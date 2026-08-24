@@ -132,7 +132,15 @@ protected:
   // list draggable by its contents without breaking a tap on them.
   void onPointerEvent(skiff::scene::PointerEvent &event) override {
     namespace scene = skiff::scene;
-    if (event.fPhase != scene::EventPhase::kCapture) {
+    // A press is watched in the capture phase, before whatever is under it
+    // sees it. But once this has taken the pointer it *is* the target, and
+    // the rest of the gesture arrives in the target phase -- so listening to
+    // capture alone meant never seeing the release, and the list stayed stuck
+    // to a pointer that had long since been let go.
+    const bool watching = event.fPhase == scene::EventPhase::kCapture;
+    const bool mine = event.fPhase == scene::EventPhase::kTarget &&
+                      (fDragging || fArmed);
+    if (!watching && !mine) {
       return;
     }
     switch (event.fAction) {
