@@ -653,11 +653,16 @@ struct PointerEvent {
   bool fCapturePointer = false;
   bool fReleasePointer = false;
   bool fRequestFocus = false;
+  bool fDeferClick = false;
 
   void handle() noexcept { fHandled = true; }
   void capturePointer() noexcept { fCapturePointer = true; }
   void releasePointer() noexcept { fReleasePointer = true; }
   void requestFocus() noexcept { fRequestFocus = true; }
+  // A gesture-owning ancestor uses this during capture: the target may arm a
+  // tap, but must not activate until the ancestor has had a chance to turn
+  // the same press into a drag.
+  void deferClick() noexcept { fDeferClick = true; }
 };
 
 struct KeyEvent {
@@ -1426,9 +1431,15 @@ public:
     if (event.fAction == PointerAction::kMove) {
       root->setHover(event.fX, event.fY);
     }
-    Drawable *target = root->fPointerCapture != nullptr
-                           ? root->fPointerCapture
-                           : root->hitTest(event.fX, event.fY);
+    Drawable *target = root->fPointerCapture;
+    if (target == nullptr &&
+        (event.fAction == PointerAction::kUp ||
+         event.fAction == PointerAction::kCancel)) {
+      target = root->fPointerDown;
+    }
+    if (target == nullptr) {
+      target = root->hitTest(event.fX, event.fY);
+    }
     if (target == nullptr) {
       if (event.fAction == PointerAction::kDown) {
         root->setFocusedNode(nullptr);
@@ -1835,8 +1846,21 @@ protected:
     if (event.fPhase != EventPhase::kTarget) {
       return;
     }
-    if (event.fAction == PointerAction::kDown &&
-        this->onClick(event.fX, event.fY)) {
+    if (event.fAction == PointerAction::kDown && event.fDeferClick) {
+      fDeferredClick = true;
+      event.handle();
+    } else if (event.fAction == PointerAction::kUp &&
+               std::exchange(fDeferredClick, false)) {
+      if (fBounds.contains(event.fX, event.fY)) {
+        (void)this->onClick(event.fX, event.fY);
+      }
+      // The release belongs to the target where this deferred gesture began,
+      // even when it ended outside its bounds.
+      event.handle();
+    } else if (event.fAction == PointerAction::kCancel) {
+      fDeferredClick = false;
+    } else if (event.fAction == PointerAction::kDown &&
+               this->onClick(event.fX, event.fY)) {
       event.handle();
     } else if (event.fAction == PointerAction::kScroll &&
                this->onScroll(event.fScrollY)) {
@@ -2466,6 +2490,7 @@ private:
   // root without a second allocation or a wrapper object.
   Drawable *fPointerCapture = nullptr;
   Drawable *fPointerDown = nullptr;
+  bool fDeferredClick = false;
   Drawable *fFocused = nullptr;
   std::shared_ptr<Drawable *> fRootLifetime;
   const std::uint64_t fSemanticId;

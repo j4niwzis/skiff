@@ -102,6 +102,9 @@ protected:
     switch (event.fAction) {
     case scene::PointerAction::kDown:
       fArmed = fExtent > 0.0f; // nothing to scroll, nothing to drag
+      if (watching && fArmed) {
+        event.deferClick();
+      }
       if (fScroll.press(event.fY)) {
         event.handle(); // the press was spent catching a flick
       }

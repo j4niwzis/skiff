@@ -97,6 +97,18 @@ private:
   int fLayouts = 0;
 };
 
+class ClickProbe : public TypedDrawable<ClickProbe> {
+public:
+  int fClicks = 0;
+
+protected:
+  bool acceptsInput() const override { return true; }
+  bool onClick(float, float) override {
+    ++fClicks;
+    return true;
+  }
+};
+
 class InputProbe : public TypedDrawable<InputProbe> {
 public:
   InputProbe(std::vector<std::string> *events, std::string name,
@@ -649,6 +661,39 @@ TEST(Layout, ProgrammaticScrollInvalidatesItsSubtree) {
   root->setCurrent(20.0f);
   EXPECT_TRUE(root->layoutIfNeeded(viewport));
   EXPECT_FLOAT_EQ(content->bounds().fTop, -20.0f);
+}
+
+TEST(Input, ScrollDragCancelsDeferredChildClick) {
+  auto root = make<ScrollContainer>({.fill = true});
+  auto *child = root->add<ClickProbe>({.width = 100.0f, .height = 200.0f});
+  const auto viewport = skia::SkRect::MakeWH(100.0f, 60.0f);
+  root->layoutIfNeeded(viewport);
+  root->updateTree(10.0);
+
+  PointerEvent down;
+  down.fAction = PointerAction::kDown;
+  down.fX = 20.0f;
+  down.fY = 20.0f;
+  EXPECT_TRUE(root->dispatchPointer(down));
+  EXPECT_EQ(child->fClicks, 0);
+
+  PointerEvent move = down;
+  move.fAction = PointerAction::kMove;
+  move.fY = 40.0f;
+  EXPECT_TRUE(root->dispatchPointer(move));
+  EXPECT_EQ(root->capturedNode(), root.get());
+
+  PointerEvent up = move;
+  up.fAction = PointerAction::kUp;
+  EXPECT_TRUE(root->dispatchPointer(up));
+  EXPECT_EQ(child->fClicks, 0);
+
+  down.fY = 20.0f;
+  EXPECT_TRUE(root->dispatchPointer(down));
+  up = down;
+  up.fAction = PointerAction::kUp;
+  EXPECT_TRUE(root->dispatchPointer(up));
+  EXPECT_EQ(child->fClicks, 1);
 }
 
 } // namespace
