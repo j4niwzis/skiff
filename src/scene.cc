@@ -1412,6 +1412,15 @@ public:
   [[nodiscard]] Drawable *focusedNode() {
     return this->inputRoot()->fFocused;
   }
+
+  // Whether whatever holds focus is somewhere text is typed. A host that has
+  // to raise an on-screen keyboard -- a phone, a tablet -- has no other way
+  // to know: it sees key events, not what they are for.
+  [[nodiscard]] bool focusedTakesText() {
+    const Drawable *node = this->inputRoot()->fFocused;
+    return node != nullptr &&
+           node->semantics().fRole == SemanticRole::kTextBox;
+  }
   [[nodiscard]] Drawable *capturedNode() {
     return this->inputRoot()->fPointerCapture;
   }
