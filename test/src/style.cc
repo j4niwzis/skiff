@@ -103,6 +103,7 @@ public:
 
 protected:
   bool acceptsInput() const override { return true; }
+  bool hoverChangesAppearance() const override { return true; }
   bool onClick(float, float) override {
     ++fClicks;
     return true;
@@ -607,6 +608,8 @@ TEST(Layout, PaintOnlyAnimationDoesNotDirtyLayout) {
 
   child->fadeTo(0.5f, 100.0);
   root->updateTree(10.0);
+  root->setHover(20.0f, 20.0f);
+  ASSERT_TRUE(child->hovered());
   EXPECT_FALSE(root->layoutIfNeeded(viewport));
   EXPECT_EQ(child->layouts(), 1);
   EXPECT_TRUE(root->finishFrame().fWantsAnotherFrame);
@@ -676,6 +679,7 @@ TEST(Input, ScrollDragCancelsDeferredChildClick) {
   down.fY = 20.0f;
   EXPECT_TRUE(root->dispatchPointer(down));
   EXPECT_EQ(child->fClicks, 0);
+  EXPECT_FALSE(child->hovered());
 
   PointerEvent move = down;
   move.fAction = PointerAction::kMove;

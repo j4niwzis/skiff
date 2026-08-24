@@ -102,8 +102,11 @@ protected:
     switch (event.fAction) {
     case scene::PointerAction::kDown:
       fArmed = fExtent > 0.0f; // nothing to scroll, nothing to drag
-      if (watching && fArmed) {
-        event.deferClick();
+      if (fArmed) {
+        event.suppressHover();
+        if (watching) {
+          event.deferClick();
+        }
       }
       if (fScroll.press(event.fY)) {
         event.handle(); // the press was spent catching a flick
@@ -113,6 +116,7 @@ protected:
       if (!fArmed) {
         break;
       }
+      event.suppressHover();
       const bool wasDragging = fScroll.dragging();
       if (!fScroll.drag(event.fY, fNowMs)) {
         break;
@@ -130,6 +134,9 @@ protected:
     }
     case scene::PointerAction::kUp:
     case scene::PointerAction::kCancel:
+      if (fArmed || fScroll.dragging()) {
+        event.suppressHover();
+      }
       if (fScroll.dragging()) {
         fScroll.release();
         this->invalidateLayout();

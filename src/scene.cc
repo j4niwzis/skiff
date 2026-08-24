@@ -654,6 +654,7 @@ struct PointerEvent {
   bool fReleasePointer = false;
   bool fRequestFocus = false;
   bool fDeferClick = false;
+  bool fSuppressHover = false;
 
   void handle() noexcept { fHandled = true; }
   void capturePointer() noexcept { fCapturePointer = true; }
@@ -663,6 +664,10 @@ struct PointerEvent {
   // tap, but must not activate until the ancestor has had a chance to turn
   // the same press into a drag.
   void deferClick() noexcept { fDeferClick = true; }
+  // Touch scrolling is not pointing. A scroll ancestor requests this while
+  // it is deciding between tap and drag so controls under the finger do not
+  // hover, expand, or select merely because touch motion reports coordinates.
+  void suppressHover() noexcept { fSuppressHover = true; }
 };
 
 struct KeyEvent {
@@ -1513,6 +1518,10 @@ public:
     if (event.fAction == PointerAction::kUp ||
         event.fAction == PointerAction::kCancel) {
       root->fPointerDown = nullptr;
+    }
+    if (event.fSuppressHover) {
+      const float away = -std::numeric_limits<float>::infinity();
+      root->setHover(away, away);
     }
     if (focusRequest != nullptr) {
       root->setFocusedNode(focusRequest);
