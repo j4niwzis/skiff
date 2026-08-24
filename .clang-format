@@ -1,0 +1,4 @@
+# The style this tree is already written in; written down so that anyone
+# arriving with a different default does not reflow half the repository.
+BasedOnStyle: LLVM
+ColumnLimit: 80

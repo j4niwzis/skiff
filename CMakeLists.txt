@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.1.1 FATAL_ERROR)
 
-include(${CMAKE_CURRENT_LIST_DIR}/../cmake/import-std.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/import-std.cmake)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # skiff -- a small retained-mode UI framework on Skia, in the shape

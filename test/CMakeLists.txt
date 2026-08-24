@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.3.4 FATAL_ERROR)
 
-include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/import-std.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/import-std.cmake)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -9,8 +9,8 @@ project(skiffTests LANGUAGES CXX)
 option(ENABLE_TEST_COVERAGE "Enable test coverage" OFF)
 option(TEST_INSTALLED_VERSION "Test the installed skiff package" OFF)
 
-include(../../cmake/tools.cmake)
-include(../../cmake/CPM.cmake)
+include(../cmake/tools.cmake)
+include(../cmake/CPM.cmake)
 
 CPMAddPackage(
   NAME googletest_modules
