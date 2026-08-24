@@ -22,244 +22,134 @@ public:
   ScrollContainer() { fMasking = true; }
 
   void scrollToStart() {
-    if (fTarget == 0.0f && fCurrent == 0.0f) {
+    if (fScroll.offset() == 0.0f && fScroll.target() == 0.0f) {
       return;
     }
-    fTarget = 0.0f;
-    fCurrent = 0.0f;
+    fScroll.jumpTo(0.0f);
     this->invalidateLayout();
   }
 
   // Carried across a rebuild: a list that grew a page should stay where the
   // reader left it, not jump back to the top.
   void setCurrent(float offset) {
-    if (fCurrent == offset && fTarget == offset) {
+    if (fScroll.offset() == offset && fScroll.target() == offset) {
       return;
     }
-    fCurrent = offset;
-    fTarget = offset;
+    fScroll.jumpTo(offset);
     this->invalidateLayout();
   }
   // Eased: the view glides to the offset rather than jumping to it, which is
   // what a jump to a section in a settings list should look like.
   void scrollTo(float offset) {
-    fTarget = std::clamp(offset, 0.0f, fExtent);
+    fScroll.glideTo(offset);
     this->invalidateLayout();
   }
 
   // Still gliding towards where it was asked to go.
-  [[nodiscard]] bool moving() const noexcept {
-    return !skiff::paint::settled(fCurrent, fTarget);
-  }
+  [[nodiscard]] bool moving() const noexcept { return fScroll.moving(); }
 
-  [[nodiscard]] float current() const noexcept { return fCurrent; }
+  [[nodiscard]] float current() const noexcept { return fScroll.offset(); }
   [[nodiscard]] float extent() const noexcept { return fExtent; }
 
 protected:
   void layoutChildren() override {
     const skia::SkRect box = this->contentBox();
-    const skia::SkRect scrolled = skia::SkRect::MakeXYWH(
-        box.fLeft, box.fTop - fCurrent, box.width(), box.height());
+    const skia::SkRect scrolled =
+        skia::SkRect::MakeXYWH(box.fLeft, box.fTop - fScroll.offset(),
+                               box.width(), box.height());
     for (auto &child : fChildren) {
       child->layout(scrolled);
     }
     const skia::SkRect content = this->childBounds();
     fExtent = std::max(0.0f, content.height() - box.height());
-    fTarget = std::clamp(fTarget, 0.0f, fExtent);
+    fScroll.setBounds(0.0f, fExtent);
   }
 
   void update(double nowMs) override {
-    // Kept for the pointer handler, which measures speed against the clock
-    // and is not given one.
-    fNowMs = nowMs;
-    const double dt = fLastMs > 0.0 ? std::min(nowMs - fLastMs, 64.0) : 16.0;
+    const double dt = fLastMs > 0.0 ? nowMs - fLastMs : 16.0;
     fLastMs = nowMs;
-    const float previous = fCurrent;
-
-    if (fDragging) {
-      // The finger owns the offset; nothing else moves it.
-      fLastMs = nowMs;
-    } else if (fFlinging) {
-      // Friction per millisecond rather than per frame, so the same flick
-      // travels the same distance at thirty frames and at two hundred.
-      fVelocity *= std::pow(kFriction, static_cast<float>(dt));
-      fCurrent += fVelocity * static_cast<float>(dt);
-      if (fCurrent < 0.0f || fCurrent > fExtent) {
-        // Past the end the flick is over; what is left is the spring.
-        fFlinging = false;
-        fVelocity = 0.0f;
-        fTarget = std::clamp(fCurrent, 0.0f, fExtent);
-      } else if (std::abs(fVelocity) < kMinVelocity) {
-        fFlinging = false;
-        fVelocity = 0.0f;
-        fTarget = fCurrent;
-      } else {
-        fTarget = fCurrent;
-      }
-    } else {
-      // Everything else -- a wheel, a jump to a section, the spring back
-      // from an overscrolled edge -- eases towards the target.
-      fCurrent = skiff::paint::approach(fCurrent, fTarget, kSettleTau, dt);
-      if (std::abs(fCurrent - fTarget) < 0.05f) {
-        fCurrent = fTarget; // settle, so a still list stops re-laying out
-      }
-    }
-
-    if (fCurrent != previous) {
+    fNowMs = nowMs;
+    if (fScroll.advance(dt)) {
       this->invalidateLayout();
     }
   }
 
-  // Still moving on its own: a flick that has not run out, or an edge
-  // springing back. The frame loop asks this to know whether to keep drawing.
-  [[nodiscard]] bool settling() const override {
-    return fFlinging || !skiff::paint::settled(fCurrent, fTarget);
-  }
+  // A flick that has not run out, or an end springing back. Damage says what
+  // changed; this says the next frame will differ too.
+  bool settling() const override { return fScroll.moving(); }
 
   bool onScroll(float ticks) override {
-    fTarget = std::clamp(fTarget - ticks * 60.0f, 0.0f, fExtent);
+    fScroll.wheel(ticks, 60.0f);
     this->invalidateLayout();
     return true;
   }
 
   // Dragging the contents, which is the only way to scroll with a finger.
   //
-  // Handled in the capture phase, so the container sees a press before the
-  // card or the slider under it does -- but the press is only remembered,
-  // never taken. A press that does not move belongs to whatever is under it;
-  // only once the finger has travelled past the slop does this take the
-  // pointer, and from then on the child sees nothing. That is what makes a
-  // list draggable by its contents without breaking a tap on them.
+  // A press is watched in the capture phase, before whatever is under it sees
+  // it, but only remembered -- a press that does not travel belongs to what
+  // is under it. Once past the slop this takes the pointer, and from then on
+  // it is the target, so the rest of the gesture arrives in the target phase.
   void onPointerEvent(skiff::scene::PointerEvent &event) override {
     namespace scene = skiff::scene;
-    // A press is watched in the capture phase, before whatever is under it
-    // sees it. But once this has taken the pointer it *is* the target, and
-    // the rest of the gesture arrives in the target phase -- so listening to
-    // capture alone meant never seeing the release, and the list stayed stuck
-    // to a pointer that had long since been let go.
     const bool watching = event.fPhase == scene::EventPhase::kCapture;
     const bool mine = event.fPhase == scene::EventPhase::kTarget &&
-                      (fDragging || fArmed);
+                      (fScroll.dragging() || fArmed);
     if (!watching && !mine) {
       return;
     }
     switch (event.fAction) {
     case scene::PointerAction::kDown:
-      fPressY = event.fY;
-      fPressOffset = fCurrent;
-      fLastDragY = event.fY;
-      fLastDragMs = 0.0;
-      fVelocity = 0.0f;
       fArmed = fExtent > 0.0f; // nothing to scroll, nothing to drag
-      fDragging = false;
-      if (fFlinging) {
-        // Touching a list that is still flying stops it where it is, the way
-        // every touch surface does. The press is spent on the catch.
-        fFlinging = false;
-        fTarget = fCurrent;
-        event.handle();
+      if (fScroll.press(event.fY)) {
+        event.handle(); // the press was spent catching a flick
       }
       break;
     case scene::PointerAction::kMove: {
       if (!fArmed) {
         break;
       }
-      const float travelled = event.fY - fPressY;
-      if (!fDragging) {
-        if (std::abs(travelled) < kDragSlop) {
-          break;
-        }
+      const bool wasDragging = fScroll.dragging();
+      if (!fScroll.drag(event.fY, fNowMs)) {
+        break;
+      }
+      if (!wasDragging) {
         if (this->capturedNode() != nullptr) {
           fArmed = false; // something else is already being dragged
           break;
         }
-        fDragging = true;
         event.capturePointer();
       }
-      // Velocity in units per millisecond, smoothed a little: a finger
-      // stutters, and the last frame alone is a poor answer for how fast it
-      // was going. Measured against the clock rather than the frame, or a
-      // slow frame reads as a fast flick.
-      if (fLastDragMs > 0.0 && fNowMs > fLastDragMs) {
-        const float sample = static_cast<float>((fLastDragY - event.fY) /
-                                                (fNowMs - fLastDragMs));
-        fVelocity = fVelocity * (1.0f - kVelocityMix) + sample * kVelocityMix;
-      }
-      fLastDragY = event.fY;
-      fLastDragMs = fNowMs;
-
-      // Follows the finger exactly rather than easing towards it: an eased
-      // drag feels like the list is on a spring. Past either end it follows
-      // at a fraction, which is the resistance every touch surface has.
-      const float wanted = fPressOffset - travelled;
-      if (wanted < 0.0f) {
-        fCurrent = wanted * kOverscroll;
-      } else if (wanted > fExtent) {
-        fCurrent = fExtent + (wanted - fExtent) * kOverscroll;
-      } else {
-        fCurrent = wanted;
-      }
-      fTarget = fCurrent;
       this->invalidateLayout();
       event.handle();
       break;
     }
     case scene::PointerAction::kUp:
     case scene::PointerAction::kCancel:
-      if (fDragging) {
-        if (fCurrent < 0.0f || fCurrent > fExtent) {
-          // Let go past the end: the spring takes it back, no flick.
-          fVelocity = 0.0f;
-          fTarget = std::clamp(fCurrent, 0.0f, fExtent);
-        } else if (std::abs(fVelocity) > kMinVelocity) {
-          fFlinging = true;
-        }
+      if (fScroll.dragging()) {
+        fScroll.release();
         this->invalidateLayout();
         event.releasePointer();
         event.handle();
       }
       fArmed = false;
-      fDragging = false;
       break;
     default:
       break;
     }
   }
 
-  // The container is a target in its own right so that the empty part of a
-  // short list can still be dragged. It never draws anything for a pointer.
+  // A target in its own right, so the empty part of a short list can still be
+  // dragged. It never draws anything for a pointer.
   bool acceptsInput() const override { return true; }
   bool hoverChangesAppearance() const override { return false; }
 
 private:
-  // How far a finger travels before this decides it is a drag and not a tap.
-  static constexpr float kDragSlop = 6.0f;
-  // What is left of the speed after a millisecond of flying. 0.994 puts a
-  // fast flick at roughly a second of travel, which is what a phone does.
-  static constexpr float kFriction = 0.994f;
-  // Below this the flick is over: a twentieth of a unit per millisecond is
-  // fifty a second, slower than anything reads as movement.
-  static constexpr float kMinVelocity = 0.05f;
-  // How much of each new speed sample to believe, against the running one.
-  static constexpr float kVelocityMix = 0.35f;
-  // How far the contents follow past either end while held.
-  static constexpr float kOverscroll = 0.4f;
-  // How quickly everything that is not a flick settles.
-  static constexpr float kSettleTau = 30.0f;
-
-  float fCurrent = 0.0f;
-  float fTarget = 0.0f;
+  skiff::scene::ScrollGesture fScroll;
   float fExtent = 0.0f;
   double fLastMs = 0.0;
-  float fPressY = 0.0f;
-  float fPressOffset = 0.0f;
-  float fLastDragY = 0.0f;
-  double fLastDragMs = 0.0;
   double fNowMs = 0.0;
-  float fVelocity = 0.0f; // units per millisecond
   bool fArmed = false;
-  bool fDragging = false;
-  bool fFlinging = false;
 };
 
 } // namespace skiff::nodes

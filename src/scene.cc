@@ -481,6 +481,167 @@ enum class Key : std::uint16_t {
   kDelete
 };
 
+// One axis of scrolling, as a gesture: the press, the slop before it counts
+// as a drag, speed measured against the clock, friction, the spring past an
+// end, and a wheel. Deliberately not a node -- a virtualised list positions
+// its own children and cannot be a ScrollContainer, but it wants exactly this
+// behaviour, and there is no version of it that is nearly right.
+class ScrollGesture {
+public:
+  void setBounds(float lo, float hi) {
+    fLo = lo;
+    fHi = std::max(lo, hi);
+    if (!fDragging) {
+      fTarget = std::clamp(fTarget, fLo, fHi);
+    }
+  }
+  [[nodiscard]] float offset() const noexcept { return fOffset; }
+  [[nodiscard]] float target() const noexcept { return fTarget; }
+  [[nodiscard]] bool dragging() const noexcept { return fDragging; }
+  // Still moving on its own: a flick running out, or an end springing back.
+  [[nodiscard]] bool moving() const noexcept {
+    return fFlinging || std::abs(fOffset - fTarget) > 0.05f;
+  }
+
+  void jumpTo(float value) {
+    fOffset = fTarget = std::clamp(value, fLo, fHi);
+    fFlinging = false;
+    fVelocity = 0.0f;
+  }
+  void glideTo(float value) {
+    fTarget = std::clamp(value, fLo, fHi);
+    fFlinging = false;
+    fVelocity = 0.0f;
+  }
+  void wheel(float ticks, float step) {
+    fFlinging = false;
+    fVelocity = 0.0f;
+    fTarget = std::clamp(fTarget - ticks * step, fLo, fHi);
+  }
+
+  // Touching a list that is still flying stops it where it is, which is the
+  // gesture everyone already knows. Returns true when it caught something.
+  bool press(float position) {
+    fPressAt = position;
+    fPressOffset = fOffset;
+    fLastAt = position;
+    fLastMs = 0.0;
+    fVelocity = 0.0f;
+    fDragging = false;
+    const bool caught = fFlinging;
+    if (caught) {
+      fFlinging = false;
+      fTarget = fOffset;
+    }
+    return caught;
+  }
+
+  // True once the finger has travelled far enough to be a drag rather than a
+  // tap; from then on the caller should keep the gesture and stop whatever
+  // else the press might have meant.
+  bool drag(float position, double nowMs) {
+    const float travelled = position - fPressAt;
+    if (!fDragging) {
+      if (std::abs(travelled) < kSlop) {
+        return false;
+      }
+      fDragging = true;
+    }
+    // Units per millisecond, smoothed: a finger stutters, and one frame is a
+    // poor witness. Against the clock, or a slow frame reads as a fast flick.
+    if (fLastMs > 0.0 && nowMs > fLastMs) {
+      const float sample =
+          static_cast<float>((fLastAt - position) / (nowMs - fLastMs));
+      fVelocity = fVelocity * (1.0f - kVelocityMix) + sample * kVelocityMix;
+    }
+    fLastAt = position;
+    fLastMs = nowMs;
+
+    // Past either end it follows at a fraction, which is the resistance a
+    // touch surface has.
+    const float wanted = fPressOffset - travelled;
+    if (wanted < fLo) {
+      fOffset = fLo + (wanted - fLo) * kOverscroll;
+    } else if (wanted > fHi) {
+      fOffset = fHi + (wanted - fHi) * kOverscroll;
+    } else {
+      fOffset = wanted;
+    }
+    fTarget = fOffset;
+    return true;
+  }
+
+  void release() {
+    if (!fDragging) {
+      return;
+    }
+    fDragging = false;
+    if (fOffset < fLo || fOffset > fHi) {
+      fVelocity = 0.0f; // let go past the end: the spring, not a flick
+      fTarget = std::clamp(fOffset, fLo, fHi);
+    } else if (std::abs(fVelocity) > kMinVelocity) {
+      fFlinging = true;
+    }
+  }
+  void cancel() {
+    fDragging = false;
+    fFlinging = false;
+    fVelocity = 0.0f;
+    fTarget = std::clamp(fOffset, fLo, fHi);
+  }
+
+  // Per frame. Returns true when the offset moved and the caller has to be
+  // laid out again.
+  bool advance(double dtMs, float tauMs = 30.0f) {
+    const float previous = fOffset;
+    const double dt = std::min(dtMs, 64.0);
+    if (fDragging) {
+      return false; // the finger owns it
+    }
+    if (fFlinging) {
+      // Friction per millisecond, so thirty frames and two hundred agree on
+      // how far a flick travels.
+      fVelocity *= std::pow(kFriction, static_cast<float>(dt));
+      fOffset += fVelocity * static_cast<float>(dt);
+      if (fOffset < fLo || fOffset > fHi ||
+          std::abs(fVelocity) < kMinVelocity) {
+        fFlinging = false;
+        fVelocity = 0.0f;
+        fTarget = std::clamp(fOffset, fLo, fHi);
+      } else {
+        fTarget = fOffset;
+      }
+    } else {
+      fOffset = paint::approach(fOffset, fTarget, tauMs, dt);
+      if (std::abs(fOffset - fTarget) < 0.05f) {
+        fOffset = fTarget;
+      }
+    }
+    return fOffset != previous;
+  }
+
+  // How far a finger travels before this is a drag and not a tap.
+  static constexpr float kSlop = 6.0f;
+
+private:
+  static constexpr float kFriction = 0.994f;
+  static constexpr float kMinVelocity = 0.05f;
+  static constexpr float kVelocityMix = 0.35f;
+  static constexpr float kOverscroll = 0.4f;
+
+  float fOffset = 0.0f;
+  float fTarget = 0.0f;
+  float fLo = 0.0f;
+  float fHi = 0.0f;
+  float fPressAt = 0.0f;
+  float fPressOffset = 0.0f;
+  float fLastAt = 0.0f;
+  double fLastMs = 0.0;
+  float fVelocity = 0.0f; // units per millisecond
+  bool fDragging = false;
+  bool fFlinging = false;
+};
+
 struct PointerEvent {
   PointerAction fAction = PointerAction::kMove;
   EventPhase fPhase = EventPhase::kTarget;
