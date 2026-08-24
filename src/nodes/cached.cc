@@ -42,8 +42,21 @@ public:
       return;
     }
     skia::GrDirectContext *context = contextSlot();
-    const int width = static_cast<int>(std::ceil(fBounds.width()));
-    const int height = static_cast<int>(std::ceil(fBounds.height()));
+    // The cache has to hold device pixels, not units. Drawn at unit size into
+    // a canvas that carries an interface scale, the texture is resampled on
+    // every frame -- blurred, and off the fast blit path that is the entire
+    // point of caching. The scale is read from the canvas rather than passed
+    // in, so nothing above has to know this node exists.
+    const skia::SkMatrix matrix = canvas->getTotalMatrix();
+    const float scaleX = std::abs(matrix.getScaleX());
+    const float scaleY = std::abs(matrix.getScaleY());
+    const bool plainScale = matrix.getSkewX() == 0.0f &&
+                            matrix.getSkewY() == 0.0f && scaleX > 0.0f &&
+                            scaleY > 0.0f;
+    const float sx = plainScale ? scaleX : 1.0f;
+    const float sy = plainScale ? scaleY : 1.0f;
+    const int width = static_cast<int>(std::ceil(fBounds.width() * sx));
+    const int height = static_cast<int>(std::ceil(fBounds.height() * sy));
     if (context == nullptr || width <= 0 || height <= 0 ||
         this->animatingTree()) {
       Drawable::draw(canvas, inheritedAlpha);
@@ -68,7 +81,9 @@ public:
       auto *cacheCanvas = fCache->getCanvas();
       cacheCanvas->clear(skia::colorSetARGB(0, 0, 0, 0));
       const int saved = cacheCanvas->save();
-      // The subtree is laid out in screen space; shift it into the cache.
+      // The subtree is laid out in screen space; shift it into the cache and
+      // draw it at the scale the cache is held at.
+      cacheCanvas->scale(sx, sy);
       cacheCanvas->translate(-fBounds.fLeft, -fBounds.fTop);
       Drawable::draw(cacheCanvas, 1.0f);
       cacheCanvas->restoreToCount(saved);
@@ -81,8 +96,13 @@ public:
     paint.setAlphaf(inheritedAlpha * fAlpha);
     auto image = fCache->makeImageSnapshot();
     if (image) {
-      canvas->drawImage(image.get(), fBounds.fLeft, fBounds.fTop,
-                        skia::SkSamplingOptions(), &paint);
+      // Back out at unit size: with the canvas scale applied that lands one
+      // device pixel per cached pixel, which is the fast path.
+      canvas->drawImageRect(
+          image.get(),
+          skia::SkRect::MakeXYWH(fBounds.fLeft, fBounds.fTop, fBounds.width(),
+                                 fBounds.height()),
+          skia::SkSamplingOptions(), &paint);
     }
     this->noteDrawn();
   }
