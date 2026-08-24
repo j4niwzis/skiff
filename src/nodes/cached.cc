@@ -96,13 +96,20 @@ public:
     paint.setAlphaf(inheritedAlpha * fAlpha);
     auto image = fCache->makeImageSnapshot();
     if (image) {
-      // Back out at unit size: with the canvas scale applied that lands one
-      // device pixel per cached pixel, which is the fast path.
-      canvas->drawImageRect(
-          image.get(),
-          skia::SkRect::MakeXYWH(fBounds.fLeft, fBounds.fTop, fBounds.width(),
-                                 fBounds.height()),
-          skia::SkSamplingOptions(), &paint);
+      if (sx == 1.0f && sy == 1.0f) {
+        // Nothing is scaled: the plain blit, as before, which is the cheapest
+        // path Skia has.
+        canvas->drawImage(image.get(), fBounds.fLeft, fBounds.fTop,
+                          skia::SkSamplingOptions(), &paint);
+      } else {
+        // Back out at unit size: with the canvas scale applied that lands one
+        // device pixel per cached pixel, which is the fast path again.
+        canvas->drawImageRect(
+            image.get(),
+            skia::SkRect::MakeXYWH(fBounds.fLeft, fBounds.fTop,
+                                   fBounds.width(), fBounds.height()),
+            skia::SkSamplingOptions(), &paint);
+      }
     }
     this->noteDrawn();
   }
