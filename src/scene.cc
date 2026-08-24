@@ -1416,6 +1416,16 @@ public:
   // Whether whatever holds focus is somewhere text is typed. A host that has
   // to raise an on-screen keyboard -- a phone, a tablet -- has no other way
   // to know: it sees key events, not what they are for.
+  // Set once by the host. Raising a keyboard is a platform matter, and which
+  // tree the focus is in is not the platform's business.
+  static std::function<void(bool)> &textFocusHook() {
+    static std::function<void(bool)> hook;
+    return hook;
+  }
+  static void setTextFocusHook(std::function<void(bool)> hook) {
+    textFocusHook() = std::move(hook);
+  }
+
   [[nodiscard]] bool focusedTakesText() {
     const Drawable *node = this->inputRoot()->fFocused;
     return node != nullptr &&
@@ -1781,6 +1791,20 @@ private:
     }
     Drawable *previous = root->fFocused;
     root->fFocused = node;
+    // Whether focus is somewhere text is typed, told once when it changes.
+    // A host that has to raise an on-screen keyboard needs this and cannot
+    // work it out: it sees key events, not what they are for, and it does
+    // not know which of several trees the focus happens to be in.
+    if (auto &hook = textFocusHook(); hook) {
+      const bool wasText =
+          previous != nullptr &&
+          previous->semantics().fRole == SemanticRole::kTextBox;
+      const bool isText =
+          node != nullptr && node->semantics().fRole == SemanticRole::kTextBox;
+      if (wasText != isText) {
+        hook(isText);
+      }
+    }
     if (previous != nullptr) {
       previous->onFocusChanged(false);
       const StyleStateResolver resolver =
