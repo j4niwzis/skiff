@@ -94,7 +94,8 @@ protected:
     namespace scene = skiff::scene;
     const bool watching = event.fPhase == scene::EventPhase::kCapture;
     const bool mine = event.fPhase == scene::EventPhase::kTarget &&
-                      (fScroll.dragging() || fArmed);
+                      (event.fAction == scene::PointerAction::kDown ||
+                       fScroll.dragging() || fArmed);
     if (!watching && !mine) {
       return;
     }

@@ -1174,6 +1174,9 @@ public:
     if (this->containsNode(root->fPointerCapture)) {
       root->fPointerCapture = nullptr;
     }
+    if (this->containsNode(root->fPointerDown)) {
+      root->fPointerDown = nullptr;
+    }
     if (this->containsNode(root->fFocused)) {
       root->setFocusedNode(nullptr);
     }
@@ -1433,8 +1436,12 @@ public:
       if (event.fAction == PointerAction::kUp ||
           event.fAction == PointerAction::kCancel) {
         root->fPointerCapture = nullptr;
+        root->fPointerDown = nullptr;
       }
       return false;
+    }
+    if (event.fAction == PointerAction::kDown) {
+      root->fPointerDown = target;
     }
 
     std::vector<Drawable *> path;
@@ -1480,7 +1487,21 @@ public:
         event.fAction == PointerAction::kUp) {
       root->fPointerCapture = nullptr;
     } else if (captureRequest != nullptr) {
+      // A container claiming a drag cancels the control where the press
+      // began. It must not remain armed and activate after scrolling.
+      if (root->fPointerDown != nullptr &&
+          root->fPointerDown != captureRequest) {
+        const PointerAction action = event.fAction;
+        event.fAction = PointerAction::kCancel;
+        deliver(root->fPointerDown, EventPhase::kTarget);
+        event.fAction = action;
+      }
+      root->fPointerDown = nullptr;
       root->fPointerCapture = captureRequest;
+    }
+    if (event.fAction == PointerAction::kUp ||
+        event.fAction == PointerAction::kCancel) {
+      root->fPointerDown = nullptr;
     }
     if (focusRequest != nullptr) {
       root->setFocusedNode(focusRequest);
@@ -1920,6 +1941,9 @@ private:
     Drawable *root = this->inputRoot();
     if (this->containsNode(root->fPointerCapture)) {
       root->fPointerCapture = nullptr;
+    }
+    if (this->containsNode(root->fPointerDown)) {
+      root->fPointerDown = nullptr;
     }
     if (this->containsNode(root->fFocused)) {
       root->setFocusedNode(nullptr);
@@ -2441,6 +2465,7 @@ private:
   // Meaningful on a root. Kept here so any detached subtree can become a
   // root without a second allocation or a wrapper object.
   Drawable *fPointerCapture = nullptr;
+  Drawable *fPointerDown = nullptr;
   Drawable *fFocused = nullptr;
   std::shared_ptr<Drawable *> fRootLifetime;
   const std::uint64_t fSemanticId;

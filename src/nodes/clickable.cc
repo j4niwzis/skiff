@@ -39,9 +39,36 @@ protected:
     return true;
   }
 
+  void onPointerEvent(skiff::scene::PointerEvent &event) override {
+    using skiff::scene::EventPhase;
+    using skiff::scene::PointerAction;
+    if (event.fPhase != EventPhase::kTarget) {
+      return;
+    }
+    switch (event.fAction) {
+    case PointerAction::kDown:
+      fArmed = true;
+      event.handle();
+      break;
+    case PointerAction::kUp:
+      if (std::exchange(fArmed, false) &&
+          fBounds.contains(event.fX, event.fY)) {
+        (void)this->onClick(event.fX, event.fY);
+        event.handle();
+      }
+      break;
+    case PointerAction::kCancel:
+      fArmed = false;
+      break;
+    default:
+      break;
+    }
+  }
+
 private:
   std::function<void()> fAction;
   std::string fLabel;
+  bool fArmed = false;
 };
 
 } // namespace skiff::nodes
