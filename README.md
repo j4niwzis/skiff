@@ -127,10 +127,18 @@ the UI without teaching scene nodes about a specific OS API.
 or newer.
 
 ```sh
-cmake -S all -B build
+cmake -S all -B build -G Ninja
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+`-G Ninja` is not a preference. CMake only supports C++20 modules under
+Ninja; the Makefile generator does not scan for them, and the build fails
+without saying why. Everything here is modules, so there is no other way to
+build it.
+
+You also need a compiler that can do `import std` -- clang 19 or newer with
+libc++, or gcc 15 -- and Skia discoverable through `pkg-config` as `skia`.
 
 Configure `test` directly to build only the library and its tests. Pass
 `-DTEST_INSTALLED_VERSION=ON` to test a previously installed `skiff` package
