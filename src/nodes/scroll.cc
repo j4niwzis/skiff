@@ -102,6 +102,8 @@ protected:
     switch (event.fAction) {
     case scene::PointerAction::kDown:
       fArmed = fExtent > 0.0f; // nothing to scroll, nothing to drag
+      fPressX = event.fX;
+      fPressY = event.fY;
       if (fArmed) {
         event.suppressHover();
         if (watching) {
@@ -115,6 +117,18 @@ protected:
     case scene::PointerAction::kMove: {
       if (!fArmed) {
         break;
+      }
+      if (!fScroll.dragging()) {
+        const float dx = event.fX - fPressX;
+        const float dy = event.fY - fPressY;
+        if (std::abs(dx) >= scene::ScrollGesture::kSlop &&
+            std::abs(dx) > std::abs(dy)) {
+          // Direction is decided once. A horizontal slider gesture may have
+          // a little vertical noise, but must never turn into list scrolling
+          // later in the same contact.
+          fArmed = false;
+          break;
+        }
       }
       event.suppressHover();
       const bool wasDragging = fScroll.dragging();
@@ -160,6 +174,8 @@ private:
   float fExtent = 0.0f;
   double fLastMs = 0.0;
   double fNowMs = 0.0;
+  float fPressX = 0.0f;
+  float fPressY = 0.0f;
   bool fArmed = false;
 };
 

@@ -700,4 +700,31 @@ TEST(Input, ScrollDragCancelsDeferredChildClick) {
   EXPECT_EQ(child->fClicks, 1);
 }
 
+TEST(Input, HorizontalGestureDoesNotBecomeVerticalScroll) {
+  auto root = make<ScrollContainer>({.fill = true});
+  root->add<ClickProbe>({.width = 100.0f, .height = 200.0f});
+  const auto viewport = skia::SkRect::MakeWH(100.0f, 60.0f);
+  root->layoutIfNeeded(viewport);
+  root->updateTree(10.0);
+
+  PointerEvent down;
+  down.fAction = PointerAction::kDown;
+  down.fX = 20.0f;
+  down.fY = 20.0f;
+  EXPECT_TRUE(root->dispatchPointer(down));
+
+  PointerEvent horizontal = down;
+  horizontal.fAction = PointerAction::kMove;
+  horizontal.fX = 40.0f;
+  horizontal.fY = 22.0f;
+  root->dispatchPointer(horizontal);
+  EXPECT_EQ(root->capturedNode(), nullptr);
+
+  PointerEvent vertical = horizontal;
+  vertical.fY = 50.0f;
+  root->dispatchPointer(vertical);
+  EXPECT_EQ(root->capturedNode(), nullptr);
+  EXPECT_FLOAT_EQ(root->current(), 0.0f);
+}
+
 } // namespace
