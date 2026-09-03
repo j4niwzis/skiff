@@ -51,7 +51,7 @@ module;
 #include <skia/gpu/ganesh/gl/GrGLTypes.h>
 #include <skia/ports/SkFontMgr_data.h>
 #include <skia/ports/SkFontMgr_directory.h>
-#include <sksl/SkSLVersion.h>
+#include <skia/sksl/SkSLVersion.h>
 
 export module skia;
 
