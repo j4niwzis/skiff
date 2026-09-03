@@ -1,7 +1,12 @@
 module;
 
+#if defined(__ANDROID__)
+#define SK_GLES 1
+#include <GLES3/gl3.h>
+#else
 #define SK_GL 1
 #include <GL/gl.h>
+#endif
 
 #include <skia/codec/SkCodec.h>
 #include <skia/core/SkBitmap.h>

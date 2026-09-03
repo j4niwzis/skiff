@@ -36,7 +36,10 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SKIA REQUIRED skia)
 
-if(NOT SKIFF_EMSCRIPTEN)
+if(ANDROID)
+  find_library(SKIFF_EGL_LIBRARY NAMES EGL REQUIRED)
+  find_library(SKIFF_GLES_LIBRARY NAMES GLESv3 GLESv2 REQUIRED)
+elseif(NOT SKIFF_EMSCRIPTEN)
   find_package(OpenGL REQUIRED)
 endif()
 
@@ -76,7 +79,10 @@ target_include_directories(${PROJECT_NAME} PUBLIC ${SKIA_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC
   ${SKIA_LDFLAGS} ${SKIA_LIBRARIES}
 )
-if(NOT SKIFF_EMSCRIPTEN)
+if(ANDROID)
+  target_link_libraries(${PROJECT_NAME} PUBLIC
+    ${SKIFF_EGL_LIBRARY} ${SKIFF_GLES_LIBRARY})
+elseif(NOT SKIFF_EMSCRIPTEN)
   target_link_libraries(${PROJECT_NAME} PUBLIC OpenGL::GL)
 endif()
 
