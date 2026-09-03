@@ -138,11 +138,22 @@ if(SKIFF_INSTALL)
     NAMESPACE skiff::
     CXX_MODULES_DIRECTORY modules
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/skiff)
-  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake"
-    "include(CMakeFindDependencyMacro)\n"
+  # Everything the exported targets name has to be found again by whoever
+  # includes this, in the same words. Skia arrives as flags and paths from
+  # pkg-config, so nothing has to be found for it beyond pkg-config itself;
+  # OpenGL arrives as a target, and a target is a name that means nothing in
+  # another build until something makes it -- "links to OpenGL::GL but the
+  # target was not found", which is where a consumer of this stopped.
+  set(skiff_config "include(CMakeFindDependencyMacro)\n")
+  string(APPEND skiff_config
     "find_dependency(PkgConfig)\n"
-    "pkg_check_modules(SKIA REQUIRED skia)\n"
+    "pkg_check_modules(SKIA REQUIRED skia)\n")
+  if(NOT ANDROID AND NOT SKIFF_EMSCRIPTEN)
+    string(APPEND skiff_config "find_dependency(OpenGL)\n")
+  endif()
+  string(APPEND skiff_config
     "include(\"\${CMAKE_CURRENT_LIST_DIR}/skiffTargets.cmake\")\n")
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake" "${skiff_config}")
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/skiff)
 endif()

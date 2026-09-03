@@ -1,0 +1,147 @@
+# What an installed skiff is.
+#
+# This library is meant to be answerable by a machine: a prefix that has it
+# has its module sources, its archive, a CMake package and the port
+# declaration that says what it needs. Every one of those is written in
+# CMakeLists.txt and none of them was ever run -- so this builds skiff on its
+# own, installs it, and then builds something against the installed copy with
+# nothing but find_package.
+name: install
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  install:
+    # 26.04 because that is where Skia is packaged: this library is a Skia
+    # wrapper, and building Skia here would be testing something else.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # Clang 22 and the distribution's libstdc++: this is a C++23 module
+      # library, so the compiler has to scan for imports, and every library
+      # on this machine was built against libstdc++.
+      - name: clang 22
+        run: |
+          sudo apt-get update || true
+          sudo apt-get install -y ninja-build python3 pkg-config \
+            lsb-release software-properties-common gnupg curl
+          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22 all
+          echo /usr/lib/llvm-22/bin >> "$GITHUB_PATH"
+
+      - name: cmake
+        run: |
+          version=4.3.4
+          curl -sSL -o cmake.tar.gz \
+            "https://github.com/Kitware/CMake/releases/download/v${version}/cmake-${version}-linux-x86_64.tar.gz"
+          sudo tar xzf cmake.tar.gz -C /opt
+          echo "/opt/cmake-${version}-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: skia
+        run: sudo apt-get install -y libskia-dev libgl-dev
+
+      # Where libstdc++ keeps the source of its std module. libc++ ships a
+      # manifest and libstdc++ does not, so the path is found rather than
+      # asked for.
+      - name: what import std reads from libstdc++
+        run: |
+          std=$(ls /usr/include/c++/*/bits/std.cc | sort -V | tail -1)
+          cat > /tmp/libstdc++.modules.json <<EOF
+          {
+            "version": 1,
+            "revision": 1,
+            "modules": [
+              { "logical-name": "std", "source-path": "$std",
+                "is-std-library": true },
+              { "logical-name": "std.compat",
+                "source-path": "${std%std.cc}std.compat.cc",
+                "is-std-library": true }
+            ]
+          }
+          EOF
+
+      - name: build and install
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-22 \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
+            -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
+            -DCMAKE_INSTALL_PREFIX="$PWD/prefix"
+          cmake --build build
+          cmake --install build
+
+      # What was installed, said out loud: an archive, the module sources a
+      # consumer compiles its own interfaces from, a CMake package, and the
+      # port declaration that describes this library to whoever answers
+      # find_package(skiff) for somebody else.
+      - name: what is in the prefix
+        run: |
+          find prefix -type f | sort
+          test -f prefix/lib/cmake/skiff/skiffConfig.cmake
+          test -f prefix/lib/cmake/skiff/skiffTargets.cmake
+
+      # And a consumer, with nothing but find_package: no cmake-everywhere,
+      # no sources of this library, only the prefix.
+      #
+      # It has to say two things of its own before project(), and both are
+      # about `import std` rather than about this library: the experimental
+      # gate CMake keeps it behind, and the request itself. An installed
+      # target that was built with CXX_MODULE_STD says so, and a consumer
+      # that has not enabled it is told the toolchain was never asked -- "it
+      # must be set before CXX is enabled". No config file can do that for
+      # the project that includes it.
+      - name: something built against the installed copy
+        run: |
+          mkdir -p /tmp/consumer
+          cat > /tmp/consumer/CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 4.3.4 FATAL_ERROR)
+          set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+              "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+          set(CMAKE_CXX_MODULE_STD 1)
+          project(skiff_consumer LANGUAGES CXX)
+          set(CMAKE_CXX_STANDARD 23)
+          set(CMAKE_CXX_EXTENSIONS OFF)
+          find_package(skiff REQUIRED)
+          add_executable(consumer main.cc)
+          target_link_libraries(consumer PRIVATE skiff::skiff)
+          EOF
+          cat > /tmp/consumer/main.cc <<'EOF'
+          import skiff.paint;
+
+          // Easing a value to its target and stopping is the smallest thing
+          // this library does that needs all of it: the module interface to
+          // compile against, and the archive to link.
+          int main() {
+            float value = 1.0f;
+            int frames = 0;
+            while (!skiff::paint::settled(value, 0.0f)) {
+              value = skiff::paint::approach(value, 0.0f, 110.0f, 16.0);
+              if (++frames > 1000) {
+                return 1;
+              }
+            }
+            return 0;
+          }
+          EOF
+          cmake -S /tmp/consumer -B /tmp/consumer/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-22 \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
+            -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
+            -DCMAKE_PREFIX_PATH="$PWD/prefix"
+          cmake --build /tmp/consumer/build
+          /tmp/consumer/build/consumer
