@@ -44,6 +44,7 @@ module;
 #include <skia/gpu/ganesh/GrBackendSurface.h>
 #include <skia/gpu/ganesh/GrDirectContext.h>
 #include <skia/gpu/ganesh/SkSurfaceGanesh.h>
+#include <skia/gpu/ganesh/gl/GrGLAssembleInterface.h>
 #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
 #include <skia/gpu/ganesh/gl/GrGLDirectContext.h>
 #include <skia/gpu/ganesh/gl/GrGLInterface.h>
@@ -122,6 +123,13 @@ using ::GrDirectContext;
 using ::GrGLenum;
 using ::GrGLFramebufferInfo;
 using ::GrGLMakeNativeInterface;
+// The interface assembled from a loader the caller provides, which is the
+// one that exists whatever a Skia was built to reach GL with. The native
+// factory is compiled per platform from the egl or glx sources, and a Skia
+// built with neither -- Debian's is -- has the variant that returns nothing.
+using ::GrGLFuncPtr;
+using ::GrGLGetProc;
+using ::GrGLMakeAssembledInterface;
 using ::GrGLuint;
 using ::GrSurfaceOrigin;
 
