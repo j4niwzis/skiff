@@ -89,3 +89,60 @@ endif()
 if(SKIFF_EMSCRIPTEN)
   target_compile_options(${PROJECT_NAME} PRIVATE -fexceptions -pthread -msimd128)
 endif()
+
+# ---- What this library is, said by the library ----
+#
+# A consumer writes find_package(skiff) and this says the rest: where it
+# comes from, what it needs, and what it produces. The declaration is
+# installed beside the library, under share/cmake-everywhere/ports, so a
+# prefix that has skiff has the description of skiff -- which is what lets a
+# machine answer for it instead of everyone fetching it again.
+if(COMMAND cme_declare_port)
+  cme_declare_port(
+    NAME skiff
+    PROVIDES skiff
+    VERSION ${PROJECT_VERSION}
+    GITHUB_REPOSITORY j4niwzis/skiff
+    GIT_TAG main
+    LICENSE AGPL-3.0-or-later
+    # Asked for by pkg-config above, and named here so that whoever answers
+    # for skiff answers for Skia the same way.
+    DEPENDS "skia[gl]"
+    TARGETS skiff::skiff
+    CHECK_HEADER skiff/skiff.modules
+  )
+endif()
+
+# ---- Installing it ----
+#
+# The module interface units go with it: a consumer of a C++20 module library
+# compiles its own binary module interface from the source, so an installed
+# library that keeps its sources to itself cannot be consumed at all.
+# Installing is what a build of this library does; a build that embeds it
+# does not.
+#
+# Inside another build its dependencies are that build's targets -- Skia
+# comes from a port, as skia_skia -- and exporting a target that links one of
+# those is an error: "requires target skia_skia that is not in any export
+# set". Which is right. What would be installed there is a library whose
+# dependencies exist only in the build directory it came from.
+option(SKIFF_INSTALL "Install skiff and its CMake package"
+       ${PROJECT_IS_TOP_LEVEL})
+if(SKIFF_INSTALL)
+  include(GNUInstallDirs)
+  install(TARGETS ${PROJECT_NAME}
+    EXPORT skiffTargets
+    FILE_SET CXX_MODULES DESTINATION ${CMAKE_INSTALL_LIBDIR}/skiff/modules
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+  install(EXPORT skiffTargets
+    NAMESPACE skiff::
+    CXX_MODULES_DIRECTORY modules
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/skiff)
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake"
+    "include(CMakeFindDependencyMacro)\n"
+    "find_dependency(PkgConfig)\n"
+    "pkg_check_modules(SKIA REQUIRED skia)\n"
+    "include(\"\${CMAKE_CURRENT_LIST_DIR}/skiffTargets.cmake\")\n")
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/skiff)
+endif()
