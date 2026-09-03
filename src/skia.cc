@@ -51,6 +51,17 @@ module;
 #include <skia/gpu/ganesh/gl/GrGLTypes.h>
 #include <skia/ports/SkFontMgr_data.h>
 #include <skia/ports/SkFontMgr_directory.h>
+#if defined(__ANDROID__)
+// The reader of the font configuration every Android device carries. It is
+// compiled into Skia only where it means something, so it is included only
+// there: a build for anything else has no such header.
+#include <skia/ports/SkFontMgr_android.h>
+// What turns a font file into a typeface. The Android font manager reads the
+// configuration and finds the files; a scanner is what it asks about each of
+// them, and it takes one rather than choosing one, because which scanner a
+// build has is the build's decision.
+#include <skia/ports/SkFontScanner_FreeType.h>
+#endif
 #include <skia/sksl/SkSLVersion.h>
 
 export module skia;
@@ -143,6 +154,12 @@ using ::SkSurfaces::WrapBackendRenderTarget;
 
 using ::SkFontMgr_New_Custom_Data;
 using ::SkFontMgr_New_Custom_Directory;
+#if defined(__ANDROID__)
+using ::SkFontMgr_Android_CustomFonts;
+using ::SkFontMgr_New_Android;
+using ::SkFontScanner;
+using ::SkFontScanner_Make_FreeType;
+#endif
 
 inline constexpr SkColor colorSetARGB(uint8_t a, uint8_t r, uint8_t g,
                                       uint8_t b) noexcept {
