@@ -138,7 +138,7 @@ if(COMMAND cme_declare_port)
     VERSION ${PROJECT_VERSION}
     GITHUB_REPOSITORY j4niwzis/skiff
     GIT_TAG main
-    LICENSE AGPL-3.0-or-later
+    LICENSE AGPL-3.0-only
     # The same Skia this asked for above, said again where a consumer of
     # skiff will read it: whoever answers for skiff answers for Skia the same
     # way, with the codecs and the font stack this compiles against.
