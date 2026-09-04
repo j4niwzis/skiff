@@ -112,7 +112,13 @@ target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_23)
 # Skia as a target rather than as flags and paths. What its headers are cut
 # by -- SK_GANESH, SK_GRAPHITE, SK_VULKAN, which codecs are compiled in --
 # comes with it, and skia.cc is written against exactly those.
-target_link_libraries(${PROJECT_NAME} PUBLIC Skia::skia)
+#
+# In this build only. A Skia the provider built is a target of this build
+# directory, and install(EXPORT) refuses to export something that links it
+# -- rightly, since what would be installed is a library whose dependency
+# exists nowhere else. So an installed copy names Skia the way a machine can
+# answer for it, which is what the config file below writes.
+target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:Skia::skia>)
 if(ANDROID AND SKIFF_EGL_LIBRARY AND SKIFF_GLES_LIBRARY)
   target_link_libraries(${PROJECT_NAME} PUBLIC
     ${SKIFF_EGL_LIBRARY} ${SKIFF_GLES_LIBRARY})
@@ -195,6 +201,24 @@ if(SKIFF_INSTALL)
   endif()
   string(APPEND skiff_config
     "include(\"\${CMAKE_CURRENT_LIST_DIR}/skiffTargets.cmake\")\n")
+  # And Skia put back on the target, since the exported one carries it only
+  # in the build interface. A consumer of this compiles the module interface
+  # units that are installed beside it, so it needs Skia's headers, the
+  # defines they are cut by, and the library itself -- the first two say
+  # which declarations in those headers are real, and getting them wrong is
+  # a module that compiles against a different Skia than this was built for.
+  get_target_property(skiff_skia_defines Skia::skia INTERFACE_COMPILE_DEFINITIONS)
+  if(skiff_skia_defines)
+    list(JOIN skiff_skia_defines " " skiff_skia_defines)
+    string(APPEND skiff_config
+      "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
+      "             INTERFACE_COMPILE_DEFINITIONS ${skiff_skia_defines})\n")
+  endif()
+  string(APPEND skiff_config
+    "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
+    "             INTERFACE_INCLUDE_DIRECTORIES \${SKIA_INCLUDE_DIRS})\n"
+    "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
+    "             INTERFACE_LINK_LIBRARIES \${SKIA_LDFLAGS} \${SKIA_LIBRARIES})\n")
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake" "${skiff_config}")
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/skiff)
