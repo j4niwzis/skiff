@@ -17,11 +17,37 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Nothing in here knows what a beatmap is, or what osu! is. This is meant to
 # be lifted into a repository of its own; keeping it as a project rather than
 # a directory is what makes that a move rather than a rewrite.
+
+# Where Skia comes from, and everything else this needs.
+#
+# cmake-everywhere answers find_package: from the machine when the machine
+# has the library, and from a pinned source when it does not. Named before
+# project(), because that is the only place a dependency provider may be
+# installed from -- and only when nothing is answering already, which is the
+# case where this library is being built inside somebody else's build and
+# that build brought its own.
+if(NOT COMMAND cme_declare_port AND NOT CMAKE_PROJECT_TOP_LEVEL_INCLUDES)
+  set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/cmake/get_cme.cmake)
+endif()
+
 project(
   skiff
   VERSION 0.1
   LANGUAGES CXX
 )
+
+# CMAKE_PROJECT_TOP_LEVEL_INCLUDES is read by the top-level project() call
+# and by no other, so a build configured from a subdirectory of this has no
+# provider and no sign of it: find_package(Skia) then falls through to
+# whatever the machine happens to have, in whatever shape, and what finally
+# says something is a compiler error about Skia rather than about this.
+if(NOT COMMAND cme_provider)
+  message(FATAL_ERROR
+    "cmake-everywhere is not installed in this build, so nothing answers "
+    "find_package(Skia). CMAKE_PROJECT_TOP_LEVEL_INCLUDES is only read by "
+    "the top-level project() call: configure this directory, and not a "
+    "subdirectory of it.")
+endif()
 
 if(PROJECT_SOURCE_DIR STREQUAL PROJECT_BINARY_DIR)
   message(FATAL_ERROR "In-source builds not allowed.")
@@ -33,8 +59,12 @@ else()
   set(SKIFF_EMSCRIPTEN FALSE)
 endif()
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SKIA REQUIRED skia)
+# Skia, by the components this library actually reads: it decodes and encodes
+# both of those formats, and its font stack is FreeType's. Which GPU backend
+# there is -- Ganesh on GL, Graphite on Vulkan, or none -- is not asked for
+# here, because this library draws through the canvas and makes no context of
+# its own. The program that draws asks for the backend it wants.
+find_package(Skia REQUIRED COMPONENTS png jpeg freetype)
 
 # GL, where the Skia this links has a Ganesh in it. Nothing here calls a GL
 # function: the header is included for the constant that names a texture
@@ -79,13 +109,10 @@ target_sources(${PROJECT_NAME} PUBLIC
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 23)
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_23)
 
-# skia.cc is the only thing here that reaches for headers, and it wants both
-# Skia's and the GL one it declares SK_GL against.
-target_include_directories(${PROJECT_NAME} PUBLIC ${SKIA_INCLUDE_DIRS})
-
-target_link_libraries(${PROJECT_NAME} PUBLIC
-  ${SKIA_LDFLAGS} ${SKIA_LIBRARIES}
-)
+# Skia as a target rather than as flags and paths. What its headers are cut
+# by -- SK_GANESH, SK_GRAPHITE, SK_VULKAN, which codecs are compiled in --
+# comes with it, and skia.cc is written against exactly those.
+target_link_libraries(${PROJECT_NAME} PUBLIC Skia::skia)
 if(ANDROID AND SKIFF_EGL_LIBRARY AND SKIFF_GLES_LIBRARY)
   target_link_libraries(${PROJECT_NAME} PUBLIC
     ${SKIFF_EGL_LIBRARY} ${SKIFF_GLES_LIBRARY})
@@ -112,13 +139,14 @@ if(COMMAND cme_declare_port)
     GITHUB_REPOSITORY j4niwzis/skiff
     GIT_TAG main
     LICENSE AGPL-3.0-or-later
-    # Asked for by pkg-config above, and named here so that whoever answers
-    # for skiff answers for Skia the same way.
+    # The same Skia this asked for above, said again where a consumer of
+    # skiff will read it: whoever answers for skiff answers for Skia the same
+    # way, with the codecs and the font stack this compiles against.
     #
     # No backend named: this library draws through the canvas and makes no
     # context of its own, so which backend there is -- Ganesh on GL, Graphite
     # on Vulkan, or none at all -- is decided by the program that draws.
-    DEPENDS "skia"
+    DEPENDS "skia[png,jpeg,freetype]"
     TARGETS skiff::skiff
     CHECK_HEADER skiff/skiff.modules
   )
@@ -150,11 +178,14 @@ if(SKIFF_INSTALL)
     CXX_MODULES_DIRECTORY modules
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/skiff)
   # Everything the exported targets name has to be found again by whoever
-  # includes this, in the same words. Skia arrives as flags and paths from
-  # pkg-config, so nothing has to be found for it beyond pkg-config itself;
-  # OpenGL arrives as a target, and a target is a name that means nothing in
-  # another build until something makes it -- "links to OpenGL::GL but the
-  # target was not found", which is where a consumer of this stopped.
+  # includes this, in the same words -- and whoever includes this may have no
+  # provider at all, which is the case this file is written for: a consumer
+  # with nothing but a prefix. So Skia is asked for the way a machine can
+  # answer without one, through pkg-config, and a consumer that does have a
+  # provider has that call answered by it instead. OpenGL arrives as a
+  # target, and a target is a name that means nothing in another build until
+  # something makes it -- "links to OpenGL::GL but the target was not
+  # found", which is where a consumer of this stopped.
   set(skiff_config "include(CMakeFindDependencyMacro)\n")
   string(APPEND skiff_config
     "find_dependency(PkgConfig)\n"
