@@ -608,7 +608,10 @@ TEST(Layout, PaintOnlyAnimationDoesNotDirtyLayout) {
 
   child->fadeTo(0.5f, 100.0);
   root->updateTree(10.0);
-  root->setHover(20.0f, 20.0f);
+  // Inside the child, which is twenty by ten at the origin. A point on the
+  // far corner of the viewport is a point over nothing: hover asks whether
+  // the bounds contain it, and the right-hand edge is not in them.
+  root->setHover(10.0f, 5.0f);
   ASSERT_TRUE(child->hovered());
   EXPECT_FALSE(root->layoutIfNeeded(viewport));
   EXPECT_EQ(child->layouts(), 1);
