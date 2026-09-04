@@ -46,6 +46,7 @@ public:
 
   void invalidateCache() {
     fCacheValid = false;
+    fCached.reset();
     this->markDamaged();
   }
 
@@ -77,6 +78,7 @@ public:
 
     if (!fCache || fCacheWidth != width || fCacheHeight != height) {
       fCache = surfaces.fMake(width, height);
+      fCached.reset();
       fCacheWidth = width;
       fCacheHeight = height;
       fCacheValid = false;
@@ -101,11 +103,21 @@ public:
       }
       fCacheValid = true;
       fCachedOrigin = fBounds.fLeft + fBounds.fTop;
+      // Taken once per repaint rather than once per frame.
+      //
+      // What a snapshot costs depends on the backend, and on one of them it
+      // is a copy of the whole texture: Graphite hands back an image of what
+      // the surface holds now, so asking every frame is copying every cached
+      // panel every frame -- which is a menu at seventeen frames a second
+      // where the other backend does a hundred. The picture only changes
+      // where this function has just redrawn it, so this is where it is
+      // taken.
+      fCached = fCache->makeImageSnapshot();
     }
 
     skia::SkPaint paint;
     paint.setAlphaf(inheritedAlpha * fAlpha);
-    auto image = fCache->makeImageSnapshot();
+    const skia::Sp<skia::SkImage> &image = fCached;
     if (image) {
       if (sx == 1.0f && sy == 1.0f) {
         // Nothing is scaled: the plain blit, as before, which is the cheapest
@@ -139,6 +151,9 @@ private:
   }
 
   skia::Sp<skia::SkSurface> fCache;
+  // What was in the cache when it was last drawn into, which is what every
+  // frame after that draws.
+  skia::Sp<skia::SkImage> fCached;
   int fCacheWidth = 0;
   int fCacheHeight = 0;
   bool fCacheValid = false;
