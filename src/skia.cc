@@ -102,6 +102,7 @@ module;
 
 export module skia;
 
+
 export namespace skia {
 
 template <class T> using Sp = ::sk_sp<T>;
@@ -333,3 +334,28 @@ using Version = ::SkSL::Version;
 inline constexpr Version kSL300 = ::SkSL::Version::k300;
 
 } // namespace skia
+
+// The smart pointer, instantiated here rather than in whoever imports this.
+//
+// sk_sp's bodies call SkRef, SkSafeRef and SkSafeUnref, which Skia declares
+// static inline: each translation unit that includes SkRefCnt.h has its own,
+// and a module unit's are local to it. An importer that instantiates one of
+// those bodies -- assigning one surface to another does it -- looks for a
+// SkSafeRef it cannot see, and is told there is no such function at all,
+// without a single candidate named.
+//
+// Instantiated here, the bodies are compiled where those helpers are
+// visible, and an importer uses what this module already has. One line per
+// type this library and its consumers hold by reference; a type that is not
+// listed is one nobody has needed to copy yet, and the error above is what
+// says so.
+template class ::sk_sp<SkSurface>;
+template class ::sk_sp<SkImage>;
+template class ::sk_sp<SkData>;
+template class ::sk_sp<SkTypeface>;
+template class ::sk_sp<SkFontMgr>;
+template class ::sk_sp<SkColorSpace>;
+template class ::sk_sp<SkShader>;
+template class ::sk_sp<SkColorFilter>;
+template class ::sk_sp<SkRuntimeEffect>;
+template class ::sk_sp<SkVertices>;
