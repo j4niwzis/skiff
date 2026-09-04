@@ -26,10 +26,22 @@ export namespace skiff::nodes {
 // it draws straight through.
 class CachedContainer : public skiff::scene::TypedDrawable<CachedContainer> {
 public:
-  // The GPU context the cache surfaces are created on, handed over by the app
-  // once the renderer exists.
-  static void setContext(skia::GrDirectContext *context) {
-    contextSlot() = context;
+  // Where a cache surface comes from, and what to do with it once it has
+  // been drawn into.
+  //
+  // Not a context: which kind of context this program has -- a Ganesh one,
+  // or a Graphite recorder -- is the app's business, and a node that names
+  // one of them is a node that only exists in a build with that backend.
+  // What this needs is a surface of a size, and a way to say that it is
+  // finished with, which Ganesh answers by submitting and Graphite answers
+  // by doing nothing: a recorder has already taken the calls.
+  struct Surfaces {
+    std::function<skia::Sp<skia::SkSurface>(int width, int height)> fMake;
+    std::function<void(skia::SkSurface *)> fDone;
+  };
+
+  static void setSurfaces(Surfaces surfaces) {
+    surfacesSlot() = std::move(surfaces);
   }
 
   void invalidateCache() {
@@ -41,7 +53,7 @@ public:
     if (!fVisible || fAlpha <= 0.001f) {
       return;
     }
-    skia::GrDirectContext *context = contextSlot();
+    const Surfaces &surfaces = surfacesSlot();
     // The cache has to hold device pixels, not units. Drawn at unit size into
     // a canvas that carries an interface scale, the texture is resampled on
     // every frame -- blurred, and off the fast blit path that is the entire
@@ -57,17 +69,14 @@ public:
     const float sy = plainScale ? scaleY : 1.0f;
     const int width = static_cast<int>(std::ceil(fBounds.width() * sx));
     const int height = static_cast<int>(std::ceil(fBounds.height() * sy));
-    if (context == nullptr || width <= 0 || height <= 0 ||
+    if (!surfaces.fMake || width <= 0 || height <= 0 ||
         this->animatingTree()) {
       Drawable::draw(canvas, inheritedAlpha);
       return;
     }
 
     if (!fCache || fCacheWidth != width || fCacheHeight != height) {
-      fCache = skia::RenderTarget(
-          context, skia::kNo,
-          skia::SkImageInfo::Make(width, height, skia::kRGBA_8888_SkColorType,
-                                  skia::kPremul_SkAlphaType));
+      fCache = surfaces.fMake(width, height);
       fCacheWidth = width;
       fCacheHeight = height;
       fCacheValid = false;
@@ -87,7 +96,9 @@ public:
       cacheCanvas->translate(-fBounds.fLeft, -fBounds.fTop);
       Drawable::draw(cacheCanvas, 1.0f);
       cacheCanvas->restoreToCount(saved);
-      context->flushAndSubmit(fCache.get());
+      if (surfaces.fDone) {
+        surfaces.fDone(fCache.get());
+      }
       fCacheValid = true;
       fCachedOrigin = fBounds.fLeft + fBounds.fTop;
     }
@@ -122,9 +133,9 @@ protected:
   }
 
 private:
-  static skia::GrDirectContext *&contextSlot() {
-    static skia::GrDirectContext *context = nullptr;
-    return context;
+  static Surfaces &surfacesSlot() {
+    static Surfaces surfaces;
+    return surfaces;
   }
 
   skia::Sp<skia::SkSurface> fCache;
