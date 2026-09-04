@@ -36,11 +36,18 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SKIA REQUIRED skia)
 
+# GL, where the Skia this links has a Ganesh in it. Nothing here calls a GL
+# function: the header is included for the constant that names a texture
+# format, and the libraries are on the interface because a program drawing
+# through Ganesh needs them. A Skia built for Graphite on Vulkan and nothing
+# else needs none of it, and a machine with such a Skia need not have GL
+# development files at all -- so this is looked for rather than demanded, and
+# what is not there is not linked.
 if(ANDROID)
-  find_library(SKIFF_EGL_LIBRARY NAMES EGL REQUIRED)
-  find_library(SKIFF_GLES_LIBRARY NAMES GLESv3 GLESv2 REQUIRED)
+  find_library(SKIFF_EGL_LIBRARY NAMES EGL)
+  find_library(SKIFF_GLES_LIBRARY NAMES GLESv3 GLESv2)
 elseif(NOT SKIFF_EMSCRIPTEN)
-  find_package(OpenGL REQUIRED)
+  find_package(OpenGL)
 endif()
 
 # The primary interface unit first, then its partitions. Globbed per
@@ -79,10 +86,10 @@ target_include_directories(${PROJECT_NAME} PUBLIC ${SKIA_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC
   ${SKIA_LDFLAGS} ${SKIA_LIBRARIES}
 )
-if(ANDROID)
+if(ANDROID AND SKIFF_EGL_LIBRARY AND SKIFF_GLES_LIBRARY)
   target_link_libraries(${PROJECT_NAME} PUBLIC
     ${SKIFF_EGL_LIBRARY} ${SKIFF_GLES_LIBRARY})
-elseif(NOT SKIFF_EMSCRIPTEN)
+elseif(NOT SKIFF_EMSCRIPTEN AND TARGET OpenGL::GL)
   target_link_libraries(${PROJECT_NAME} PUBLIC OpenGL::GL)
 endif()
 
@@ -107,7 +114,11 @@ if(COMMAND cme_declare_port)
     LICENSE AGPL-3.0-or-later
     # Asked for by pkg-config above, and named here so that whoever answers
     # for skiff answers for Skia the same way.
-    DEPENDS "skia[gl]"
+    #
+    # No backend named: this library draws through the canvas and makes no
+    # context of its own, so which backend there is -- Ganesh on GL, Graphite
+    # on Vulkan, or none at all -- is decided by the program that draws.
+    DEPENDS "skia"
     TARGETS skiff::skiff
     CHECK_HEADER skiff/skiff.modules
   )
