@@ -63,8 +63,19 @@ endif()
 # both of those formats, and its font stack is FreeType's. Which GPU backend
 # there is -- Ganesh on GL, Graphite on Vulkan, or none -- is not asked for
 # here, because this library draws through the canvas and makes no context of
-# its own. The program that draws asks for the backend it wants.
-find_package(Skia REQUIRED COMPONENTS png jpeg freetype)
+# its own. The program that draws asks for the backend it wants, and a
+# program built together with this one is what decides.
+#
+# A copy of this built on its own has no such program to ask, and what it is
+# compiled against is what its consumers get: the module that wraps Skia's
+# headers names Ganesh only where the Skia it links has one, so a build that
+# is going to be installed and drawn through says which backend that Skia is
+# expected to have. Whoever packages this knows -- it is the Skia they are
+# packaging beside it.
+set(SKIFF_SKIA_COMPONENTS "" CACHE STRING
+    "Backend components to ask Skia for, for a copy built on its own")
+find_package(Skia REQUIRED
+             COMPONENTS png jpeg freetype ${SKIFF_SKIA_COMPONENTS})
 
 # GL, where the Skia this links has a Ganesh in it. Nothing here calls a GL
 # function: the header is included for the constant that names a texture
