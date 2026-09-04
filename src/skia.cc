@@ -1,11 +1,18 @@
 module;
 
+// Which backends this Skia has is the build's decision, and the build says
+// so: the port puts Skia's own public defines on the interface, so SK_GANESH
+// and SK_GRAPHITE are here to be asked rather than assumed. A module that
+// named a backend the library was not built with would compile and then fail
+// to link, in the program of whoever imported it.
+#if defined(SK_GANESH)
 #if defined(__ANDROID__)
 #define SK_GLES 1
 #include <GLES3/gl3.h>
 #else
 #define SK_GL 1
 #include <GL/gl.h>
+#endif
 #endif
 
 #include <skia/codec/SkCodec.h>
@@ -41,6 +48,11 @@ module;
 #include <skia/effects/SkGradient.h>
 #include <skia/effects/SkRuntimeEffect.h>
 #include <skia/encode/SkPngEncoder.h>
+// Budgeted is a question about a surface, not about a backend: it is asked
+// wherever an offscreen one is made, and this header is where it lives
+// whichever backend is compiled in.
+#include <skia/gpu/GpuTypes.h>
+#if defined(SK_GANESH)
 #include <skia/gpu/ganesh/GrBackendSurface.h>
 #include <skia/gpu/ganesh/GrDirectContext.h>
 #include <skia/gpu/ganesh/SkSurfaceGanesh.h>
@@ -49,6 +61,30 @@ module;
 #include <skia/gpu/ganesh/gl/GrGLDirectContext.h>
 #include <skia/gpu/ganesh/gl/GrGLInterface.h>
 #include <skia/gpu/ganesh/gl/GrGLTypes.h>
+#endif
+#if defined(SK_GRAPHITE)
+#include <skia/gpu/graphite/BackendSemaphore.h>
+#include <skia/gpu/graphite/BackendTexture.h>
+#include <skia/gpu/graphite/Context.h>
+#include <skia/gpu/graphite/ContextOptions.h>
+#include <skia/gpu/graphite/GraphiteTypes.h>
+#include <skia/gpu/graphite/Image.h>
+#include <skia/gpu/graphite/ImageProvider.h>
+#include <skia/gpu/graphite/Recorder.h>
+#include <skia/gpu/graphite/Recording.h>
+#include <skia/gpu/graphite/Surface.h>
+#include <skia/gpu/graphite/TextureInfo.h>
+#if defined(SK_VULKAN)
+#include <skia/gpu/MutableTextureState.h>
+#include <skia/gpu/graphite/vk/VulkanGraphiteContext.h>
+#include <skia/gpu/graphite/vk/VulkanGraphiteTypes.h>
+#include <skia/gpu/vk/VulkanBackendContext.h>
+#include <skia/gpu/vk/VulkanExtensions.h>
+#include <skia/gpu/vk/VulkanMemoryAllocator.h>
+#include <skia/gpu/vk/VulkanMutableTextureState.h>
+#include <skia/gpu/vk/VulkanTypes.h>
+#endif
+#endif
 #include <skia/ports/SkFontMgr_data.h>
 #include <skia/ports/SkFontMgr_directory.h>
 #if defined(__ANDROID__)
@@ -128,6 +164,7 @@ using Options = ::SkPngEncoder::Options;
 
 using ::SkImages::RasterFromBitmap;
 
+#if defined(SK_GANESH)
 using ::GrBackendRenderTarget;
 using ::GrBackendTexture;
 using ::GrDirectContext;
@@ -146,11 +183,87 @@ using ::GrSurfaceOrigin;
 
 using ::GrBackendRenderTargets::MakeGL;
 using ::GrDirectContexts::MakeGL;
+using ::SkSurfaces::WrapBackendRenderTarget;
+#endif
+
 using ::skgpu::Budgeted;
 using ::skgpu::Budgeted::kNo;
 using ::SkSurfaces::Raster;
+// One name, both backends: the overload taking a Ganesh context and the one
+// taking a Graphite recorder are the same function to whoever asks for an
+// offscreen surface, and which of them exists is what the build decided.
+//
+// Named at all only where there is a GPU in this Skia. A build with neither
+// backend has no SkSurfaces::RenderTarget of any kind -- the declarations
+// are behind the same macros -- and naming it there is an error about a
+// member that does not exist.
+#if defined(SK_GANESH) || defined(SK_GRAPHITE)
 using ::SkSurfaces::RenderTarget;
-using ::SkSurfaces::WrapBackendRenderTarget;
+#endif
+
+#if defined(SK_GRAPHITE)
+// Graphite draws into a recording rather than into the device: a Recorder
+// takes the calls, snap() turns what it took into a Recording, and the
+// Context plays it. Everything else here is the same Skia.
+namespace graphite {
+using ::skgpu::graphite::BackendSemaphore;
+using ::skgpu::graphite::BackendTexture;
+using ::skgpu::graphite::Context;
+using ::skgpu::graphite::ContextOptions;
+// What turns an image this program made into one the recorder can draw.
+// Graphite does not do it by itself: an image that is not already its own is
+// dropped, with a line on the console, unless the context was given one of
+// these.
+using ::skgpu::graphite::ImageProvider;
+using ::SkImages::TextureFromImage;
+using ::skgpu::graphite::InsertRecordingInfo;
+using ::skgpu::graphite::InsertStatus;
+using ::skgpu::graphite::Recorder;
+using ::skgpu::graphite::RecorderOptions;
+using ::skgpu::graphite::Recording;
+using ::skgpu::graphite::SyncToCpu;
+using ::skgpu::graphite::TextureInfo;
+using ::SkSurfaces::WrapBackendTexture;
+// What a finished callback is told, and whether a texture carries mip
+// levels: both are said in skgpu's vocabulary rather than Graphite's.
+using ::skgpu::CallbackResult;
+using ::skgpu::Mipmapped;
+#if defined(SK_VULKAN)
+// What a Vulkan program hands over: the device it made, the queue it will
+// submit on, and an allocator, which Skia will not make one of for itself.
+using ::skgpu::MutableTextureState;
+using ::skgpu::Protected;
+using ::skgpu::VulkanAlloc;
+using ::skgpu::VulkanBackendContext;
+using ::skgpu::VulkanExtensions;
+using ::skgpu::VulkanGetProc;
+using ::skgpu::VulkanMemoryAllocator;
+using ::skgpu::VulkanYcbcrConversionInfo;
+using ::skgpu::graphite::VulkanTextureInfo;
+
+// Skia spells each of these MakeVulkan, in a namespace saying what is being
+// made. The namespaces are kept, because five factories under one name is
+// five overloads a reader has to resolve by argument.
+namespace contextFactory {
+using ::skgpu::graphite::ContextFactory::MakeVulkan;
+} // namespace contextFactory
+namespace backendTextures {
+using ::skgpu::graphite::BackendTextures::MakeVulkan;
+} // namespace backendTextures
+namespace backendSemaphores {
+using ::skgpu::graphite::BackendSemaphores::GetVkSemaphore;
+using ::skgpu::graphite::BackendSemaphores::MakeVulkan;
+} // namespace backendSemaphores
+namespace textureInfos {
+using ::skgpu::graphite::TextureInfos::GetVulkanTextureInfo;
+using ::skgpu::graphite::TextureInfos::MakeVulkan;
+} // namespace textureInfos
+namespace mutableTextureStates {
+using ::skgpu::MutableTextureStates::MakeVulkan;
+} // namespace mutableTextureStates
+#endif
+} // namespace graphite
+#endif
 
 using ::SkFontMgr_New_Custom_Data;
 using ::SkFontMgr_New_Custom_Directory;
@@ -167,15 +280,20 @@ inline constexpr SkColor colorSetARGB(uint8_t a, uint8_t r, uint8_t g,
          (static_cast<SkColor>(g) << 8) | static_cast<SkColor>(b);
 }
 
+#if defined(SK_GANESH)
 inline constexpr GrGLenum kGlRgba8 = GL_RGBA8;
 
+// Which corner a backend surface counts from. Ganesh asks because GL and
+// everything else disagree about it; Graphite does not ask at all.
 using ::kBottomLeft_GrSurfaceOrigin;
+using ::kTopLeft_GrSurfaceOrigin;
+#endif
+
 using ::kN32_SkColorType;
 using ::kOpaque_SkAlphaType;
 using ::kPremul_SkAlphaType;
 using ::kRGBA_8888_SkColorType;
 using ::kRGBA_F32_SkColorType;
-using ::kTopLeft_GrSurfaceOrigin;
 using ::kUnpremul_SkAlphaType;
 
 inline constexpr SkColor kBlack = SK_ColorBLACK;
