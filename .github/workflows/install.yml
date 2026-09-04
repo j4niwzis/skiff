@@ -20,10 +20,14 @@ concurrency:
 
 jobs:
   install:
-    # 26.04 because that is where Skia is packaged: this library is a Skia
-    # wrapper, and building Skia here would be testing something else.
+    # 26.04 because that is where Skia is packaged. What is packaged there is
+    # milestone 146, and this library is written against the gradient API of
+    # 148 -- so the provider compiles a program against the installed copy,
+    # finds it cannot be linked against, and builds one. That is the answer
+    # this library would want on any machine with an older Skia, and it is
+    # what the store below keeps so that it happens once.
     runs-on: ubuntu-26.04
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -48,8 +52,29 @@ jobs:
           sudo tar xzf cmake.tar.gz -C /opt
           echo "/opt/cmake-${version}-linux-x86_64/bin" >> "$GITHUB_PATH"
 
-      - name: skia
-        run: sudo apt-get install -y libskia-dev libgl-dev
+      # What the provider will answer find_package(Skia) with, where it can:
+      # the machine's own Skia, and the libraries a Skia is built against, so
+      # that a build which cannot take the machine's copy takes those and
+      # builds one library rather than eight. gn is Skia's build system, and
+      # a build that has to make one needs it.
+      - name: what a machine with development packages has
+        run: |
+          sudo apt-get install -y libskia-dev libgl-dev generate-ninja \
+            zlib1g-dev libpng-dev libjpeg-dev libfreetype-dev \
+            libharfbuzz-dev libexpat1-dev
+
+      # A Skia built here is built once. The store keeps what came out, keyed
+      # by what it was built from, and the sources keep what was fetched, so
+      # a run that cannot take the machine's copy pays for it once rather
+      # than on every push.
+      - name: what was built before
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/cmake-everywhere/sources
+            ~/.cache/cmake-everywhere/store
+          key: skiff-${{ hashFiles('cmake/get_cme.cmake') }}-${{ github.sha }}
+          restore-keys: skiff-${{ hashFiles('cmake/get_cme.cmake') }}-
 
       # Where libstdc++ keeps the source of its std module. libc++ ships a
       # manifest and libstdc++ does not, so the path is found rather than
@@ -79,9 +104,27 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++-22 \
             -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
             -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
+            -DCME_STORE_ENABLED=ON \
+            -DCME_SOURCES_ENABLED=ON \
             -DCMAKE_INSTALL_PREFIX="$PWD/prefix"
           cmake --build build
           cmake --install build
+
+      # The tests, which are the only thing here that runs. Everything else
+      # this workflow does is about whether the library can be built and
+      # linked against; this is about whether what it computes is right.
+      - name: the tests
+        run: |
+          cmake -S test -B build/test -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-22 \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
+            -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
+            -DCME_STORE_ENABLED=ON \
+            -DCME_SOURCES_ENABLED=ON
+          cmake --build build/test
+          ctest --test-dir build/test --output-on-failure
 
       # What was installed, said out loud: an archive, the module sources a
       # consumer compiles its own interfaces from, a CMake package, and the
