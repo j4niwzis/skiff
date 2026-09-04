@@ -44,6 +44,26 @@ public:
     surfacesSlot() = std::move(surfaces);
   }
 
+  // Every cache, dropped.
+  //
+  // A cache surface belongs to whatever made it, and what made it is a
+  // context that a program tears down before it exits. Holding one past that
+  // is a surface referring to a device that is gone, which is not an error
+  // anybody sees until the node is destroyed and something unrefs it. So the
+  // program says when the surfaces stop being valid, and this is where every
+  // node hears it.
+  static void dropSurfaces() {
+    surfacesSlot() = {};
+    for (CachedContainer *node : live()) {
+      node->fCache.reset();
+      node->fCached.reset();
+      node->fCacheValid = false;
+    }
+  }
+
+  CachedContainer() { live().insert(this); }
+  ~CachedContainer() override { live().erase(this); }
+
   void invalidateCache() {
     fCacheValid = false;
     fCached.reset();
@@ -148,6 +168,14 @@ private:
   static Surfaces &surfacesSlot() {
     static Surfaces surfaces;
     return surfaces;
+  }
+
+  // Which of these exist, so that the program can say when what they hold
+  // stops being valid. A set of raw pointers, kept by the constructor and
+  // the destructor of the only thing that puts itself in it.
+  static std::set<CachedContainer *> &live() {
+    static std::set<CachedContainer *> nodes;
+    return nodes;
   }
 
   skia::Sp<skia::SkSurface> fCache;
