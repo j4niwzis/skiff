@@ -228,7 +228,15 @@ class ImageProvider : public ::skgpu::graphite::ImageProvider {
 public:
   using ::skgpu::graphite::ImageProvider::ImageProvider;
 };
-using ::SkImages::TextureFromImage;
+// The same for the call that makes one: a using-declaration carries the name
+// of something declared in the global module fragment, and a name is all a
+// caller of it does not need. Declared here, calling Skia's where Skia's is
+// visible, so importing this module is enough to call it.
+[[nodiscard]] inline ::sk_sp<::SkImage>
+TextureFromImage(::skgpu::graphite::Recorder *recorder, const ::SkImage *image,
+                 ::SkImage::RequiredProperties required) {
+  return ::SkImages::TextureFromImage(recorder, image, required);
+}
 using ::skgpu::graphite::InsertRecordingInfo;
 using ::skgpu::graphite::InsertStatus;
 using ::skgpu::graphite::Recorder;
