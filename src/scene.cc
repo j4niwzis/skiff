@@ -1317,19 +1317,27 @@ public:
     // anything is computed from it. It is told the box it is going into,
     // since a row that wraps has a height only relative to a width.
     this->measure(parent);
-    const float parentW = parent.width();
-    const float parentH = parent.height();
+
+    // The room a margin leaves is the box this is placed in, rather than an
+    // amount taken off its size and an offset always towards the left and the
+    // top. Said the old way, a drawable hanging on the right edge asked for
+    // fifty pixels of room there and got a box fifty pixels narrower, still
+    // flush against that edge: the space it asked for appeared on the side it
+    // was not hanging on. Placed in the room instead, a margin holds a
+    // drawable off whichever edge it is anchored to, which is what every
+    // caller writing one meant.
+    const skia::SkRect room = inset(parent, fMargin);
+    const float parentW = room.width();
+    const float parentH = room.height();
 
     float width = hasX(fRelativeSizeAxes) ? parentW * fWidth : fWidth;
     float height = hasY(fRelativeSizeAxes) ? parentH * fHeight : fHeight;
-    width -= fMargin.totalX();
-    height -= fMargin.totalY();
 
     // Auto-sized axes need the children measured first, which needs a
     // provisional box to lay them out in.
     if (fAutoSizeAxes != Axes::kNone) {
       const skia::SkRect provisional = skia::SkRect::MakeXYWH(
-          parent.fLeft, parent.fTop, hasX(fAutoSizeAxes) ? parentW : width,
+          room.fLeft, room.fTop, hasX(fAutoSizeAxes) ? parentW : width,
           hasY(fAutoSizeAxes) ? parentH : height);
       fBounds = provisional;
       this->layoutChildren();
@@ -1355,8 +1363,7 @@ public:
     height *= fScale;
 
     const skia::SkRect previous = fBounds;
-    fBounds = anchoredBox(parent, width, height, fAnchor, fOrigin,
-                          fX + fMargin.fLeft, fY + fMargin.fTop);
+    fBounds = anchoredBox(room, width, height, fAnchor, fOrigin, fX, fY);
     if (fBounds != previous) {
       // A drawable that moved or changed size has to repaint both where it is
       // now and where it used to be, and the layout is the only place that
