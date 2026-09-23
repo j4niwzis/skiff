@@ -215,7 +215,19 @@ using ::skgpu::graphite::ContextOptions;
 // Graphite does not do it by itself: an image that is not already its own is
 // dropped, with a line on the console, unless the context was given one of
 // these.
-using ::skgpu::graphite::ImageProvider;
+//
+// Declared here rather than exported by name. Skia's own is declared in the
+// global module fragment, and a using-declaration carries the name across
+// without carrying the definition: whoever imports this module can say the
+// name and cannot derive from it -- "expected class name", about a class the
+// module itself can see. A class declared in the module's own purview is
+// reachable wherever the module is imported, and this one is Skia's with
+// nothing added, so an sk_sp of it is an sk_sp of Skia's wherever one is
+// wanted.
+class ImageProvider : public ::skgpu::graphite::ImageProvider {
+public:
+  using ::skgpu::graphite::ImageProvider::ImageProvider;
+};
 using ::SkImages::TextureFromImage;
 using ::skgpu::graphite::InsertRecordingInfo;
 using ::skgpu::graphite::InsertStatus;
