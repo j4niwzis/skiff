@@ -139,6 +139,72 @@ private:
   double fLastMs = 0.0;
 };
 
+// A value moving to its target over a fixed time, eased out -- quick, then
+// settling -- so a move takes as long whichever way it goes, which
+// approach()'s never-ending tail does not. A new target starts a new move
+// from wherever the value is. Like Eased, it says what kind of movement it
+// is, and where motionLevel() does not move that kind it is at its target at
+// once.
+class Tween {
+public:
+  explicit Tween(float value = 0.0f, float durationMs = 220.0f,
+                 Movement kind = movement::subtle{}) noexcept
+      : fValue(value), fFrom(value), fTarget(value), fDurationMs(durationMs),
+        fKind(kind) {}
+
+  [[nodiscard]] float value() const noexcept { return fValue; }
+  [[nodiscard]] float target() const noexcept { return fTarget; }
+  [[nodiscard]] bool moving() const noexcept { return fValue != fTarget; }
+
+  void setTarget(float target) {
+    if (target == fTarget) {
+      return;
+    }
+    fFrom = fValue;
+    fTarget = target;
+    fStartMs = -1.0;
+    if (!moves(fKind)) {
+      fValue = target;
+    }
+  }
+  void jump(float value) noexcept {
+    fValue = value;
+    fFrom = value;
+    fTarget = value;
+    fStartMs = -1.0;
+  }
+  void setDuration(float durationMs) noexcept { fDurationMs = durationMs; }
+
+  // One frame's step, at `nowMs`: whether the value changed. The first frame
+  // of a move counts as one frame in.
+  bool step(double nowMs) {
+    if (!this->moving()) {
+      return false;
+    }
+    if (!moves(fKind) || fDurationMs <= 0.0f) {
+      fValue = fTarget;
+      return true;
+    }
+    if (fStartMs < 0.0) {
+      fStartMs = nowMs - 16.0;
+    }
+    const float t = std::clamp(
+        static_cast<float>((nowMs - fStartMs) / fDurationMs), 0.0f, 1.0f);
+    const float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+    const float before = fValue;
+    fValue = t >= 1.0f ? fTarget : fFrom + (fTarget - fFrom) * eased;
+    return fValue != before;
+  }
+
+private:
+  float fValue;
+  float fFrom;
+  float fTarget;
+  float fDurationMs;
+  Movement fKind;
+  double fStartMs = -1.0;
+};
+
 // ---- Text with fallback ---------------------------------------------------
 //
 // Skia draws a string with exactly one typeface: a codepoint the typeface

@@ -925,4 +925,34 @@ TEST(Motion, AnEasedValueArrivesExactly) {
   EXPECT_EQ(value.value(), 1.0f);
 }
 
+TEST(Motion, ATweenTakesItsTimeEitherWay) {
+  using namespace skiff::paint;
+  auto &level = motionLevel();
+  const Motion was = level;
+  level = motion::full{};
+  Tween value{0.0f, 200.0f, movement::sweeping{}};
+  const auto frames = [&value](float to) {
+    value.setTarget(to);
+    int count = 0;
+    double now = 1000.0;
+    while (value.moving() && count < 1000) {
+      now += 16.0;
+      (void)value.step(now);
+      ++count;
+    }
+    return count;
+  };
+  const int out = frames(1.0f);
+  EXPECT_EQ(value.value(), 1.0f);
+  const int back = frames(0.0f);
+  EXPECT_EQ(value.value(), 0.0f);
+  EXPECT_EQ(out, back);
+  EXPECT_LE(out, 14);
+
+  level = motion::reduced{};
+  value.setTarget(1.0f);
+  EXPECT_FALSE(value.moving());
+  level = was;
+}
+
 } // namespace

@@ -48,7 +48,8 @@ public:
     skia::SkPaint paint;
     paint.setAntiAlias(true);
     paint.setColor(fColour);
-    paint.setAlphaf(alpha);
+    // The colour's own alpha, and the node's on top of it.
+    paint.setAlphaf(alpha * static_cast<float>((fColour >> 24) & 0xffu) / 255.0f);
     if (state.fCornerRadius > 0.0f) {
       canvas->drawRRect(skia::SkRRect::MakeRectXY(state.fBounds,
                                                   state.fCornerRadius,
