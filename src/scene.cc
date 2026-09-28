@@ -755,6 +755,10 @@ struct PointerEvent {
   float fX = 0.0f, fY = 0.0f;
   float fScrollX = 0.0f, fScrollY = 0.0f;
   int fButton = 0;
+  // The node the event is for, and the one it is being delivered to now: an
+  // ancestor handling a child's event in the bubble phase tells which child
+  // by comparing ids.
+  NodeId fTarget = 0;
   NodeId fCurrentTarget = 0;
   // Whether some node already holds the pointer: a scroll container deciding
   // to take a drag has to know whether something else took it first.
@@ -785,6 +789,7 @@ struct KeyEvent {
   bool fPressed = true;
   bool fRepeat = false;
   bool fShift = false, fControl = false, fAlt = false, fSuper = false;
+  NodeId fTarget = 0;
   NodeId fCurrentTarget = 0;
   bool fHandled = false;
 
@@ -797,6 +802,7 @@ struct TextInputEvent {
   std::string_view fText;
   std::string_view fComposition;
   EventPhase fPhase = EventPhase::kTarget;
+  NodeId fTarget = 0;
   NodeId fCurrentTarget = 0;
   int fSelectionStart = 0;
   int fSelectionLength = 0;
@@ -831,6 +837,9 @@ struct SemanticActionEvent {
   SemanticAction fAction = SemanticAction::kActivate;
   float fValue = 0.0f;
   std::string_view fText;
+  EventPhase fPhase = EventPhase::kTarget;
+  NodeId fTarget = 0;
+  NodeId fCurrentTarget = 0;
   bool fHandled = false;
   bool fRequestFocus = false;
 
@@ -1721,6 +1730,9 @@ template <class T>
   requires std::derived_from<T, Node>
 void defaultSemanticAction(T &node, SemanticActionEvent &event) {
   const skia::SkRect &bounds = node.fState.fBounds;
+  if (event.fPhase != EventPhase::kTarget) {
+    return;
+  }
   if (event.fAction == SemanticAction::kFocus && hook::focusable(node)) {
     event.requestFocus();
     event.handle();
@@ -1968,8 +1980,8 @@ template <class C>
 [[nodiscard]] bool focusChanged(C &child, NodeId id, bool focused,
                                 StyleResolver resolver, float viewportWidth);
 template <class C>
-[[nodiscard]] bool semanticAction(C &child, NodeId id,
-                                  SemanticActionEvent &event);
+void routeSemantic(C &child, const Path &path, std::size_t at,
+                   SemanticActionEvent &event);
 template <class C>
 void collectSemantics(C &child, std::vector<Semantics> &out, int parent,
                       NodeId focused);
@@ -2531,23 +2543,31 @@ bool focusChanged(C &child, NodeId id, bool focused, StyleResolver resolver,
 }
 
 template <class C>
-bool semanticAction(C &child, NodeId id, SemanticActionEvent &event) {
+void routeSemantic(C &child, const Path &path, std::size_t at,
+                   SemanticActionEvent &event) {
   if constexpr (std::same_as<C, AnyNode>) {
-    return child.semanticAction(id, event);
+    child.routeSemantic(path, at, event);
   } else {
-    State &state = child.fState;
-    if (!state.fVisible || state.fDisabled) {
-      return false;
-    }
-    if (state.fId == id) {
+    const auto deliver = [&](EventPhase phase) {
+      event.fPhase = phase;
+      event.fCurrentTarget = child.fState.fId;
       hook::semanticAction(child, event);
-      return true;
+    };
+    if (at == path.size()) {
+      if (!event.fHandled) {
+        deliver(EventPhase::kTarget);
+      }
+      return;
     }
-    bool found = false;
-    eachChild(child, [&](auto &each) {
-      found = found || walk::semanticAction(each, id, event);
+    if (!event.fHandled) {
+      deliver(EventPhase::kCapture);
+    }
+    childAt(child, path[at], [&](auto &each) {
+      walk::routeSemantic(each, path, at + 1, event);
     });
-    return found;
+    if (!event.fHandled) {
+      deliver(EventPhase::kBubble);
+    }
   }
 }
 
@@ -2737,8 +2757,9 @@ public:
                                   float viewportWidth) {
     return fOps->fFocusChanged(fNode, id, focused, resolver, viewportWidth);
   }
-  [[nodiscard]] bool semanticAction(NodeId id, SemanticActionEvent &event) {
-    return fOps->fSemanticAction(fNode, id, event);
+  void routeSemantic(const Path &path, std::size_t at,
+                     SemanticActionEvent &event) {
+    fOps->fRouteSemantic(fNode, path, at, event);
   }
   void collectSemantics(std::vector<Semantics> &out, int parent,
                         NodeId focused) {
@@ -2770,7 +2791,8 @@ private:
     void (*fRouteText)(void *, const Path &, std::size_t, TextInputEvent &);
     std::optional<NodeInfo> (*fInfo)(void *, NodeId);
     bool (*fFocusChanged)(void *, NodeId, bool, StyleResolver, float);
-    bool (*fSemanticAction)(void *, NodeId, SemanticActionEvent &);
+    void (*fRouteSemantic)(void *, const Path &, std::size_t,
+                           SemanticActionEvent &);
     void (*fCollectSemantics)(void *, std::vector<Semantics> &, int, NodeId);
     void (*fCollectFocusable)(void *, std::vector<NodeId> &);
     bool (*fAnimating)(void *);
@@ -2822,8 +2844,8 @@ private:
       +[](void *n, NodeId id, bool focused, StyleResolver r, float width) {
         return walk::focusChanged(as<T>(n), id, focused, r, width);
       },
-      +[](void *n, NodeId id, SemanticActionEvent &e) {
-        return walk::semanticAction(as<T>(n), id, e);
+      +[](void *n, const Path &path, std::size_t at, SemanticActionEvent &e) {
+        walk::routeSemantic(as<T>(n), path, at, e);
       },
       +[](void *n, std::vector<Semantics> &out, int parent, NodeId focused) {
         walk::collectSemantics(as<T>(n), out, parent, focused);
@@ -2987,6 +3009,7 @@ public:
       fDown = target;
     }
     event.fCaptured = fCapture != 0;
+    event.fTarget = target;
     Routed routed;
     walk::routePointer(fRoot, path, 0, event, routed, false);
 
@@ -3001,6 +3024,7 @@ public:
           PointerEvent cancel = event;
           cancel.fAction = PointerAction::kCancel;
           cancel.fHandled = false;
+          cancel.fTarget = fDown;
           Routed ignored;
           walk::routePointer(fRoot, down, 0, cancel, ignored, true);
         }
@@ -3048,6 +3072,7 @@ public:
     if (!this->focusPath(path)) {
       return false;
     }
+    event.fTarget = fFocus;
     walk::routeKey(fRoot, path, 0, event);
     this->restyleDirty();
     return event.fHandled;
@@ -3058,15 +3083,21 @@ public:
     if (!this->focusPath(path)) {
       return false;
     }
+    event.fTarget = fFocus;
     walk::routeText(fRoot, path, 0, event);
     this->restyleDirty();
     return event.fHandled;
   }
 
   bool dispatchSemantic(NodeId id, SemanticActionEvent event) {
-    if (!walk::semanticAction(fRoot, id, event)) {
+    const std::optional<NodeInfo> about = walk::info(fRoot, id);
+    Path path;
+    if (!about || !about->fVisible || about->fDisabled ||
+        !walk::findPath(fRoot, id, path)) {
       return false;
     }
+    event.fTarget = id;
+    walk::routeSemantic(fRoot, path, 0, event);
     if (event.fRequestFocus) {
       this->focus(id);
     }
