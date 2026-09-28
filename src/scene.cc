@@ -1988,6 +1988,9 @@ void collectSemantics(C &child, std::vector<Semantics> &out, int parent,
 template <class C>
 void collectFocusable(C &child, std::vector<NodeId> &out);
 template <class C> [[nodiscard]] bool animating(C &child);
+template <class C>
+[[nodiscard]] bool clickPath(C &child, const Path &path, std::size_t at,
+                             float x, float y);
 } // namespace walk
 
 // The children in the order they are drawn: eachChild's order, unless one of
@@ -2647,6 +2650,25 @@ template <class C> [[nodiscard]] bool hasDamage(C &child) {
   }
 }
 
+// A click told straight to the node at the end of a path and, when it does
+// not take it, to each node above in turn -- a click as such, without the
+// press and release around it.
+template <class C>
+bool clickPath(C &child, const Path &path, std::size_t at, float x, float y) {
+  if constexpr (std::same_as<C, AnyNode>) {
+    return child.clickPath(path, at, x, y);
+  } else {
+    bool taken = false;
+    if (at < path.size()) {
+      childAt(child, path[at], [&](auto &each) {
+        taken = walk::clickPath(each, path, at + 1, x, y);
+      });
+    }
+    return taken || (child.fState.fBounds.contains(x, y) &&
+                     hook::onClick(child, x, y));
+  }
+}
+
 // The id of the node at the end of a path.
 template <class C>
 [[nodiscard]] NodeId idAt(C &child, const Path &path, std::size_t at) {
@@ -2769,6 +2791,10 @@ public:
     fOps->fCollectFocusable(fNode, out);
   }
   [[nodiscard]] bool animating() { return fOps->fAnimating(fNode); }
+  [[nodiscard]] bool clickPath(const Path &path, std::size_t at, float x,
+                               float y) {
+    return fOps->fClickPath(fNode, path, at, x, y);
+  }
 
 private:
   struct Ops {
@@ -2796,6 +2822,7 @@ private:
     void (*fCollectSemantics)(void *, std::vector<Semantics> &, int, NodeId);
     void (*fCollectFocusable)(void *, std::vector<NodeId> &);
     bool (*fAnimating)(void *);
+    bool (*fClickPath)(void *, const Path &, std::size_t, float, float);
   };
 
   template <class T> [[nodiscard]] static T &as(void *node) {
@@ -2854,6 +2881,9 @@ private:
         walk::collectFocusable(as<T>(n), out);
       },
       +[](void *n) { return walk::animating(as<T>(n)); },
+      +[](void *n, const Path &path, std::size_t at, float x, float y) {
+        return walk::clickPath(as<T>(n), path, at, x, y);
+      },
   };
 
   void *fNode = nullptr;
@@ -3061,6 +3091,19 @@ public:
     event.fScrollY = scrollY;
     event.fButton = button;
     return this->dispatchPointer(event);
+  }
+
+  // A click at a point: onClick of the front-most node there that takes
+  // input, then of each node above it until one takes it. What a test or a
+  // scripted interaction wants; a real pointer goes through dispatchPointer.
+  bool click(float x, float y) {
+    Path path;
+    if (!walk::hitPath(fRoot, x, y, path)) {
+      return false;
+    }
+    const bool taken = walk::clickPath(fRoot, path, 0, x, y);
+    this->restyleDirty();
+    return taken;
   }
 
   bool dispatchKey(KeyEvent event) {
