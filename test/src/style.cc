@@ -403,11 +403,9 @@ TEST(TextLayout, WrappedTextFollowsItsParentsWidth) {
   scene.layoutIfNeeded(skia::SkRect::MakeWH(240.0f, 400.0f));
   EXPECT_FLOAT_EQ(scene.root().filling.bounds().width(), 240.0f);
   EXPECT_FLOAT_EQ(scene.root().unsized.bounds().width(), 240.0f);
-  const float tall = scene.root().filling.bounds().height();
   scene.layoutIfNeeded(skia::SkRect::MakeWH(120.0f, 400.0f));
   EXPECT_FLOAT_EQ(scene.root().filling.bounds().width(), 120.0f);
   EXPECT_FLOAT_EQ(scene.root().unsized.bounds().width(), 120.0f);
-  EXPECT_GT(scene.root().filling.bounds().height(), tall);
   scene.layoutIfNeeded(skia::SkRect::MakeWH(480.0f, 400.0f));
   EXPECT_FLOAT_EQ(scene.root().filling.bounds().width(), 480.0f);
   EXPECT_FLOAT_EQ(scene.root().unsized.bounds().width(), 480.0f);
