@@ -182,7 +182,7 @@ private:
     if (state.fMaxWidth > 0.0f) {
       return state.fMaxWidth;
     }
-    if (skiff::scene::state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
+    if (state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
       return parent.width() * state.fWidth - state.fMargin.totalX();
     }
     return state.fWidth > 0.0f ? state.fWidth

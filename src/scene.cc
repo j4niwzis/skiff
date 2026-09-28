@@ -18,7 +18,7 @@ import skiff.paint;
 // the Scene, and an event goes to its node along a path, capture on the way
 // down and bubble on the way back.
 //
-// Choices are types: a pointer event is a pointer_t, one of pointer::down,
+// Choices are types: a pointer event is a PointerEvent, one of pointer::down,
 // pointer::move and the rest, each with what it carries, and a node handles
 // the ones it cares about as overloads of onPointer. Sets of flags are Flags.
 export namespace skiff::scene {
@@ -244,11 +244,11 @@ struct out {};
 struct out_quint {};
 struct out_elastic_half {};
 } // namespace easing
-using easing_t = std::variant<easing::out_quint, easing::none, easing::out,
+using Easing = std::variant<easing::out_quint, easing::none, easing::out,
                               easing::out_elastic_half>;
 
 // How far along an ease is at time t of 1.
-[[nodiscard]] inline float ease(const easing_t &how, float t) {
+[[nodiscard]] inline float ease(const Easing &how, float t) {
   t = std::clamp(t, 0.0f, 1.0f);
   return std::visit(
       overloaded{
@@ -271,17 +271,17 @@ struct width {};
 struct height {};
 struct scale {};
 } // namespace property
-using property_t = std::variant<property::alpha, property::x, property::y,
+using Property = std::variant<property::alpha, property::x, property::y,
                                 property::width, property::height,
                                 property::scale>;
 
 struct Transform {
-  property_t fProperty;
+  Property fProperty;
   float fFrom = 0.0f;
   float fTo = 0.0f;
   double fStartMs = 0.0;
   double fEndMs = 0.0;
-  easing_t fEasing;
+  Easing fEasing;
 };
 
 // ---- style identity ---------------------------------------------------------
@@ -405,7 +405,7 @@ struct Style {
 
   // A state change animates position, size, scale and alpha.
   std::optional<double> transitionMs{};
-  std::optional<easing_t> transitionEasing{};
+  std::optional<Easing> transitionEasing{};
 
   void overlay(const Style &other) {
 #define SKIFF_OVERLAY(member)                                                  \
@@ -796,17 +796,17 @@ struct scroll {
   float dx = 0.0f, dy = 0.0f;
 };
 } // namespace pointer
-using pointer_t = std::variant<pointer::move, pointer::down, pointer::up,
+using PointerEvent = std::variant<pointer::move, pointer::down, pointer::up,
                                pointer::cancel, pointer::scroll>;
 
 // Where a pointer event is.
-[[nodiscard]] inline skia::SkPoint where(const pointer_t &event) {
+[[nodiscard]] inline skia::SkPoint where(const PointerEvent &event) {
   return std::visit(
       [](const auto &one) { return skia::SkPoint::Make(one.x, one.y); },
       event);
 }
 // Whether it ends a gesture.
-[[nodiscard]] inline bool ends(const pointer_t &event) {
+[[nodiscard]] inline bool ends(const PointerEvent &event) {
   return std::visit(overloaded{[](const pointer::up &) { return true; },
                                [](const pointer::cancel &) { return true; },
                                [](const auto &) { return false; }},
@@ -888,7 +888,7 @@ struct up {
   Modifiers modifiers;
 };
 } // namespace key
-using key_t = std::variant<key::down, key::up>;
+using KeyEvent = std::variant<key::down, key::up>;
 
 // Text and composition are distinct: an IME can replace its provisional
 // range many times before committing it.
@@ -902,7 +902,7 @@ struct compose {
   int length = 0;
 };
 } // namespace text
-using text_t = std::variant<text::commit, text::compose>;
+using TextEvent = std::variant<text::commit, text::compose>;
 
 // What assistive technology asks of a node.
 namespace semantic_action {
@@ -915,7 +915,7 @@ struct set_value {
   std::string_view text;
 };
 } // namespace semantic_action
-using semantic_action_t =
+using SemanticAction =
     std::variant<semantic_action::focus, semantic_action::activate,
                  semantic_action::increment, semantic_action::decrement,
                  semantic_action::set_value>;
@@ -933,7 +933,7 @@ struct tab {};
 struct list {};
 struct list_item {};
 } // namespace semantic_role
-using semantic_role_t =
+using SemanticRole =
     std::variant<semantic_role::none, semantic_role::group,
                  semantic_role::button, semantic_role::text,
                  semantic_role::text_box, semantic_role::slider,
@@ -953,7 +953,7 @@ struct Reply {
 
 struct Semantics {
   NodeId fId = 0;
-  semantic_role_t fRole;
+  SemanticRole fRole;
   std::string fLabel;
   std::string fValue;
   std::string fHint;
@@ -962,15 +962,15 @@ struct Semantics {
   bool fSelected = false;
   skia::SkRect fBounds = skia::SkRect::MakeEmpty();
   int fParent = -1;
-  std::vector<semantic_action_t> fActions;
+  std::vector<SemanticAction> fActions;
 };
 
-[[nodiscard]] inline bool isTextBox(const semantic_role_t &role) {
+[[nodiscard]] inline bool isTextBox(const SemanticRole &role) {
   return std::visit(overloaded{[](semantic_role::text_box) { return true; },
                                [](auto) { return false; }},
                     role);
 }
-[[nodiscard]] inline bool hasRole(const semantic_role_t &role) {
+[[nodiscard]] inline bool hasRole(const SemanticRole &role) {
   return std::visit(overloaded{[](semantic_role::none) { return false; },
                                [](auto) { return true; }},
                     role);
@@ -1342,24 +1342,24 @@ public:
   }
 
   // -- transforms
-  void fadeTo(float target, double durationMs, easing_t e = easing::out_quint{}) {
+  void fadeTo(float target, double durationMs, Easing e = easing::out_quint{}) {
     this->transformTo(property::alpha{}, fAlpha, target, durationMs, e);
   }
-  void moveToX(float target, double durationMs, easing_t e = easing::out_quint{}) {
+  void moveToX(float target, double durationMs, Easing e = easing::out_quint{}) {
     this->transformTo(property::x{}, fX, target, durationMs, e);
   }
-  void moveToY(float target, double durationMs, easing_t e = easing::out_quint{}) {
+  void moveToY(float target, double durationMs, Easing e = easing::out_quint{}) {
     this->transformTo(property::y{}, fY, target, durationMs, e);
   }
   void resizeWidthTo(float target, double durationMs,
-                     easing_t e = easing::out_quint{}) {
+                     Easing e = easing::out_quint{}) {
     this->transformTo(property::width{}, fWidth, target, durationMs, e);
   }
   void resizeHeightTo(float target, double durationMs,
-                      easing_t e = easing::out_quint{}) {
+                      Easing e = easing::out_quint{}) {
     this->transformTo(property::height{}, fHeight, target, durationMs, e);
   }
-  void scaleTo(float target, double durationMs, easing_t e = easing::out_quint{}) {
+  void scaleTo(float target, double durationMs, Easing e = easing::out_quint{}) {
     this->transformTo(property::scale{}, fScale, target, durationMs, e);
   }
   // Everything queued after this starts that much later.
@@ -1520,7 +1520,7 @@ public:
     const bool changed = target != current;
     const bool layoutChanged = !sameLayout(target, current);
     const double duration = style.transitionMs.value_or(0.0);
-    const easing_t how = style.transitionEasing.value_or(easing::out_quint{});
+    const Easing how = style.transitionEasing.value_or(easing::out_quint{});
 
 #define SKIFF_STYLE_DIRECT(declaration, targetMember, liveMember)             \
   if (style.declaration || fResolvedStyle.declaration) {                      \
@@ -1568,8 +1568,8 @@ public:
     }
   }
 
-  void transformTo(property_t property, float from, float to,
-                   double durationMs, easing_t e) {
+  void transformTo(Property property, float from, float to,
+                   double durationMs, Easing e) {
     // A new transform on a property replaces whatever was animating it.
     std::erase_if(fTransforms, [&property](const Transform &t) {
       return t.fProperty.index() == property.index();
@@ -1646,9 +1646,9 @@ private:
     return next.fetch_add(1, std::memory_order_relaxed);
   }
 
-  void setStyledProperty(const property_t &property, float target,
+  void setStyledProperty(const Property &property, float target,
                          float previousTarget, double durationMs,
-                         const easing_t &how, bool animate) {
+                         const Easing &how, bool animate) {
     if (target == previousTarget) {
       return;
     }
@@ -1660,7 +1660,7 @@ private:
     }
   }
 
-  [[nodiscard]] float &propertyRef(const property_t &property) {
+  [[nodiscard]] float &propertyRef(const Property &property) {
     return std::visit(
         overloaded{[this](property::alpha) -> float & { return fAlpha; },
                    [this](property::x) -> float & { return fX; },
@@ -1671,7 +1671,7 @@ private:
         property);
   }
 
-  void applyProperty(const property_t &property, float value) {
+  void applyProperty(const Property &property, float value) {
     float &current = this->propertyRef(property);
     if (current == value) {
       return;
@@ -1946,24 +1946,24 @@ struct Node {
   template <class Theme> void setStyleSheet() {
     fState.template setStyleSheet<Theme>();
   }
-  void fadeTo(float target, double ms, easing_t e = easing::out_quint{}) {
+  void fadeTo(float target, double ms, Easing e = easing::out_quint{}) {
     fState.fadeTo(target, ms, e);
   }
-  void moveToX(float target, double ms, easing_t e = easing::out_quint{}) {
+  void moveToX(float target, double ms, Easing e = easing::out_quint{}) {
     fState.moveToX(target, ms, e);
   }
-  void moveToY(float target, double ms, easing_t e = easing::out_quint{}) {
+  void moveToY(float target, double ms, Easing e = easing::out_quint{}) {
     fState.moveToY(target, ms, e);
   }
   void resizeWidthTo(float target, double ms,
-                     easing_t e = easing::out_quint{}) {
+                     Easing e = easing::out_quint{}) {
     fState.resizeWidthTo(target, ms, e);
   }
   void resizeHeightTo(float target, double ms,
-                      easing_t e = easing::out_quint{}) {
+                      Easing e = easing::out_quint{}) {
     fState.resizeHeightTo(target, ms, e);
   }
-  void scaleTo(float target, double ms, easing_t e = easing::out_quint{}) {
+  void scaleTo(float target, double ms, Easing e = easing::out_quint{}) {
     fState.scaleTo(target, ms, e);
   }
   void delay(double ms) { fState.delay(ms); }
@@ -2217,12 +2217,12 @@ void hover(AnyNode &, float, float, bool, StyleResolver, float);
 [[nodiscard]] bool hitPath(AnyNode &, float, float, Path &);
 [[nodiscard]] bool findPath(AnyNode &, NodeId, Path &);
 [[nodiscard]] NodeId idAt(AnyNode &, const Path &, std::size_t);
-void routePointer(AnyNode &, const Path &, std::size_t, const pointer_t &,
+void routePointer(AnyNode &, const Path &, std::size_t, const PointerEvent &,
                   PointerReply &, Routed &, bool);
-void routeKey(AnyNode &, const Path &, std::size_t, const key_t &, Reply &);
-void routeText(AnyNode &, const Path &, std::size_t, const text_t &, Reply &);
+void routeKey(AnyNode &, const Path &, std::size_t, const KeyEvent &, Reply &);
+void routeText(AnyNode &, const Path &, std::size_t, const TextEvent &, Reply &);
 void routeSemantic(AnyNode &, const Path &, std::size_t,
-                   const semantic_action_t &, Reply &);
+                   const SemanticAction &, Reply &);
 [[nodiscard]] std::optional<NodeInfo> info(AnyNode &, NodeId);
 [[nodiscard]] bool focusChanged(AnyNode &, NodeId, bool, StyleResolver, float);
 void collectSemantics(AnyNode &, std::vector<Semantics> &, int, NodeId);
@@ -2427,7 +2427,7 @@ template <class N> NodeId idAt(N &child, const Path &path, std::size_t at) {
 // way back up. `targetOnly` delivers to the end of the path alone.
 template <class N>
 void routePointer(N &child, const Path &path, std::size_t at,
-                  const pointer_t &input, PointerReply &reply, Routed &routed,
+                  const PointerEvent &input, PointerReply &reply, Routed &routed,
                   bool targetOnly) {
   State &state = child.fState;
   const auto deliver = [&](const auto &when) {
@@ -2493,66 +2493,66 @@ void route(N &child, const Path &path, std::size_t at, const Input &input,
 
 struct KeyDelivery {
   template <class N>
-  void operator()(N &node, const auto &when, const key_t &input,
+  void operator()(N &node, const auto &when, const KeyEvent &input,
                   Reply &reply) const {
     std::visit([&](const auto &event) { node.onKey(when, event, reply); },
                input);
   }
   template <class C>
-  void next(C &child, const Path &path, std::size_t at, const key_t &input,
+  void next(C &child, const Path &path, std::size_t at, const KeyEvent &input,
             Reply &reply) const;
 };
 struct TextDelivery {
   template <class N>
-  void operator()(N &node, const auto &when, const text_t &input,
+  void operator()(N &node, const auto &when, const TextEvent &input,
                   Reply &reply) const {
     std::visit([&](const auto &event) { node.onText(when, event, reply); },
                input);
   }
   template <class C>
-  void next(C &child, const Path &path, std::size_t at, const text_t &input,
+  void next(C &child, const Path &path, std::size_t at, const TextEvent &input,
             Reply &reply) const;
 };
 struct SemanticDelivery {
   template <class N>
-  void operator()(N &node, const auto &when, const semantic_action_t &input,
+  void operator()(N &node, const auto &when, const SemanticAction &input,
                   Reply &reply) const {
     std::visit([&](const auto &event) { node.onSemantic(when, event, reply); },
                input);
   }
   template <class C>
   void next(C &child, const Path &path, std::size_t at,
-            const semantic_action_t &input, Reply &reply) const;
+            const SemanticAction &input, Reply &reply) const;
 };
 
 template <class N>
-void routeKey(N &child, const Path &path, std::size_t at, const key_t &input,
+void routeKey(N &child, const Path &path, std::size_t at, const KeyEvent &input,
               Reply &reply) {
   route(child, path, at, input, reply, KeyDelivery{});
 }
 template <class N>
 void routeText(N &child, const Path &path, std::size_t at,
-               const text_t &input, Reply &reply) {
+               const TextEvent &input, Reply &reply) {
   route(child, path, at, input, reply, TextDelivery{});
 }
 template <class N>
 void routeSemantic(N &child, const Path &path, std::size_t at,
-                   const semantic_action_t &input, Reply &reply) {
+                   const SemanticAction &input, Reply &reply) {
   route(child, path, at, input, reply, SemanticDelivery{});
 }
 template <class C>
 void KeyDelivery::next(C &child, const Path &path, std::size_t at,
-                       const key_t &input, Reply &reply) const {
+                       const KeyEvent &input, Reply &reply) const {
   walk::routeKey(child, path, at, input, reply);
 }
 template <class C>
 void TextDelivery::next(C &child, const Path &path, std::size_t at,
-                        const text_t &input, Reply &reply) const {
+                        const TextEvent &input, Reply &reply) const {
   walk::routeText(child, path, at, input, reply);
 }
 template <class C>
 void SemanticDelivery::next(C &child, const Path &path, std::size_t at,
-                            const semantic_action_t &input,
+                            const SemanticAction &input,
                             Reply &reply) const {
   walk::routeSemantic(child, path, at, input, reply);
 }
@@ -2723,13 +2723,13 @@ public:
     bool (*fFindPath)(void *, NodeId, Path &);
     NodeId (*fIdAt)(void *, const Path &, std::size_t);
     void (*fRoutePointer)(void *, const Path &, std::size_t,
-                          const pointer_t &, PointerReply &, Routed &, bool);
-    void (*fRouteKey)(void *, const Path &, std::size_t, const key_t &,
+                          const PointerEvent &, PointerReply &, Routed &, bool);
+    void (*fRouteKey)(void *, const Path &, std::size_t, const KeyEvent &,
                       Reply &);
-    void (*fRouteText)(void *, const Path &, std::size_t, const text_t &,
+    void (*fRouteText)(void *, const Path &, std::size_t, const TextEvent &,
                        Reply &);
     void (*fRouteSemantic)(void *, const Path &, std::size_t,
-                           const semantic_action_t &, Reply &);
+                           const SemanticAction &, Reply &);
     std::optional<NodeInfo> (*fInfo)(void *, NodeId);
     bool (*fFocusChanged)(void *, NodeId, bool, StyleResolver, float);
     void (*fCollectSemantics)(void *, std::vector<Semantics> &, int, NodeId);
@@ -2771,16 +2771,16 @@ private:
       +[](void *n, const Path &path, std::size_t at) {
         return walk::idAt(as<T>(n), path, at);
       },
-      +[](void *n, const Path &path, std::size_t at, const pointer_t &e,
+      +[](void *n, const Path &path, std::size_t at, const PointerEvent &e,
           PointerReply &reply, Routed &routed, bool targetOnly) {
         walk::routePointer(as<T>(n), path, at, e, reply, routed, targetOnly);
       },
-      +[](void *n, const Path &path, std::size_t at, const key_t &e,
+      +[](void *n, const Path &path, std::size_t at, const KeyEvent &e,
           Reply &reply) { walk::routeKey(as<T>(n), path, at, e, reply); },
-      +[](void *n, const Path &path, std::size_t at, const text_t &e,
+      +[](void *n, const Path &path, std::size_t at, const TextEvent &e,
           Reply &reply) { walk::routeText(as<T>(n), path, at, e, reply); },
       +[](void *n, const Path &path, std::size_t at,
-          const semantic_action_t &e, Reply &reply) {
+          const SemanticAction &e, Reply &reply) {
         walk::routeSemantic(as<T>(n), path, at, e, reply);
       },
       +[](void *n, NodeId id) { return walk::info(as<T>(n), id); },
@@ -2840,20 +2840,20 @@ inline NodeId idAt(AnyNode &c, const Path &path, std::size_t at) {
   return c.ops().fIdAt(c.node(), path, at);
 }
 inline void routePointer(AnyNode &c, const Path &path, std::size_t at,
-                         const pointer_t &e, PointerReply &reply,
+                         const PointerEvent &e, PointerReply &reply,
                          Routed &routed, bool targetOnly) {
   c.ops().fRoutePointer(c.node(), path, at, e, reply, routed, targetOnly);
 }
 inline void routeKey(AnyNode &c, const Path &path, std::size_t at,
-                     const key_t &e, Reply &reply) {
+                     const KeyEvent &e, Reply &reply) {
   c.ops().fRouteKey(c.node(), path, at, e, reply);
 }
 inline void routeText(AnyNode &c, const Path &path, std::size_t at,
-                      const text_t &e, Reply &reply) {
+                      const TextEvent &e, Reply &reply) {
   c.ops().fRouteText(c.node(), path, at, e, reply);
 }
 inline void routeSemantic(AnyNode &c, const Path &path, std::size_t at,
-                          const semantic_action_t &e, Reply &reply) {
+                          const SemanticAction &e, Reply &reply) {
   c.ops().fRouteSemantic(c.node(), path, at, e, reply);
 }
 inline std::optional<NodeInfo> info(AnyNode &c, NodeId id) {
@@ -2973,7 +2973,7 @@ public:
   }
 
   // -- input
-  bool dispatchPointer(const pointer_t &input) {
+  bool dispatchPointer(const PointerEvent &input) {
     const skia::SkPoint at = where(input);
     std::visit(overloaded{[&](const pointer::move &) {
                             this->setHover(at.fX, at.fY);
@@ -3036,7 +3036,7 @@ public:
           cancelled.fTarget = fDown;
           Routed ignored;
           walk::routePointer(fRoot, down, 0,
-                             pointer_t{pointer::cancel{at.fX, at.fY}},
+                             PointerEvent{pointer::cancel{at.fX, at.fY}},
                              cancelled, ignored, true);
         }
       }
@@ -3071,7 +3071,7 @@ public:
     return taken;
   }
 
-  bool dispatchKey(const key_t &input) {
+  bool dispatchKey(const KeyEvent &input) {
     // Tab moves the focus; Shift+Tab back.
     const std::optional<bool> tab = std::visit(
         overloaded{[](const key::down &press) -> std::optional<bool> {
@@ -3099,7 +3099,7 @@ public:
     return reply.fHandled;
   }
 
-  bool dispatchText(const text_t &input) {
+  bool dispatchText(const TextEvent &input) {
     Path path;
     if (!this->focusPath(path)) {
       return false;
@@ -3111,7 +3111,7 @@ public:
     return reply.fHandled;
   }
 
-  bool dispatchSemantic(NodeId id, const semantic_action_t &action) {
+  bool dispatchSemantic(NodeId id, const SemanticAction &action) {
     const std::optional<NodeInfo> about = walk::info(fRoot, id);
     Path path;
     if (!about || !about->fVisible || about->fDisabled ||
@@ -3276,16 +3276,16 @@ public:
     return fScene == other.fScene;
   }
 
-  bool pointer(const pointer_t &input) const {
+  bool pointer(const PointerEvent &input) const {
     return this->alive() && fOps->fPointer(fScene, input);
   }
-  bool key(const key_t &input) const {
+  bool key(const KeyEvent &input) const {
     return this->alive() && fOps->fKey(fScene, input);
   }
-  bool text(const text_t &input) const {
+  bool text(const TextEvent &input) const {
     return this->alive() && fOps->fText(fScene, input);
   }
-  bool semantic(NodeId id, const semantic_action_t &action) const {
+  bool semantic(NodeId id, const SemanticAction &action) const {
     return this->alive() && fOps->fSemantic(fScene, id, action);
   }
   [[nodiscard]] std::vector<Semantics> semantics() const {
@@ -3309,10 +3309,10 @@ public:
 
 private:
   struct Ops {
-    bool (*fPointer)(void *, const pointer_t &);
-    bool (*fKey)(void *, const key_t &);
-    bool (*fText)(void *, const text_t &);
-    bool (*fSemantic)(void *, NodeId, const semantic_action_t &);
+    bool (*fPointer)(void *, const PointerEvent &);
+    bool (*fKey)(void *, const KeyEvent &);
+    bool (*fText)(void *, const TextEvent &);
+    bool (*fSemantic)(void *, NodeId, const SemanticAction &);
     std::vector<Semantics> (*fSemantics)(void *);
     NodeId (*fCaptured)(void *);
     NodeId (*fFocused)(void *);
@@ -3324,12 +3324,12 @@ private:
   }
   template <class Root>
   static constexpr Ops kOps{
-      +[](void *s, const pointer_t &e) {
+      +[](void *s, const PointerEvent &e) {
         return as<Root>(s).dispatchPointer(e);
       },
-      +[](void *s, const key_t &e) { return as<Root>(s).dispatchKey(e); },
-      +[](void *s, const text_t &e) { return as<Root>(s).dispatchText(e); },
-      +[](void *s, NodeId id, const semantic_action_t &e) {
+      +[](void *s, const KeyEvent &e) { return as<Root>(s).dispatchKey(e); },
+      +[](void *s, const TextEvent &e) { return as<Root>(s).dispatchText(e); },
+      +[](void *s, NodeId id, const SemanticAction &e) {
         return as<Root>(s).dispatchSemantic(id, e);
       },
       +[](void *s) { return as<Root>(s).semanticsTree(); },
@@ -3397,7 +3397,7 @@ public:
     fLayers.assign(layers.begin(), layers.end());
   }
 
-  bool pointer(const pointer_t &input) {
+  bool pointer(const PointerEvent &input) {
     if (fCaptured.alive()) {
       const bool handled = fCaptured.pointer(input);
       if (fCaptured.captured() == 0) {
@@ -3435,7 +3435,7 @@ public:
     return false;
   }
 
-  bool key(const key_t &input) {
+  bool key(const KeyEvent &input) {
     const std::optional<bool> tab = std::visit(
         overloaded{[](const key::down &press) -> std::optional<bool> {
                      if (press.key == keys::kTab) {
@@ -3464,7 +3464,7 @@ public:
     return false;
   }
 
-  bool text(const text_t &input) {
+  bool text(const TextEvent &input) {
     for (auto it = fLayers.rbegin(); it != fLayers.rend(); ++it) {
       if (!it->fScene.alive()) {
         continue;
@@ -3479,7 +3479,7 @@ public:
     return false;
   }
 
-  bool semantic(NodeId id, const semantic_action_t &action) {
+  bool semantic(NodeId id, const SemanticAction &action) {
     const bool focusing = std::visit(
         overloaded{[](const semantic_action::focus &) { return true; },
                    [](const auto &) { return false; }},

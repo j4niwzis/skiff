@@ -419,7 +419,7 @@ TEST(Children, AVectorOfNodesAndOfAnyNodes) {
   EXPECT_TRUE(scene.layoutIfNeeded(kViewport));
   EXPECT_FLOAT_EQ(scene.root().mixed[0].state().fBounds.width(), 20.0f);
 
-  pointer_t down = pointer::down{5.0f, 25.0f};
+  PointerEvent down = pointer::down{5.0f, 25.0f};
   EXPECT_TRUE(scene.dispatchPointer(down));
   ASSERT_NE(scene.root().mixed[1].get<ClickProbe>(), nullptr);
   EXPECT_EQ(scene.root().mixed[1].get<ClickProbe>()->fClicks, 1);
@@ -462,7 +462,7 @@ TEST(Input, PropagatesCaptureTargetAndBubbleInOrder) {
   scene.state().apply({.fill = true});
   scene.layoutIfNeeded(kViewport);
 
-  pointer_t down = pointer::down{10.0f, 10.0f};
+  PointerEvent down = pointer::down{10.0f, 10.0f};
   EXPECT_FALSE(scene.dispatchPointer(down));
   EXPECT_EQ(events, (std::vector<std::string>{"root:0", "child:1", "root:2"}));
 
@@ -486,16 +486,16 @@ TEST(Input, PointerCaptureSurvivesLeavingTheControl) {
   InputProbe<> &child = scene.root().drag;
   scene.layoutIfNeeded(kViewport);
 
-  pointer_t down = pointer::down{10.0f, 10.0f};
+  PointerEvent down = pointer::down{10.0f, 10.0f};
   EXPECT_TRUE(scene.dispatchPointer(down));
   EXPECT_EQ(scene.capturedId(), child.id());
   EXPECT_EQ(scene.focusedId(), child.id());
 
-  pointer_t move = pointer::move{500.0f, 500.0f};
+  PointerEvent move = pointer::move{500.0f, 500.0f};
   EXPECT_TRUE(scene.dispatchPointer(move));
   EXPECT_EQ(child.fPointerEvents, 2);
 
-  pointer_t up = pointer::up{500.0f, 500.0f};
+  PointerEvent up = pointer::up{500.0f, 500.0f};
   (void)scene.dispatchPointer(up);
   EXPECT_EQ(scene.capturedId(), 0u);
 }
@@ -514,7 +514,7 @@ TEST(Input, ModalLayerBlocksPointerAndAccessibilityBehindIt) {
   InputRouter router;
   router.setLayers(layers);
 
-  pointer_t down = pointer::down{10.0f, 10.0f};
+  PointerEvent down = pointer::down{10.0f, 10.0f};
   EXPECT_TRUE(router.pointer(down));
   EXPECT_EQ(behind.root().fPointerEvents, 0);
   EXPECT_TRUE(router.semantics().empty());
@@ -537,7 +537,7 @@ TEST(Input, ModalScopeCancelsCoveredCaptureAndRestoresPriorFocus) {
   const std::array<InputRouter::Layer, 1> base = {
       InputRouter::Layer{behind.handle(), false}};
 
-  pointer_t down = pointer::down{10.0f, 10.0f};
+  PointerEvent down = pointer::down{10.0f, 10.0f};
   // Pressed through the scene directly, as some wrappers do to read their
   // callback at once: the router adopts the capture and still cancels it
   // when a modal covers the scene.
@@ -571,7 +571,7 @@ TEST(Input, TabTraversesAcrossSceneRoots) {
   InputRouter router;
   router.setLayers(layers);
 
-  key_t tab = key::down{keys::kTab};
+  KeyEvent tab = key::down{keys::kTab};
   EXPECT_TRUE(router.key(tab));
   EXPECT_EQ(first.focusedId(), first.root().id());
   EXPECT_EQ(second.focusedId(), 0u);
@@ -609,7 +609,7 @@ TEST(Input, PointerFocusHasOneOwnerAcrossSceneRoots) {
   InputRouter router;
   router.setLayers(layers);
 
-  pointer_t down = pointer::down{10.0f, 10.0f};
+  PointerEvent down = pointer::down{10.0f, 10.0f};
   EXPECT_TRUE(router.pointer(down));
   EXPECT_EQ(firstScene.focusedId(), first);
   EXPECT_FALSE(router.pointer(pointer::up{10.0f, 10.0f}));
@@ -637,16 +637,16 @@ TEST(Input, DestroyedSceneMakesRetainedLayerInert) {
         InputRouter::Layer{scene.handle(), false}};
     router.setLayers(layers);
 
-    pointer_t down = pointer::down{10.0f, 10.0f};
+    PointerEvent down = pointer::down{10.0f, 10.0f};
     EXPECT_TRUE(router.pointer(down));
     EXPECT_EQ(scene.capturedId(), scene.root().id());
   }
 
-  pointer_t move = pointer::move{20.0f, 20.0f};
+  PointerEvent move = pointer::move{20.0f, 20.0f};
   EXPECT_FALSE(router.pointer(move));
   EXPECT_TRUE(router.semantics().empty());
 
-  key_t tab = key::down{keys::kTab};
+  KeyEvent tab = key::down{keys::kTab};
   EXPECT_FALSE(router.key(tab));
   router.setLayers({});
 
@@ -663,7 +663,7 @@ TEST(Input, DestroyedSceneMakesRetainedLayerInert) {
 
   // An expired modal is not an invisible shield over live layers.
   EXPECT_EQ(router.semantics().size(), 1u);
-  pointer_t down = pointer::down{10.0f, 10.0f};
+  PointerEvent down = pointer::down{10.0f, 10.0f};
   EXPECT_TRUE(router.pointer(down));
   EXPECT_EQ(behind.capturedId(), behind.root().id());
 }
@@ -809,7 +809,7 @@ TEST(Input, ScrollDragCancelsDeferredChildClick) {
   scene.layoutIfNeeded(kViewport);
   scene.update(10.0);
 
-  pointer_t down = pointer::down{20.0f, 20.0f};
+  PointerEvent down = pointer::down{20.0f, 20.0f};
   EXPECT_TRUE(scene.dispatchPointer(down));
   EXPECT_EQ(child.fClicks, 0);
   EXPECT_FALSE(child.hovered());
@@ -832,7 +832,7 @@ TEST(Input, HorizontalGestureDoesNotBecomeVerticalScroll) {
   scene.layoutIfNeeded(kViewport);
   scene.update(10.0);
 
-  pointer_t down = pointer::down{20.0f, 20.0f};
+  PointerEvent down = pointer::down{20.0f, 20.0f};
   EXPECT_TRUE(scene.dispatchPointer(down));
 
   scene.dispatchPointer(pointer::move{40.0f, 22.0f});

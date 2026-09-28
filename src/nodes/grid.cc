@@ -18,7 +18,7 @@ struct fraction {
   float share = 1.0f;
 };
 } // namespace track
-using track_t = std::variant<track::fraction, track::fixed, track::automatic>;
+using Track = std::variant<track::fraction, track::fixed, track::automatic>;
 
 // Rows and columns of given sizes, the children dealt into the cells in
 // order. A cell does not move its child: the child is laid out against the
@@ -31,11 +31,11 @@ public:
     std::apply([&](auto &...each) { (f(each), ...); }, fChildren);
   }
 
-  void setRows(std::vector<track_t> rows) {
+  void setRows(std::vector<Track> rows) {
     fRows = std::move(rows);
     this->invalidateLayout();
   }
-  void setColumns(std::vector<track_t> columns) {
+  void setColumns(std::vector<Track> columns) {
     fColumns = std::move(columns);
     this->invalidateLayout();
   }
@@ -123,14 +123,14 @@ private:
   }
 
   [[nodiscard]] static std::vector<float>
-  resolve(const std::vector<track_t> &tracks, std::size_t count, float room,
+  resolve(const std::vector<Track> &tracks, std::size_t count, float room,
           float gap, bool horizontal, std::size_t columns,
           const std::vector<skiff::scene::State *> &shown) {
     std::vector<float> sizes(count, 0.0f);
     float taken = gap * static_cast<float>(count > 0 ? count - 1 : 0);
     float shares = 0.0f;
     for (std::size_t i = 0; i < count; ++i) {
-      const track_t one = i < tracks.size() ? tracks[i] : track_t{};
+      const Track one = i < tracks.size() ? tracks[i] : Track{};
       std::visit(skiff::scene::overloaded{
                      [&](const track::fixed &fixed) {
                        sizes[i] = fixed.size;
@@ -146,7 +146,7 @@ private:
     if (shares > 0.0f) {
       const float left = std::max(0.0f, room - taken);
       for (std::size_t i = 0; i < count; ++i) {
-        const track_t one = i < tracks.size() ? tracks[i] : track_t{};
+        const Track one = i < tracks.size() ? tracks[i] : Track{};
         std::visit(skiff::scene::overloaded{
                        [&](const track::fraction &part) {
                          sizes[i] = left * part.share / shares;
@@ -158,8 +158,8 @@ private:
     return sizes;
   }
 
-  std::vector<track_t> fRows;
-  std::vector<track_t> fColumns;
+  std::vector<Track> fRows;
+  std::vector<Track> fColumns;
   float fRowGap = 0.0f;
   float fColumnGap = 0.0f;
   std::vector<float> fRowSizes;

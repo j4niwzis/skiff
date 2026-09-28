@@ -12,7 +12,7 @@ namespace direction {
 struct vertical {};
 struct horizontal {};
 } // namespace direction
-using direction_t = std::variant<direction::vertical, direction::horizontal>;
+using Direction = std::variant<direction::vertical, direction::horizontal>;
 
 // How the room a line leaves is handed out.
 namespace justify {
@@ -22,11 +22,11 @@ struct end {};
 struct space_between {};
 struct space_around {};
 } // namespace justify
-using justify_t = std::variant<justify::start, justify::middle, justify::end,
+using Justify = std::variant<justify::start, justify::middle, justify::end,
                                justify::space_between, justify::space_around>;
 
 struct FlowOptions {
-  direction_t direction = direction::vertical{};
+  Direction direction = direction::vertical{};
   float spacingX = 0.0f;
   float spacingY = 0.0f;
   // A horizontal flow breaks into rows at its edge.
@@ -36,7 +36,7 @@ struct FlowOptions {
   // Where children sit across the axis; a child can say otherwise with
   // alignSelf.
   skiff::scene::Align crossAlign = skiff::scene::align::kStart;
-  justify_t justify = justify::start{};
+  Justify justify = justify::start{};
 };
 
 // Where a line starts and how much goes between its items, given how much
@@ -46,7 +46,7 @@ struct Spread {
   float fBetween = 0.0f;
   constexpr bool operator==(const Spread &) const = default;
 };
-[[nodiscard]] constexpr Spread spread(const justify_t &how, float room,
+[[nodiscard]] constexpr Spread spread(const Justify &how, float room,
                                       float used, int count) {
   const float slack = std::max(0.0f, room - used);
   const auto gaps = static_cast<float>(std::max(0, count - 1));
@@ -123,7 +123,7 @@ public:
       this->invalidateLayout();
     }
   }
-  void setJustify(justify_t how) {
+  void setJustify(Justify how) {
     fOptions.justify = how;
     this->invalidateLayout();
   }
