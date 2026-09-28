@@ -978,4 +978,28 @@ TEST(Frames, APressBetweenFramesDoesNotRunTheNodesClock) {
   EXPECT_EQ(scene.root().seen.back(), 61000.0);
 }
 
+// The pointer's shape is the node's under it, or the nearest above it with
+// one.
+struct Shaped : Node {
+  ClickProbe edge = make<ClickProbe>({.x = 0.0f, .width = 10.0f, .height = 100.0f});
+  ClickProbe plain = make<ClickProbe>({.x = 50.0f, .width = 10.0f, .height = 100.0f});
+  Shaped() { edge.fState.setCursor(cursor::resize_horizontal{}); }
+  void forEachChild(auto &&f) {
+    f(edge);
+    f(plain);
+  }
+};
+
+TEST(Cursor, ThePointersShapeIsTheNodesUnderIt) {
+  Scene<Shaped> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(100.0f, 100.0f));
+  scene.setHover(5.0f, 50.0f);
+  EXPECT_EQ(scene.cursor(), Cursor{cursor::resize_horizontal{}});
+  scene.setHover(55.0f, 50.0f);
+  EXPECT_EQ(scene.cursor(), Cursor{cursor::arrow{}});
+  scene.state().setCursor(cursor::text{});
+  EXPECT_EQ(scene.cursor(), Cursor{cursor::text{}});
+}
+
 } // namespace

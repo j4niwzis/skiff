@@ -1042,6 +1042,32 @@ struct Semantics {
                                [](auto) { return false; }},
                     role);
 }
+// The pointer's shape over a node: an arrow unless it says otherwise.
+namespace cursor {
+struct arrow {
+  friend bool operator==(arrow, arrow) = default;
+};
+struct text {
+  friend bool operator==(text, text) = default;
+};
+struct hand {
+  friend bool operator==(hand, hand) = default;
+};
+struct resize_horizontal {
+  friend bool operator==(resize_horizontal, resize_horizontal) = default;
+};
+struct resize_vertical {
+  friend bool operator==(resize_vertical, resize_vertical) = default;
+};
+} // namespace cursor
+using Cursor = std::variant<cursor::arrow, cursor::text, cursor::hand,
+                            cursor::resize_horizontal, cursor::resize_vertical>;
+[[nodiscard]] inline bool isArrow(const Cursor &shape) {
+  return std::visit(overloaded{[](cursor::arrow) { return true; },
+                               [](auto) { return false; }},
+                    shape);
+}
+
 [[nodiscard]] inline bool hasRole(const SemanticRole &role) {
   return std::visit(overloaded{[](semantic_role::none) { return false; },
                                [](auto) { return true; }},
@@ -1116,6 +1142,7 @@ public:
   // earlier in the tree) and does not move in memory while followed.
   const State *fFollow = nullptr;
   bool fMasking = false; // clip children to these bounds
+  Cursor fCursor = cursor::arrow{};
   float fCornerRadius = 0.0f;
   bool fVisible = true;
 
@@ -1210,6 +1237,10 @@ public:
     fFollow = follow;
     this->invalidateLayout();
   }
+  // The pointer's shape over this node, and over those below it that say
+  // nothing of their own.
+  void setCursor(Cursor shape) { fCursor = shape; }
+  [[nodiscard]] const Cursor &cursorShape() const noexcept { return fCursor; }
   void setMasking(bool masking) {
     if (masking == fMasking) {
       return;
@@ -2102,6 +2133,7 @@ struct NodeInfo {
   bool fDisabled = false;
   bool fVisible = true;
   bool fTakesText = false;
+  Cursor fCursor = cursor::arrow{};
 };
 
 // The children in the order they are drawn: eachChild's order, unless one of
@@ -2641,7 +2673,7 @@ template <class N> std::optional<NodeInfo> info(N &child, NodeId id) {
   const State &state = child.fState;
   if (state.fId == id) {
     return NodeInfo{child.focusable(), state.fDisabled, state.fVisible,
-                    isTextBox(child.semantics().fRole)};
+                    isTextBox(child.semantics().fRole), state.fCursor};
   }
   std::optional<NodeInfo> found;
   eachChild(child, [&](auto &each) {
@@ -3307,6 +3339,29 @@ public:
 private:
   // Styles whose inputs changed, applied now, so what a handler sees next is
   // current.
+  // The pointer's shape: that of the node held, else of the node under the
+  // pointer or the nearest above it with a shape of its own.
+  [[nodiscard]] Cursor cursor() {
+    Path path;
+    if (fCapture != 0) {
+      if (!walk::findPath(fRoot, fCapture, path)) {
+        return cursor::arrow{};
+      }
+    } else if (!fHoverSeen || !walk::hitPath(fRoot, fHoverX, fHoverY, path)) {
+      return cursor::arrow{};
+    }
+    for (std::size_t n = path.size() + 1; n-- > 0;) {
+      const Path above(path.begin(),
+                       path.begin() + static_cast<std::ptrdiff_t>(n));
+      const std::optional<NodeInfo> about =
+          walk::info(fRoot, walk::idAt(fRoot, above, 0));
+      if (about && !isArrow(about->fCursor)) {
+        return about->fCursor;
+      }
+    }
+    return cursor::arrow{};
+  }
+
   void restyleDirty() {
     UpdateContext context{fNowMs, fViewport.width(), false, false};
     walk::update(fRoot, context, {}, nullptr, false);
