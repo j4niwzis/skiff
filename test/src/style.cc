@@ -362,6 +362,7 @@ TEST(TextLayout, RelativeWidthIsOwnedByLayout) {
   scene.state().apply({.fill = true});
   scene.layoutIfNeeded(skia::SkRect::MakeWH(240.0f, 80.0f));
   EXPECT_FLOAT_EQ(scene.root().text.bounds().width(), 120.0f);
+  Text::setFont(nullptr); // the font is this test's
 }
 
 // ---- children held in other ways
