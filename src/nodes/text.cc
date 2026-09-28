@@ -109,7 +109,6 @@ public:
   }
 
   void measure(const skia::SkRect &parent) {
-    using skiff::scene::hasX;
     skiff::scene::State &state = fState;
     if (fMeasuredSize == fSize && !fWrapped) {
       return; // measured at this size, and the text has not changed
@@ -125,7 +124,7 @@ public:
       state.fHeight =
           static_cast<float>(std::max<std::size_t>(1, fLines.size())) *
           fSize * 1.25f;
-      if (!hasX(state.fGrowAxes)) {
+      if (!state.fGrowAxes.has<skiff::scene::axis::x>()) {
         state.fWidth = room;
       }
       fMeasuredSize = fSize;
@@ -134,7 +133,7 @@ public:
     const float measured = p.measure(fText, fSize, fBold);
     // Sized by its flow or parent, it clips to the width it was given rather
     // than replacing that width with the glyphs'.
-    if (!hasX(state.fGrowAxes) && !hasX(state.fRelativeSizeAxes)) {
+    if (!state.fGrowAxes.has<skiff::scene::axis::x>() && !state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
       state.fWidth = state.fMaxWidth > 0.0f
                          ? std::min(state.fMaxWidth, measured)
                          : measured;
@@ -144,7 +143,6 @@ public:
   }
 
   void drawSelf(skia::SkCanvas *canvas, float alpha) {
-    using skiff::scene::hasX;
     const skiff::scene::State &state = fState;
     skia::SkFont *font = skiff::paint::defaultFont();
     if (font == nullptr || fText.empty()) {
@@ -162,8 +160,8 @@ public:
       canvas->restoreToCount(saved);
       return;
     }
-    if (state.fMaxWidth > 0.0f || hasX(state.fGrowAxes) ||
-        hasX(state.fRelativeSizeAxes)) {
+    if (state.fMaxWidth > 0.0f || state.fGrowAxes.has<skiff::scene::axis::x>() ||
+        state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
       canvas->clipRect(bounds, true);
     }
     // The baseline sits at the top plus the ascent share of the line box.
@@ -184,7 +182,7 @@ private:
     if (state.fMaxWidth > 0.0f) {
       return state.fMaxWidth;
     }
-    if (skiff::scene::hasX(state.fRelativeSizeAxes)) {
+    if (skiff::scene::state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
       return parent.width() * state.fWidth - state.fMargin.totalX();
     }
     return state.fWidth > 0.0f ? state.fWidth

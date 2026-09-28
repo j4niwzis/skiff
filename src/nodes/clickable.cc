@@ -21,14 +21,14 @@ public:
   }
 
   [[nodiscard]] bool acceptsInput() const {
-    return skiff::scene::kActs<Action>;
+    return skiff::scene::acts(fAction);
   }
   [[nodiscard]] skiff::scene::Semantics semantics() const {
     skiff::scene::Semantics out;
-    out.fRole = skiff::scene::SemanticRole::kButton;
+    out.fRole = skiff::scene::semantic_role::button{};
     out.fLabel = fLabel;
-    out.fActions = {skiff::scene::SemanticAction::kFocus,
-                    skiff::scene::SemanticAction::kActivate};
+    out.fActions = {skiff::scene::semantic_action::focus{},
+                    skiff::scene::semantic_action::activate{}};
     return out;
   }
   [[nodiscard]] bool onClick(float, float) {
@@ -38,30 +38,24 @@ public:
 
   // Activates on release inside, not on the press: a press that turns into
   // a scroll must not have clicked.
-  void onPointerEvent(skiff::scene::PointerEvent &event) {
-    using skiff::scene::EventPhase;
-    using skiff::scene::PointerAction;
-    if (event.fPhase != EventPhase::kTarget) {
-      return;
+  using Node::onPointer;
+  void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::down &,
+                 skiff::scene::PointerReply &reply) {
+    fArmed = true;
+    reply.handle();
+  }
+  void onPointer(skiff::scene::phase::target,
+                 const skiff::scene::pointer::up &release,
+                 skiff::scene::PointerReply &reply) {
+    if (std::exchange(fArmed, false) &&
+        fState.fBounds.contains(release.x, release.y)) {
+      (void)this->onClick(release.x, release.y);
+      reply.handle();
     }
-    switch (event.fAction) {
-    case PointerAction::kDown:
-      fArmed = true;
-      event.handle();
-      break;
-    case PointerAction::kUp:
-      if (std::exchange(fArmed, false) &&
-          fState.fBounds.contains(event.fX, event.fY)) {
-        (void)this->onClick(event.fX, event.fY);
-        event.handle();
-      }
-      break;
-    case PointerAction::kCancel:
-      fArmed = false;
-      break;
-    default:
-      break;
-    }
+  }
+  void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::cancel &,
+                 skiff::scene::PointerReply &) {
+    fArmed = false;
   }
 
   std::tuple<Children...> fChildren;

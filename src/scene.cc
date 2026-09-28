@@ -6,107 +6,162 @@ import skiff.paint;
 
 // A retained scene whose type is its tree.
 //
-// A node is any type with a skiff::scene::State member named fState. It does
-// not derive from anything: what it can do -- draw itself, lay out its
-// children, take a click, describe itself to a screen reader -- it says by
-// having the member function, and the walks here find it with `requires`.
-// Its children are its own members, held by value: other nodes, a
-// std::variant or std::optional of nodes, a std::unique_ptr to one, or any
-// range of them (std::vector<Row>). AnyNode holds a node of any type by value
-// for the places where the type cannot be written down.
+// A node derives from Node, which holds its State and the default of every
+// hook; a node overrides a hook by declaring it. Its children are its own
+// members: nodes, or a std::variant, std::optional, pointer, tuple or range of
+// them. AnyNode holds a node of any type by value where the type cannot be
+// written down.
 //
-// Nothing in the tree points upwards. A node that changes marks its own
-// State; the walks from the root find what changed, lay out what has to be,
-// and gather what has to be repainted, clipped by the masking ancestors on
-// the way down. Focus, pointer capture and the node a press began on are
-// node ids held by the Scene, and routing an event turns an id into a path of
-// child positions and recurses along it: the call stack is the path, so a
-// capture handler runs on the way down and a bubble handler on the way back.
-// A node that went away is simply not found again.
+// Nothing points upwards. A change marks its node's State; each frame the
+// walks from the root find what changed, lay it out, and gather what has to
+// be repainted. Focus, pointer capture and the pressed node are ids held by
+// the Scene, and an event goes to its node along a path, capture on the way
+// down and bubble on the way back.
 //
-// The layout model is osu!framework's: anchors and origins, relative and
-// automatic sizes, flows, margins and padding, transforms with easing.
+// Choices are types: a pointer event is a pointer_t, one of pointer::down,
+// pointer::move and the rest, each with what it carries, and a node handles
+// the ones it cares about as overloads of onPointer. Sets of flags are Flags.
 export namespace skiff::scene {
 
-// What a widget does when it was not given anything to do: its action's type
-// when none is passed. A widget can tell it apart at compile time -- a toggle
-// that does nothing is not offered to input at all.
+// The overloaded pattern: a visitor made of several callables.
+template <class... Fs> struct overloaded : Fs... {
+  using Fs::operator()...;
+};
+template <class... Fs> overloaded(Fs...) -> overloaded<Fs...>;
+
+// What a widget does when it was not given anything to do.
 struct NoAction {
   template <class... Args>
   constexpr void operator()(Args &&...) const noexcept {}
 };
+// Whether an action does anything: false for NoAction, true for anything
+// else. Overloads, so a widget asks without a condition on types.
+[[nodiscard]] constexpr bool acts(const NoAction &) noexcept { return false; }
 template <class Action>
-inline constexpr bool kActs =
-    !std::same_as<std::remove_cvref_t<Action>, NoAction>;
+[[nodiscard]] constexpr bool acts(const Action &) noexcept {
+  return true;
+}
+
+// ---- flags -------------------------------------------------------------------
+
+namespace detail {
+template <class Tag, class... Tags> consteval std::size_t indexOf() {
+  constexpr std::array<bool, sizeof...(Tags)> same{std::is_same_v<Tag, Tags>...};
+  for (std::size_t i = 0; i < same.size(); ++i) {
+    if (same[i]) {
+      return i;
+    }
+  }
+  return sizeof...(Tags);
+}
+template <std::size_t N>
+using FlagBits = std::conditional_t<
+    (N <= 8), std::uint8_t,
+    std::conditional_t<(N <= 16), std::uint16_t,
+                       std::conditional_t<(N <= 32), std::uint32_t,
+                                          std::uint64_t>>>;
+} // namespace detail
+
+// A set of flags named by tag types: one bit per tag, by its place in Tags.
+// A tag that is not one of them does not compile.
+//
+//   using Axes = Flags<axis::x, axis::y>;
+//   Axes both = Axes::of<axis::x, axis::y>();
+//   both.has<axis::x>()
+template <class... Tags> class Flags {
+  static_assert(sizeof...(Tags) <= 64, "at most 64 flags");
+  using Bits = detail::FlagBits<sizeof...(Tags)>;
+
+  template <class Tag> [[nodiscard]] static consteval Bits bit() {
+    constexpr std::size_t at = detail::indexOf<Tag, Tags...>();
+    static_assert(at < sizeof...(Tags), "not one of these flags");
+    return static_cast<Bits>(Bits{1} << at);
+  }
+  constexpr explicit Flags(Bits bits) noexcept : fBits(bits) {}
+
+public:
+  constexpr Flags() noexcept = default;
+
+  template <class... Some> [[nodiscard]] static constexpr Flags of() noexcept {
+    return Flags(static_cast<Bits>((Bits{0} | ... | bit<Some>())));
+  }
+  template <class Tag> [[nodiscard]] constexpr bool has() const noexcept {
+    return (fBits & bit<Tag>()) != 0;
+  }
+  template <class Tag> [[nodiscard]] constexpr Flags with() const noexcept {
+    return Flags(static_cast<Bits>(fBits | bit<Tag>()));
+  }
+  template <class Tag> [[nodiscard]] constexpr Flags without() const noexcept {
+    return Flags(static_cast<Bits>(fBits & ~bit<Tag>()));
+  }
+  template <class Tag>
+  [[nodiscard]] constexpr Flags with(bool on) const noexcept {
+    return on ? this->with<Tag>() : this->without<Tag>();
+  }
+  [[nodiscard]] constexpr Flags operator|(Flags other) const noexcept {
+    return Flags(static_cast<Bits>(fBits | other.fBits));
+  }
+  [[nodiscard]] constexpr Flags operator&(Flags other) const noexcept {
+    return Flags(static_cast<Bits>(fBits & other.fBits));
+  }
+  // Every flag of `other` is set here.
+  [[nodiscard]] constexpr bool contains(Flags other) const noexcept {
+    return (fBits & other.fBits) == other.fBits;
+  }
+  [[nodiscard]] constexpr bool any(Flags other) const noexcept {
+    return (fBits & other.fBits) != 0;
+  }
+  [[nodiscard]] constexpr bool none() const noexcept { return fBits == 0; }
+  constexpr bool operator==(const Flags &) const noexcept = default;
+
+private:
+  Bits fBits = 0;
+};
 
 // ---- geometry -------------------------------------------------------------
 
-enum class Axes : std::uint8_t { kNone, kX, kY, kBoth };
+namespace axis {
+struct x {};
+struct y {};
+} // namespace axis
+using Axes = Flags<axis::x, axis::y>;
+namespace axes {
+inline constexpr Axes kNone{};
+inline constexpr Axes kX = Axes::of<axis::x>();
+inline constexpr Axes kY = Axes::of<axis::y>();
+inline constexpr Axes kBoth = Axes::of<axis::x, axis::y>();
+} // namespace axes
 
-[[nodiscard]] inline bool hasX(Axes a) noexcept {
-  return a == Axes::kX || a == Axes::kBoth;
-}
-[[nodiscard]] inline bool hasY(Axes a) noexcept {
-  return a == Axes::kY || a == Axes::kBoth;
-}
-
-[[nodiscard]] inline Axes axesUnion(Axes a, Axes b) noexcept {
-  const bool x = hasX(a) || hasX(b);
-  const bool y = hasY(a) || hasY(b);
-  if (x && y)
-    return Axes::kBoth;
-  if (x)
-    return Axes::kX;
-  if (y)
-    return Axes::kY;
-  return Axes::kNone;
-}
-
-// The nine positions a node can be anchored to, as in the framework.
-enum class Anchor : std::uint8_t {
-  kTopLeft,
-  kTopCentre,
-  kTopRight,
-  kCentreLeft,
-  kCentre,
-  kCentreRight,
-  kBottomLeft,
-  kBottomCentre,
-  kBottomRight
+// A point of a box, as fractions of its width and height: where a node is
+// attached to its parent, and which of its own points lands there.
+struct Anchor {
+  float x = 0.0f;
+  float y = 0.0f;
+  constexpr bool operator==(const Anchor &) const = default;
 };
+namespace anchor {
+inline constexpr Anchor kTopLeft{0.0f, 0.0f};
+inline constexpr Anchor kTopCentre{0.5f, 0.0f};
+inline constexpr Anchor kTopRight{1.0f, 0.0f};
+inline constexpr Anchor kCentreLeft{0.0f, 0.5f};
+inline constexpr Anchor kCentre{0.5f, 0.5f};
+inline constexpr Anchor kCentreRight{1.0f, 0.5f};
+inline constexpr Anchor kBottomLeft{0.0f, 1.0f};
+inline constexpr Anchor kBottomCentre{0.5f, 1.0f};
+inline constexpr Anchor kBottomRight{1.0f, 1.0f};
+} // namespace anchor
 
-[[nodiscard]] inline float anchorX(Anchor a) noexcept {
-  switch (a) {
-  case Anchor::kTopCentre:
-  case Anchor::kCentre:
-  case Anchor::kBottomCentre:
-    return 0.5f;
-  case Anchor::kTopRight:
-  case Anchor::kCentreRight:
-  case Anchor::kBottomRight:
-    return 1.0f;
-  default:
-    return 0.0f;
-  }
-}
-
-[[nodiscard]] inline float anchorY(Anchor a) noexcept {
-  switch (a) {
-  case Anchor::kCentreLeft:
-  case Anchor::kCentre:
-  case Anchor::kCentreRight:
-    return 0.5f;
-  case Anchor::kBottomLeft:
-  case Anchor::kBottomCentre:
-  case Anchor::kBottomRight:
-    return 1.0f;
-  default:
-    return 0.0f;
-  }
-}
-
-// Where something sits across the axis it is being laid out along.
-enum class Align : std::uint8_t { kStart, kMiddle, kEnd };
+// Where something sits across the axis it is laid out along, as a fraction
+// of the room it has there.
+struct Align {
+  float at = 0.0f;
+  constexpr bool operator==(const Align &) const = default;
+};
+namespace align {
+inline constexpr Align kStart{0.0f};
+inline constexpr Align kMiddle{0.5f};
+inline constexpr Align kEnd{1.0f};
+} // namespace align
 
 struct Margin {
   float fTop = 0.0f, fRight = 0.0f, fBottom = 0.0f, fLeft = 0.0f;
@@ -132,20 +187,16 @@ struct FrameResult {
   bool fWantsAnotherFrame = false;
 };
 
-// The box a thing of that size occupies when its `origin` point is put on the
-// `anchor` point of `parent`, offset by dx and dy. What layout does for a
-// node, available on its own for what is not a node: a glyph inside a
-// control, a bar inside a row.
+// The box a thing of that size occupies when its `origin` point is put on
+// the `at` point of `parent`, offset by dx and dy.
 [[nodiscard]] inline skia::SkRect
-anchoredBox(const skia::SkRect &parent, float width, float height,
-            Anchor anchor, Anchor origin, float dx = 0.0f, float dy = 0.0f) {
-  const float ax = parent.fLeft + parent.width() * anchorX(anchor);
-  const float ay = parent.fTop + parent.height() * anchorY(anchor);
-  return skia::SkRect::MakeXYWH(ax - width * anchorX(origin) + dx,
-                                ay - height * anchorY(origin) + dy, width,
-                                height);
+anchoredBox(const skia::SkRect &parent, float width, float height, Anchor at,
+            Anchor origin, float dx = 0.0f, float dy = 0.0f) {
+  const float ax = parent.fLeft + parent.width() * at.x;
+  const float ay = parent.fTop + parent.height() * at.y;
+  return skia::SkRect::MakeXYWH(ax - width * origin.x + dx,
+                                ay - height * origin.y + dy, width, height);
 }
-
 [[nodiscard]] inline skia::SkRect anchoredBox(const skia::SkRect &parent,
                                               float width, float height,
                                               Anchor at, float dx = 0.0f,
@@ -159,7 +210,6 @@ anchoredBox(const skia::SkRect &parent, float width, float height,
                                 rect.fRight - by.fRight,
                                 rect.fBottom - by.fBottom);
 }
-
 [[nodiscard]] inline skia::SkRect inset(const skia::SkRect &rect,
                                         float horizontal, float vertical) {
   return inset(rect, Margin{vertical, horizontal, vertical, horizontal});
@@ -176,9 +226,7 @@ anchoredBox(const skia::SkRect &parent, float width, float height,
   return a;
 }
 
-// How many nodes a frame walked and how many it drew. Counters rather than
-// anything cleverer: "why does a frame cost what it costs" has been answered
-// by guessing twice now, and guessing is slower than counting.
+// How many nodes a frame walked and how many it drew.
 inline std::uint64_t &visitedCount() {
   static std::uint64_t count = 0;
   return count;
@@ -190,34 +238,50 @@ inline std::uint64_t &drawnCount() {
 
 // ---- transforms -----------------------------------------------------------
 
-enum class Easing : std::uint8_t { kNone, kOut, kOutQuint, kOutElasticHalf };
+namespace easing {
+struct none {};
+struct out {};
+struct out_quint {};
+struct out_elastic_half {};
+} // namespace easing
+using easing_t = std::variant<easing::out_quint, easing::none, easing::out,
+                              easing::out_elastic_half>;
 
-[[nodiscard]] inline float ease(Easing e, float t) {
+// How far along an ease is at time t of 1.
+[[nodiscard]] inline float ease(const easing_t &how, float t) {
   t = std::clamp(t, 0.0f, 1.0f);
-  switch (e) {
-  case Easing::kOut:
-    return 1.0f - (1.0f - t) * (1.0f - t);
-  case Easing::kOutQuint:
-    return skiff::paint::outQuint(t);
-  case Easing::kOutElasticHalf:
-    return skiff::paint::outElasticHalf(t);
-  case Easing::kNone:
-    break;
-  }
-  return t;
+  return std::visit(
+      overloaded{
+          [t](easing::none) { return t; },
+          [t](easing::out) { return 1.0f - (1.0f - t) * (1.0f - t); },
+          [t](easing::out_quint) { return skiff::paint::outQuint(t); },
+          [t](easing::out_elastic_half) {
+            return skiff::paint::outElasticHalf(t);
+          },
+      },
+      how);
 }
 
-// What a transform animates. A closed set: no allocation and no dispatch per
-// property.
-enum class Property : std::uint8_t { kAlpha, kX, kY, kWidth, kHeight, kScale };
+// What a transform animates: a closed set.
+namespace property {
+struct alpha {};
+struct x {};
+struct y {};
+struct width {};
+struct height {};
+struct scale {};
+} // namespace property
+using property_t = std::variant<property::alpha, property::x, property::y,
+                                property::width, property::height,
+                                property::scale>;
 
 struct Transform {
-  Property fProperty = Property::kAlpha;
+  property_t fProperty;
   float fFrom = 0.0f;
   float fTo = 0.0f;
   double fStartMs = 0.0;
   double fEndMs = 0.0;
-  Easing fEasing = Easing::kNone;
+  easing_t fEasing;
 };
 
 // ---- style identity ---------------------------------------------------------
@@ -241,33 +305,27 @@ struct TemplateKeyOf<Template<Args...>> {
 };
 } // namespace detail
 
-// A role is a type-safe name shared by a node and a selector. Applications
-// define empty tag types (`struct PrimaryButton;`) and never coordinate
-// string spellings.
+// A role is a type-safe name shared by a node and a selector.
 class StyleRole {
 public:
   template <class Tag> [[nodiscard]] static constexpr StyleRole of() {
     return StyleRole(&detail::styleRoleKey<Tag>);
   }
-
   [[nodiscard]] bool operator==(const StyleRole &) const noexcept = default;
 
 private:
   explicit constexpr StyleRole(const detail::StyleKey *key) : fKey(key) {}
   const detail::StyleKey *fKey;
 };
-
 template <class Tag> inline constexpr StyleRole role = StyleRole::of<Tag>();
 
 // ---- the specification ----------------------------------------------------
 
-// Every layout input a node has, gathered into one aggregate so that a node
-// can be written down rather than assembled field by field. A field left out
-// is not written at all: "zero" and "not mentioned" are different things,
-// and `{}` leaves a node as its constructor made it.
+// Every layout input a node has, as one aggregate. A field left out is not
+// written: "zero" and "not mentioned" are different things.
 //
 //   place        anchor and origin at once
-//   fill         relative size on both axes at 1.0 -- "as big as my parent"
+//   fill         relative size on both axes at 1.0
 //   fillX/fillY  the same on one axis
 struct Spec {
   std::optional<Anchor> place{};
@@ -289,8 +347,8 @@ struct Spec {
   std::optional<Align> alignSelf{};
   std::optional<float> depth{};
 
-  // Plain, not optional, so that `.padding = {2, 6, 2, 6}` compiles. An
-  // all-zero margin reads as "not mentioned".
+  // Plain, so that `.padding = {2, 6, 2, 6}` compiles. All zero reads as
+  // "not mentioned".
   Margin margin{};
   Margin padding{};
 
@@ -307,29 +365,24 @@ struct Spec {
 
 // ---- declarative styling -------------------------------------------------
 
-enum class StyleState : std::uint8_t {
-  kNone = 0,
-  kHover = 1 << 0,
-  kSelected = 1 << 1,
-  kDisabled = 1 << 2,
-  kFocus = 1 << 3,
-};
+// The states a rule can ask for.
+namespace state {
+struct hover {};
+struct selected {};
+struct disabled {};
+struct focus {};
+} // namespace state
+using StyleStates = Flags<state::hover, state::selected, state::disabled,
+                          state::focus>;
+namespace states {
+inline constexpr StyleStates kNone{};
+inline constexpr StyleStates kHover = StyleStates::of<state::hover>();
+inline constexpr StyleStates kSelected = StyleStates::of<state::selected>();
+inline constexpr StyleStates kDisabled = StyleStates::of<state::disabled>();
+inline constexpr StyleStates kFocus = StyleStates::of<state::focus>();
+} // namespace states
 
-[[nodiscard]] constexpr StyleState operator|(StyleState a,
-                                             StyleState b) noexcept {
-  return static_cast<StyleState>(static_cast<std::uint8_t>(a) |
-                                 static_cast<std::uint8_t>(b));
-}
-
-[[nodiscard]] constexpr bool hasState(StyleState states,
-                                      StyleState state) noexcept {
-  return (static_cast<std::uint8_t>(states) &
-          static_cast<std::uint8_t>(state)) != 0;
-}
-
-// The declarations every node understands, plus the inheritable visual ones
-// Text and Box read. Margins are optional here: a rule must be able to clear
-// a margin a less specific rule supplied.
+// The declarations every node understands, plus the inheritable visual ones.
 struct Style {
   std::optional<Anchor> anchor{}, origin{};
   std::optional<float> x{}, y{};
@@ -350,10 +403,9 @@ struct Style {
   std::optional<float> fontSize{};
   std::optional<bool> fontBold{};
 
-  // A state change animates position, size, scale and alpha. Zero or absent
-  // is immediate.
+  // A state change animates position, size, scale and alpha.
   std::optional<double> transitionMs{};
-  std::optional<Easing> transitionEasing{};
+  std::optional<easing_t> transitionEasing{};
 
   void overlay(const Style &other) {
 #define SKIFF_OVERLAY(member)                                                  \
@@ -391,14 +443,12 @@ struct Style {
   }
 };
 
-// What a rule is matched against: which type the node is (and which class
-// template, when it is a specialisation of one), its roles and its states.
-// Plain data, built by the walks, so a sheet never needs the node itself.
+// What a rule is matched against: plain data built by the walks.
 struct StyleSubject {
   const detail::StyleKey *fType = nullptr;
   const detail::StyleKey *fTemplate = nullptr;
   std::span<const StyleRole> fRoles;
-  StyleState fStates = StyleState::kNone;
+  StyleStates fStates;
   float fViewportWidth = 0.0f;
 
   [[nodiscard]] bool has(StyleRole role) const noexcept {
@@ -406,17 +456,16 @@ struct StyleSubject {
   }
 };
 
-// A selector subject that is a class template rather than a type:
-// select<widgets::Button>() matches every Button<Action>.
+// Selector subjects: a type, a class template (every specialisation), or
+// anything.
 template <template <class...> class Template> struct OfTemplate {};
-// A selector subject that is any node.
 struct Anything {};
 
 template <class Subject, class... Roles> class Selector {
 public:
   [[nodiscard]] constexpr Selector when(this Selector self,
-                                          StyleState state) {
-    self.fStates = self.fStates | state;
+                                          StyleStates wanted) {
+    self.fStates = self.fStates | wanted;
     return self;
   }
   [[nodiscard]] constexpr Selector atLeastWidth(this Selector self,
@@ -431,7 +480,7 @@ public:
   }
 
 private:
-  StyleState fStates = StyleState::kNone;
+  StyleStates fStates;
   std::optional<float> fMinViewportWidth{}, fMaxViewportWidth{};
 
   template <class, class...> friend struct StyleRule;
@@ -451,20 +500,22 @@ template <class... Roles>
 }
 
 namespace detail {
-template <class T> struct SubjectKey {
-  [[nodiscard]] static bool matches(const StyleSubject &subject) {
-    return subject.fType == &styleNodeKey<T>;
-  }
-};
+// Whether a subject is what a selector names: overloads on the selector's
+// subject type.
+template <class T>
+[[nodiscard]] bool isSubject(std::type_identity<T>,
+                             const StyleSubject &subject) {
+  return subject.fType == &styleNodeKey<T>;
+}
 template <template <class...> class Template>
-struct SubjectKey<OfTemplate<Template>> {
-  [[nodiscard]] static bool matches(const StyleSubject &subject) {
-    return subject.fTemplate == &styleTemplateKey<Template>;
-  }
-};
-template <> struct SubjectKey<Anything> {
-  [[nodiscard]] static bool matches(const StyleSubject &) { return true; }
-};
+[[nodiscard]] bool isSubject(std::type_identity<OfTemplate<Template>>,
+                             const StyleSubject &subject) {
+  return subject.fTemplate == &styleTemplateKey<Template>;
+}
+[[nodiscard]] inline bool isSubject(std::type_identity<Anything>,
+                                    const StyleSubject &) {
+  return true;
+}
 } // namespace detail
 
 template <class Subject, class... Roles> struct StyleRule {
@@ -472,30 +523,20 @@ template <class Subject, class... Roles> struct StyleRule {
   Style fStyle;
 
   [[nodiscard]] bool matchesSubject(const StyleSubject &node) const {
-    if (!detail::SubjectKey<Subject>::matches(node)) {
-      return false;
-    }
-    if (!(node.has(role<Roles>) && ...)) {
-      return false;
-    }
-    return (!fSelector.fMinViewportWidth ||
+    return detail::isSubject(std::type_identity<Subject>{}, node) &&
+           (node.has(role<Roles>) && ...) &&
+           (!fSelector.fMinViewportWidth ||
             node.fViewportWidth >= *fSelector.fMinViewportWidth) &&
            (!fSelector.fMaxViewportWidth ||
             node.fViewportWidth <= *fSelector.fMaxViewportWidth);
   }
   [[nodiscard]] bool matches(const StyleSubject &node) const {
-    const StyleState wanted = fSelector.fStates;
-    for (StyleState one : {StyleState::kHover, StyleState::kFocus,
-                           StyleState::kSelected, StyleState::kDisabled}) {
-      if (hasState(wanted, one) && !hasState(node.fStates, one)) {
-        return false;
-      }
-    }
-    return this->matchesSubject(node);
+    return node.fStates.contains(fSelector.fStates) &&
+           this->matchesSubject(node);
   }
   [[nodiscard]] bool usesState(const StyleSubject &node,
-                               StyleState state) const {
-    return hasState(fSelector.fStates, state) && this->matchesSubject(node);
+                               StyleStates which) const {
+    return fSelector.fStates.any(which) && this->matchesSubject(node);
   }
 };
 
@@ -526,10 +567,10 @@ public:
     return out;
   }
   [[nodiscard]] bool usesState(const StyleSubject &node,
-                               StyleState state) const {
+                               StyleStates which) const {
     return std::apply(
         [&](const auto &...rules) {
-          return (rules.usesState(node, state) || ... || false);
+          return (rules.usesState(node, which) || ... || false);
         },
         fRules);
   }
@@ -543,7 +584,7 @@ private:
 // A sheet as the walks keep it: two functions instantiated for one theme.
 struct StyleResolver {
   Style (*fResolve)(const StyleSubject &) = nullptr;
-  bool (*fUsesState)(const StyleSubject &, StyleState) = nullptr;
+  bool (*fUsesState)(const StyleSubject &, StyleStates) = nullptr;
 
   [[nodiscard]] explicit operator bool() const noexcept {
     return fResolve != nullptr;
@@ -552,37 +593,13 @@ struct StyleResolver {
     return {+[](const StyleSubject &node) {
               return Theme::styles.resolve(node);
             },
-            +[](const StyleSubject &node, StyleState state) {
-              return Theme::styles.usesState(node, state);
+            +[](const StyleSubject &node, StyleStates which) {
+              return Theme::styles.usesState(node, which);
             }};
   }
 };
 
 // ---- input and accessibility --------------------------------------------
-
-enum class EventPhase : std::uint8_t { kCapture, kTarget, kBubble };
-enum class PointerAction : std::uint8_t {
-  kMove,
-  kDown,
-  kUp,
-  kCancel,
-  kScroll
-};
-enum class Key : std::uint16_t {
-  kUnknown,
-  kTab,
-  kEnter,
-  kSpace,
-  kEscape,
-  kLeft,
-  kRight,
-  kUp,
-  kDown,
-  kHome,
-  kEnd,
-  kBackspace,
-  kDelete
-};
 
 // One axis of scrolling, as a gesture: the press, the slop before it counts
 // as a drag, speed measured against the clock, friction, the spring past an
@@ -749,19 +766,59 @@ private:
 // pointer: a node that is gone is simply not found by it any more.
 using NodeId = std::uint64_t;
 
-struct PointerEvent {
-  PointerAction fAction = PointerAction::kMove;
-  EventPhase fPhase = EventPhase::kTarget;
-  float fX = 0.0f, fY = 0.0f;
-  float fScrollX = 0.0f, fScrollY = 0.0f;
-  int fButton = 0;
-  // The node the event is for, and the one it is being delivered to now: an
-  // ancestor handling a child's event in the bubble phase tells which child
-  // by comparing ids.
+// Where on the way to its node an event is.
+namespace phase {
+struct capture {};
+struct target {};
+struct bubble {};
+} // namespace phase
+
+// The pointer.
+namespace pointer {
+struct move {
+  float x = 0.0f, y = 0.0f;
+};
+struct down {
+  float x = 0.0f, y = 0.0f;
+  int button = 0;
+};
+struct up {
+  float x = 0.0f, y = 0.0f;
+  int button = 0;
+};
+// The gesture is over without ending where it began: a container took it,
+// or a modal covered the scene.
+struct cancel {
+  float x = 0.0f, y = 0.0f;
+};
+struct scroll {
+  float x = 0.0f, y = 0.0f;
+  float dx = 0.0f, dy = 0.0f;
+};
+} // namespace pointer
+using pointer_t = std::variant<pointer::move, pointer::down, pointer::up,
+                               pointer::cancel, pointer::scroll>;
+
+// Where a pointer event is.
+[[nodiscard]] inline skia::SkPoint where(const pointer_t &event) {
+  return std::visit(
+      [](const auto &one) { return skia::SkPoint::Make(one.x, one.y); },
+      event);
+}
+// Whether it ends a gesture.
+[[nodiscard]] inline bool ends(const pointer_t &event) {
+  return std::visit(overloaded{[](const pointer::up &) { return true; },
+                               [](const pointer::cancel &) { return true; },
+                               [](const auto &) { return false; }},
+                    event);
+}
+
+// What delivering a pointer event says and asks: which node it is for and
+// which has it now, and what the handler wants done.
+struct PointerReply {
   NodeId fTarget = 0;
-  NodeId fCurrentTarget = 0;
-  // Whether some node already holds the pointer: a scroll container deciding
-  // to take a drag has to know whether something else took it first.
+  NodeId fCurrent = 0;
+  // Whether some node already holds the pointer.
   bool fCaptured = false;
   bool fHandled = false;
   bool fCapturePointer = false;
@@ -774,72 +831,119 @@ struct PointerEvent {
   void capturePointer() noexcept { fCapturePointer = true; }
   void releasePointer() noexcept { fReleasePointer = true; }
   void requestFocus() noexcept { fRequestFocus = true; }
-  // A gesture-owning ancestor uses this during capture: the target may arm a
-  // tap, but must not activate until the ancestor has had a chance to turn
-  // the same press into a drag.
+  // A gesture-owning ancestor, in the capture phase: the target may arm a
+  // tap but must not activate until the ancestor has had its chance to turn
+  // the press into a drag.
   void deferClick() noexcept { fDeferClick = true; }
-  // Touch scrolling is not pointing: controls under a finger that is deciding
-  // between a tap and a drag do not hover.
+  // Touch scrolling is not pointing: what is under a finger deciding between
+  // a tap and a drag does not hover.
   void suppressHover() noexcept { fSuppressHover = true; }
 };
 
-struct KeyEvent {
-  Key fKey = Key::kUnknown;
-  EventPhase fPhase = EventPhase::kTarget;
-  bool fPressed = true;
-  bool fRepeat = false;
-  bool fShift = false, fControl = false, fAlt = false, fSuper = false;
-  NodeId fTarget = 0;
-  NodeId fCurrentTarget = 0;
-  bool fHandled = false;
-
-  void handle() noexcept { fHandled = true; }
+// A key: a code, from whatever the window system calls it.
+struct Key {
+  std::uint16_t code = 0;
+  constexpr bool operator==(const Key &) const = default;
 };
+namespace keys {
+inline constexpr Key kUnknown{0};
+inline constexpr Key kTab{1};
+inline constexpr Key kEnter{2};
+inline constexpr Key kSpace{3};
+inline constexpr Key kEscape{4};
+inline constexpr Key kLeft{5};
+inline constexpr Key kRight{6};
+inline constexpr Key kUp{7};
+inline constexpr Key kDown{8};
+inline constexpr Key kHome{9};
+inline constexpr Key kEnd{10};
+inline constexpr Key kBackspace{11};
+inline constexpr Key kDelete{12};
+} // namespace keys
+
+namespace modifier {
+struct shift {};
+struct control {};
+struct alt {};
+struct super {};
+} // namespace modifier
+using Modifiers =
+    Flags<modifier::shift, modifier::control, modifier::alt, modifier::super>;
+namespace modifiers {
+inline constexpr Modifiers kNone{};
+inline constexpr Modifiers kShift = Modifiers::of<modifier::shift>();
+inline constexpr Modifiers kControl = Modifiers::of<modifier::control>();
+inline constexpr Modifiers kAlt = Modifiers::of<modifier::alt>();
+inline constexpr Modifiers kSuper = Modifiers::of<modifier::super>();
+} // namespace modifiers
+
+namespace key {
+struct down {
+  Key key;
+  Modifiers modifiers;
+  bool repeat = false;
+};
+struct up {
+  Key key;
+  Modifiers modifiers;
+};
+} // namespace key
+using key_t = std::variant<key::down, key::up>;
 
 // Text and composition are distinct: an IME can replace its provisional
 // range many times before committing it.
-struct TextInputEvent {
-  std::string_view fText;
-  std::string_view fComposition;
-  EventPhase fPhase = EventPhase::kTarget;
+namespace text {
+struct commit {
+  std::string_view text;
+};
+struct compose {
+  std::string_view text;
+  int start = 0;
+  int length = 0;
+};
+} // namespace text
+using text_t = std::variant<text::commit, text::compose>;
+
+// What assistive technology asks of a node.
+namespace semantic_action {
+struct focus {};
+struct activate {};
+struct increment {};
+struct decrement {};
+struct set_value {
+  float value = 0.0f;
+  std::string_view text;
+};
+} // namespace semantic_action
+using semantic_action_t =
+    std::variant<semantic_action::focus, semantic_action::activate,
+                 semantic_action::increment, semantic_action::decrement,
+                 semantic_action::set_value>;
+
+// What a node is to a screen reader.
+namespace semantic_role {
+struct none {};
+struct group {};
+struct button {};
+struct text {};
+struct text_box {};
+struct slider {};
+struct toggle {};
+struct tab {};
+struct list {};
+struct list_item {};
+} // namespace semantic_role
+using semantic_role_t =
+    std::variant<semantic_role::none, semantic_role::group,
+                 semantic_role::button, semantic_role::text,
+                 semantic_role::text_box, semantic_role::slider,
+                 semantic_role::toggle, semantic_role::tab,
+                 semantic_role::list, semantic_role::list_item>;
+
+// What delivering a key, text or semantic action says and asks.
+struct Reply {
   NodeId fTarget = 0;
-  NodeId fCurrentTarget = 0;
-  int fSelectionStart = 0;
-  int fSelectionLength = 0;
-  bool fCommit = true;
-  bool fHandled = false;
-
-  void handle() noexcept { fHandled = true; }
-};
-
-enum class SemanticRole : std::uint8_t {
-  kNone,
-  kGroup,
-  kButton,
-  kText,
-  kTextBox,
-  kSlider,
-  kToggle,
-  kTab,
-  kList,
-  kListItem
-};
-
-enum class SemanticAction : std::uint8_t {
-  kFocus,
-  kActivate,
-  kIncrement,
-  kDecrement,
-  kSetValue
-};
-
-struct SemanticActionEvent {
-  SemanticAction fAction = SemanticAction::kActivate;
-  float fValue = 0.0f;
-  std::string_view fText;
-  EventPhase fPhase = EventPhase::kTarget;
-  NodeId fTarget = 0;
-  NodeId fCurrentTarget = 0;
+  NodeId fCurrent = 0;
   bool fHandled = false;
   bool fRequestFocus = false;
 
@@ -849,7 +953,7 @@ struct SemanticActionEvent {
 
 struct Semantics {
   NodeId fId = 0;
-  SemanticRole fRole = SemanticRole::kNone;
+  semantic_role_t fRole;
   std::string fLabel;
   std::string fValue;
   std::string fHint;
@@ -858,13 +962,23 @@ struct Semantics {
   bool fSelected = false;
   skia::SkRect fBounds = skia::SkRect::MakeEmpty();
   int fParent = -1;
-  std::vector<SemanticAction> fActions;
+  std::vector<semantic_action_t> fActions;
 };
 
+[[nodiscard]] inline bool isTextBox(const semantic_role_t &role) {
+  return std::visit(overloaded{[](semantic_role::text_box) { return true; },
+                               [](auto) { return false; }},
+                    role);
+}
+[[nodiscard]] inline bool hasRole(const semantic_role_t &role) {
+  return std::visit(overloaded{[](semantic_role::none) { return false; },
+                               [](auto) { return true; }},
+                    role);
+}
+
 // Whether whatever holds focus is somewhere text is typed, told to the host
-// when it changes: a phone has to raise an on-screen keyboard and sees key
-// events, not what they are for. The host keeps what it passes and clears
-// the hook before that goes away -- a pointer is kept here, not a copy.
+// when it changes. The host keeps what it passes and clears the hook before
+// that goes away.
 struct TextFocusHook {
   void (*fCall)(void *target, bool text) = nullptr;
   void *fTarget = nullptr;
@@ -906,11 +1020,11 @@ public:
 
   // -- layout inputs
   float fWidth = 0.0f, fHeight = 0.0f;  // absolute, or a fraction if relative
-  Axes fRelativeSizeAxes = Axes::kNone; // size is a fraction of the parent
-  Axes fAutoSizeAxes = Axes::kNone;     // size follows the children
+  Axes fRelativeSizeAxes; // size is a fraction of the parent
+  Axes fAutoSizeAxes;     // size follows the children
   // Inside a flow, takes an equal share of what the other children leave
   // along the flow's axis.
-  Axes fGrowAxes = Axes::kNone;
+  Axes fGrowAxes;
   // Bounds on the computed size. Zero means no limit, on the maximums.
   float fMinWidth = 0.0f, fMaxWidth = 0.0f;
   float fMinHeight = 0.0f, fMaxHeight = 0.0f;
@@ -918,8 +1032,8 @@ public:
   std::optional<Align> fAlignSelf{};
   // Drawn and hit-tested in this order within the parent, low first.
   float fDepth = 0.0f;
-  Anchor fAnchor = Anchor::kTopLeft; // point in the parent to attach to
-  Anchor fOrigin = Anchor::kTopLeft; // point in this node that lands there
+  Anchor fAnchor = anchor::kTopLeft; // point in the parent to attach to
+  Anchor fOrigin = anchor::kTopLeft; // point in this node that lands there
   Margin fMargin;                    // outside the node
   Margin fPadding;                   // inside, applied to children
   float fX = 0.0f, fY = 0.0f;        // offset from the anchor
@@ -1132,11 +1246,11 @@ public:
     // a widget's full-width default.
     Axes relative = spec.relativeSize.value_or(fRelativeSizeAxes);
     if (spec.fill || spec.fillX) {
-      relative = axesUnion(relative, Axes::kX);
+      relative = relative.with<axis::x>();
       fWidth = 1.0f;
     }
     if (spec.fill || spec.fillY) {
-      relative = axesUnion(relative, Axes::kY);
+      relative = relative.with<axis::y>();
       fHeight = 1.0f;
     }
     if (spec.relativeSize || spec.fill || spec.fillX || spec.fillY) {
@@ -1207,19 +1321,17 @@ public:
     }
     // Sizing an axis both from the parent and from the children asks for two
     // numbers at once: say which, and keep the relative one.
-    if ((hasX(fRelativeSizeAxes) && hasX(fAutoSizeAxes)) ||
-        (hasY(fRelativeSizeAxes) && hasY(fAutoSizeAxes))) {
+    if (fRelativeSizeAxes.any(fAutoSizeAxes)) {
       std::println(std::cerr,
                    "[scene] relative and automatic sizing on the same axis");
-      fAutoSizeAxes = Axes::kNone;
+      fAutoSizeAxes = axes::kNone;
     }
     // A flow writes a grown child's size; anything else claiming the axis
     // would be overwritten every frame.
-    if ((hasX(fGrowAxes) && (hasX(fRelativeSizeAxes) || hasX(fAutoSizeAxes))) ||
-        (hasY(fGrowAxes) && (hasY(fRelativeSizeAxes) || hasY(fAutoSizeAxes)))) {
+    if (fGrowAxes.any(fRelativeSizeAxes | fAutoSizeAxes)) {
       std::println(std::cerr,
                    "[scene] growing and sized another way on the same axis");
-      fGrowAxes = Axes::kNone;
+      fGrowAxes = axes::kNone;
     }
     const auto after = this->commonValues();
     if (!sameLayout(before, after)) {
@@ -1230,25 +1342,25 @@ public:
   }
 
   // -- transforms
-  void fadeTo(float target, double durationMs, Easing e = Easing::kOutQuint) {
-    this->transformTo(Property::kAlpha, fAlpha, target, durationMs, e);
+  void fadeTo(float target, double durationMs, easing_t e = easing::out_quint{}) {
+    this->transformTo(property::alpha{}, fAlpha, target, durationMs, e);
   }
-  void moveToX(float target, double durationMs, Easing e = Easing::kOutQuint) {
-    this->transformTo(Property::kX, fX, target, durationMs, e);
+  void moveToX(float target, double durationMs, easing_t e = easing::out_quint{}) {
+    this->transformTo(property::x{}, fX, target, durationMs, e);
   }
-  void moveToY(float target, double durationMs, Easing e = Easing::kOutQuint) {
-    this->transformTo(Property::kY, fY, target, durationMs, e);
+  void moveToY(float target, double durationMs, easing_t e = easing::out_quint{}) {
+    this->transformTo(property::y{}, fY, target, durationMs, e);
   }
   void resizeWidthTo(float target, double durationMs,
-                     Easing e = Easing::kOutQuint) {
-    this->transformTo(Property::kWidth, fWidth, target, durationMs, e);
+                     easing_t e = easing::out_quint{}) {
+    this->transformTo(property::width{}, fWidth, target, durationMs, e);
   }
   void resizeHeightTo(float target, double durationMs,
-                      Easing e = Easing::kOutQuint) {
-    this->transformTo(Property::kHeight, fHeight, target, durationMs, e);
+                      easing_t e = easing::out_quint{}) {
+    this->transformTo(property::height{}, fHeight, target, durationMs, e);
   }
-  void scaleTo(float target, double durationMs, Easing e = Easing::kOutQuint) {
-    this->transformTo(Property::kScale, fScale, target, durationMs, e);
+  void scaleTo(float target, double durationMs, easing_t e = easing::out_quint{}) {
+    this->transformTo(property::scale{}, fScale, target, durationMs, e);
   }
   // Everything queued after this starts that much later.
   void delay(double ms) { fDelayMs = ms; }
@@ -1267,14 +1379,14 @@ public:
 
   // Placement by a container, during its layout: writes the position a flow
   // decided without counting as a change somebody made.
-  void arrange(float x, float y, Anchor anchor = Anchor::kTopLeft,
-               Anchor origin = Anchor::kTopLeft) {
-    if (fX == x && fY == y && fAnchor == anchor && fOrigin == origin) {
+  void arrange(float x, float y, Anchor at = anchor::kTopLeft,
+               Anchor origin = anchor::kTopLeft) {
+    if (fX == x && fY == y && fAnchor == at && fOrigin == origin) {
       return;
     }
     fX = x;
     fY = y;
-    fAnchor = anchor;
+    fAnchor = at;
     fOrigin = origin;
     fLayoutValid = false;
   }
@@ -1290,13 +1402,13 @@ public:
   // What the walks keep. Public so that the walks, which are free functions,
   // can reach it; nothing else has a reason to.
   struct Common {
-    Anchor fAnchor = Anchor::kTopLeft;
-    Anchor fOrigin = Anchor::kTopLeft;
+    Anchor fAnchor = anchor::kTopLeft;
+    Anchor fOrigin = anchor::kTopLeft;
     float fX = 0.0f, fY = 0.0f;
     float fWidth = 0.0f, fHeight = 0.0f;
-    Axes fRelativeSize = Axes::kNone;
-    Axes fAutoSize = Axes::kNone;
-    Axes fGrow = Axes::kNone;
+    Axes fRelativeSize;
+    Axes fAutoSize;
+    Axes fGrow;
     float fMinWidth = 0.0f, fMaxWidth = 0.0f;
     float fMinHeight = 0.0f, fMaxHeight = 0.0f;
     std::optional<Align> fAlignSelf{};
@@ -1408,7 +1520,7 @@ public:
     const bool changed = target != current;
     const bool layoutChanged = !sameLayout(target, current);
     const double duration = style.transitionMs.value_or(0.0);
-    const Easing easing = style.transitionEasing.value_or(Easing::kOutQuint);
+    const easing_t how = style.transitionEasing.value_or(easing::out_quint{});
 
 #define SKIFF_STYLE_DIRECT(declaration, targetMember, liveMember)             \
   if (style.declaration || fResolvedStyle.declaration) {                      \
@@ -1438,14 +1550,14 @@ public:
                                ? fStyledTarget.member                         \
                                : current.member;                              \
     this->setStyledProperty(property, target.member, previous, duration,      \
-                            easing, animate);                                 \
+                            how, animate);                                    \
   }
-    SKIFF_STYLE_ANIMATED(x, fX, Property::kX);
-    SKIFF_STYLE_ANIMATED(y, fY, Property::kY);
-    SKIFF_STYLE_ANIMATED(width, fWidth, Property::kWidth);
-    SKIFF_STYLE_ANIMATED(height, fHeight, Property::kHeight);
-    SKIFF_STYLE_ANIMATED(scale, fScale, Property::kScale);
-    SKIFF_STYLE_ANIMATED(alpha, fAlpha, Property::kAlpha);
+    SKIFF_STYLE_ANIMATED(x, fX, property::x{});
+    SKIFF_STYLE_ANIMATED(y, fY, property::y{});
+    SKIFF_STYLE_ANIMATED(width, fWidth, property::width{});
+    SKIFF_STYLE_ANIMATED(height, fHeight, property::height{});
+    SKIFF_STYLE_ANIMATED(scale, fScale, property::scale{});
+    SKIFF_STYLE_ANIMATED(alpha, fAlpha, property::alpha{});
 #undef SKIFF_STYLE_ANIMATED
 
     fStyledTarget = target;
@@ -1456,11 +1568,11 @@ public:
     }
   }
 
-  void transformTo(Property property, float from, float to, double durationMs,
-                   Easing e) {
+  void transformTo(property_t property, float from, float to,
+                   double durationMs, easing_t e) {
     // A new transform on a property replaces whatever was animating it.
-    std::erase_if(fTransforms, [property](const Transform &t) {
-      return t.fProperty == property;
+    std::erase_if(fTransforms, [&property](const Transform &t) {
+      return t.fProperty.index() == property.index();
     });
     if (durationMs <= 0.0) {
       this->applyProperty(property, to);
@@ -1534,114 +1646,112 @@ private:
     return next.fetch_add(1, std::memory_order_relaxed);
   }
 
-  void setStyledProperty(Property property, float target, float previousTarget,
-                         double durationMs, Easing easing, bool animate) {
+  void setStyledProperty(const property_t &property, float target,
+                         float previousTarget, double durationMs,
+                         const easing_t &how, bool animate) {
     if (target == previousTarget) {
       return;
     }
     if (animate && durationMs > 0.0) {
-      this->transformTo(property, this->propertyValue(property), target,
-                        durationMs, easing);
+      this->transformTo(property, this->propertyRef(property), target,
+                        durationMs, how);
     } else {
-      this->transformTo(property, target, target, 0.0, easing);
+      this->transformTo(property, target, target, 0.0, how);
     }
   }
 
-  [[nodiscard]] float &propertyRef(Property property) {
-    switch (property) {
-    case Property::kAlpha:
-      return fAlpha;
-    case Property::kX:
-      return fX;
-    case Property::kY:
-      return fY;
-    case Property::kWidth:
-      return fWidth;
-    case Property::kHeight:
-      return fHeight;
-    case Property::kScale:
-      break;
-    }
-    return fScale;
-  }
-  [[nodiscard]] float propertyValue(Property property) {
-    return this->propertyRef(property);
+  [[nodiscard]] float &propertyRef(const property_t &property) {
+    return std::visit(
+        overloaded{[this](property::alpha) -> float & { return fAlpha; },
+                   [this](property::x) -> float & { return fX; },
+                   [this](property::y) -> float & { return fY; },
+                   [this](property::width) -> float & { return fWidth; },
+                   [this](property::height) -> float & { return fHeight; },
+                   [this](property::scale) -> float & { return fScale; }},
+        property);
   }
 
-  void applyProperty(Property property, float value) {
+  void applyProperty(const property_t &property, float value) {
     float &current = this->propertyRef(property);
     if (current == value) {
       return;
     }
     current = value;
-    if (property == Property::kAlpha) {
-      this->markDamaged();
-    } else {
-      this->invalidateLayout();
-    }
+    // Alpha only repaints; the rest move or resize.
+    std::visit(overloaded{[this](property::alpha) { this->markDamaged(); },
+                          [this](auto) { this->invalidateLayout(); }},
+               property);
   }
 };
 
-struct Node;
 
 // ---- children --------------------------------------------------------------
 
 class AnyNode;
+struct Node;
 
-namespace detail {
-template <class T> struct IsVariant : std::false_type {};
-template <class... Ts> struct IsVariant<std::variant<Ts...>> : std::true_type {};
-template <class T> struct IsOptional : std::false_type {};
-template <class T> struct IsOptional<std::optional<T>> : std::true_type {};
-template <class T> struct IsPointer : std::false_type {};
-template <class T, class D>
-struct IsPointer<std::unique_ptr<T, D>> : std::true_type {};
-template <class T> struct IsPointer<std::shared_ptr<T>> : std::true_type {};
-template <class T> struct IsReference : std::false_type {};
-template <class T>
-struct IsReference<std::reference_wrapper<T>> : std::true_type {};
-template <class T> struct IsTuple : std::false_type {};
-template <class... Ts> struct IsTuple<std::tuple<Ts...>> : std::true_type {};
-} // namespace detail
-
-// What can be a child: a way of holding nodes -- a std::variant (its
-// alternative, unless that is std::monostate), a std::optional, a pointer, a
-// reference_wrapper, a tuple, an AnyNode, a range -- or a node. The walks see
-// through the holders to the nodes.
 // A node type that is also a range -- it has begin() and end() -- is walked
 // as a range of children unless it says it is a node:
 //
 //   template <> inline constexpr bool skiff::scene::kTreatAsNode<MyList> = true;
 template <class T> inline constexpr bool kTreatAsNode = false;
 
-template <class Child, class F> void visitChild(Child &child, F &&f) {
-  using C = std::remove_cvref_t<Child>;
-  if constexpr (std::same_as<C, std::monostate>) {
-    // nothing
-  } else if constexpr (detail::IsVariant<C>::value) {
-    std::visit([&](auto &alternative) { visitChild(alternative, f); }, child);
-  } else if constexpr (detail::IsOptional<C>::value ||
-                       detail::IsPointer<C>::value) {
-    if (child) {
-      visitChild(*child, f);
-    }
-  } else if constexpr (detail::IsReference<C>::value) {
-    visitChild(child.get(), f);
-  } else if constexpr (detail::IsTuple<C>::value) {
-    std::apply([&](auto &...each) { (visitChild(each, f), ...); }, child);
-  } else if constexpr (std::same_as<C, AnyNode>) {
-    if (child) {
-      f(child);
-    }
-  } else if constexpr (std::ranges::range<C> && !kTreatAsNode<C>) {
-    for (auto &each : child) {
-      visitChild(each, f);
-    }
-  } else {
-    // Anything else is a node.
-    f(child);
+// What can be a child: a way of holding nodes -- a std::variant (its
+// alternative, unless that is std::monostate), a std::optional, a pointer, a
+// reference_wrapper, a tuple, an AnyNode, a range -- or a node. One overload
+// per holder; anything else is a node.
+template <class F> void visitChild(std::monostate &, F &&);
+template <class... Ts, class F> void visitChild(std::variant<Ts...> &, F &&);
+template <class T, class F> void visitChild(std::optional<T> &, F &&);
+template <class T, class D, class F>
+void visitChild(std::unique_ptr<T, D> &, F &&);
+template <class T, class F> void visitChild(std::shared_ptr<T> &, F &&);
+template <class T, class F> void visitChild(std::reference_wrapper<T> &, F &&);
+template <class... Ts, class F> void visitChild(std::tuple<Ts...> &, F &&);
+template <class F> void visitChild(AnyNode &, F &&);
+template <class R, class F>
+  requires(std::ranges::range<R> && !kTreatAsNode<R>)
+void visitChild(R &, F &&);
+template <class N, class F> void visitChild(N &, F &&);
+
+template <class F> void visitChild(std::monostate &, F &&) {}
+template <class... Ts, class F>
+void visitChild(std::variant<Ts...> &child, F &&f) {
+  std::visit([&](auto &alternative) { visitChild(alternative, f); }, child);
+}
+template <class T, class F> void visitChild(std::optional<T> &child, F &&f) {
+  if (child) {
+    visitChild(*child, f);
   }
 }
+template <class T, class D, class F>
+void visitChild(std::unique_ptr<T, D> &child, F &&f) {
+  if (child) {
+    visitChild(*child, f);
+  }
+}
+template <class T, class F>
+void visitChild(std::shared_ptr<T> &child, F &&f) {
+  if (child) {
+    visitChild(*child, f);
+  }
+}
+template <class T, class F>
+void visitChild(std::reference_wrapper<T> &child, F &&f) {
+  visitChild(child.get(), f);
+}
+template <class... Ts, class F>
+void visitChild(std::tuple<Ts...> &child, F &&f) {
+  std::apply([&](auto &...each) { (visitChild(each, f), ...); }, child);
+}
+template <class R, class F>
+  requires(std::ranges::range<R> && !kTreatAsNode<R>)
+void visitChild(R &child, F &&f) {
+  for (auto &each : child) {
+    visitChild(each, f);
+  }
+}
+template <class N, class F> void visitChild(N &child, F &&f) { f(child); }
 
 // Each child of a node, in the order its forEachChild gives them, holders
 // seen through.
@@ -1649,130 +1759,104 @@ template <class T, class F> void eachChild(T &node, F &&f) {
   node.forEachChild([&](auto &child) { visitChild(child, f); });
 }
 
-template <class C> [[nodiscard]] State &stateOf(C &child);
+// The State of a child: a node's own, or the one inside an AnyNode.
+template <class N> [[nodiscard]] State &stateOf(N &child) {
+  return child.fState;
+}
+[[nodiscard]] State &stateOf(AnyNode &child);
 
-// ---- hooks -------------------------------------------------------------------
+// ---- default handling --------------------------------------------------------
+//
+// What a node does with an event it has no handler for. Overload sets: the
+// general one does nothing, and the ones for particular phases and events
+// act. A node's own handler calls these for what it does not handle itself.
 
-namespace hook {
-template <class T> [[nodiscard]] bool acceptsInput(T &node) {
-  return node.acceptsInput();
-}
-template <class T> [[nodiscard]] bool focusable(T &node) {
-  return node.focusable();
-}
-template <class T> [[nodiscard]] bool hoverChangesAppearance(T &node) {
-  return node.hoverChangesAppearance();
-}
-template <class T> [[nodiscard]] bool focusChangesAppearance(T &node) {
-  return node.focusChangesAppearance();
-}
-template <class T> [[nodiscard]] bool settling(T &node) {
-  return node.settling();
-}
-template <class T> [[nodiscard]] bool onClick(T &node, float x, float y) {
-  return node.onClick(x, y);
-}
-template <class T> [[nodiscard]] bool onScroll(T &node, float ticks) {
-  return node.onScroll(ticks);
-}
-template <class T> [[nodiscard]] Semantics semantics(T &node) {
-  return node.semantics();
-}
-template <class T> [[nodiscard]] bool takesText(T &node) {
-  return hook::semantics(node).fRole == SemanticRole::kTextBox;
-}
-} // namespace hook
-
-// What a node does with a pointer event when it says nothing itself: a
-// press is a click, a wheel is a scroll, and a click a gesture-owning
-// ancestor deferred waits for the release. A node with its own
-// onPointerEvent calls this for what it does not handle.
+template <class T, class Phase, class Input>
+void defaultPointer(T &, const Phase &, const Input &, PointerReply &) {}
+// A press is a click -- unless a gesture-owning ancestor deferred it, when
+// the click waits for the release.
 template <class T>
-  requires std::derived_from<T, Node> void defaultPointerEvent(T &node, PointerEvent &event) {
-  State &state = node.fState;
-  if (event.fPhase != EventPhase::kTarget) {
-    return;
+void defaultPointer(T &node, const phase::target &, const pointer::down &press,
+                    PointerReply &reply) {
+  if (reply.fDeferClick) {
+    node.fState.fDeferredClick = true;
+    reply.handle();
+  } else if (node.onClick(press.x, press.y)) {
+    reply.handle();
   }
-  if (event.fAction == PointerAction::kDown && event.fDeferClick) {
-    state.fDeferredClick = true;
-    event.handle();
-  } else if (event.fAction == PointerAction::kUp &&
-             std::exchange(state.fDeferredClick, false)) {
-    if (state.fBounds.contains(event.fX, event.fY)) {
-      (void)hook::onClick(node, event.fX, event.fY);
+}
+template <class T>
+void defaultPointer(T &node, const phase::target &, const pointer::up &release,
+                    PointerReply &reply) {
+  if (std::exchange(node.fState.fDeferredClick, false)) {
+    if (node.fState.fBounds.contains(release.x, release.y)) {
+      (void)node.onClick(release.x, release.y);
     }
-    // The release belongs to the target where the deferred gesture began,
-    // even when it ended outside its bounds.
-    event.handle();
-  } else if (event.fAction == PointerAction::kCancel) {
-    state.fDeferredClick = false;
-  } else if (event.fAction == PointerAction::kDown &&
-             hook::onClick(node, event.fX, event.fY)) {
-    event.handle();
-  } else if (event.fAction == PointerAction::kScroll &&
-             hook::onScroll(node, event.fScrollY)) {
-    event.handle();
+    // The release belongs to where the deferred gesture began, even when it
+    // ended outside.
+    reply.handle();
+  }
+}
+template <class T>
+void defaultPointer(T &node, const phase::target &, const pointer::cancel &,
+                    PointerReply &) {
+  node.fState.fDeferredClick = false;
+}
+template <class T>
+void defaultPointer(T &node, const phase::target &,
+                    const pointer::scroll &wheel, PointerReply &reply) {
+  if (node.onScroll(wheel.dy)) {
+    reply.handle();
   }
 }
 
+template <class T, class Phase, class Input>
+void defaultKey(T &, const Phase &, const Input &, Reply &) {}
 // Enter and Space activate.
 template <class T>
-  requires std::derived_from<T, Node> void defaultKeyEvent(T &node, KeyEvent &event) {
+void defaultKey(T &node, const phase::target &, const key::down &press,
+                Reply &reply) {
   const skia::SkRect &bounds = node.fState.fBounds;
-  if (event.fPhase == EventPhase::kTarget && event.fPressed &&
-      (event.fKey == Key::kEnter || event.fKey == Key::kSpace) &&
-      hook::onClick(node, bounds.centerX(), bounds.centerY())) {
-    event.handle();
+  if ((press.key == keys::kEnter || press.key == keys::kSpace) &&
+      node.onClick(bounds.centerX(), bounds.centerY())) {
+    reply.handle();
   }
 }
 
-// Focus and activation, which is what assistive technology asks of most
-// nodes.
+template <class T, class Phase, class Action>
+void defaultSemantic(T &, const Phase &, const Action &, Reply &) {}
 template <class T>
-  requires std::derived_from<T, Node>
-void defaultSemanticAction(T &node, SemanticActionEvent &event) {
-  const skia::SkRect &bounds = node.fState.fBounds;
-  if (event.fPhase != EventPhase::kTarget) {
-    return;
+void defaultSemantic(T &node, const phase::target &,
+                     const semantic_action::focus &, Reply &reply) {
+  if (node.focusable()) {
+    reply.requestFocus();
+    reply.handle();
   }
-  if (event.fAction == SemanticAction::kFocus && hook::focusable(node)) {
-    event.requestFocus();
-    event.handle();
-  } else if (event.fAction == SemanticAction::kActivate &&
-             hook::onClick(node, bounds.centerX(), bounds.centerY())) {
-    event.handle();
-  }
-}
-
-namespace hook {
-template <class T> void pointerEvent(T &node, PointerEvent &event) {
-  node.onPointerEvent(event);
-}
-template <class T> void keyEvent(T &node, KeyEvent &event) {
-  node.onKeyEvent(event);
-}
-template <class T> void textInput(T &node, TextInputEvent &event) {
-  node.onTextInput(event);
 }
 template <class T>
-void semanticAction(T &node, SemanticActionEvent &event) {
-  node.onSemanticAction(event);
+void defaultSemantic(T &node, const phase::target &,
+                     const semantic_action::activate &, Reply &reply) {
+  const skia::SkRect &bounds = node.fState.fBounds;
+  if (node.onClick(bounds.centerX(), bounds.centerY())) {
+    reply.handle();
+  }
 }
-template <class T> void focusChanged(T &node, bool focused) {
-  node.onFocusChanged(focused);
-}
-} // namespace hook
 
+template <class T> void layoutChildrenInContentBox(T &node);
+template <class T> void drawDefault(T &node, skia::SkCanvas *canvas, float alpha);
 
 // ---- the node ----------------------------------------------------------------
 
 // What every node derives from: its State, and the default of every hook.
-// Nothing here is virtual -- the hooks take `this` by deduction, so a call
-// made on a node's own type reaches the node's own hook when it has one, and
-// this default when it does not. The walks are templates over the real type
-// and always call on it.
+// Nothing here is virtual -- the hooks take `this` by deduction, so a call on
+// a node's own type reaches its own hook when it has one, and this default
+// when it does not. The walks are templates over the real type and always
+// call on it.
 //
-// A node overrides a hook by declaring one with the same name, publicly.
+// A node overrides a hook by declaring one, publicly. The event hooks are
+// overload sets, one overload per phase and event a node handles; a node
+// that declares some writes `using Node::onPointer;` (or onKey, onText,
+// onSemantic) to keep the defaults for the rest.
 struct Node {
   State fState;
 
@@ -1786,17 +1870,14 @@ struct Node {
 
   // -- drawing
   void drawSelf(this auto &, skia::SkCanvas *, float) {}
-  // The whole subtree: overridden by a node that draws it another way (a
-  // cache), which calls drawDefault for the rest.
+  // The whole subtree, overridden by a node that draws it another way.
   void draw(this auto &self, skia::SkCanvas *canvas, float alpha) {
     drawDefault(self, canvas, alpha);
   }
 
   // -- time
   void update(this auto &, double) {}
-  // Part-way to somewhere by hand -- a hover weight, a knob sliding -- so the
-  // next frame differs. Damage says what changed; this says it is still
-  // changing.
+  // Part-way to somewhere by hand, so the next frame differs.
   [[nodiscard]] bool settling(this const auto &) { return false; }
 
   // -- input
@@ -1804,9 +1885,6 @@ struct Node {
   [[nodiscard]] bool focusable(this const auto &self) {
     return self.acceptsInput();
   }
-  // Whether the pointer entering or leaving changes the picture. Taking
-  // input and drawing hover are separate: a slider need not repaint because
-  // the pointer crossed it.
   [[nodiscard]] bool hoverChangesAppearance(this const auto &) {
     return false;
   }
@@ -1816,15 +1894,18 @@ struct Node {
   void onFocusChanged(this auto &, bool) {}
   [[nodiscard]] bool onClick(this auto &, float, float) { return false; }
   [[nodiscard]] bool onScroll(this auto &, float) { return false; }
-  void onPointerEvent(this auto &self, PointerEvent &event) {
-    defaultPointerEvent(self, event);
+  void onPointer(this auto &self, const auto &at, const auto &input,
+                 PointerReply &reply) {
+    defaultPointer(self, at, input, reply);
   }
-  void onKeyEvent(this auto &self, KeyEvent &event) {
-    defaultKeyEvent(self, event);
+  void onKey(this auto &self, const auto &at, const auto &input,
+             Reply &reply) {
+    defaultKey(self, at, input, reply);
   }
-  void onTextInput(this auto &, TextInputEvent &) {}
-  void onSemanticAction(this auto &self, SemanticActionEvent &event) {
-    defaultSemanticAction(self, event);
+  void onText(this auto &, const auto &, const auto &, Reply &) {}
+  void onSemantic(this auto &self, const auto &at, const auto &action,
+                  Reply &reply) {
+    defaultSemantic(self, at, action, reply);
   }
   [[nodiscard]] Semantics semantics(this const auto &) { return {}; }
 
@@ -1865,23 +1946,24 @@ struct Node {
   template <class Theme> void setStyleSheet() {
     fState.template setStyleSheet<Theme>();
   }
-  void fadeTo(float target, double ms, Easing e = Easing::kOutQuint) {
+  void fadeTo(float target, double ms, easing_t e = easing::out_quint{}) {
     fState.fadeTo(target, ms, e);
   }
-  void moveToX(float target, double ms, Easing e = Easing::kOutQuint) {
+  void moveToX(float target, double ms, easing_t e = easing::out_quint{}) {
     fState.moveToX(target, ms, e);
   }
-  void moveToY(float target, double ms, Easing e = Easing::kOutQuint) {
+  void moveToY(float target, double ms, easing_t e = easing::out_quint{}) {
     fState.moveToY(target, ms, e);
   }
-  void resizeWidthTo(float target, double ms, Easing e = Easing::kOutQuint) {
+  void resizeWidthTo(float target, double ms,
+                     easing_t e = easing::out_quint{}) {
     fState.resizeWidthTo(target, ms, e);
   }
   void resizeHeightTo(float target, double ms,
-                      Easing e = Easing::kOutQuint) {
+                      easing_t e = easing::out_quint{}) {
     fState.resizeHeightTo(target, ms, e);
   }
-  void scaleTo(float target, double ms, Easing e = Easing::kOutQuint) {
+  void scaleTo(float target, double ms, easing_t e = easing::out_quint{}) {
     fState.scaleTo(target, ms, e);
   }
   void delay(double ms) { fState.delay(ms); }
@@ -1889,8 +1971,7 @@ struct Node {
   void markDamaged() { fState.markDamaged(); }
 };
 
-// A node with no picture of its own that lays its children out in its box:
-// a group.
+// A node with no picture of its own that lays its children out in its box.
 template <class... Children> struct Group : Node {
   explicit Group(Children... children) : fChildren(std::move(children)...) {}
   void forEachChild(auto &&f) {
@@ -1902,27 +1983,21 @@ template <class... Children> struct Group : Node {
 // ---- style subjects ----------------------------------------------------------
 
 template <class T>
-  requires std::derived_from<T, Node>
 [[nodiscard]] StyleSubject styleSubject(T &node, float viewportWidth) {
   const State &state = node.fState;
-  StyleState states = StyleState::kNone;
-  if (state.fHovered)
-    states = states | StyleState::kHover;
-  if (state.fFocused)
-    states = states | StyleState::kFocus;
-  if (state.fSelected)
-    states = states | StyleState::kSelected;
-  if (state.fDisabled)
-    states = states | StyleState::kDisabled;
+  const StyleStates now = StyleStates{}
+                              .with<state::hover>(state.fHovered)
+                              .with<state::focus>(state.fFocused)
+                              .with<state::selected>(state.fSelected)
+                              .with<state::disabled>(state.fDisabled);
   return {&detail::styleNodeKey<T>, detail::TemplateKeyOf<T>::value,
-          state.styleRoles(), states, viewportWidth};
+          state.styleRoles(), now, viewportWidth};
 }
 
 // ---- the walks ---------------------------------------------------------------
 //
-// Each is a function template over the child's type, recursing through
-// eachChild. The ones a node's own hooks call -- layout, draw, childBounds --
-// are the public ones; the rest are what a Scene runs.
+// Each is a function template over the child's type, with an overload for
+// AnyNode that goes through its table, recursing through eachChild.
 
 struct UpdateContext {
   double fNowMs = 0.0;
@@ -1930,11 +2005,11 @@ struct UpdateContext {
   bool fAnimating = false;
 };
 
-// A path from a node to one below it: the positions of the children taken,
-// in eachChild order.
+// A path from a node to one below it: positions of the children taken, in
+// eachChild order.
 using Path = std::vector<std::uint32_t>;
 
-// What routing an event found out, for the scene to act on afterwards.
+// What routing a pointer event found out, for the scene to act on.
 struct Routed {
   NodeId fCaptureRequest = 0;
   NodeId fFocusRequest = 0;
@@ -1951,54 +2026,8 @@ struct NodeInfo {
   bool fTakesText = false;
 };
 
-template <class C> void layout(C &child, const skia::SkRect &parentBox);
-template <class C> void draw(C &child, skia::SkCanvas *canvas, float alpha);
-
-namespace walk {
-template <class C>
-void update(C &child, UpdateContext &context, StyleResolver resolver,
-            const Style *inherited, bool restyleAll);
-template <class C> [[nodiscard]] bool markDirty(C &child);
-template <class C>
-[[nodiscard]] skia::SkRect collectDamage(C &child, bool drawnAbove);
-template <class C>
-void hover(C &child, float x, float y, bool visibleAbove,
-           StyleResolver resolver, float viewportWidth);
-template <class C>
-[[nodiscard]] bool hitPath(C &child, float x, float y, Path &path);
-template <class C>
-[[nodiscard]] bool findPath(C &child, NodeId id, Path &path);
-template <class C>
-void routePointer(C &child, const Path &path, std::size_t at,
-                  PointerEvent &event, Routed &routed, bool targetOnly);
-template <class C>
-void routeKey(C &child, const Path &path, std::size_t at, KeyEvent &event);
-template <class C>
-void routeText(C &child, const Path &path, std::size_t at,
-               TextInputEvent &event);
-template <class C>
-[[nodiscard]] std::optional<NodeInfo> info(C &child, NodeId id);
-template <class C>
-[[nodiscard]] bool focusChanged(C &child, NodeId id, bool focused,
-                                StyleResolver resolver, float viewportWidth);
-template <class C>
-void routeSemantic(C &child, const Path &path, std::size_t at,
-                   SemanticActionEvent &event);
-template <class C>
-void collectSemantics(C &child, std::vector<Semantics> &out, int parent,
-                      NodeId focused);
-template <class C>
-void collectFocusable(C &child, std::vector<NodeId> &out);
-template <class C> [[nodiscard]] bool animating(C &child);
-template <class C>
-[[nodiscard]] bool clickPath(C &child, const Path &path, std::size_t at,
-                             float x, float y);
-} // namespace walk
-
 // The children in the order they are drawn: eachChild's order, unless one of
-// them has a depth. Sorting is stable, so an untouched tree keeps exactly the
-// order it was written in and pays nothing for the feature. `f` gets the
-// child and its position in eachChild order.
+// them has a depth. `f` gets the child and its position in eachChild order.
 template <class T, class F> void eachChildInDrawOrder(T &node, F &&f) {
   bool sorted = true;
   std::uint32_t count = 0;
@@ -2039,10 +2068,8 @@ void childAt(T &node, std::uint32_t index, F &&f) {
   });
 }
 
-// The union of the visible children's boxes: what an auto-sized node is
-// sized to.
-template <class T>
-  requires std::derived_from<T, Node> [[nodiscard]] skia::SkRect childBounds(T &node) {
+// The union of the visible children's boxes.
+template <class T> [[nodiscard]] skia::SkRect childBounds(T &node) {
   skia::SkRect content = skia::SkRect::MakeEmpty();
   eachChild(node, [&](auto &child) {
     const State &state = stateOf(child);
@@ -2053,24 +2080,23 @@ template <class T>
   return content;
 }
 
-// Lays every child out in this node's content box: what a node without a
-// layoutChildren does, and what one that has one may call.
-template <class T>
-  requires std::derived_from<T, Node> void layoutChildrenInContentBox(T &node) {
+template <class N> void layout(N &child, const skia::SkRect &parentBox);
+void layout(AnyNode &child, const skia::SkRect &parentBox);
+template <class N> void draw(N &child, skia::SkCanvas *canvas, float alpha);
+void draw(AnyNode &child, skia::SkCanvas *canvas, float alpha);
+
+// Lays every child out in the content box: what a node without its own
+// layoutChildren does.
+template <class T> void layoutChildrenInContentBox(T &node) {
   const skia::SkRect box = node.fState.contentBox();
   eachChild(node, [&](auto &child) { layout(child, box); });
 }
 
 namespace detail {
-template <class T>
-  requires std::derived_from<T, Node> void layoutChildren(T &node) { node.layoutChildren(); }
-
-template <class T>
-  requires std::derived_from<T, Node> void layoutNode(T &node, const skia::SkRect &parentBox) {
+template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   State &state = node.fState;
   // Placed against another node, when asked: a dropdown list belongs to the
-  // control that opened it and has to be drawn over everything below it, so
-  // it lives high in the tree and is positioned low in it.
+  // control that opened it.
   const skia::SkRect parent =
       (state.fFollow != nullptr && !state.fFollow->fBounds.isEmpty())
           ? state.fFollow->fBounds
@@ -2080,32 +2106,31 @@ template <class T>
     return;
   }
   state.fLastConstraint = parent;
-
-  // A node that knows its own size -- text, mainly -- says so before
-  // anything is computed from it, given the box it is going into.
+  // A node that knows its own size says so first, given its box.
   node.measure(parent);
 
-  // A margin holds a node off whichever edge it is anchored to: the room it
-  // is placed in is the parent's box less the margin.
+  // A margin holds a node off whichever edge it is anchored to.
   const skia::SkRect room = inset(parent, state.fMargin);
   const float parentW = room.width();
   const float parentH = room.height();
-  float width = hasX(state.fRelativeSizeAxes) ? parentW * state.fWidth
-                                              : state.fWidth;
-  float height = hasY(state.fRelativeSizeAxes) ? parentH * state.fHeight
-                                               : state.fHeight;
+  const bool relativeX = state.fRelativeSizeAxes.has<axis::x>();
+  const bool relativeY = state.fRelativeSizeAxes.has<axis::y>();
+  const bool autoX = state.fAutoSizeAxes.has<axis::x>();
+  const bool autoY = state.fAutoSizeAxes.has<axis::y>();
+  float width = relativeX ? parentW * state.fWidth : state.fWidth;
+  float height = relativeY ? parentH * state.fHeight : state.fHeight;
 
   // Auto-sized axes need the children laid out first, in a provisional box.
-  if (state.fAutoSizeAxes != Axes::kNone) {
-    state.fBounds = skia::SkRect::MakeXYWH(
-        room.fLeft, room.fTop, hasX(state.fAutoSizeAxes) ? parentW : width,
-        hasY(state.fAutoSizeAxes) ? parentH : height);
-    detail::layoutChildren(node);
+  if (autoX || autoY) {
+    state.fBounds = skia::SkRect::MakeXYWH(room.fLeft, room.fTop,
+                                           autoX ? parentW : width,
+                                           autoY ? parentH : height);
+    node.layoutChildren();
     const skia::SkRect content = childBounds(node);
-    if (hasX(state.fAutoSizeAxes)) {
+    if (autoX) {
       width = content.width() + state.fPadding.totalX();
     }
-    if (hasY(state.fAutoSizeAxes)) {
+    if (autoY) {
       height = content.height() + state.fPadding.totalY();
     }
   }
@@ -2125,25 +2150,22 @@ template <class T>
   state.fBounds = anchoredBox(room, width, height, state.fAnchor,
                               state.fOrigin, state.fX, state.fY);
   if (state.fBounds != previous) {
-    // Moved or resized: repaint where it was and where it is. Layout is the
-    // only place that knows both.
+    // Moved or resized: repaint where it was and where it is.
     state.fMovedDamage =
         joined(joined(state.fMovedDamage, previous), state.fBounds);
   }
-  detail::layoutChildren(node);
+  node.layoutChildren();
   state.fLayoutValid = true;
   state.fSubtreeDirty = false;
 }
 
 template <class T>
-  requires std::derived_from<T, Node>
 void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
   State &state = node.fState;
   if (!state.fVisible || state.fAlpha <= 0.001f) {
     return;
   }
-  // Whatever lies outside what is being repainted is skipped whole, with its
-  // subtree: a repaint of one card does not walk the other two hundred.
+  // What lies outside what is being repainted is skipped with its subtree.
   ++visitedCount();
   if (!state.fBounds.isEmpty() && canvas->quickReject(state.fBounds)) {
     return;
@@ -2170,544 +2192,487 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
 }
 } // namespace detail
 
-// Lays a child out in a box: what a container's layoutChildren calls for
-// each of its children, after placing it.
-template <class C> void layout(C &child, const skia::SkRect &parentBox) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    child.layout(parentBox);
-  } else {
-    detail::layoutNode(child, parentBox);
-  }
+// Lays a child out in a box: what a container's layoutChildren calls for each
+// of its children, after placing it.
+template <class N> void layout(N &child, const skia::SkRect &parentBox) {
+  detail::layoutNode(child, parentBox);
 }
-
-// Draws a node and its subtree, the way the scene does. A node with its own
-// draw -- a cache -- calls drawDefault for what it does not do itself.
-template <class T>
-  requires std::derived_from<T, Node>
-void drawDefault(T &node, skia::SkCanvas *canvas, float alpha) {
+// Draws a node and its subtree the way the scene does; a node that draws its
+// subtree another way calls this for what it does not do itself.
+template <class T> void drawDefault(T &node, skia::SkCanvas *canvas, float alpha) {
   detail::drawNode(node, canvas, alpha);
 }
-
-template <class C> void draw(C &child, skia::SkCanvas *canvas, float alpha) {
+template <class N> void draw(N &child, skia::SkCanvas *canvas, float alpha) {
   child.draw(canvas, alpha);
 }
 
 namespace walk {
 
-template <class C>
-void update(C &child, UpdateContext &context, StyleResolver resolver,
+// Every walk, for an AnyNode: through its table.
+void update(AnyNode &, UpdateContext &, StyleResolver, const Style *, bool);
+[[nodiscard]] bool markDirty(AnyNode &);
+[[nodiscard]] skia::SkRect collectDamage(AnyNode &, bool);
+[[nodiscard]] bool hasDamage(AnyNode &);
+void hover(AnyNode &, float, float, bool, StyleResolver, float);
+[[nodiscard]] bool hitPath(AnyNode &, float, float, Path &);
+[[nodiscard]] bool findPath(AnyNode &, NodeId, Path &);
+[[nodiscard]] NodeId idAt(AnyNode &, const Path &, std::size_t);
+void routePointer(AnyNode &, const Path &, std::size_t, const pointer_t &,
+                  PointerReply &, Routed &, bool);
+void routeKey(AnyNode &, const Path &, std::size_t, const key_t &, Reply &);
+void routeText(AnyNode &, const Path &, std::size_t, const text_t &, Reply &);
+void routeSemantic(AnyNode &, const Path &, std::size_t,
+                   const semantic_action_t &, Reply &);
+[[nodiscard]] std::optional<NodeInfo> info(AnyNode &, NodeId);
+[[nodiscard]] bool focusChanged(AnyNode &, NodeId, bool, StyleResolver, float);
+void collectSemantics(AnyNode &, std::vector<Semantics> &, int, NodeId);
+void collectFocusable(AnyNode &, std::vector<NodeId> &);
+[[nodiscard]] bool animating(AnyNode &);
+[[nodiscard]] bool clickPath(AnyNode &, const Path &, std::size_t, float,
+                             float);
+
+// Transforms, the node's own time, and styles.
+template <class N>
+void update(N &child, UpdateContext &context, StyleResolver resolver,
             const Style *inherited, bool restyleAll) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    child.update(context, resolver, inherited, restyleAll);
-  } else {
-    State &state = child.fState;
-    state.updateTransforms(context.fNowMs);
-    child.update(context.fNowMs);
-    if (!state.fTransforms.empty() || hook::settling(child)) {
-      context.fAnimating = true;
-    }
-
-    const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
-                                                   : resolver;
-    const bool restyle = restyleAll || state.fStyleDirty ||
-                         state.fStyleSheetChanged;
-    if (restyle) {
-      const bool active = static_cast<bool>(own);
-      Style resolved =
-          active ? own.fResolve(styleSubject(child, context.fViewportWidth))
-                 : Style{};
-      if (inherited != nullptr) {
-        if (!resolved.colour)
-          resolved.colour = inherited->colour;
-        if (!resolved.fontSize)
-          resolved.fontSize = inherited->fontSize;
-        if (!resolved.fontBold)
-          resolved.fontBold = inherited->fontBold;
-      }
-      state.applyCommonStyle(resolved, active, state.fStyleAnimate);
-      child.applyNodeStyle(resolved, active);
-      state.fResolvedStyle = resolved;
-      state.fStyleApplied = active;
-      state.fStyleDirty = false;
-      state.fStyleAnimate = false;
-      state.fStyleSheetChanged = false;
-    }
-    const Style *passed = state.fStyleApplied ? &state.fResolvedStyle
-                                              : inherited;
-    eachChild(child, [&](auto &each) {
-      walk::update(each, context, own, passed, restyle);
-    });
+  State &state = child.fState;
+  state.updateTransforms(context.fNowMs);
+  child.update(context.fNowMs);
+  if (!state.fTransforms.empty() || child.settling()) {
+    context.fAnimating = true;
   }
+  const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
+                                                 : resolver;
+  const bool restyle =
+      restyleAll || state.fStyleDirty || state.fStyleSheetChanged;
+  if (restyle) {
+    const bool active = static_cast<bool>(own);
+    Style resolved =
+        active ? own.fResolve(styleSubject(child, context.fViewportWidth))
+               : Style{};
+    if (inherited != nullptr) {
+      if (!resolved.colour)
+        resolved.colour = inherited->colour;
+      if (!resolved.fontSize)
+        resolved.fontSize = inherited->fontSize;
+      if (!resolved.fontBold)
+        resolved.fontBold = inherited->fontBold;
+    }
+    state.applyCommonStyle(resolved, active, state.fStyleAnimate);
+    child.applyNodeStyle(resolved, active);
+    state.fResolvedStyle = resolved;
+    state.fStyleApplied = active;
+    state.fStyleDirty = false;
+    state.fStyleAnimate = false;
+    state.fStyleSheetChanged = false;
+  }
+  const Style *passed = state.fStyleApplied ? &state.fResolvedStyle
+                                            : inherited;
+  eachChild(child, [&](auto &each) {
+    walk::update(each, context, own, passed, restyle);
+  });
 }
 
-// Finds what has to be laid out again, bottom-up, and says so on the way
-// back: nothing below can tell its ancestors, so the frame asks. A node whose
-// set of children changed -- a variant switched, a row added -- is laid out
-// again and repainted whole.
-template <class C> bool markDirty(C &child) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    return child.markDirty();
-  } else {
-    State &state = child.fState;
-    bool below = false;
-    std::size_t signature = 0;
-    eachChild(child, [&](auto &each) {
-      below = walk::markDirty(each) || below;
-      signature = signature * 1099511628211ull ^
-                  static_cast<std::size_t>(stateOf(each).fId);
-    });
-    if (signature != state.fChildSignature) {
-      // The children that went took their boxes with them: where they were
-      // is what this node remembers of them.
-      state.fChildSignature = signature;
-      state.fLayoutValid = false;
-      state.fDamaged = true;
-      state.fMovedDamage = joined(state.fMovedDamage, state.fChildArea);
-    }
-    state.fSubtreeDirty = below || !state.fLayoutValid;
-    return state.fSubtreeDirty;
+// What has to be laid out again, found bottom-up: nothing below can tell its
+// ancestors, so the frame asks. A node whose set of children changed is laid
+// out again and repainted where they were.
+template <class N> bool markDirty(N &child) {
+  State &state = child.fState;
+  bool below = false;
+  std::size_t signature = 0;
+  eachChild(child, [&](auto &each) {
+    below = walk::markDirty(each) || below;
+    signature = signature * 1099511628211ull ^
+                static_cast<std::size_t>(stateOf(each).fId);
+  });
+  if (signature != state.fChildSignature) {
+    state.fChildSignature = signature;
+    state.fLayoutValid = false;
+    state.fDamaged = true;
+    state.fMovedDamage = joined(state.fMovedDamage, state.fChildArea);
   }
+  state.fSubtreeDirty = below || !state.fLayoutValid;
+  return state.fSubtreeDirty;
 }
 
-// What has to be repainted in this subtree, and forgets it. A masking node
-// clips what its subtree reports; a hidden one drops it, though its own
-// change still counts -- hiding is a change.
-template <class C> skia::SkRect collectDamage(C &child, bool drawnAbove) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    return child.collectDamage(drawnAbove);
-  } else {
-    State &state = child.fState;
-    skia::SkRect damage = skia::SkRect::MakeEmpty();
-    if (drawnAbove) {
-      damage = state.fMovedDamage;
-      if (state.fDamaged) {
-        damage = joined(joined(damage, state.fBounds), state.fDrawnBounds);
-      }
+// What has to be repainted, and forgets it. A masking node clips what its
+// subtree reports; a hidden one drops it, though its own change counts.
+template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
+  State &state = child.fState;
+  skia::SkRect damage = skia::SkRect::MakeEmpty();
+  if (drawnAbove) {
+    damage = state.fMovedDamage;
+    if (state.fDamaged) {
+      damage = joined(joined(damage, state.fBounds), state.fDrawnBounds);
     }
-    state.fMovedDamage = skia::SkRect::MakeEmpty();
-    state.fDamaged = false;
-    const bool drawn = drawnAbove && state.fVisible && state.fAlpha > 0.001f;
-    skia::SkRect below = skia::SkRect::MakeEmpty();
-    skia::SkRect area = skia::SkRect::MakeEmpty();
-    eachChild(child, [&](auto &each) {
-      below = joined(below, walk::collectDamage(each, drawn));
-      const State &one = stateOf(each);
-      area = joined(joined(area, one.fBounds), one.fDrawnBounds);
-    });
-    // Where the children are, laid out: what is repainted if they go.
-    state.fChildArea = area;
-    if (!below.isEmpty() && state.fMasking &&
-        !below.intersect(state.fBounds)) {
-      below = skia::SkRect::MakeEmpty();
-    }
-    return joined(damage, below);
   }
+  state.fMovedDamage = skia::SkRect::MakeEmpty();
+  state.fDamaged = false;
+  const bool drawn = drawnAbove && state.fVisible && state.fAlpha > 0.001f;
+  skia::SkRect below = skia::SkRect::MakeEmpty();
+  skia::SkRect area = skia::SkRect::MakeEmpty();
+  eachChild(child, [&](auto &each) {
+    below = joined(below, walk::collectDamage(each, drawn));
+    const State &one = stateOf(each);
+    area = joined(joined(area, one.fBounds), one.fDrawnBounds);
+  });
+  // Where the children are, laid out: what is repainted if they go.
+  state.fChildArea = area;
+  if (!below.isEmpty() && state.fMasking && !below.intersect(state.fBounds)) {
+    below = skia::SkRect::MakeEmpty();
+  }
+  return joined(damage, below);
 }
 
-// Every node remembers where the pointer is, not only the root: a control
-// with parts has to know which of its own parts is under it.
-template <class C>
-void hover(C &child, float x, float y, bool visibleAbove,
+template <class N> bool hasDamage(N &child) {
+  const State &state = child.fState;
+  if (state.fDamaged || !state.fMovedDamage.isEmpty()) {
+    return true;
+  }
+  bool any = false;
+  eachChild(child, [&](auto &each) { any = any || walk::hasDamage(each); });
+  return any;
+}
+
+// Every node remembers where the pointer is: a control with parts has to
+// know which of its parts is under it.
+template <class N>
+void hover(N &child, float x, float y, bool visibleAbove,
            StyleResolver resolver, float viewportWidth) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    child.hover(x, y, visibleAbove, resolver, viewportWidth);
-  } else {
-    State &state = child.fState;
-    state.fHoverX = x;
-    state.fHoverY = y;
-    const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
-                                                   : resolver;
-    const bool visible = visibleAbove && state.fVisible;
-    const bool hovered = visible && state.fBounds.contains(x, y);
-    if (hovered != state.fHovered) {
-      state.fHovered = hovered;
-      if (own && own.fUsesState(styleSubject(child, viewportWidth),
-                                StyleState::kHover)) {
-        state.restyle(true);
-      }
-      // Only where hover is drawn: most containers do not light up.
-      if (hook::hoverChangesAppearance(child)) {
-        state.markDamaged();
-      }
+  State &state = child.fState;
+  state.fHoverX = x;
+  state.fHoverY = y;
+  const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
+                                                 : resolver;
+  const bool visible = visibleAbove && state.fVisible;
+  const bool hovered = visible && state.fBounds.contains(x, y);
+  if (hovered != state.fHovered) {
+    state.fHovered = hovered;
+    if (own && own.fUsesState(styleSubject(child, viewportWidth),
+                              states::kHover)) {
+      state.restyle(true);
     }
-    const bool childrenVisible =
-        visible && (!state.fMasking || state.fBounds.contains(x, y));
-    eachChild(child, [&](auto &each) {
-      walk::hover(each, x, y, childrenVisible, own, viewportWidth);
-    });
+    if (child.hoverChangesAppearance()) {
+      state.markDamaged();
+    }
   }
+  const bool childrenVisible =
+      visible && (!state.fMasking || state.fBounds.contains(x, y));
+  eachChild(child, [&](auto &each) {
+    walk::hover(each, x, y, childrenVisible, own, viewportWidth);
+  });
 }
 
 // The front-most node under a point that takes input: what is drawn last is
-// hit first. `path` receives the positions below this node.
-template <class C> bool hitPath(C &child, float x, float y, Path &path) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    return child.hitPath(x, y, path);
-  } else {
-    State &state = child.fState;
-    if (!state.fVisible || state.fAlpha <= 0.001f || state.fDisabled) {
-      return false;
-    }
-    if (state.fMasking && !state.fBounds.contains(x, y)) {
-      return false;
-    }
-    bool found = false;
-    Path best;
-    eachChildInDrawOrder(child, [&](auto &each, std::uint32_t index) {
-      Path below;
-      if (walk::hitPath(each, x, y, below)) {
-        found = true;
-        best.clear();
-        best.push_back(index);
-        best.insert(best.end(), below.begin(), below.end());
-      }
-    });
-    if (found) {
-      path.insert(path.end(), best.begin(), best.end());
-      return true;
-    }
-    return hook::acceptsInput(child) && state.fBounds.contains(x, y);
+// hit first.
+template <class N> bool hitPath(N &child, float x, float y, Path &path) {
+  State &state = child.fState;
+  if (!state.fVisible || state.fAlpha <= 0.001f || state.fDisabled) {
+    return false;
   }
+  if (state.fMasking && !state.fBounds.contains(x, y)) {
+    return false;
+  }
+  bool found = false;
+  Path best;
+  eachChildInDrawOrder(child, [&](auto &each, std::uint32_t index) {
+    Path below;
+    if (walk::hitPath(each, x, y, below)) {
+      found = true;
+      best.clear();
+      best.push_back(index);
+      best.insert(best.end(), below.begin(), below.end());
+    }
+  });
+  if (found) {
+    path.insert(path.end(), best.begin(), best.end());
+    return true;
+  }
+  return child.acceptsInput() && state.fBounds.contains(x, y);
 }
 
-template <class C> bool findPath(C &child, NodeId id, Path &path) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    return child.findPath(id, path);
-  } else {
-    if (child.fState.fId == id) {
-      return true;
-    }
-    bool found = false;
-    std::uint32_t at = 0;
-    eachChild(child, [&](auto &each) {
-      if (found) {
-        return;
-      }
-      const std::size_t mark = path.size();
-      path.push_back(at);
-      if (walk::findPath(each, id, path)) {
-        found = true;
-      } else {
-        path.resize(mark);
-      }
-      ++at;
-    });
-    return found;
+template <class N> bool findPath(N &child, NodeId id, Path &path) {
+  if (child.fState.fId == id) {
+    return true;
   }
+  bool found = false;
+  std::uint32_t at = 0;
+  eachChild(child, [&](auto &each) {
+    if (found) {
+      return;
+    }
+    const std::size_t mark = path.size();
+    path.push_back(at);
+    if (walk::findPath(each, id, path)) {
+      found = true;
+    } else {
+      path.resize(mark);
+    }
+    ++at;
+  });
+  return found;
+}
+
+template <class N> NodeId idAt(N &child, const Path &path, std::size_t at) {
+  if (at == path.size()) {
+    return child.fState.fId;
+  }
+  NodeId found = 0;
+  childAt(child, path[at],
+          [&](auto &each) { found = walk::idAt(each, path, at + 1); });
+  return found;
 }
 
 // Capture on the way down, the target at the end of the path, bubble on the
-// way back up. `targetOnly` delivers to the end of the path alone -- a
-// cancel told to the node a press began on.
+// way back up. `targetOnly` delivers to the end of the path alone.
+template <class N>
+void routePointer(N &child, const Path &path, std::size_t at,
+                  const pointer_t &input, PointerReply &reply, Routed &routed,
+                  bool targetOnly) {
+  State &state = child.fState;
+  const auto deliver = [&](const auto &when) {
+    reply.fCurrent = state.fId;
+    reply.fCapturePointer = false;
+    reply.fReleasePointer = false;
+    reply.fRequestFocus = false;
+    std::visit([&](const auto &event) { child.onPointer(when, event, reply); },
+               input);
+    if (reply.fCapturePointer) {
+      routed.fCaptureRequest = state.fId;
+    }
+    if (reply.fReleasePointer) {
+      routed.fReleaseRequest = true;
+    }
+    if (reply.fRequestFocus) {
+      routed.fFocusRequest = state.fId;
+    }
+  };
+  if (at == path.size()) {
+    if (!reply.fHandled) {
+      routed.fTargetDelivered = true;
+      routed.fTargetFocusable = child.focusable();
+      deliver(phase::target{});
+    }
+    return;
+  }
+  if (!targetOnly && !reply.fHandled) {
+    deliver(phase::capture{});
+  }
+  childAt(child, path[at], [&](auto &each) {
+    walk::routePointer(each, path, at + 1, input, reply, routed, targetOnly);
+  });
+  if (!targetOnly && !reply.fHandled) {
+    deliver(phase::bubble{});
+  }
+}
+
+// The same for keys, text and semantic actions, which have one kind of reply.
+template <class N, class Input, class Deliver>
+void route(N &child, const Path &path, std::size_t at, const Input &input,
+           Reply &reply, Deliver deliver) {
+  const auto phaseOf = [&](const auto &when) {
+    reply.fCurrent = child.fState.fId;
+    deliver(child, when, input, reply);
+  };
+  if (at == path.size()) {
+    if (!reply.fHandled) {
+      phaseOf(phase::target{});
+    }
+    return;
+  }
+  if (!reply.fHandled) {
+    phaseOf(phase::capture{});
+  }
+  childAt(child, path[at], [&](auto &each) {
+    deliver.next(each, path, at + 1, input, reply);
+  });
+  if (!reply.fHandled) {
+    phaseOf(phase::bubble{});
+  }
+}
+
+struct KeyDelivery {
+  template <class N>
+  void operator()(N &node, const auto &when, const key_t &input,
+                  Reply &reply) const {
+    std::visit([&](const auto &event) { node.onKey(when, event, reply); },
+               input);
+  }
+  template <class C>
+  void next(C &child, const Path &path, std::size_t at, const key_t &input,
+            Reply &reply) const;
+};
+struct TextDelivery {
+  template <class N>
+  void operator()(N &node, const auto &when, const text_t &input,
+                  Reply &reply) const {
+    std::visit([&](const auto &event) { node.onText(when, event, reply); },
+               input);
+  }
+  template <class C>
+  void next(C &child, const Path &path, std::size_t at, const text_t &input,
+            Reply &reply) const;
+};
+struct SemanticDelivery {
+  template <class N>
+  void operator()(N &node, const auto &when, const semantic_action_t &input,
+                  Reply &reply) const {
+    std::visit([&](const auto &event) { node.onSemantic(when, event, reply); },
+               input);
+  }
+  template <class C>
+  void next(C &child, const Path &path, std::size_t at,
+            const semantic_action_t &input, Reply &reply) const;
+};
+
+template <class N>
+void routeKey(N &child, const Path &path, std::size_t at, const key_t &input,
+              Reply &reply) {
+  route(child, path, at, input, reply, KeyDelivery{});
+}
+template <class N>
+void routeText(N &child, const Path &path, std::size_t at,
+               const text_t &input, Reply &reply) {
+  route(child, path, at, input, reply, TextDelivery{});
+}
+template <class N>
+void routeSemantic(N &child, const Path &path, std::size_t at,
+                   const semantic_action_t &input, Reply &reply) {
+  route(child, path, at, input, reply, SemanticDelivery{});
+}
 template <class C>
-void routePointer(C &child, const Path &path, std::size_t at,
-                  PointerEvent &event, Routed &routed, bool targetOnly) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    child.routePointer(path, at, event, routed, targetOnly);
-  } else {
-    State &state = child.fState;
-    const auto deliver = [&](EventPhase phase) {
-      event.fPhase = phase;
-      event.fCurrentTarget = state.fId;
-      event.fCapturePointer = false;
-      event.fReleasePointer = false;
-      event.fRequestFocus = false;
-      hook::pointerEvent(child, event);
-      if (event.fCapturePointer) {
-        routed.fCaptureRequest = state.fId;
-      }
-      if (event.fReleasePointer) {
-        routed.fReleaseRequest = true;
-      }
-      if (event.fRequestFocus) {
-        routed.fFocusRequest = state.fId;
-      }
-    };
-    if (at == path.size()) {
-      if (!event.fHandled) {
-        routed.fTargetDelivered = true;
-        routed.fTargetFocusable = hook::focusable(child);
-        deliver(EventPhase::kTarget);
-      }
+void KeyDelivery::next(C &child, const Path &path, std::size_t at,
+                       const key_t &input, Reply &reply) const {
+  walk::routeKey(child, path, at, input, reply);
+}
+template <class C>
+void TextDelivery::next(C &child, const Path &path, std::size_t at,
+                        const text_t &input, Reply &reply) const {
+  walk::routeText(child, path, at, input, reply);
+}
+template <class C>
+void SemanticDelivery::next(C &child, const Path &path, std::size_t at,
+                            const semantic_action_t &input,
+                            Reply &reply) const {
+  walk::routeSemantic(child, path, at, input, reply);
+}
+
+template <class N> std::optional<NodeInfo> info(N &child, NodeId id) {
+  const State &state = child.fState;
+  if (state.fId == id) {
+    return NodeInfo{child.focusable(), state.fDisabled, state.fVisible,
+                    isTextBox(child.semantics().fRole)};
+  }
+  std::optional<NodeInfo> found;
+  eachChild(child, [&](auto &each) {
+    if (found) {
       return;
     }
-    if (!targetOnly && !event.fHandled) {
-      deliver(EventPhase::kCapture);
+    found = walk::info(each, id);
+    if (found) {
+      found->fVisible = found->fVisible && state.fVisible;
+      found->fDisabled = found->fDisabled || state.fDisabled;
     }
-    childAt(child, path[at], [&](auto &each) {
-      walk::routePointer(each, path, at + 1, event, routed, targetOnly);
-    });
-    if (!targetOnly && !event.fHandled) {
-      deliver(EventPhase::kBubble);
-    }
-  }
+  });
+  return found;
 }
 
-template <class C>
-void routeKey(C &child, const Path &path, std::size_t at, KeyEvent &event) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    child.routeKey(path, at, event);
-  } else {
-    const auto deliver = [&](EventPhase phase) {
-      event.fPhase = phase;
-      event.fCurrentTarget = child.fState.fId;
-      hook::keyEvent(child, event);
-    };
-    if (at == path.size()) {
-      if (!event.fHandled) {
-        deliver(EventPhase::kTarget);
-      }
-      return;
-    }
-    if (!event.fHandled) {
-      deliver(EventPhase::kCapture);
-    }
-    childAt(child, path[at], [&](auto &each) {
-      walk::routeKey(each, path, at + 1, event);
-    });
-    if (!event.fHandled) {
-      deliver(EventPhase::kBubble);
-    }
-  }
-}
-
-template <class C>
-void routeText(C &child, const Path &path, std::size_t at,
-               TextInputEvent &event) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    child.routeText(path, at, event);
-  } else {
-    const auto deliver = [&](EventPhase phase) {
-      event.fPhase = phase;
-      event.fCurrentTarget = child.fState.fId;
-      hook::textInput(child, event);
-    };
-    if (at == path.size()) {
-      if (!event.fHandled) {
-        deliver(EventPhase::kTarget);
-      }
-      return;
-    }
-    if (!event.fHandled) {
-      deliver(EventPhase::kCapture);
-    }
-    childAt(child, path[at], [&](auto &each) {
-      walk::routeText(each, path, at + 1, event);
-    });
-    if (!event.fHandled) {
-      deliver(EventPhase::kBubble);
-    }
-  }
-}
-
-template <class C> std::optional<NodeInfo> info(C &child, NodeId id) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    return child.info(id);
-  } else {
-    const State &state = child.fState;
-    if (state.fId == id) {
-      return NodeInfo{hook::focusable(child), state.fDisabled,
-                      state.fVisible, hook::takesText(child)};
-    }
-    std::optional<NodeInfo> found;
-    eachChild(child, [&](auto &each) {
-      if (!found) {
-        found = walk::info(each, id);
-        if (found && (!state.fVisible)) {
-          found->fVisible = false;
-        }
-        if (found && state.fDisabled) {
-          found->fDisabled = true;
-        }
-      }
-    });
-    return found;
-  }
-}
-
-template <class C>
-bool focusChanged(C &child, NodeId id, bool focused, StyleResolver resolver,
+template <class N>
+bool focusChanged(N &child, NodeId id, bool focused, StyleResolver resolver,
                   float viewportWidth) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    return child.focusChanged(id, focused, resolver, viewportWidth);
-  } else {
-    State &state = child.fState;
-    const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
-                                                   : resolver;
-    if (state.fId == id) {
-      state.fFocused = focused;
-      hook::focusChanged(child, focused);
-      if (own && own.fUsesState(styleSubject(child, viewportWidth),
-                                StyleState::kFocus)) {
-        state.restyle(true);
-      }
-      if (hook::focusChangesAppearance(child)) {
-        state.markDamaged();
-      }
-      return true;
+  State &state = child.fState;
+  const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
+                                                 : resolver;
+  if (state.fId == id) {
+    state.fFocused = focused;
+    child.onFocusChanged(focused);
+    if (own && own.fUsesState(styleSubject(child, viewportWidth),
+                              states::kFocus)) {
+      state.restyle(true);
     }
-    bool found = false;
-    eachChild(child, [&](auto &each) {
-      found = found ||
-              walk::focusChanged(each, id, focused, own, viewportWidth);
-    });
-    return found;
+    if (child.focusChangesAppearance()) {
+      state.markDamaged();
+    }
+    return true;
   }
+  bool found = false;
+  eachChild(child, [&](auto &each) {
+    found = found || walk::focusChanged(each, id, focused, own, viewportWidth);
+  });
+  return found;
 }
 
-template <class C>
-void routeSemantic(C &child, const Path &path, std::size_t at,
-                   SemanticActionEvent &event) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    child.routeSemantic(path, at, event);
-  } else {
-    const auto deliver = [&](EventPhase phase) {
-      event.fPhase = phase;
-      event.fCurrentTarget = child.fState.fId;
-      hook::semanticAction(child, event);
-    };
-    if (at == path.size()) {
-      if (!event.fHandled) {
-        deliver(EventPhase::kTarget);
-      }
-      return;
-    }
-    if (!event.fHandled) {
-      deliver(EventPhase::kCapture);
-    }
-    childAt(child, path[at], [&](auto &each) {
-      walk::routeSemantic(each, path, at + 1, event);
-    });
-    if (!event.fHandled) {
-      deliver(EventPhase::kBubble);
-    }
-  }
-}
-
-template <class C>
-void collectSemantics(C &child, std::vector<Semantics> &out, int parent,
+template <class N>
+void collectSemantics(N &child, std::vector<Semantics> &out, int parent,
                       NodeId focused) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    child.collectSemantics(out, parent, focused);
-  } else {
-    const State &state = child.fState;
-    if (!state.fVisible || state.fAlpha <= 0.001f) {
-      return;
-    }
-    Semantics own = hook::semantics(child);
-    int childParent = parent;
-    if (own.fRole != SemanticRole::kNone || !own.fLabel.empty()) {
-      own.fDisabled = own.fDisabled || state.fDisabled;
-      own.fFocused = own.fFocused || state.fId == focused;
-      own.fSelected = own.fSelected || state.fSelected;
-      own.fBounds = state.fBounds;
-      own.fParent = parent;
-      own.fId = state.fId;
-      childParent = static_cast<int>(out.size());
-      out.push_back(std::move(own));
-    }
-    eachChild(child, [&](auto &each) {
-      walk::collectSemantics(each, out, childParent, focused);
-    });
+  const State &state = child.fState;
+  if (!state.fVisible || state.fAlpha <= 0.001f) {
+    return;
   }
+  Semantics own = child.semantics();
+  int childParent = parent;
+  if (hasRole(own.fRole) || !own.fLabel.empty()) {
+    own.fDisabled = own.fDisabled || state.fDisabled;
+    own.fFocused = own.fFocused || state.fId == focused;
+    own.fSelected = own.fSelected || state.fSelected;
+    own.fBounds = state.fBounds;
+    own.fParent = parent;
+    own.fId = state.fId;
+    childParent = static_cast<int>(out.size());
+    out.push_back(std::move(own));
+  }
+  eachChild(child, [&](auto &each) {
+    walk::collectSemantics(each, out, childParent, focused);
+  });
 }
 
-template <class C> void collectFocusable(C &child, std::vector<NodeId> &out) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    child.collectFocusable(out);
-  } else {
-    const State &state = child.fState;
-    if (!state.fVisible || state.fDisabled || state.fAlpha <= 0.001f) {
-      return;
-    }
-    if (hook::focusable(child)) {
-      out.push_back(state.fId);
-    }
-    eachChildInDrawOrder(child, [&](auto &each, std::uint32_t) {
-      walk::collectFocusable(each, out);
-    });
+template <class N> void collectFocusable(N &child, std::vector<NodeId> &out) {
+  const State &state = child.fState;
+  if (!state.fVisible || state.fDisabled || state.fAlpha <= 0.001f) {
+    return;
   }
+  if (child.focusable()) {
+    out.push_back(state.fId);
+  }
+  eachChildInDrawOrder(child, [&](auto &each, std::uint32_t) {
+    walk::collectFocusable(each, out);
+  });
 }
 
-template <class C> bool animating(C &child) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    return child.animating();
-  } else {
-    if (!child.fState.fTransforms.empty() || hook::settling(child)) {
-      return true;
-    }
-    bool any = false;
-    eachChild(child, [&](auto &each) { any = any || walk::animating(each); });
-    return any;
+template <class N> bool animating(N &child) {
+  if (!child.fState.fTransforms.empty() || child.settling()) {
+    return true;
   }
-}
-
-} // namespace walk
-
-namespace walk {
-// What is waiting to be repainted, without forgetting it.
-template <class C> [[nodiscard]] bool hasDamage(C &child) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    return child.hasDamage();
-  } else {
-    const State &state = child.fState;
-    if (state.fDamaged || !state.fMovedDamage.isEmpty()) {
-      return true;
-    }
-    bool any = false;
-    eachChild(child, [&](auto &each) { any = any || walk::hasDamage(each); });
-    return any;
-  }
+  bool any = false;
+  eachChild(child, [&](auto &each) { any = any || walk::animating(each); });
+  return any;
 }
 
 // A click told straight to the node at the end of a path and, when it does
-// not take it, to each node above in turn -- a click as such, without the
-// press and release around it.
-template <class C>
-bool clickPath(C &child, const Path &path, std::size_t at, float x, float y) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    return child.clickPath(path, at, x, y);
-  } else {
-    bool taken = false;
-    if (at < path.size()) {
-      childAt(child, path[at], [&](auto &each) {
-        taken = walk::clickPath(each, path, at + 1, x, y);
-      });
-    }
-    return taken || (child.fState.fBounds.contains(x, y) &&
-                     hook::onClick(child, x, y));
+// not take it, to each node above in turn.
+template <class N>
+bool clickPath(N &child, const Path &path, std::size_t at, float x, float y) {
+  bool taken = false;
+  if (at < path.size()) {
+    childAt(child, path[at], [&](auto &each) {
+      taken = walk::clickPath(each, path, at + 1, x, y);
+    });
   }
+  return taken ||
+         (child.fState.fBounds.contains(x, y) && child.onClick(x, y));
 }
 
-// The id of the node at the end of a path.
-template <class C>
-[[nodiscard]] NodeId idAt(C &child, const Path &path, std::size_t at) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    return child.idAt(path, at);
-  } else {
-    if (at == path.size()) {
-      return child.fState.fId;
-    }
-    NodeId found = 0;
-    childAt(child, path[at],
-            [&](auto &each) { found = walk::idAt(each, path, at + 1); });
-    return found;
-  }
-}
 } // namespace walk
 
 // ---- AnyNode ----------------------------------------------------------------
 
 // Any node, held by value, erased the way std::function erases a callable:
-// one allocation, and a table of the walks for the node's own type. For the
-// places where the type cannot be written down -- a list whose rows differ,
-// a panel a plugin supplies. Everywhere else, write the type.
+// one allocation, and a table of the walks for the node's own type.
 class AnyNode {
 public:
   AnyNode() = default;
   template <class T>
-    requires std::derived_from<std::remove_cvref_t<T>, Node> &&
-             (!std::same_as<std::remove_cvref_t<T>, AnyNode>)
+    requires std::derived_from<std::remove_cvref_t<T>, Node>
   AnyNode(T &&node) // NOLINT: converting, as std::function's is
       : fNode(new std::remove_cvref_t<T>(std::forward<T>(node))),
         fOps(&kOps<std::remove_cvref_t<T>>) {}
@@ -2738,75 +2703,11 @@ public:
     return fNode != nullptr;
   }
   // The node, when it is a T.
-  template <class T>
-  requires std::derived_from<T, Node> [[nodiscard]] T *get() noexcept {
+  template <class T> [[nodiscard]] T *get() noexcept {
     return fOps == &kOps<T> ? static_cast<T *>(fNode) : nullptr;
   }
   [[nodiscard]] State &state() { return fOps->fState(fNode); }
 
-  // The walks, for the node inside.
-  void layout(const skia::SkRect &box) { fOps->fLayout(fNode, box); }
-  void draw(skia::SkCanvas *canvas, float alpha) {
-    fOps->fDraw(fNode, canvas, alpha);
-  }
-  void update(UpdateContext &context, StyleResolver resolver,
-              const Style *inherited, bool restyleAll) {
-    fOps->fUpdate(fNode, context, resolver, inherited, restyleAll);
-  }
-  [[nodiscard]] bool markDirty() { return fOps->fMarkDirty(fNode); }
-  [[nodiscard]] skia::SkRect collectDamage(bool drawnAbove) {
-    return fOps->fCollectDamage(fNode, drawnAbove);
-  }
-  [[nodiscard]] bool hasDamage() { return fOps->fHasDamage(fNode); }
-  void hover(float x, float y, bool visibleAbove, StyleResolver resolver,
-             float viewportWidth) {
-    fOps->fHover(fNode, x, y, visibleAbove, resolver, viewportWidth);
-  }
-  [[nodiscard]] bool hitPath(float x, float y, Path &path) {
-    return fOps->fHitPath(fNode, x, y, path);
-  }
-  [[nodiscard]] bool findPath(NodeId id, Path &path) {
-    return fOps->fFindPath(fNode, id, path);
-  }
-  [[nodiscard]] NodeId idAt(const Path &path, std::size_t at) {
-    return fOps->fIdAt(fNode, path, at);
-  }
-  void routePointer(const Path &path, std::size_t at, PointerEvent &event,
-                    Routed &routed, bool targetOnly) {
-    fOps->fRoutePointer(fNode, path, at, event, routed, targetOnly);
-  }
-  void routeKey(const Path &path, std::size_t at, KeyEvent &event) {
-    fOps->fRouteKey(fNode, path, at, event);
-  }
-  void routeText(const Path &path, std::size_t at, TextInputEvent &event) {
-    fOps->fRouteText(fNode, path, at, event);
-  }
-  [[nodiscard]] std::optional<NodeInfo> info(NodeId id) {
-    return fOps->fInfo(fNode, id);
-  }
-  [[nodiscard]] bool focusChanged(NodeId id, bool focused,
-                                  StyleResolver resolver,
-                                  float viewportWidth) {
-    return fOps->fFocusChanged(fNode, id, focused, resolver, viewportWidth);
-  }
-  void routeSemantic(const Path &path, std::size_t at,
-                     SemanticActionEvent &event) {
-    fOps->fRouteSemantic(fNode, path, at, event);
-  }
-  void collectSemantics(std::vector<Semantics> &out, int parent,
-                        NodeId focused) {
-    fOps->fCollectSemantics(fNode, out, parent, focused);
-  }
-  void collectFocusable(std::vector<NodeId> &out) {
-    fOps->fCollectFocusable(fNode, out);
-  }
-  [[nodiscard]] bool animating() { return fOps->fAnimating(fNode); }
-  [[nodiscard]] bool clickPath(const Path &path, std::size_t at, float x,
-                               float y) {
-    return fOps->fClickPath(fNode, path, at, x, y);
-  }
-
-private:
   struct Ops {
     void (*fDestroy)(void *);
     State &(*fState)(void *);
@@ -2821,20 +2722,25 @@ private:
     bool (*fHitPath)(void *, float, float, Path &);
     bool (*fFindPath)(void *, NodeId, Path &);
     NodeId (*fIdAt)(void *, const Path &, std::size_t);
-    void (*fRoutePointer)(void *, const Path &, std::size_t, PointerEvent &,
-                          Routed &, bool);
-    void (*fRouteKey)(void *, const Path &, std::size_t, KeyEvent &);
-    void (*fRouteText)(void *, const Path &, std::size_t, TextInputEvent &);
+    void (*fRoutePointer)(void *, const Path &, std::size_t,
+                          const pointer_t &, PointerReply &, Routed &, bool);
+    void (*fRouteKey)(void *, const Path &, std::size_t, const key_t &,
+                      Reply &);
+    void (*fRouteText)(void *, const Path &, std::size_t, const text_t &,
+                       Reply &);
+    void (*fRouteSemantic)(void *, const Path &, std::size_t,
+                           const semantic_action_t &, Reply &);
     std::optional<NodeInfo> (*fInfo)(void *, NodeId);
     bool (*fFocusChanged)(void *, NodeId, bool, StyleResolver, float);
-    void (*fRouteSemantic)(void *, const Path &, std::size_t,
-                           SemanticActionEvent &);
     void (*fCollectSemantics)(void *, std::vector<Semantics> &, int, NodeId);
     void (*fCollectFocusable)(void *, std::vector<NodeId> &);
     bool (*fAnimating)(void *);
     bool (*fClickPath)(void *, const Path &, std::size_t, float, float);
   };
+  [[nodiscard]] const Ops &ops() const noexcept { return *fOps; }
+  [[nodiscard]] void *node() const noexcept { return fNode; }
 
+private:
   template <class T> [[nodiscard]] static T &as(void *node) {
     return *static_cast<T *>(node);
   }
@@ -2843,9 +2749,7 @@ private:
   static constexpr Ops kOps{
       +[](void *n) { delete static_cast<T *>(n); },
       +[](void *n) -> State & { return as<T>(n).fState; },
-      +[](void *n, const skia::SkRect &box) {
-        scene::layout(as<T>(n), box);
-      },
+      +[](void *n, const skia::SkRect &box) { scene::layout(as<T>(n), box); },
       +[](void *n, skia::SkCanvas *canvas, float alpha) {
         scene::draw(as<T>(n), canvas, alpha);
       },
@@ -2867,22 +2771,21 @@ private:
       +[](void *n, const Path &path, std::size_t at) {
         return walk::idAt(as<T>(n), path, at);
       },
-      +[](void *n, const Path &path, std::size_t at, PointerEvent &e,
-          Routed &routed, bool targetOnly) {
-        walk::routePointer(as<T>(n), path, at, e, routed, targetOnly);
+      +[](void *n, const Path &path, std::size_t at, const pointer_t &e,
+          PointerReply &reply, Routed &routed, bool targetOnly) {
+        walk::routePointer(as<T>(n), path, at, e, reply, routed, targetOnly);
       },
-      +[](void *n, const Path &path, std::size_t at, KeyEvent &e) {
-        walk::routeKey(as<T>(n), path, at, e);
-      },
-      +[](void *n, const Path &path, std::size_t at, TextInputEvent &e) {
-        walk::routeText(as<T>(n), path, at, e);
+      +[](void *n, const Path &path, std::size_t at, const key_t &e,
+          Reply &reply) { walk::routeKey(as<T>(n), path, at, e, reply); },
+      +[](void *n, const Path &path, std::size_t at, const text_t &e,
+          Reply &reply) { walk::routeText(as<T>(n), path, at, e, reply); },
+      +[](void *n, const Path &path, std::size_t at,
+          const semantic_action_t &e, Reply &reply) {
+        walk::routeSemantic(as<T>(n), path, at, e, reply);
       },
       +[](void *n, NodeId id) { return walk::info(as<T>(n), id); },
       +[](void *n, NodeId id, bool focused, StyleResolver r, float width) {
         return walk::focusChanged(as<T>(n), id, focused, r, width);
-      },
-      +[](void *n, const Path &path, std::size_t at, SemanticActionEvent &e) {
-        walk::routeSemantic(as<T>(n), path, at, e);
       },
       +[](void *n, std::vector<Semantics> &out, int parent, NodeId focused) {
         walk::collectSemantics(as<T>(n), out, parent, focused);
@@ -2900,16 +2803,81 @@ private:
   const Ops *fOps = nullptr;
 };
 
-template <class C> State &stateOf(C &child) {
-  if constexpr (std::same_as<C, AnyNode>) {
-    return child.state();
-  } else {
-    return child.fState;
+template <class F> void visitChild(AnyNode &child, F &&f) {
+  if (child) {
+    f(child);
   }
 }
+inline State &stateOf(AnyNode &child) { return child.state(); }
+inline void layout(AnyNode &child, const skia::SkRect &box) {
+  child.ops().fLayout(child.node(), box);
+}
+inline void draw(AnyNode &child, skia::SkCanvas *canvas, float alpha) {
+  child.ops().fDraw(child.node(), canvas, alpha);
+}
 
-// A node built with a spec applied: for members and for the arguments of a
-// container, where there is no parent to add to.
+namespace walk {
+inline void update(AnyNode &c, UpdateContext &context, StyleResolver r,
+                   const Style *s, bool all) {
+  c.ops().fUpdate(c.node(), context, r, s, all);
+}
+inline bool markDirty(AnyNode &c) { return c.ops().fMarkDirty(c.node()); }
+inline skia::SkRect collectDamage(AnyNode &c, bool drawn) {
+  return c.ops().fCollectDamage(c.node(), drawn);
+}
+inline bool hasDamage(AnyNode &c) { return c.ops().fHasDamage(c.node()); }
+inline void hover(AnyNode &c, float x, float y, bool visible, StyleResolver r,
+                  float width) {
+  c.ops().fHover(c.node(), x, y, visible, r, width);
+}
+inline bool hitPath(AnyNode &c, float x, float y, Path &path) {
+  return c.ops().fHitPath(c.node(), x, y, path);
+}
+inline bool findPath(AnyNode &c, NodeId id, Path &path) {
+  return c.ops().fFindPath(c.node(), id, path);
+}
+inline NodeId idAt(AnyNode &c, const Path &path, std::size_t at) {
+  return c.ops().fIdAt(c.node(), path, at);
+}
+inline void routePointer(AnyNode &c, const Path &path, std::size_t at,
+                         const pointer_t &e, PointerReply &reply,
+                         Routed &routed, bool targetOnly) {
+  c.ops().fRoutePointer(c.node(), path, at, e, reply, routed, targetOnly);
+}
+inline void routeKey(AnyNode &c, const Path &path, std::size_t at,
+                     const key_t &e, Reply &reply) {
+  c.ops().fRouteKey(c.node(), path, at, e, reply);
+}
+inline void routeText(AnyNode &c, const Path &path, std::size_t at,
+                      const text_t &e, Reply &reply) {
+  c.ops().fRouteText(c.node(), path, at, e, reply);
+}
+inline void routeSemantic(AnyNode &c, const Path &path, std::size_t at,
+                          const semantic_action_t &e, Reply &reply) {
+  c.ops().fRouteSemantic(c.node(), path, at, e, reply);
+}
+inline std::optional<NodeInfo> info(AnyNode &c, NodeId id) {
+  return c.ops().fInfo(c.node(), id);
+}
+inline bool focusChanged(AnyNode &c, NodeId id, bool focused, StyleResolver r,
+                         float width) {
+  return c.ops().fFocusChanged(c.node(), id, focused, r, width);
+}
+inline void collectSemantics(AnyNode &c, std::vector<Semantics> &out,
+                             int parent, NodeId focused) {
+  c.ops().fCollectSemantics(c.node(), out, parent, focused);
+}
+inline void collectFocusable(AnyNode &c, std::vector<NodeId> &out) {
+  c.ops().fCollectFocusable(c.node(), out);
+}
+inline bool animating(AnyNode &c) { return c.ops().fAnimating(c.node()); }
+inline bool clickPath(AnyNode &c, const Path &path, std::size_t at, float x,
+                      float y) {
+  return c.ops().fClickPath(c.node(), path, at, x, y);
+}
+} // namespace walk
+
+// A node built with a spec applied.
 //
 //   nodes::Text title = make<nodes::Text>({.fillX = true}, "Log in", 20.0f);
 template <class T, class... Args>
@@ -2928,7 +2896,8 @@ template <template <class...> class T, class... Args>
 }
 // A spec applied to a node already built.
 template <class T>
-  requires std::derived_from<T, Node> [[nodiscard]] T placed(const Spec &spec, T node) {
+  requires std::derived_from<T, Node>
+[[nodiscard]] T placed(const Spec &spec, T node) {
   node.fState.apply(spec);
   return node;
 }
@@ -2943,8 +2912,7 @@ class SceneHandle;
 //
 // A frame is: update(now), layoutIfNeeded(viewport), draw(canvas),
 // finishFrame().
-template <class Root>
-  requires std::derived_from<Root, Node> class Scene {
+template <class Root> class Scene {
 public:
   template <class... Args>
   explicit Scene(std::in_place_t, Args &&...args)
@@ -2966,14 +2934,12 @@ public:
     this->restyleDirty();
   }
 
-  // Advances transforms and the nodes' own animation, and applies styles.
   void update(double nowMs) {
     fNowMs = nowMs;
     UpdateContext context{nowMs, fViewport.width(), false};
     walk::update(fRoot, context, {}, nullptr, false);
   }
 
-  // Lays out what changed, and everything when the viewport did.
   bool layoutIfNeeded(const skia::SkRect &viewport) {
     const bool viewportChanged = viewport != fViewport;
     fViewport = viewport;
@@ -2993,8 +2959,6 @@ public:
 
   void draw(skia::SkCanvas *canvas) { scene::draw(fRoot, canvas, 1.0f); }
 
-  // What changed this frame and whether the next can differ, together: kept
-  // apart, damage was consumed while an ease still needed frames.
   [[nodiscard]] FrameResult finishFrame() {
     skia::SkRect damage = walk::collectDamage(fRoot, true);
     const skia::SkRect &bounds = fRoot.fState.fBounds;
@@ -3009,12 +2973,14 @@ public:
   }
 
   // -- input
-  bool dispatchPointer(PointerEvent event) {
-    if (event.fAction == PointerAction::kMove) {
-      this->setHover(event.fX, event.fY);
-    }
-    const bool ending = event.fAction == PointerAction::kUp ||
-                        event.fAction == PointerAction::kCancel;
+  bool dispatchPointer(const pointer_t &input) {
+    const skia::SkPoint at = where(input);
+    std::visit(overloaded{[&](const pointer::move &) {
+                            this->setHover(at.fX, at.fY);
+                          },
+                          [](const auto &) {}},
+               input);
+    const bool ending = ends(input);
     Path path;
     bool found = false;
     if (fCapture != 0) {
@@ -3032,10 +2998,14 @@ public:
     }
     if (!found) {
       path.clear();
-      found = walk::hitPath(fRoot, event.fX, event.fY, path);
+      found = walk::hitPath(fRoot, at.fX, at.fY, path);
     }
+    const bool press = std::visit(
+        overloaded{[](const pointer::down &) { return true; },
+                   [](const auto &) { return false; }},
+        input);
     if (!found) {
-      if (event.fAction == PointerAction::kDown) {
+      if (press) {
         this->focus(0);
       }
       if (ending) {
@@ -3045,13 +3015,14 @@ public:
       return false;
     }
     const NodeId target = walk::idAt(fRoot, path, 0);
-    if (event.fAction == PointerAction::kDown) {
+    if (press) {
       fDown = target;
     }
-    event.fCaptured = fCapture != 0;
-    event.fTarget = target;
+    PointerReply reply;
+    reply.fTarget = target;
+    reply.fCaptured = fCapture != 0;
     Routed routed;
-    walk::routePointer(fRoot, path, 0, event, routed, false);
+    walk::routePointer(fRoot, path, 0, input, reply, routed, false);
 
     if (routed.fReleaseRequest || ending) {
       fCapture = 0;
@@ -3061,12 +3032,12 @@ public:
       if (fDown != 0 && fDown != routed.fCaptureRequest) {
         Path down;
         if (walk::findPath(fRoot, fDown, down)) {
-          PointerEvent cancel = event;
-          cancel.fAction = PointerAction::kCancel;
-          cancel.fHandled = false;
-          cancel.fTarget = fDown;
+          PointerReply cancelled;
+          cancelled.fTarget = fDown;
           Routed ignored;
-          walk::routePointer(fRoot, down, 0, cancel, ignored, true);
+          walk::routePointer(fRoot, down, 0,
+                             pointer_t{pointer::cancel{at.fX, at.fY}},
+                             cancelled, ignored, true);
         }
       }
       fDown = 0;
@@ -3075,37 +3046,21 @@ public:
     if (ending) {
       fDown = 0;
     }
-    if (event.fSuppressHover) {
+    if (reply.fSuppressHover) {
       const float away = -std::numeric_limits<float>::infinity();
       this->setHover(away, away);
     }
     if (routed.fFocusRequest != 0) {
       this->focus(routed.fFocusRequest);
-    } else if (routed.fTargetDelivered &&
-               event.fAction == PointerAction::kDown &&
-               routed.fTargetFocusable) {
+    } else if (routed.fTargetDelivered && press && routed.fTargetFocusable) {
       this->focus(target);
     }
     this->restyleDirty();
-    return event.fHandled;
-  }
-
-  bool dispatchPointer(PointerAction action, float x, float y,
-                       float scrollX = 0.0f, float scrollY = 0.0f,
-                       int button = 0) {
-    PointerEvent event;
-    event.fAction = action;
-    event.fX = x;
-    event.fY = y;
-    event.fScrollX = scrollX;
-    event.fScrollY = scrollY;
-    event.fButton = button;
-    return this->dispatchPointer(event);
+    return reply.fHandled;
   }
 
   // A click at a point: onClick of the front-most node there that takes
-  // input, then of each node above it until one takes it. What a test or a
-  // scripted interaction wants; a real pointer goes through dispatchPointer.
+  // input, then of each node above it until one takes it.
   bool click(float x, float y) {
     Path path;
     if (!walk::hitPath(fRoot, x, y, path)) {
@@ -3116,46 +3071,61 @@ public:
     return taken;
   }
 
-  bool dispatchKey(KeyEvent event) {
-    if (event.fPressed && event.fKey == Key::kTab) {
-      this->focusNext(event.fShift);
+  bool dispatchKey(const key_t &input) {
+    // Tab moves the focus; Shift+Tab back.
+    const std::optional<bool> tab = std::visit(
+        overloaded{[](const key::down &press) -> std::optional<bool> {
+                     if (press.key == keys::kTab) {
+                       return press.modifiers.has<modifier::shift>();
+                     }
+                     return std::nullopt;
+                   },
+                   [](const auto &) -> std::optional<bool> {
+                     return std::nullopt;
+                   }},
+        input);
+    if (tab) {
+      this->focusNext(*tab);
       return fFocus != 0;
     }
     Path path;
     if (!this->focusPath(path)) {
       return false;
     }
-    event.fTarget = fFocus;
-    walk::routeKey(fRoot, path, 0, event);
+    Reply reply;
+    reply.fTarget = fFocus;
+    walk::routeKey(fRoot, path, 0, input, reply);
     this->restyleDirty();
-    return event.fHandled;
+    return reply.fHandled;
   }
 
-  bool dispatchText(TextInputEvent event) {
+  bool dispatchText(const text_t &input) {
     Path path;
     if (!this->focusPath(path)) {
       return false;
     }
-    event.fTarget = fFocus;
-    walk::routeText(fRoot, path, 0, event);
+    Reply reply;
+    reply.fTarget = fFocus;
+    walk::routeText(fRoot, path, 0, input, reply);
     this->restyleDirty();
-    return event.fHandled;
+    return reply.fHandled;
   }
 
-  bool dispatchSemantic(NodeId id, SemanticActionEvent event) {
+  bool dispatchSemantic(NodeId id, const semantic_action_t &action) {
     const std::optional<NodeInfo> about = walk::info(fRoot, id);
     Path path;
     if (!about || !about->fVisible || about->fDisabled ||
         !walk::findPath(fRoot, id, path)) {
       return false;
     }
-    event.fTarget = id;
-    walk::routeSemantic(fRoot, path, 0, event);
-    if (event.fRequestFocus) {
+    Reply reply;
+    reply.fTarget = id;
+    walk::routeSemantic(fRoot, path, 0, action, reply);
+    if (reply.fRequestFocus) {
       this->focus(id);
     }
     this->restyleDirty();
-    return event.fHandled;
+    return reply.fHandled;
   }
 
   [[nodiscard]] std::vector<Semantics> semanticsTree() {
@@ -3164,8 +3134,7 @@ public:
     return out;
   }
 
-  // Gives a node focus, or takes it from all with 0. A node that cannot
-  // take it -- not focusable, disabled, hidden, gone -- does not get it.
+  // Gives a node focus, or takes it from all with 0.
   void focus(NodeId id) {
     std::optional<NodeInfo> now;
     if (id != 0) {
@@ -3197,7 +3166,7 @@ public:
     }
     this->restyleDirty();
   }
-  void focus(const State &node) { this->focus(node.id()); }
+  void focus(const Node &node) { this->focus(node.id()); }
   void clearFocus() { this->focus(0); }
   [[nodiscard]] NodeId focusedId() {
     Path ignored;
@@ -3205,10 +3174,8 @@ public:
   }
   [[nodiscard]] bool focusedTakesText() {
     const NodeId id = this->focusedId();
-    if (id == 0) {
-      return false;
-    }
-    const std::optional<NodeInfo> about = walk::info(fRoot, id);
+    const std::optional<NodeInfo> about =
+        id != 0 ? walk::info(fRoot, id) : std::nullopt;
     return about && about->fTakesText;
   }
   [[nodiscard]] NodeId capturedId() {
@@ -3244,7 +3211,6 @@ public:
     this->focus(nodes[index]);
   }
 
-  // Walked only when the pointer moved: hover cannot change by itself.
   void setHover(float x, float y) {
     if (x == fHoverX && y == fHoverY && fHoverSeen) {
       return;
@@ -3259,8 +3225,8 @@ public:
   [[nodiscard]] SceneHandle handle();
 
 private:
-  // Styles whose inputs changed -- a hover, a focus, a role -- applied now
-  // rather than at the next frame, so what a handler sees is current.
+  // Styles whose inputs changed, applied now, so what a handler sees next is
+  // current.
   void restyleDirty() {
     UpdateContext context{fNowMs, fViewport.width(), false};
     walk::update(fRoot, context, {}, nullptr, false);
@@ -3292,13 +3258,11 @@ private:
   friend class SceneHandle;
 };
 
-// A scene of any root type, not owned, that goes inert when the scene is
-// destroyed: what a router keeps across screen changes.
+// A scene of any root type, not owned, inert once the scene is destroyed.
 class SceneHandle {
 public:
   SceneHandle() = default;
   template <class Root>
-  requires std::derived_from<Root, Node>
   explicit SceneHandle(Scene<Root> &scene)
       : fAlive(scene.fAlive), fScene(&scene), fOps(&kOps<Root>) {}
 
@@ -3312,17 +3276,17 @@ public:
     return fScene == other.fScene;
   }
 
-  bool pointer(PointerEvent event) const {
-    return this->alive() && fOps->fPointer(fScene, event);
+  bool pointer(const pointer_t &input) const {
+    return this->alive() && fOps->fPointer(fScene, input);
   }
-  bool key(KeyEvent event) const {
-    return this->alive() && fOps->fKey(fScene, event);
+  bool key(const key_t &input) const {
+    return this->alive() && fOps->fKey(fScene, input);
   }
-  bool text(TextInputEvent event) const {
-    return this->alive() && fOps->fText(fScene, event);
+  bool text(const text_t &input) const {
+    return this->alive() && fOps->fText(fScene, input);
   }
-  bool semantic(NodeId id, SemanticActionEvent event) const {
-    return this->alive() && fOps->fSemantic(fScene, id, event);
+  bool semantic(NodeId id, const semantic_action_t &action) const {
+    return this->alive() && fOps->fSemantic(fScene, id, action);
   }
   [[nodiscard]] std::vector<Semantics> semantics() const {
     return this->alive() ? fOps->fSemantics(fScene)
@@ -3345,10 +3309,10 @@ public:
 
 private:
   struct Ops {
-    bool (*fPointer)(void *, PointerEvent);
-    bool (*fKey)(void *, KeyEvent);
-    bool (*fText)(void *, TextInputEvent);
-    bool (*fSemantic)(void *, NodeId, SemanticActionEvent);
+    bool (*fPointer)(void *, const pointer_t &);
+    bool (*fKey)(void *, const key_t &);
+    bool (*fText)(void *, const text_t &);
+    bool (*fSemantic)(void *, NodeId, const semantic_action_t &);
     std::vector<Semantics> (*fSemantics)(void *);
     NodeId (*fCaptured)(void *);
     NodeId (*fFocused)(void *);
@@ -3360,10 +3324,12 @@ private:
   }
   template <class Root>
   static constexpr Ops kOps{
-      +[](void *s, PointerEvent e) { return as<Root>(s).dispatchPointer(e); },
-      +[](void *s, KeyEvent e) { return as<Root>(s).dispatchKey(e); },
-      +[](void *s, TextInputEvent e) { return as<Root>(s).dispatchText(e); },
-      +[](void *s, NodeId id, SemanticActionEvent e) {
+      +[](void *s, const pointer_t &e) {
+        return as<Root>(s).dispatchPointer(e);
+      },
+      +[](void *s, const key_t &e) { return as<Root>(s).dispatchKey(e); },
+      +[](void *s, const text_t &e) { return as<Root>(s).dispatchText(e); },
+      +[](void *s, NodeId id, const semantic_action_t &e) {
         return as<Root>(s).dispatchSemantic(id, e);
       },
       +[](void *s) { return as<Root>(s).semanticsTree(); },
@@ -3378,14 +3344,13 @@ private:
   const Ops *fOps = nullptr;
 };
 
-template <class Root>
-  requires std::derived_from<Root, Node> SceneHandle Scene<Root>::handle() {
+template <class Root> SceneHandle Scene<Root>::handle() {
   return SceneHandle(*this);
 }
 
 // Routes between scenes. Layers are back-to-front; the first modal layer
 // found owns input even when nothing in it handles it. Covered layers keep
-// their hover and focus, so closing a modal restores where the user was.
+// their hover and focus.
 class InputRouter {
 public:
   struct Layer {
@@ -3424,9 +3389,7 @@ public:
                                 return layer.fModal && layer.fScene.alive();
                               });
       if (at == layers.end() || covered) {
-        PointerEvent cancel;
-        cancel.fAction = PointerAction::kCancel;
-        captured.pointer(cancel);
+        captured.pointer(pointer::cancel{});
         captured = {};
       }
     }
@@ -3434,29 +3397,33 @@ public:
     fLayers.assign(layers.begin(), layers.end());
   }
 
-  bool pointer(PointerEvent event) {
+  bool pointer(const pointer_t &input) {
     if (fCaptured.alive()) {
-      const bool handled = fCaptured.pointer(event);
+      const bool handled = fCaptured.pointer(input);
       if (fCaptured.captured() == 0) {
         fCaptured = {};
       }
       return handled;
     }
     fCaptured = {};
+    const bool press = std::visit(
+        overloaded{[](const pointer::down &) { return true; },
+                   [](const auto &) { return false; }},
+        input);
     for (auto it = fLayers.rbegin(); it != fLayers.rend(); ++it) {
       if (!it->fScene.alive()) {
         continue;
       }
-      const bool handled = it->fScene.pointer(event);
+      const bool handled = it->fScene.pointer(input);
       if (it->fScene.captured() != 0) {
         fCaptured = it->fScene;
-        if (event.fAction == PointerAction::kDown) {
+        if (press) {
           this->ownFocus(it->fScene);
         }
         return true;
       }
       if (handled) {
-        if (event.fAction == PointerAction::kDown) {
+        if (press) {
           this->ownFocus(it->fScene);
         }
         return true;
@@ -3468,15 +3435,26 @@ public:
     return false;
   }
 
-  bool key(KeyEvent event) {
-    if (event.fPressed && event.fKey == Key::kTab) {
-      return this->focusNext(event.fShift);
+  bool key(const key_t &input) {
+    const std::optional<bool> tab = std::visit(
+        overloaded{[](const key::down &press) -> std::optional<bool> {
+                     if (press.key == keys::kTab) {
+                       return press.modifiers.has<modifier::shift>();
+                     }
+                     return std::nullopt;
+                   },
+                   [](const auto &) -> std::optional<bool> {
+                     return std::nullopt;
+                   }},
+        input);
+    if (tab) {
+      return this->focusNext(*tab);
     }
     for (auto it = fLayers.rbegin(); it != fLayers.rend(); ++it) {
       if (!it->fScene.alive()) {
         continue;
       }
-      if (it->fScene.key(event)) {
+      if (it->fScene.key(input)) {
         return true;
       }
       if (it->fModal) {
@@ -3486,12 +3464,12 @@ public:
     return false;
   }
 
-  bool text(TextInputEvent event) {
+  bool text(const text_t &input) {
     for (auto it = fLayers.rbegin(); it != fLayers.rend(); ++it) {
       if (!it->fScene.alive()) {
         continue;
       }
-      if (it->fScene.focused() != 0 && it->fScene.text(event)) {
+      if (it->fScene.focused() != 0 && it->fScene.text(input)) {
         return true;
       }
       if (it->fModal) {
@@ -3501,13 +3479,17 @@ public:
     return false;
   }
 
-  bool semantic(NodeId id, SemanticActionEvent event) {
+  bool semantic(NodeId id, const semantic_action_t &action) {
+    const bool focusing = std::visit(
+        overloaded{[](const semantic_action::focus &) { return true; },
+                   [](const auto &) { return false; }},
+        action);
     for (auto it = fLayers.rbegin(); it != fLayers.rend(); ++it) {
       if (!it->fScene.alive()) {
         continue;
       }
-      if (it->fScene.semantic(id, event)) {
-        if (event.fAction == SemanticAction::kFocus) {
+      if (it->fScene.semantic(id, action)) {
+        if (focusing) {
           this->ownFocus(it->fScene);
         }
         return true;

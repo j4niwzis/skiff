@@ -73,83 +73,102 @@ public:
 
   // Dragging the contents, which is how a finger scrolls. A press is watched
   // in the capture phase and only remembered -- a press that does not travel
-  // belongs to what is under it. Past the slop this takes the pointer.
-  void onPointerEvent(skiff::scene::PointerEvent &event) {
-    namespace scene = skiff::scene;
-    const bool watching = event.fPhase == scene::EventPhase::kCapture;
-    const bool mine = event.fPhase == scene::EventPhase::kTarget &&
-                      (event.fAction == scene::PointerAction::kDown ||
-                       fScroll.dragging() || fArmed);
-    if (!watching && !mine) {
+  // belongs to what is under it. Past the slop this takes the pointer, and
+  // the rest of the gesture comes to it as the target.
+  using Node::onPointer;
+  template <class Phase>
+  void onPointer(const Phase &, const skiff::scene::pointer::down &press,
+                 skiff::scene::PointerReply &reply)
+    requires(std::same_as<Phase, skiff::scene::phase::capture> ||
+             std::same_as<Phase, skiff::scene::phase::target>)
+  {
+    fArmed = fExtent > 0.0f; // nothing to scroll, nothing to drag
+    fPressX = press.x;
+    fPressY = press.y;
+    if (fArmed) {
+      reply.suppressHover();
+      this->deferIn(Phase{}, reply);
+    }
+    if (fScroll.press(press.y)) {
+      reply.handle(); // the press was spent catching a flick
+    }
+  }
+  template <class Phase>
+  void onPointer(const Phase &, const skiff::scene::pointer::move &move,
+                 skiff::scene::PointerReply &reply)
+    requires(std::same_as<Phase, skiff::scene::phase::capture> ||
+             std::same_as<Phase, skiff::scene::phase::target>)
+  {
+    if (!fArmed) {
       return;
     }
-    switch (event.fAction) {
-    case scene::PointerAction::kDown:
-      fArmed = fExtent > 0.0f; // nothing to scroll, nothing to drag
-      fPressX = event.fX;
-      fPressY = event.fY;
-      if (fArmed) {
-        event.suppressHover();
-        if (watching) {
-          event.deferClick();
-        }
+    if (!fScroll.dragging()) {
+      const float dx = move.x - fPressX;
+      const float dy = move.y - fPressY;
+      if (std::abs(dx) >= skiff::scene::ScrollGesture::kSlop &&
+          std::abs(dx) > std::abs(dy)) {
+        // Direction is decided once: a horizontal gesture never turns into
+        // list scrolling later in the same contact.
+        fArmed = false;
+        return;
       }
-      if (fScroll.press(event.fY)) {
-        event.handle(); // the press was spent catching a flick
-      }
-      break;
-    case scene::PointerAction::kMove: {
-      if (!fArmed) {
-        break;
-      }
-      if (!fScroll.dragging()) {
-        const float dx = event.fX - fPressX;
-        const float dy = event.fY - fPressY;
-        if (std::abs(dx) >= scene::ScrollGesture::kSlop &&
-            std::abs(dx) > std::abs(dy)) {
-          // Direction is decided once: a horizontal gesture never turns into
-          // list scrolling later in the same contact.
-          fArmed = false;
-          break;
-        }
-      }
-      event.suppressHover();
-      const bool wasDragging = fScroll.dragging();
-      if (!fScroll.drag(event.fY, fNowMs)) {
-        break;
-      }
-      if (!wasDragging) {
-        if (event.fCaptured) {
-          fArmed = false; // something else is already being dragged
-          break;
-        }
-        event.capturePointer();
-      }
-      this->invalidateLayout();
-      event.handle();
-      break;
     }
-    case scene::PointerAction::kUp:
-    case scene::PointerAction::kCancel:
-      if (fArmed || fScroll.dragging()) {
-        event.suppressHover();
-      }
-      if (fScroll.dragging()) {
-        fScroll.release();
-        this->invalidateLayout();
-        event.releasePointer();
-        event.handle();
-      }
-      fArmed = false;
-      break;
-    default:
-      break;
+    reply.suppressHover();
+    const bool wasDragging = fScroll.dragging();
+    if (!fScroll.drag(move.y, fNowMs)) {
+      return;
     }
+    if (!wasDragging) {
+      if (reply.fCaptured) {
+        fArmed = false; // something else is already being dragged
+        return;
+      }
+      reply.capturePointer();
+    }
+    this->invalidateLayout();
+    reply.handle();
+  }
+  template <class Phase>
+  void onPointer(const Phase &, const skiff::scene::pointer::up &,
+                 skiff::scene::PointerReply &reply)
+    requires(std::same_as<Phase, skiff::scene::phase::capture> ||
+             std::same_as<Phase, skiff::scene::phase::target>)
+  {
+    this->finish(reply);
+  }
+  template <class Phase>
+  void onPointer(const Phase &, const skiff::scene::pointer::cancel &,
+                 skiff::scene::PointerReply &reply)
+    requires(std::same_as<Phase, skiff::scene::phase::capture> ||
+             std::same_as<Phase, skiff::scene::phase::target>)
+  {
+    this->finish(reply);
   }
 
   // A target in its own right, so the empty part of a short list can still
   // be dragged. Draws nothing for a pointer.
   [[nodiscard]] bool acceptsInput() const { return true; }
+
+  // What the gesture does at its end, released or cancelled.
+  void finish(skiff::scene::PointerReply &reply) {
+    if (fArmed || fScroll.dragging()) {
+      reply.suppressHover();
+    }
+    if (fScroll.dragging()) {
+      fScroll.release();
+      this->invalidateLayout();
+      reply.releasePointer();
+      reply.handle();
+    }
+    fArmed = false;
+  }
+  // Watching from above, the press is deferred: the target must not click
+  // before this has had its chance to make the press a drag.
+  static void deferIn(skiff::scene::phase::capture,
+                      skiff::scene::PointerReply &reply) {
+    reply.deferClick();
+  }
+  static void deferIn(skiff::scene::phase::target, skiff::scene::PointerReply &) {}
 
   std::tuple<Children...> fChildren;
 

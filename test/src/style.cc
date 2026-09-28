@@ -84,33 +84,47 @@ template <class... Children> struct InputProbe : Node {
   }
   [[nodiscard]] bool acceptsInput() const { return true; }
 
-  void onPointerEvent(PointerEvent &event) {
-    ++fPointerEvents;
+  static int number(phase::capture) { return 0; }
+  static int number(phase::target) { return 1; }
+  static int number(phase::bubble) { return 2; }
+
+  void note(int at, std::string_view what) {
     if (fEvents != nullptr) {
-      fEvents->push_back(
-          std::format("{}:{}", fName, static_cast<int>(event.fPhase)));
-    }
-    if (fCapture && event.fPhase == EventPhase::kTarget &&
-        event.fAction == PointerAction::kDown) {
-      event.capturePointer();
-      event.requestFocus();
-      event.handle();
-    } else if (fCapture && event.fPhase == EventPhase::kTarget &&
-               event.fAction == PointerAction::kMove) {
-      event.handle();
+      fEvents->push_back(std::format("{}:{}{}", fName, what, at));
     }
   }
-  void onKeyEvent(KeyEvent &event) {
-    if (fEvents != nullptr) {
-      fEvents->push_back(
-          std::format("{}:key:{}", fName, static_cast<int>(event.fPhase)));
+  // Every pointer event is written down; a capturing probe takes the press
+  // and the moves at the target.
+  template <class Phase, class Input>
+  void onPointer(const Phase &at, const Input &, PointerReply &) {
+    ++fPointerEvents;
+    this->note(number(at), "");
+  }
+  void onPointer(phase::target at, const pointer::down &, PointerReply &reply) {
+    ++fPointerEvents;
+    this->note(number(at), "");
+    if (fCapture) {
+      reply.capturePointer();
+      reply.requestFocus();
+      reply.handle();
     }
+  }
+  void onPointer(phase::target at, const pointer::move &, PointerReply &reply) {
+    ++fPointerEvents;
+    this->note(number(at), "");
+    if (fCapture) {
+      reply.handle();
+    }
+  }
+  template <class Phase, class Input>
+  void onKey(const Phase &at, const Input &, Reply &) {
+    this->note(number(at), "key:");
   }
   [[nodiscard]] Semantics semantics() const {
     Semantics out;
-    out.fRole = SemanticRole::kButton;
+    out.fRole = semantic_role::button{};
     out.fLabel = fName;
-    out.fActions = {SemanticAction::kFocus, SemanticAction::kActivate};
+    out.fActions = {semantic_action::focus{}, semantic_action::activate{}};
     return out;
   }
 
@@ -129,10 +143,10 @@ struct CardTheme {
           .rule(selectAny(), {.alpha = 0.9f})
           .rule(select<Box, Card>(),
                 {.width = 20.0f, .height = 5.0f, .backgroundColour = kCard})
-          .rule(select<Box, Card>().when(StyleState::kSelected),
+          .rule(select<Box, Card>().when(states::kSelected),
                 {.width = 30.0f, .backgroundColour = kSelected})
-          .rule(select<Box, Card>().when(StyleState::kHover), {.scale = 1.2f})
-          .rule(select<Box, Card>().when(StyleState::kDisabled),
+          .rule(select<Box, Card>().when(states::kHover), {.scale = 1.2f})
+          .rule(select<Box, Card>().when(states::kDisabled),
                 {.alpha = 0.25f})
           .rule(selectAny<Moved>(), {.y = 42.0f})
           .rule(select<Box, Card>().atMostWidth(500.0f), {.height = 12.0f});
@@ -149,7 +163,7 @@ struct TextTheme {
 
 struct FocusTheme {
   static constexpr auto styles = makeStyleSheet().rule(
-      select<InputProbe>().when(StyleState::kFocus), {.alpha = 0.65f});
+      select<InputProbe>().when(states::kFocus), {.alpha = 0.65f});
 };
 
 struct WidgetTheme {
@@ -350,7 +364,7 @@ TEST(State, HoverOnlyRestylesNodesWithHoverRules) {
 }
 
 struct HalfText : Node {
-  Text text = make<Text>({.width = 0.5f, .relativeSize = Axes::kX}, "short",
+  Text text = make<Text>({.width = 0.5f, .relativeSize = axes::kX}, "short",
                          14.0f, skia::kWhite);
   void forEachChild(auto &&f) { f(text); }
 };
@@ -405,10 +419,7 @@ TEST(Children, AVectorOfNodesAndOfAnyNodes) {
   EXPECT_TRUE(scene.layoutIfNeeded(kViewport));
   EXPECT_FLOAT_EQ(scene.root().mixed[0].state().fBounds.width(), 20.0f);
 
-  PointerEvent down;
-  down.fAction = PointerAction::kDown;
-  down.fX = 5.0f;
-  down.fY = 25.0f;
+  pointer_t down = pointer::down{5.0f, 25.0f};
   EXPECT_TRUE(scene.dispatchPointer(down));
   ASSERT_NE(scene.root().mixed[1].get<ClickProbe>(), nullptr);
   EXPECT_EQ(scene.root().mixed[1].get<ClickProbe>()->fClicks, 1);
@@ -451,16 +462,12 @@ TEST(Input, PropagatesCaptureTargetAndBubbleInOrder) {
   scene.state().apply({.fill = true});
   scene.layoutIfNeeded(kViewport);
 
-  PointerEvent down;
-  down.fAction = PointerAction::kDown;
-  down.fX = 10.0f;
-  down.fY = 10.0f;
+  pointer_t down = pointer::down{10.0f, 10.0f};
   EXPECT_FALSE(scene.dispatchPointer(down));
   EXPECT_EQ(events, (std::vector<std::string>{"root:0", "child:1", "root:2"}));
 
   events.clear();
-  KeyEvent key;
-  EXPECT_FALSE(scene.dispatchKey(key));
+  EXPECT_FALSE(scene.dispatchKey(key::down{}));
   EXPECT_EQ(events, (std::vector<std::string>{"root:key:0", "child:key:1",
                                               "root:key:2"}));
 }
@@ -479,25 +486,16 @@ TEST(Input, PointerCaptureSurvivesLeavingTheControl) {
   InputProbe<> &child = scene.root().drag;
   scene.layoutIfNeeded(kViewport);
 
-  PointerEvent down;
-  down.fAction = PointerAction::kDown;
-  down.fX = 10.0f;
-  down.fY = 10.0f;
+  pointer_t down = pointer::down{10.0f, 10.0f};
   EXPECT_TRUE(scene.dispatchPointer(down));
   EXPECT_EQ(scene.capturedId(), child.id());
   EXPECT_EQ(scene.focusedId(), child.id());
 
-  PointerEvent move;
-  move.fAction = PointerAction::kMove;
-  move.fX = 500.0f;
-  move.fY = 500.0f;
+  pointer_t move = pointer::move{500.0f, 500.0f};
   EXPECT_TRUE(scene.dispatchPointer(move));
   EXPECT_EQ(child.fPointerEvents, 2);
 
-  PointerEvent up;
-  up.fAction = PointerAction::kUp;
-  up.fX = 500.0f;
-  up.fY = 500.0f;
+  pointer_t up = pointer::up{500.0f, 500.0f};
   (void)scene.dispatchPointer(up);
   EXPECT_EQ(scene.capturedId(), 0u);
 }
@@ -516,18 +514,14 @@ TEST(Input, ModalLayerBlocksPointerAndAccessibilityBehindIt) {
   InputRouter router;
   router.setLayers(layers);
 
-  PointerEvent down;
-  down.fAction = PointerAction::kDown;
-  down.fX = 10.0f;
-  down.fY = 10.0f;
+  pointer_t down = pointer::down{10.0f, 10.0f};
   EXPECT_TRUE(router.pointer(down));
   EXPECT_EQ(behind.root().fPointerEvents, 0);
   EXPECT_TRUE(router.semantics().empty());
 
   const auto behindTree = behind.semanticsTree();
   ASSERT_EQ(behindTree.size(), 1u);
-  SemanticActionEvent activate;
-  EXPECT_TRUE(router.semantic(behindTree[0].fId, activate));
+  EXPECT_TRUE(router.semantic(behindTree[0].fId, semantic_action::activate{}));
   EXPECT_EQ(behind.root().fPointerEvents, 0);
 }
 
@@ -543,10 +537,7 @@ TEST(Input, ModalScopeCancelsCoveredCaptureAndRestoresPriorFocus) {
   const std::array<InputRouter::Layer, 1> base = {
       InputRouter::Layer{behind.handle(), false}};
 
-  PointerEvent down;
-  down.fAction = PointerAction::kDown;
-  down.fX = 10.0f;
-  down.fY = 10.0f;
+  pointer_t down = pointer::down{10.0f, 10.0f};
   // Pressed through the scene directly, as some wrappers do to read their
   // callback at once: the router adopts the capture and still cancels it
   // when a modal covers the scene.
@@ -580,8 +571,7 @@ TEST(Input, TabTraversesAcrossSceneRoots) {
   InputRouter router;
   router.setLayers(layers);
 
-  KeyEvent tab;
-  tab.fKey = Key::kTab;
+  key_t tab = key::down{keys::kTab};
   EXPECT_TRUE(router.key(tab));
   EXPECT_EQ(first.focusedId(), first.root().id());
   EXPECT_EQ(second.focusedId(), 0u);
@@ -593,8 +583,7 @@ TEST(Input, TabTraversesAcrossSceneRoots) {
   EXPECT_FLOAT_EQ(first.root().fState.alpha(), 1.0f);
   EXPECT_FLOAT_EQ(second.root().fState.alpha(), 0.65f);
 
-  tab.fShift = true;
-  EXPECT_TRUE(router.key(tab));
+  EXPECT_TRUE(router.key(key::down{keys::kTab, modifiers::kShift}));
   EXPECT_EQ(first.focusedId(), first.root().id());
 }
 
@@ -620,26 +609,19 @@ TEST(Input, PointerFocusHasOneOwnerAcrossSceneRoots) {
   InputRouter router;
   router.setLayers(layers);
 
-  PointerEvent down;
-  down.fAction = PointerAction::kDown;
-  down.fX = 10.0f;
-  down.fY = 10.0f;
+  pointer_t down = pointer::down{10.0f, 10.0f};
   EXPECT_TRUE(router.pointer(down));
   EXPECT_EQ(firstScene.focusedId(), first);
-  PointerEvent up = down;
-  up.fAction = PointerAction::kUp;
-  EXPECT_FALSE(router.pointer(up));
+  EXPECT_FALSE(router.pointer(pointer::up{10.0f, 10.0f}));
 
-  down.fX = 70.0f;
+  down = pointer::down{70.0f, 10.0f};
   EXPECT_TRUE(router.pointer(down));
   EXPECT_EQ(firstScene.focusedId(), 0u);
   EXPECT_EQ(secondScene.focusedId(), second);
 
   const auto firstSemantics = firstScene.semanticsTree();
   ASSERT_EQ(firstSemantics.size(), 1u);
-  SemanticActionEvent focus;
-  focus.fAction = SemanticAction::kFocus;
-  EXPECT_TRUE(router.semantic(firstSemantics[0].fId, focus));
+  EXPECT_TRUE(router.semantic(firstSemantics[0].fId, semantic_action::focus{}));
   EXPECT_EQ(firstScene.focusedId(), first);
   EXPECT_EQ(secondScene.focusedId(), 0u);
 }
@@ -655,23 +637,16 @@ TEST(Input, DestroyedSceneMakesRetainedLayerInert) {
         InputRouter::Layer{scene.handle(), false}};
     router.setLayers(layers);
 
-    PointerEvent down;
-    down.fAction = PointerAction::kDown;
-    down.fX = 10.0f;
-    down.fY = 10.0f;
+    pointer_t down = pointer::down{10.0f, 10.0f};
     EXPECT_TRUE(router.pointer(down));
     EXPECT_EQ(scene.capturedId(), scene.root().id());
   }
 
-  PointerEvent move;
-  move.fAction = PointerAction::kMove;
-  move.fX = 20.0f;
-  move.fY = 20.0f;
+  pointer_t move = pointer::move{20.0f, 20.0f};
   EXPECT_FALSE(router.pointer(move));
   EXPECT_TRUE(router.semantics().empty());
 
-  KeyEvent tab;
-  tab.fKey = Key::kTab;
+  key_t tab = key::down{keys::kTab};
   EXPECT_FALSE(router.key(tab));
   router.setLayers({});
 
@@ -688,10 +663,7 @@ TEST(Input, DestroyedSceneMakesRetainedLayerInert) {
 
   // An expired modal is not an invisible shield over live layers.
   EXPECT_EQ(router.semantics().size(), 1u);
-  PointerEvent down;
-  down.fAction = PointerAction::kDown;
-  down.fX = 10.0f;
-  down.fY = 10.0f;
+  pointer_t down = pointer::down{10.0f, 10.0f};
   EXPECT_TRUE(router.pointer(down));
   EXPECT_EQ(behind.capturedId(), behind.root().id());
 }
@@ -837,30 +809,19 @@ TEST(Input, ScrollDragCancelsDeferredChildClick) {
   scene.layoutIfNeeded(kViewport);
   scene.update(10.0);
 
-  PointerEvent down;
-  down.fAction = PointerAction::kDown;
-  down.fX = 20.0f;
-  down.fY = 20.0f;
+  pointer_t down = pointer::down{20.0f, 20.0f};
   EXPECT_TRUE(scene.dispatchPointer(down));
   EXPECT_EQ(child.fClicks, 0);
   EXPECT_FALSE(child.hovered());
 
-  PointerEvent move = down;
-  move.fAction = PointerAction::kMove;
-  move.fY = 40.0f;
-  EXPECT_TRUE(scene.dispatchPointer(move));
+  EXPECT_TRUE(scene.dispatchPointer(pointer::move{20.0f, 40.0f}));
   EXPECT_EQ(scene.capturedId(), scene.root().id());
 
-  PointerEvent up = move;
-  up.fAction = PointerAction::kUp;
-  EXPECT_TRUE(scene.dispatchPointer(up));
+  EXPECT_TRUE(scene.dispatchPointer(pointer::up{20.0f, 40.0f}));
   EXPECT_EQ(child.fClicks, 0);
 
-  down.fY = 20.0f;
-  EXPECT_TRUE(scene.dispatchPointer(down));
-  up = down;
-  up.fAction = PointerAction::kUp;
-  EXPECT_TRUE(scene.dispatchPointer(up));
+  EXPECT_TRUE(scene.dispatchPointer(pointer::down{20.0f, 20.0f}));
+  EXPECT_TRUE(scene.dispatchPointer(pointer::up{20.0f, 20.0f}));
   EXPECT_EQ(child.fClicks, 1);
 }
 
@@ -871,22 +832,13 @@ TEST(Input, HorizontalGestureDoesNotBecomeVerticalScroll) {
   scene.layoutIfNeeded(kViewport);
   scene.update(10.0);
 
-  PointerEvent down;
-  down.fAction = PointerAction::kDown;
-  down.fX = 20.0f;
-  down.fY = 20.0f;
+  pointer_t down = pointer::down{20.0f, 20.0f};
   EXPECT_TRUE(scene.dispatchPointer(down));
 
-  PointerEvent horizontal = down;
-  horizontal.fAction = PointerAction::kMove;
-  horizontal.fX = 40.0f;
-  horizontal.fY = 22.0f;
-  scene.dispatchPointer(horizontal);
+  scene.dispatchPointer(pointer::move{40.0f, 22.0f});
   EXPECT_EQ(scene.capturedId(), 0u);
 
-  PointerEvent vertical = horizontal;
-  vertical.fY = 50.0f;
-  scene.dispatchPointer(vertical);
+  scene.dispatchPointer(pointer::move{40.0f, 50.0f});
   EXPECT_EQ(scene.capturedId(), 0u);
   EXPECT_FLOAT_EQ(scene.root().current(), 0.0f);
 }
