@@ -5,45 +5,33 @@ import skia;
 import skiff.paint;
 import skiff.scene;
 
-namespace skiff::nodes {
-using skiff::scene::Align;
-using skiff::scene::Anchor;
-using skiff::scene::Axes;
-using skiff::scene::Drawable;
-using skiff::scene::Margin;
-using skiff::scene::Spec;
-} // namespace skiff::nodes
-
 export namespace skiff::nodes {
 
-// Rows and columns of given sizes, with the children dealt into the cells in
-// the order they were added. osu!framework's GridContainer, and CSS grid with
-// one track list per axis.
-//
-// A track is a fixed size, the size of what is in it, or a share of what the
-// fixed and automatic ones leave. That last one is `1fr`, and it is what a
-// screen would otherwise compute: "half of what the buttons did not use" is
-// two fractional rows either side of an automatic one.
-//
-// A cell does not move its child. The child is laid out against the cell as
-// though it were its parent, so it centres itself or hangs off a corner with
-// its own anchor and origin, which is how the framework this follows does it.
-class Grid : public skiff::scene::TypedDrawable<Grid> {
+// One track of a grid: a fixed size, the size of what is in it, or a share
+// of what the fixed and automatic ones leave (`1fr`).
+struct Track {
+  enum class Kind : std::uint8_t { kFixed, kAuto, kFraction };
+
+  Kind fKind = Kind::kFraction;
+  float fValue = 1.0f;
+
+  [[nodiscard]] static Track fixed(float size) { return {Kind::kFixed, size}; }
+  [[nodiscard]] static Track automatic() { return {Kind::kAuto, 0.0f}; }
+  [[nodiscard]] static Track fraction(float share = 1.0f) {
+    return {Kind::kFraction, share};
+  }
+};
+
+// Rows and columns of given sizes, the children dealt into the cells in
+// order. A cell does not move its child: the child is laid out against the
+// cell as its parent, and anchors itself in it.
+template <class... Children> class Grid : public skiff::scene::Node {
 public:
-  struct Track {
-    enum class Kind : std::uint8_t { kFixed, kAuto, kFraction };
+  explicit Grid(Children... children) : fChildren(std::move(children)...) {}
 
-    Kind fKind = Kind::kFraction;
-    float fValue = 1.0f;
-
-    [[nodiscard]] static Track fixed(float size) {
-      return {Kind::kFixed, size};
-    }
-    [[nodiscard]] static Track automatic() { return {Kind::kAuto, 0.0f}; }
-    [[nodiscard]] static Track fraction(float share = 1.0f) {
-      return {Kind::kFraction, share};
-    }
-  };
+  void forEachChild(auto &&f) {
+    std::apply([&](auto &...each) { (f(each), ...); }, fChildren);
+  }
 
   void setRows(std::vector<Track> rows) {
     fRows = std::move(rows);
@@ -62,14 +50,13 @@ public:
     this->invalidateLayout();
   }
 
-  // Where a cell ended up, for anything that has to be placed against one
-  // without being in it.
+  // Where a cell ended up, for what has to be placed against one.
   [[nodiscard]] skia::SkRect cellBox(std::size_t row,
                                      std::size_t column) const {
     if (row >= fRowSizes.size() || column >= fColumnSizes.size()) {
       return skia::SkRect::MakeEmpty();
     }
-    const skia::SkRect box = this->contentBox();
+    const skia::SkRect box = fState.contentBox();
     float x = box.fLeft;
     for (std::size_t c = 0; c < column; ++c) {
       x += fColumnSizes[c] + fColumnGap;
@@ -81,85 +68,66 @@ public:
     return skia::SkRect::MakeXYWH(x, y, fColumnSizes[column], fRowSizes[row]);
   }
 
-protected:
-  // Empty means one track taking everything, which is what a single row or a
-  // single column of children is.
-  std::vector<Track> fRows;
-  std::vector<Track> fColumns;
-  float fRowGap = 0.0f;
-  float fColumnGap = 0.0f;
-
-  void layoutChildren() override {
-    const skia::SkRect box = this->contentBox();
+  void layoutChildren() {
+    namespace scene = skiff::scene;
+    const skia::SkRect box = fState.contentBox();
+    std::vector<scene::State *> shown;
+    scene::eachChild(*this, [&](auto &child) {
+      scene::State &state = scene::stateOf(child);
+      if (state.fVisible) {
+        scene::layout(child, box); // its own size, which sizes auto tracks
+        shown.push_back(&state);
+      }
+    });
     const std::size_t columns = std::max<std::size_t>(1, fColumns.size());
     const std::size_t rows =
-        fRows.empty() ? std::max<std::size_t>(
-                            1, (this->visibleCount() + columns - 1) / columns)
-                      : fRows.size();
-
-    // What each child would be at its own size, which is what an automatic
-    // track is sized by.
-    for (auto &child : fChildren) {
-      if (child->visible()) {
-        child->layout(box);
-      }
-    }
-
-    fColumnSizes = this->resolve(fColumns, columns, box.width(), fColumnGap,
-                                 /*horizontal=*/true, columns);
-    fRowSizes = this->resolve(fRows, rows, box.height(), fRowGap,
-                              /*horizontal=*/false, columns);
+        fRows.empty()
+            ? std::max<std::size_t>(1, (shown.size() + columns - 1) / columns)
+            : fRows.size();
+    fColumnSizes =
+        resolve(fColumns, columns, box.width(), fColumnGap, true, columns, shown);
+    fRowSizes =
+        resolve(fRows, rows, box.height(), fRowGap, false, columns, shown);
 
     std::size_t index = 0;
-    for (auto &child : fChildren) {
-      if (!child->visible()) {
-        continue;
+    scene::eachChild(*this, [&](auto &child) {
+      if (!scene::stateOf(child).fVisible) {
+        return;
       }
       const std::size_t row = index / columns;
       const std::size_t column = index % columns;
       ++index;
-      if (row >= rows) {
-        break; // more children than cells: the rest are not placed
+      if (row < rows) { // more children than cells: the rest stay unplaced
+        scene::layout(child, this->cellBox(row, column));
       }
-      child->layout(this->cellBox(row, column));
-    }
+    });
   }
+
+  std::tuple<Children...> fChildren;
 
 private:
-  [[nodiscard]] std::size_t visibleCount() const {
-    std::size_t count = 0;
-    for (const auto &child : fChildren) {
-      count += child->visible() ? 1 : 0;
-    }
-    return count;
-  }
-
-  // The natural size of whatever is in a track, taken from the children that
-  // fall into it.
-  [[nodiscard]] float naturalSize(std::size_t track, bool horizontal,
-                                  std::size_t columns) const {
+  [[nodiscard]] static float
+  naturalSize(std::size_t track, bool horizontal, std::size_t columns,
+              const std::vector<skiff::scene::State *> &shown) {
     float size = 0.0f;
-    std::size_t index = 0;
-    for (const auto &child : fChildren) {
-      if (!child->visible()) {
-        continue;
-      }
+    for (std::size_t index = 0; index < shown.size(); ++index) {
       const std::size_t at = horizontal ? index % columns : index / columns;
-      ++index;
       if (at != track) {
         continue;
       }
-      size = std::max(
-          size, horizontal ? child->bounds().width() + child->margin().totalX()
-                           : child->bounds().height() + child->margin().totalY());
+      const skiff::scene::State &state = *shown[index];
+      size = std::max(size, horizontal
+                                ? state.fBounds.width() + state.fMargin.totalX()
+                                : state.fBounds.height() +
+                                      state.fMargin.totalY());
     }
     return size;
   }
 
-  [[nodiscard]] std::vector<float> resolve(const std::vector<Track> &tracks,
-                                           std::size_t count, float room,
-                                           float gap, bool horizontal,
-                                           std::size_t columns) const {
+  [[nodiscard]] static std::vector<float>
+  resolve(const std::vector<Track> &tracks, std::size_t count, float room,
+          float gap, bool horizontal, std::size_t columns,
+          const std::vector<skiff::scene::State *> &shown) {
     std::vector<float> sizes(count, 0.0f);
     float taken = gap * static_cast<float>(count > 0 ? count - 1 : 0);
     float shares = 0.0f;
@@ -171,7 +139,7 @@ private:
         taken += sizes[i];
         break;
       case Track::Kind::kAuto:
-        sizes[i] = this->naturalSize(i, horizontal, columns);
+        sizes[i] = naturalSize(i, horizontal, columns, shown);
         taken += sizes[i];
         break;
       case Track::Kind::kFraction:
@@ -192,6 +160,10 @@ private:
     return sizes;
   }
 
+  std::vector<Track> fRows;
+  std::vector<Track> fColumns;
+  float fRowGap = 0.0f;
+  float fColumnGap = 0.0f;
   std::vector<float> fRowSizes;
   std::vector<float> fColumnSizes;
 };

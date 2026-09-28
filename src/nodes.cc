@@ -5,11 +5,9 @@ import skia;
 import skiff.paint;
 import skiff.scene;
 
-// The drawables the screens are built out of: boxes, text, sprites, flows,
-// scroll containers and clickable areas. Everything here is a scene::Drawable
-// and inherits layout, transforms and hit testing from it. One partition
-// each -- none of them refers to another, so there was nothing holding them
-// in one file except that they arrived together.
+// The nodes screens are built out of: boxes, text, sprites, flows, grids,
+// scroll containers, caches and clickable areas. Each derives from
+// scene::Node and holds its children as members of their own types.
 
 export import :box;
 export import :text;
@@ -19,3 +17,4 @@ export import :scroll;
 export import :cached;
 export import :clickable;
 export import :grid;
+export import :group;

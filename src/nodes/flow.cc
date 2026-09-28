@@ -5,34 +5,13 @@ import skia;
 import skiff.paint;
 import skiff.scene;
 
-namespace skiff::nodes {
-using skiff::scene::Anchor;
-using skiff::scene::Axes;
-using skiff::scene::Drawable;
-using skiff::scene::Easing;
-using skiff::scene::Margin;
-using skiff::scene::Spec;
-} // namespace skiff::nodes
-
 export namespace skiff::nodes {
 
-// FillFlowContainer: children laid end to end, wrapping when they run out of
-// room, which is how lazer builds every list and row of filters.
-class FillFlow : public skiff::scene::TypedDrawable<FillFlow> {
-public:
+// How a flow lays its children out: along which axis, how far apart, and
+// what it does with room left over.
+struct FlowOptions {
   enum class Direction : std::uint8_t { kHorizontal, kVertical };
-
-  explicit FillFlow(Direction direction = Direction::kVertical)
-      : fDirection(direction) {}
-  // Spacing is part of what a flow *is*, so it can be given at construction
-  // rather than in a setter call on the line after every one of them.
-  FillFlow(Direction direction, float spacingX, float spacingY)
-      : fSpacingX(spacingX), fSpacingY(spacingY), fDirection(direction) {}
-
-  // Where children sit across the flow's axis, and how the room left over
-  // along it is handed out. A child can override the first for itself with
-  // fAlignSelf.
-  using Align = skiff::scene::Align;
+  // How the room left along the axis is handed out.
   enum class Justify : std::uint8_t {
     kStart,
     kMiddle,
@@ -40,158 +19,178 @@ public:
     kSpaceBetween,
     kSpaceAround
   };
+
+  Direction direction = Direction::kVertical;
+  float spacingX = 0.0f;
+  float spacingY = 0.0f;
+  // A horizontal flow breaks into rows at its edge.
+  bool wrap = true;
+  // Rows centred in the container, as the cards are.
+  bool centreRows = false;
+  // Where children sit across the axis; a child can say otherwise with
+  // alignSelf.
+  skiff::scene::Align crossAlign = skiff::scene::Align::kStart;
+  Justify justify = Justify::kStart;
+};
+
+// FillFlowContainer: children laid end to end, wrapping when they run out of
+// room, which is how lazer builds every list and row of filters.
+template <class... Children> class Flow : public skiff::scene::Node {
+public:
+  using Direction = FlowOptions::Direction;
+  using Justify = FlowOptions::Justify;
+  using Align = skiff::scene::Align;
+
+  explicit Flow(FlowOptions options, Children... children)
+      : fChildren(std::move(children)...), fOptions(options) {}
+
+  void forEachChild(auto &&f) {
+    std::apply([&](auto &...each) { (f(each), ...); }, fChildren);
+  }
+
+  [[nodiscard]] const FlowOptions &options() const noexcept {
+    return fOptions;
+  }
+  void setOptions(FlowOptions options) {
+    fOptions = options;
+    this->invalidateLayout();
+  }
   void setSpacing(float x, float y) {
-    if (x == fSpacingX && y == fSpacingY) {
+    if (x == fOptions.spacingX && y == fOptions.spacingY) {
       return;
     }
-    fSpacingX = x;
-    fSpacingY = y;
+    fOptions.spacingX = x;
+    fOptions.spacingY = y;
     this->invalidateLayout();
   }
   void setWrap(bool wrap) {
-    if (wrap != fWrap) {
-      fWrap = wrap;
-      this->invalidateLayout();
-    }
-  }
-  void setCentreRows(bool centre) {
-    if (centre != fCentreRows) {
-      fCentreRows = centre;
+    if (wrap != fOptions.wrap) {
+      fOptions.wrap = wrap;
       this->invalidateLayout();
     }
   }
   void setCrossAlign(Align align) {
-    if (align != fCrossAlign) {
-      fCrossAlign = align;
+    if (align != fOptions.crossAlign) {
+      fOptions.crossAlign = align;
       this->invalidateLayout();
     }
   }
   void setJustify(Justify justify) {
-    if (justify != fJustify) {
-      fJustify = justify;
+    if (justify != fOptions.justify) {
+      fOptions.justify = justify;
       this->invalidateLayout();
     }
   }
 
-protected:
-  float fSpacingX = 0.0f;
-  float fSpacingY = 0.0f;
-  bool fWrap = true;
-  bool fCentreRows = false; // rows centred in the container, as the cards are
-  Align fCrossAlign = Align::kStart;
-  Justify fJustify = Justify::kStart;
+  void layoutChildren() {
+    namespace scene = skiff::scene;
+    const skia::SkRect box = fState.contentBox();
+    const bool horizontal = fOptions.direction == Direction::kHorizontal;
+    this->grow(box, horizontal);
 
-  void layoutChildren() override {
-    const skia::SkRect box = this->contentBox();
-    if (fDirection == Direction::kVertical) {
-      this->grow(box, false);
-      // Ask dirty children for their current size. Clean children keep their
-      // cached result; position does not affect the measured width or height,
-      // so there is no need to move every child to zero and dirty it first.
-      float used = 0.0f;
-      int count = 0;
-      for (auto &child : fChildren) {
-        if (!child->visible()) {
-          continue;
-        }
-        child->layout(box);
-        used += child->bounds().height() + child->margin().totalY();
-        ++count;
+    // What every visible child is at its own size. Clean children keep
+    // their cached result: position does not change a measured size.
+    std::vector<scene::State *> shown;
+    scene::eachChild(*this, [&](auto &child) {
+      scene::State &state = scene::stateOf(child);
+      if (state.fVisible) {
+        scene::layout(child, box);
+        shown.push_back(&state);
       }
+    });
+
+    // Where each goes, worked out from what they measured.
+    std::vector<std::pair<float, float>> places(shown.size());
+    if (!horizontal) {
+      float used = 0.0f;
+      for (const scene::State *state : shown) {
+        used += state->fBounds.height() + state->fMargin.totalY();
+      }
+      const int count = static_cast<int>(shown.size());
       const Spread spread = this->spread(
           box.height(),
-          used + fSpacingY * static_cast<float>(std::max(0, count - 1)), count);
+          used + fOptions.spacingY * static_cast<float>(std::max(0, count - 1)),
+          count);
       float y = spread.fStart;
-      for (auto &child : fChildren) {
-        if (!child->visible()) {
-          continue;
-        }
-        const float x = this->crossOffset(
-            *child, box.width(),
-            child->bounds().width() + child->margin().totalX());
-        this->arrangeChild(*child, x, y);
-        child->layout(box);
-        y += child->bounds().height() + child->margin().totalY() + fSpacingY +
-             spread.fBetween;
+      for (std::size_t i = 0; i < shown.size(); ++i) {
+        const scene::State &state = *shown[i];
+        places[i] = {this->crossOffset(state, box.width(),
+                                       state.fBounds.width() +
+                                           state.fMargin.totalX()),
+                     y};
+        y += state.fBounds.height() + state.fMargin.totalY() +
+             fOptions.spacingY + spread.fBetween;
       }
-      return;
+    } else {
+      // Rows broken at the edge, then placed.
+      std::size_t rowStart = 0;
+      float rowWidth = 0.0f;
+      float y = 0.0f;
+      const auto flush = [&](std::size_t end) {
+        if (end == rowStart) {
+          return;
+        }
+        float rowHeight = 0.0f;
+        for (std::size_t i = rowStart; i < end; ++i) {
+          rowHeight = std::max(rowHeight, shown[i]->fBounds.height() +
+                                              shown[i]->fMargin.totalY());
+        }
+        const Spread spread =
+            fOptions.centreRows
+                ? Spread{(box.width() - rowWidth) * 0.5f, 0.0f}
+                : this->spread(box.width(), rowWidth,
+                               static_cast<int>(end - rowStart));
+        float x = spread.fStart;
+        for (std::size_t i = rowStart; i < end; ++i) {
+          const scene::State &state = *shown[i];
+          places[i] = {x, y + this->crossOffset(state, rowHeight,
+                                                state.fBounds.height() +
+                                                    state.fMargin.totalY())};
+          x += state.fBounds.width() + state.fMargin.totalX() +
+               fOptions.spacingX + spread.fBetween;
+        }
+        y += rowHeight + fOptions.spacingY;
+        rowStart = end;
+        rowWidth = 0.0f;
+      };
+      for (std::size_t i = 0; i < shown.size(); ++i) {
+        const float width =
+            shown[i]->fBounds.width() + shown[i]->fMargin.totalX();
+        // Half a pixel of slack: four quarters add up to the width, and
+        // whether that comes out a hair over depends on the arithmetic.
+        if (fOptions.wrap && i > rowStart &&
+            rowWidth + fOptions.spacingX + width > box.width() + 0.5f) {
+          flush(i);
+        }
+        rowWidth += i == rowStart ? width : fOptions.spacingX + width;
+      }
+      flush(shown.size());
     }
 
-    // Horizontal: measure each child, break rows at the edge, then place them.
-    this->grow(box, true);
-    std::vector<Drawable *> row;
-    float rowWidth = 0.0f;
-    float y = 0.0f;
-    const auto flushRow = [&] {
-      if (row.empty()) {
+    // And placed: a child that did not move keeps its layout.
+    std::size_t at = 0;
+    scene::eachChild(*this, [&](auto &child) {
+      scene::State &state = scene::stateOf(child);
+      if (!state.fVisible) {
         return;
       }
-      // Every child in this row has been laid out already, so the row's
-      // height is known before anything is placed in it.
-      float rowHeight = 0.0f;
-      for (Drawable *child : row) {
-        rowHeight = std::max(rowHeight,
-                             child->bounds().height() +
-                                 child->margin().totalY());
-      }
-      // fCentreRows predates fJustify and means the same thing for a
-      // wrapped row, so it reads as kMiddle when it is set.
-      const Spread spread = fCentreRows
-                                ? Spread{(box.width() - rowWidth) * 0.5f, 0.0f}
-                                : this->spread(box.width(), rowWidth,
-                                               static_cast<int>(row.size()));
-      float x = spread.fStart;
-      for (Drawable *child : row) {
-        this->arrangeChild(
-            *child, x,
-            y + this->crossOffset(*child, rowHeight,
-                                  child->bounds().height() +
-                                      child->margin().totalY()));
-        child->layout(box);
-        x += child->bounds().width() + child->margin().totalX() + fSpacingX +
-             spread.fBetween;
-      }
-      y += rowHeight + fSpacingY;
-      row.clear();
-      rowWidth = 0.0f;
-    };
-
-    for (auto &child : fChildren) {
-      if (!child->visible()) {
-        continue;
-      }
-      // A clean child already knows its size; a dirty one measures here.
-      child->layout(box);
-      const float width = child->bounds().width() + child->margin().totalX();
-      // Half a pixel of slack: four children at a quarter of the width each
-      // add up to the width, and whether that comes out a hair over depends
-      // on the arithmetic rather than on the layout.
-      if (fWrap && !row.empty() &&
-          rowWidth + fSpacingX + width > box.width() + 0.5f) {
-        flushRow();
-      }
-      rowWidth += row.empty() ? width : fSpacingX + width;
-      row.push_back(child.get());
-    }
-    flushRow();
+      state.arrange(places[at].first, places[at].second);
+      scene::layout(child, box);
+      ++at;
+    });
   }
 
-  // Children that grow take an equal share of what the rest leave along the
-  // flow's axis. Their size is written here, before anything is placed, so
-  // the placing pass sees a settled size like any other child's.
-  //
-  // A wrapping row is left alone: what is left over is only known once the
-  // rows are decided, and the rows are decided by the widths this would be
-  // choosing.
-  // How far across the line a child sits: how much room the line has, less
-  // how much the child takes.
-  [[nodiscard]] Align alignOf(const Drawable &child) const {
-    return child.alignSelf().value_or(fCrossAlign);
-  }
+  std::tuple<Children...> fChildren;
 
-  [[nodiscard]] float crossOffset(const Drawable &child, float line,
-                                  float own) const {
-    switch (this->alignOf(child)) {
+private:
+  struct Spread {
+    float fStart = 0.0f;
+    float fBetween = 0.0f;
+  };
+
+  [[nodiscard]] float crossOffset(const skiff::scene::State &child,
+                                  float line, float own) const {
+    switch (child.fAlignSelf.value_or(fOptions.crossAlign)) {
     case Align::kMiddle:
       return (line - own) * 0.5f;
     case Align::kEnd:
@@ -202,17 +201,10 @@ protected:
     return 0.0f;
   }
 
-  // Where a line starts and how much extra goes between its children, given
-  // how much room it did not use.
-  struct Spread {
-    float fStart = 0.0f;
-    float fBetween = 0.0f;
-  };
-
   [[nodiscard]] Spread spread(float room, float used, int count) const {
     const float slack = std::max(0.0f, room - used);
     const auto gaps = static_cast<float>(std::max(0, count - 1));
-    switch (fJustify) {
+    switch (fOptions.justify) {
     case Justify::kMiddle:
       return {slack * 0.5f, 0.0f};
     case Justify::kEnd:
@@ -228,52 +220,67 @@ protected:
     return {};
   }
 
+  // Children that grow take an equal share of what the rest leave along the
+  // axis, written before anything is placed. A wrapping row is left alone:
+  // what is left over depends on the rows, which depend on these widths.
   void grow(const skia::SkRect &box, bool horizontal) {
-    if (horizontal && fWrap) {
+    namespace scene = skiff::scene;
+    if (horizontal && fOptions.wrap) {
       return;
     }
-    const auto grows = [horizontal](const Drawable &child) {
-      return horizontal ? hasX(child.growAxes()) : hasY(child.growAxes());
+    const auto grows = [horizontal](const scene::State &state) {
+      return horizontal ? scene::hasX(state.fGrowAxes)
+                        : scene::hasY(state.fGrowAxes);
     };
     int growers = 0;
-    for (const auto &child : fChildren) {
-      if (child->visible() && grows(*child)) {
-        ++growers;
+    int visible = 0;
+    float taken = 0.0f;
+    scene::eachChild(*this, [&](auto &child) {
+      scene::State &state = scene::stateOf(child);
+      if (!state.fVisible) {
+        return;
       }
-    }
+      ++visible;
+      if (grows(state)) {
+        ++growers;
+        return;
+      }
+      scene::layout(child, box);
+      taken += horizontal ? state.fBounds.width() + state.fMargin.totalX()
+                          : state.fBounds.height() + state.fMargin.totalY();
+    });
     if (growers == 0) {
       return;
     }
-
-    float taken = 0.0f;
-    int visible = 0;
-    for (auto &child : fChildren) {
-      if (!child->visible()) {
-        continue;
-      }
-      ++visible;
-      if (grows(*child)) {
-        continue;
-      }
-      child->layout(box);
-      taken += horizontal ? child->bounds().width() + child->margin().totalX()
-                          : child->bounds().height() + child->margin().totalY();
-    }
-    const float gaps = (horizontal ? fSpacingX : fSpacingY) *
+    const float gaps = (horizontal ? fOptions.spacingX : fOptions.spacingY) *
                        static_cast<float>(std::max(0, visible - 1));
     const float room = horizontal ? box.width() : box.height();
     const float share =
         std::max(0.0f, (room - taken - gaps) / static_cast<float>(growers));
-    for (auto &child : fChildren) {
-      if (!child->visible() || !grows(*child)) {
-        continue;
+    scene::eachChild(*this, [&](auto &child) {
+      scene::State &state = scene::stateOf(child);
+      if (state.fVisible && grows(state)) {
+        state.arrangeAxisSize(horizontal, share);
       }
-      this->setChildAxisSize(*child, horizontal, share);
-    }
+    });
   }
 
-private:
-  Direction fDirection;
+  FlowOptions fOptions;
 };
+
+// A vertical flow and a horizontal one, as they are usually written.
+template <class... Children>
+[[nodiscard]] Flow<Children...> column(float spacing, Children... children) {
+  return Flow<Children...>(
+      {.direction = FlowOptions::Direction::kVertical, .spacingY = spacing},
+      std::move(children)...);
+}
+template <class... Children>
+[[nodiscard]] Flow<Children...> row(float spacing, Children... children) {
+  return Flow<Children...>({.direction = FlowOptions::Direction::kHorizontal,
+                            .spacingX = spacing,
+                            .wrap = false},
+                           std::move(children)...);
+}
 
 } // namespace skiff::nodes

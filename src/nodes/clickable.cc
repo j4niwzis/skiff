@@ -5,29 +5,25 @@ import skia;
 import skiff.paint;
 import skiff.scene;
 
-namespace skiff::nodes {
-using skiff::scene::Anchor;
-using skiff::scene::Axes;
-using skiff::scene::Drawable;
-using skiff::scene::Easing;
-using skiff::scene::Margin;
-using skiff::scene::Spec;
-} // namespace skiff::nodes
-
 export namespace skiff::nodes {
 
-template <class Action = skiff::scene::NoAction> class Clickable;
-
-// Anything that reacts to a click: all of it but the action, which
-// Clickable<Action> keeps as a member of its own type. Every Clickable is
-// selected in a stylesheet as Clickable<>, whatever its action is.
-class ClickableCore : public skiff::scene::TypedDrawable<Clickable<>> {
+// Anything that reacts to a click, with what it shows inside it. The action
+// is a member of its own type; a rule for Clickable matches all of them.
+template <class Action, class... Children>
+class Clickable : public skiff::scene::Node {
 public:
-  explicit ClickableCore(std::string label = {}) : fLabel(std::move(label)) {}
+  Clickable(Action action, std::string label, Children... children)
+      : fChildren(std::move(children)...), fAction(std::move(action)),
+        fLabel(std::move(label)) {}
 
-protected:
-  bool acceptsInput() const override { return true; }
-  [[nodiscard]] skiff::scene::Semantics semantics() const override {
+  void forEachChild(auto &&f) {
+    std::apply([&](auto &...each) { (f(each), ...); }, fChildren);
+  }
+
+  [[nodiscard]] bool acceptsInput() const {
+    return skiff::scene::kActs<Action>;
+  }
+  [[nodiscard]] skiff::scene::Semantics semantics() const {
     skiff::scene::Semantics out;
     out.fRole = skiff::scene::SemanticRole::kButton;
     out.fLabel = fLabel;
@@ -35,14 +31,14 @@ protected:
                     skiff::scene::SemanticAction::kActivate};
     return out;
   }
-  bool onClick(float, float) override {
-    this->activate();
+  [[nodiscard]] bool onClick(float, float) {
+    std::invoke(fAction);
     return true;
   }
-  // What the screen wants done.
-  virtual void activate() = 0;
 
-  void onPointerEvent(skiff::scene::PointerEvent &event) override {
+  // Activates on release inside, not on the press: a press that turns into
+  // a scroll must not have clicked.
+  void onPointerEvent(skiff::scene::PointerEvent &event) {
     using skiff::scene::EventPhase;
     using skiff::scene::PointerAction;
     if (event.fPhase != EventPhase::kTarget) {
@@ -55,7 +51,7 @@ protected:
       break;
     case PointerAction::kUp:
       if (std::exchange(fArmed, false) &&
-          fBounds.contains(event.fX, event.fY)) {
+          fState.fBounds.contains(event.fX, event.fY)) {
         (void)this->onClick(event.fX, event.fY);
         event.handle();
       }
@@ -68,26 +64,12 @@ protected:
     }
   }
 
+  std::tuple<Children...> fChildren;
+
 private:
+  [[no_unique_address]] Action fAction;
   std::string fLabel;
   bool fArmed = false;
 };
-
-template <class Action> class Clickable : public ClickableCore {
-public:
-  explicit Clickable(Action action, std::string label = {})
-      : ClickableCore(std::move(label)), fAction(std::move(action)) {}
-  explicit Clickable(std::string label = {})
-    requires std::same_as<Action, skiff::scene::NoAction>
-      : ClickableCore(std::move(label)) {}
-
-protected:
-  void activate() override { std::invoke(fAction); }
-
-private:
-  [[no_unique_address]] Action fAction{};
-};
-Clickable(const char *) -> Clickable<>;
-Clickable(std::string) -> Clickable<>;
 
 } // namespace skiff::nodes

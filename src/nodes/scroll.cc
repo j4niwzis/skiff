@@ -5,21 +5,19 @@ import skia;
 import skiff.paint;
 import skiff.scene;
 
-namespace skiff::nodes {
-using skiff::scene::Anchor;
-using skiff::scene::Axes;
-using skiff::scene::Drawable;
-using skiff::scene::Easing;
-using skiff::scene::Margin;
-using skiff::scene::Spec;
-} // namespace skiff::nodes
-
 export namespace skiff::nodes {
 
 // A container that scrolls its children and clips them to itself.
-class ScrollContainer : public skiff::scene::TypedDrawable<ScrollContainer> {
+template <class... Children> class ScrollContainer : public skiff::scene::Node {
 public:
-  ScrollContainer() { fMasking = true; }
+  explicit ScrollContainer(Children... children)
+      : fChildren(std::move(children)...) {
+    fState.fMasking = true;
+  }
+
+  void forEachChild(auto &&f) {
+    std::apply([&](auto &...each) { (f(each), ...); }, fChildren);
+  }
 
   void scrollToStart() {
     if (fScroll.offset() == 0.0f && fScroll.target() == 0.0f) {
@@ -28,9 +26,8 @@ public:
     fScroll.jumpTo(0.0f);
     this->invalidateLayout();
   }
-
-  // Carried across a rebuild: a list that grew a page should stay where the
-  // reader left it, not jump back to the top.
+  // Carried across a rebuild: a list that grew should stay where the reader
+  // left it.
   void setCurrent(float offset) {
     if (fScroll.offset() == offset && fScroll.target() == offset) {
       return;
@@ -38,34 +35,27 @@ public:
     fScroll.jumpTo(offset);
     this->invalidateLayout();
   }
-  // Eased: the view glides to the offset rather than jumping to it, which is
-  // what a jump to a section in a settings list should look like.
+  // Eased: the view glides there rather than jumping.
   void scrollTo(float offset) {
     fScroll.glideTo(offset);
     this->invalidateLayout();
   }
-
-  // Still gliding towards where it was asked to go.
   [[nodiscard]] bool moving() const noexcept { return fScroll.moving(); }
-
   [[nodiscard]] float current() const noexcept { return fScroll.offset(); }
   [[nodiscard]] float extent() const noexcept { return fExtent; }
 
-protected:
-  void layoutChildren() override {
-    const skia::SkRect box = this->contentBox();
-    const skia::SkRect scrolled =
-        skia::SkRect::MakeXYWH(box.fLeft, box.fTop - fScroll.offset(),
-                               box.width(), box.height());
-    for (auto &child : fChildren) {
-      child->layout(scrolled);
-    }
-    const skia::SkRect content = this->childBounds();
+  void layoutChildren() {
+    namespace scene = skiff::scene;
+    const skia::SkRect box = fState.contentBox();
+    const skia::SkRect scrolled = skia::SkRect::MakeXYWH(
+        box.fLeft, box.fTop - fScroll.offset(), box.width(), box.height());
+    scene::eachChild(*this, [&](auto &child) { scene::layout(child, scrolled); });
+    const skia::SkRect content = scene::childBounds(*this);
     fExtent = std::max(0.0f, content.height() - box.height());
     fScroll.setBounds(0.0f, fExtent);
   }
 
-  void update(double nowMs) override {
+  void update(double nowMs) {
     const double dt = fLastMs > 0.0 ? nowMs - fLastMs : 16.0;
     fLastMs = nowMs;
     fNowMs = nowMs;
@@ -73,24 +63,18 @@ protected:
       this->invalidateLayout();
     }
   }
+  [[nodiscard]] bool settling() const { return fScroll.moving(); }
 
-  // A flick that has not run out, or an end springing back. Damage says what
-  // changed; this says the next frame will differ too.
-  bool settling() const override { return fScroll.moving(); }
-
-  bool onScroll(float ticks) override {
+  [[nodiscard]] bool onScroll(float ticks) {
     fScroll.wheel(ticks, 60.0f);
     this->invalidateLayout();
     return true;
   }
 
-  // Dragging the contents, which is the only way to scroll with a finger.
-  //
-  // A press is watched in the capture phase, before whatever is under it sees
-  // it, but only remembered -- a press that does not travel belongs to what
-  // is under it. Once past the slop this takes the pointer, and from then on
-  // it is the target, so the rest of the gesture arrives in the target phase.
-  void onPointerEvent(skiff::scene::PointerEvent &event) override {
+  // Dragging the contents, which is how a finger scrolls. A press is watched
+  // in the capture phase and only remembered -- a press that does not travel
+  // belongs to what is under it. Past the slop this takes the pointer.
+  void onPointerEvent(skiff::scene::PointerEvent &event) {
     namespace scene = skiff::scene;
     const bool watching = event.fPhase == scene::EventPhase::kCapture;
     const bool mine = event.fPhase == scene::EventPhase::kTarget &&
@@ -123,9 +107,8 @@ protected:
         const float dy = event.fY - fPressY;
         if (std::abs(dx) >= scene::ScrollGesture::kSlop &&
             std::abs(dx) > std::abs(dy)) {
-          // Direction is decided once. A horizontal slider gesture may have
-          // a little vertical noise, but must never turn into list scrolling
-          // later in the same contact.
+          // Direction is decided once: a horizontal gesture never turns into
+          // list scrolling later in the same contact.
           fArmed = false;
           break;
         }
@@ -136,7 +119,7 @@ protected:
         break;
       }
       if (!wasDragging) {
-        if (this->capturedNode() != nullptr) {
+        if (event.fCaptured) {
           fArmed = false; // something else is already being dragged
           break;
         }
@@ -164,10 +147,11 @@ protected:
     }
   }
 
-  // A target in its own right, so the empty part of a short list can still be
-  // dragged. It never draws anything for a pointer.
-  bool acceptsInput() const override { return true; }
-  bool hoverChangesAppearance() const override { return false; }
+  // A target in its own right, so the empty part of a short list can still
+  // be dragged. Draws nothing for a pointer.
+  [[nodiscard]] bool acceptsInput() const { return true; }
+
+  std::tuple<Children...> fChildren;
 
 private:
   skiff::scene::ScrollGesture fScroll;

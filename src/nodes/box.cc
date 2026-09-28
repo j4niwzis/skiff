@@ -5,22 +5,14 @@ import skia;
 import skiff.paint;
 import skiff.scene;
 
-namespace skiff::nodes {
-using skiff::scene::Anchor;
-using skiff::scene::Axes;
-using skiff::scene::Drawable;
-using skiff::scene::Easing;
-using skiff::scene::Margin;
-using skiff::scene::Spec;
-using skiff::scene::Style;
-} // namespace skiff::nodes
-
 export namespace skiff::nodes {
 
-// A filled rectangle, optionally rounded. The framework's Box.
-class Box : public skiff::scene::TypedDrawable<Box> {
+// A filled rectangle, optionally rounded, with whatever it holds laid out in
+// it. The framework's Box.
+template <class... Children> class Box : public skiff::scene::Node {
 public:
-  explicit Box(skia::SkColor colour) : fColour(colour) {}
+  explicit Box(skia::SkColor colour, Children... children)
+      : fChildren(std::move(children)...), fColour(colour) {}
 
   void setColour(skia::SkColor colour) {
     if (colour == fColour) {
@@ -31,8 +23,11 @@ public:
   }
   [[nodiscard]] skia::SkColor colour() const noexcept { return fColour; }
 
-protected:
-  void applyNodeStyle(const Style &style, bool active) override {
+  void forEachChild(auto &&f) {
+    std::apply([&](auto &...each) { (f(each), ...); }, fChildren);
+  }
+
+  void applyNodeStyle(const skiff::scene::Style &style, bool active) {
     if (!active && !fNodeStyleActive) {
       return;
     }
@@ -48,19 +43,23 @@ protected:
     fNodeStyleActive = active;
   }
 
-  void drawSelf(skia::SkCanvas *canvas, float alpha) override {
+  void drawSelf(skia::SkCanvas *canvas, float alpha) {
+    const skiff::scene::State &state = fState;
     skia::SkPaint paint;
     paint.setAntiAlias(true);
     paint.setColor(fColour);
     paint.setAlphaf(alpha);
-    if (fCornerRadius > 0.0f) {
-      canvas->drawRRect(
-          skia::SkRRect::MakeRectXY(fBounds, fCornerRadius, fCornerRadius),
-          paint);
+    if (state.fCornerRadius > 0.0f) {
+      canvas->drawRRect(skia::SkRRect::MakeRectXY(state.fBounds,
+                                                  state.fCornerRadius,
+                                                  state.fCornerRadius),
+                        paint);
     } else {
-      canvas->drawRect(fBounds, paint);
+      canvas->drawRect(state.fBounds, paint);
     }
   }
+
+  std::tuple<Children...> fChildren;
 
 private:
   skia::SkColor fColour;
