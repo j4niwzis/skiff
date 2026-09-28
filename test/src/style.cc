@@ -359,6 +359,7 @@ TEST(TextLayout, RelativeWidthIsOwnedByLayout) {
   skia::SkFont font;
   Text::setFont(&font);
   Scene<HalfText> scene{std::in_place};
+  scene.state().apply({.fill = true});
   scene.layoutIfNeeded(skia::SkRect::MakeWH(240.0f, 80.0f));
   EXPECT_FLOAT_EQ(scene.root().text.bounds().width(), 120.0f);
 }
