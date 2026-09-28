@@ -1506,6 +1506,8 @@ public:
   // added to a vector. Compared each frame; a different set is laid out and
   // repainted.
   std::size_t fChildSignature = 0;
+  // Where the children were at the last frame, for when they are gone.
+  skia::SkRect fChildArea = skia::SkRect::MakeEmpty();
   skia::SkRect fLastConstraint = skia::SkRect::MakeEmpty();
   bool fDamaged = true;
   skia::SkRect fMovedDamage = skia::SkRect::MakeEmpty();
@@ -2249,16 +2251,22 @@ template <class C> bool markDirty(C &child) {
     State &state = child.fState;
     bool below = false;
     std::size_t signature = 0;
+    skia::SkRect area = skia::SkRect::MakeEmpty();
     eachChild(child, [&](auto &each) {
       below = walk::markDirty(each) || below;
-      signature = signature * 1099511628211ull ^
-                  static_cast<std::size_t>(stateOf(each).fId);
+      const State &one = stateOf(each);
+      signature = signature * 1099511628211ull ^ static_cast<std::size_t>(one.fId);
+      area = joined(joined(area, one.fBounds), one.fDrawnBounds);
     });
     if (signature != state.fChildSignature) {
+      // The children that went took their boxes with them: where they were
+      // is what this node remembers of them.
       state.fChildSignature = signature;
       state.fLayoutValid = false;
       state.fDamaged = true;
+      state.fMovedDamage = joined(state.fMovedDamage, state.fChildArea);
     }
+    state.fChildArea = area;
     state.fSubtreeDirty = below || !state.fLayoutValid;
     return state.fSubtreeDirty;
   }
