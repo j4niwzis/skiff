@@ -16,11 +16,14 @@ using skiff::scene::Spec;
 
 export namespace skiff::nodes {
 
-// Anything that reacts to a click. The action is what the screen wants done.
-class Clickable : public skiff::scene::TypedDrawable<Clickable> {
+template <class Action = skiff::scene::NoAction> class Clickable;
+
+// Anything that reacts to a click: all of it but the action, which
+// Clickable<Action> keeps as a member of its own type. Every Clickable is
+// selected in a stylesheet as Clickable<>, whatever its action is.
+class ClickableCore : public skiff::scene::TypedDrawable<Clickable<>> {
 public:
-  explicit Clickable(std::function<void()> action, std::string label = {})
-      : fAction(std::move(action)), fLabel(std::move(label)) {}
+  explicit ClickableCore(std::string label = {}) : fLabel(std::move(label)) {}
 
 protected:
   bool acceptsInput() const override { return true; }
@@ -33,11 +36,11 @@ protected:
     return out;
   }
   bool onClick(float, float) override {
-    if (fAction) {
-      fAction();
-    }
+    this->activate();
     return true;
   }
+  // What the screen wants done.
+  virtual void activate() = 0;
 
   void onPointerEvent(skiff::scene::PointerEvent &event) override {
     using skiff::scene::EventPhase;
@@ -66,9 +69,25 @@ protected:
   }
 
 private:
-  std::function<void()> fAction;
   std::string fLabel;
   bool fArmed = false;
 };
+
+template <class Action> class Clickable : public ClickableCore {
+public:
+  explicit Clickable(Action action, std::string label = {})
+      : ClickableCore(std::move(label)), fAction(std::move(action)) {}
+  explicit Clickable(std::string label = {})
+    requires std::same_as<Action, skiff::scene::NoAction>
+      : ClickableCore(std::move(label)) {}
+
+protected:
+  void activate() override { std::invoke(fAction); }
+
+private:
+  [[no_unique_address]] Action fAction{};
+};
+Clickable(const char *) -> Clickable<>;
+Clickable(std::string) -> Clickable<>;
 
 } // namespace skiff::nodes

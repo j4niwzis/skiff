@@ -20,6 +20,17 @@ import skiff.paint;
 // the tree.
 export namespace skiff::scene {
 
+// What a widget does when it was not given anything to do: its action's type
+// when none is passed. A widget can tell it apart at compile time -- a toggle
+// that does nothing is not offered to input at all.
+struct NoAction {
+  template <class... Args>
+  constexpr void operator()(Args &&...) const noexcept {}
+};
+template <class Action>
+inline constexpr bool kActs = !std::same_as<std::remove_cvref_t<Action>, NoAction>;
+
+
 // ---- geometry -------------------------------------------------------------
 
 enum class Axes : std::uint8_t { kNone, kX, kY, kBoth };
@@ -1171,6 +1182,17 @@ public:
     return raw;
   }
 
+  // Same, for a node that is a class template -- a widget that keeps its
+  // action as a member of the action's own type -- with the template's
+  // arguments deduced from the constructor's, as a declaration would:
+  //
+  //   add<widgets::Button>(spec, "Log in", [this] { logIn(); })
+  template <template <class...> class T, class... Args>
+  auto *add(const Spec &spec, Args &&...args) {
+    using Made = decltype(T(std::forward<Args>(args)...));
+    return this->add<Made>(spec, std::forward<Args>(args)...);
+  }
+
   // Same, for a node that was already built elsewhere -- returns it typed so
   // that keeping a pointer does not need a separate .get() before the move.
   template <class T> T *adopt(std::unique_ptr<T> child) {
@@ -1627,13 +1649,28 @@ public:
   // to know: it sees key events, not what they are for.
   // Set once by the host. Raising a keyboard is a platform matter, and which
   // tree the focus is in is not the platform's business.
-  static std::function<void(bool)> &textFocusHook() {
-    static std::function<void(bool)> hook;
+  //
+  // The host keeps what it is told with, and clears the hook before that
+  // goes away: what is kept here is a pointer to it, not a copy.
+  struct TextFocusHook {
+    void (*fCall)(void *target, bool text) = nullptr;
+    void *fTarget = nullptr;
+    explicit operator bool() const noexcept { return fCall != nullptr; }
+    void operator()(bool text) const { fCall(fTarget, text); }
+  };
+  static TextFocusHook &textFocusHook() {
+    static TextFocusHook hook;
     return hook;
   }
-  static void setTextFocusHook(std::function<void(bool)> hook) {
-    textFocusHook() = std::move(hook);
+  template <class Target>
+    requires std::invocable<Target &, bool>
+  static void setTextFocusHook(Target &target) {
+    textFocusHook() = {+[](void *kept, bool text) {
+                         std::invoke(*static_cast<Target *>(kept), text);
+                       },
+                       &target};
   }
+  static void clearTextFocusHook() { textFocusHook() = {}; }
 
   [[nodiscard]] bool focusedTakesText() {
     const Drawable *node = this->inputRoot()->fFocused;

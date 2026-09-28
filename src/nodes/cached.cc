@@ -35,13 +35,34 @@ public:
   // What this needs is a surface of a size, and a way to say that it is
   // finished with, which Ganesh answers by submitting and Graphite answers
   // by doing nothing: a recorder has already taken the calls.
+  //
+  // The provider is anything with make(width, height) and done(surface). The
+  // program keeps it for as long as it is set, and calls dropSurfaces()
+  // before it goes: what is kept here is a pointer to it.
   struct Surfaces {
-    std::function<skia::Sp<skia::SkSurface>(int width, int height)> fMake;
-    std::function<void(skia::SkSurface *)> fDone;
+    skia::Sp<skia::SkSurface> (*fMake)(void *provider, int width,
+                                       int height) = nullptr;
+    void (*fDone)(void *provider, skia::SkSurface *surface) = nullptr;
+    void *fProvider = nullptr;
   };
 
-  static void setSurfaces(Surfaces surfaces) {
-    surfacesSlot() = std::move(surfaces);
+  template <class Provider>
+    requires requires(Provider &provider, int size,
+                      skia::SkSurface *surface) {
+      {
+        provider.make(size, size)
+      } -> std::convertible_to<skia::Sp<skia::SkSurface>>;
+      provider.done(surface);
+    }
+  static void setSurfaces(Provider &provider) {
+    surfacesSlot() = {
+        +[](void *kept, int width, int height) -> skia::Sp<skia::SkSurface> {
+          return static_cast<Provider *>(kept)->make(width, height);
+        },
+        +[](void *kept, skia::SkSurface *surface) {
+          static_cast<Provider *>(kept)->done(surface);
+        },
+        &provider};
   }
 
   // Every cache, dropped.
@@ -97,7 +118,7 @@ public:
     }
 
     if (!fCache || fCacheWidth != width || fCacheHeight != height) {
-      fCache = surfaces.fMake(width, height);
+      fCache = surfaces.fMake(surfaces.fProvider, width, height);
       fCached.reset();
       fCacheWidth = width;
       fCacheHeight = height;
@@ -119,7 +140,7 @@ public:
       Drawable::draw(cacheCanvas, 1.0f);
       cacheCanvas->restoreToCount(saved);
       if (surfaces.fDone) {
-        surfaces.fDone(fCache.get());
+        surfaces.fDone(surfaces.fProvider, fCache.get());
       }
       fCacheValid = true;
       fCachedOrigin = fBounds.fLeft + fBounds.fTop;
