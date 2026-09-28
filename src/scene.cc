@@ -2251,12 +2251,10 @@ template <class C> bool markDirty(C &child) {
     State &state = child.fState;
     bool below = false;
     std::size_t signature = 0;
-    skia::SkRect area = skia::SkRect::MakeEmpty();
     eachChild(child, [&](auto &each) {
       below = walk::markDirty(each) || below;
-      const State &one = stateOf(each);
-      signature = signature * 1099511628211ull ^ static_cast<std::size_t>(one.fId);
-      area = joined(joined(area, one.fBounds), one.fDrawnBounds);
+      signature = signature * 1099511628211ull ^
+                  static_cast<std::size_t>(stateOf(each).fId);
     });
     if (signature != state.fChildSignature) {
       // The children that went took their boxes with them: where they were
@@ -2266,7 +2264,6 @@ template <class C> bool markDirty(C &child) {
       state.fDamaged = true;
       state.fMovedDamage = joined(state.fMovedDamage, state.fChildArea);
     }
-    state.fChildArea = area;
     state.fSubtreeDirty = below || !state.fLayoutValid;
     return state.fSubtreeDirty;
   }
@@ -2291,9 +2288,14 @@ template <class C> skia::SkRect collectDamage(C &child, bool drawnAbove) {
     state.fDamaged = false;
     const bool drawn = drawnAbove && state.fVisible && state.fAlpha > 0.001f;
     skia::SkRect below = skia::SkRect::MakeEmpty();
+    skia::SkRect area = skia::SkRect::MakeEmpty();
     eachChild(child, [&](auto &each) {
       below = joined(below, walk::collectDamage(each, drawn));
+      const State &one = stateOf(each);
+      area = joined(joined(area, one.fBounds), one.fDrawnBounds);
     });
+    // Where the children are, laid out: what is repainted if they go.
+    state.fChildArea = area;
     if (!below.isEmpty() && state.fMasking &&
         !below.intersect(state.fBounds)) {
       below = skia::SkRect::MakeEmpty();
