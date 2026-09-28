@@ -1002,4 +1002,20 @@ TEST(Cursor, ThePointersShapeIsTheNodesUnderIt) {
   EXPECT_EQ(scene.cursor(), Cursor{cursor::text{}});
 }
 
+// A press focuses without showing it; the keyboard shows it.
+TEST(Focus, APressFocusesWithoutShowingIt) {
+  Scene<Shaped> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(100.0f, 100.0f));
+  const std::array layers{InputRouter::Layer{scene.handle(), false}};
+  InputRouter router;
+  router.setLayers(layers);
+  router.pointer(PointerEvent{pointer::down{55.0f, 50.0f}});
+  router.pointer(PointerEvent{pointer::up{55.0f, 50.0f}});
+  EXPECT_TRUE(scene.root().plain.focused());
+  EXPECT_FALSE(scene.root().plain.showsFocus());
+  router.key(KeyEvent{key::down{keys::kTab, Modifiers{}, false}});
+  EXPECT_TRUE(focusVisible());
+}
+
 } // namespace

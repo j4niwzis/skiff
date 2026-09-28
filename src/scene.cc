@@ -1042,6 +1042,15 @@ struct Semantics {
                                [](auto) { return false; }},
                     role);
 }
+// Whether focus is to be shown: it is when it came from the keyboard, and
+// not when a press gave it -- a pressed button keeps the focus, so Enter and
+// Space still act on it, without being drawn as focused until the keyboard
+// moves it. One for the program, as the keyboard is.
+inline bool &focusVisible() {
+  static bool shown = false;
+  return shown;
+}
+
 // The pointer's shape over a node: an arrow unless it says otherwise.
 namespace cursor {
 struct arrow {
@@ -2023,6 +2032,10 @@ struct Node {
   [[nodiscard]] bool visible() const noexcept { return fState.visible(); }
   [[nodiscard]] bool hovered() const noexcept { return fState.hovered(); }
   [[nodiscard]] bool focused() const noexcept { return fState.focused(); }
+  // Focused, and to be drawn so: focus the keyboard gave.
+  [[nodiscard]] bool showsFocus() const noexcept {
+    return fState.focused() && focusVisible();
+  }
   [[nodiscard]] bool selected() const noexcept { return fState.selected(); }
   [[nodiscard]] bool disabled() const noexcept { return fState.disabled(); }
   void apply(const Spec &spec) { fState.apply(spec); }
@@ -3166,6 +3179,7 @@ public:
       this->focus(routed.fFocusRequest);
     } else if (routed.fTargetDelivered && press && routed.fTargetFocusable) {
       this->focus(target);
+      focusVisible() = false;
     }
     this->restyleDirty();
     return reply.fHandled;
@@ -3583,6 +3597,7 @@ public:
                    }},
         input);
     if (tab) {
+      focusVisible() = true;
       return this->focusNext(*tab);
     }
     for (auto it = fLayers.rbegin(); it != fLayers.rend(); ++it) {
