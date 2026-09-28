@@ -1,6 +1,6 @@
 # skiff as a static tree
 
-Status: proposal. Nothing here is implemented yet.
+Status: agreed; being implemented.
 
 ## Why
 
@@ -98,9 +98,11 @@ auto row = nodes::row({.fillX = true, .spacing = 8.0f},
 
 The tree's shape is fixed by its type; what varies is said explicitly:
 
-- `nodes::Each<T>`: any number of children of one type, kept in stable
-  storage, for lists (the conversation list is `Each<ConversationRow>`).
-- `nodes::OneOf<Ts...>`: one of a known set, over `std::variant` (the
+- `nodes::List<T>`: any number of children of one type, kept in stable
+  storage. Statically typed where the rows are alike (the conversation list
+  is `List<ConversationRow>`), and `List<AnyNode>` where they are not and
+  spelling out the alternatives is not worth it.
+- `nodes::OneOf<Ts...>`: one of a small known set, over `std::variant` (the
   conversations screen, the login screen, the settings screen).
 - `nodes::Optional<T>`: present or not.
 - `skiff::AnyNode`: any node by value, erased the way `std::function`
@@ -113,15 +115,16 @@ Focus, pointer capture, hover, followers and semantic lookups need to point
 at a node whatever its type. `skiff::NodeRef` is a non-owning erased
 reference: a pointer and a table of the walks, like `std::function_ref`.
 Nodes do not move while they are in a scene (the root is not movable, and
-`Each` keeps elements in stable storage), so a `NodeRef` stays valid until
+`List` keeps elements in stable storage), so a `NodeRef` stays valid until
 its node leaves; a container that drops children releases every reference
 into them first, as `releaseInputForSubtree` does now.
 
 ## Styles
 
-A rule selects a node type, as now. A class template that should be styled
-as one type says so: `using StyleAs = widgets::Button<>;`, so every
-`Button<Action>` matches rules written for `Button<>`.
+A rule selects a node type, as now, or a class template: `rule<Row>` matches
+every row, `rule<widgets::Button>` -- the template, with no arguments --
+matches every `Button<Action>`, whatever its action. Nothing has to be
+declared on the widget for that.
 
 ## Callbacks
 
@@ -132,7 +135,7 @@ anywhere; a program that wants erasure there can pass one itself.
 ## Order of work
 
 1. skiff: `State`, the `Node` concept, the walks, `NodeRef`, the
-   containers and `Each`/`OneOf`/`Optional`/`AnyNode`; `Drawable` removed.
+   containers and `List`/`OneOf`/`Optional`/`AnyNode`; `Drawable` removed.
    Its tests ported.
 2. skiff-widgets on it, tests ported.
 3. mux: the screens, and the login and config screens written on it.
