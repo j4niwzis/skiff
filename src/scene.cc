@@ -45,14 +45,60 @@ template <class Action>
 // ---- flags -------------------------------------------------------------------
 
 namespace detail {
-template <class Tag, class... Tags> consteval std::size_t indexOf() {
-  constexpr std::array<bool, sizeof...(Tags)> same{std::is_same_v<Tag, Tags>...};
+// A list of types, and the same list with its duplicates removed: from
+// do_let_is (examples/src/type_set.h, MIT), by the same author.
+template <class... Ts> struct type_set {
+  static constexpr std::size_t size = sizeof...(Ts);
+};
+template <class... Ts, class... Ts2>
+constexpr auto operator+(type_set<Ts...>, type_set<Ts2...>)
+    -> type_set<Ts..., Ts2...> {
+  return {};
+}
+struct overload_check_root {
+  static consteval void test();
+};
+template <class T = overload_check_root, class Base = overload_check_root>
+struct overload_check : Base {
+  using Base::test;
+  static consteval void test(type_set<T> value)
+    requires true;
+  static consteval void test(type_set<T> value)
+    requires(requires { Base::test(value); });
+
+  template <class T2> constexpr auto operator|(type_set<T2>) {
+    constexpr auto next = overload_check<T2, overload_check>{};
+    if constexpr (requires { next.test(type_set<T2>{}); }) {
+      return next;
+    } else {
+      return *this;
+    }
+  }
+};
+template <class T> struct overload_check_to_type_set {};
+template <class T, class Base>
+struct overload_check_to_type_set<overload_check<T, Base>> {
+  using type = decltype(type_set<T>{} +
+                        typename overload_check_to_type_set<Base>::type{});
+};
+template <>
+struct overload_check_to_type_set<
+    overload_check<overload_check_root, overload_check_root>> {
+  using type = type_set<>;
+};
+template <class... Ts> struct get_unique {
+  using type = typename overload_check_to_type_set<decltype((
+      overload_check<>{} | ... | type_set<Ts>{}))>::type;
+};
+
+template <class Tag, class... Ts> consteval std::size_t indexOf() {
+  constexpr std::array<bool, sizeof...(Ts)> same{std::is_same_v<Tag, Ts>...};
   for (std::size_t i = 0; i < same.size(); ++i) {
     if (same[i]) {
       return i;
     }
   }
-  return sizeof...(Tags);
+  return sizeof...(Ts);
 }
 template <std::size_t N>
 using FlagBits = std::conditional_t<
@@ -62,47 +108,65 @@ using FlagBits = std::conditional_t<
                                           std::uint64_t>>>;
 } // namespace detail
 
-// A set of flags named by tag types: one bit per tag, by its place in Tags.
-// A tag that is not one of them does not compile.
+// A set of flags known at compile time: Tag names the family, Ts are the
+// flags in the set. It holds nothing; combining two sets of one family gives
+// the set of both, duplicates removed, still as a type.
 //
-//   using Axes = Flags<axis::x, axis::y>;
-//   Axes both = Axes::of<axis::x, axis::y>();
-//   both.has<axis::x>()
-template <class... Tags> class Flags {
-  static_assert(sizeof...(Tags) <= 64, "at most 64 flags");
-  using Bits = detail::FlagBits<sizeof...(Tags)>;
+//   axes::kX | axes::kY   is   StaticFlags<AxisTag, axis::x, axis::y>
+template <class Tag, class... Ts> struct StaticFlags {
+  template <class Flag> [[nodiscard]] static constexpr bool has() noexcept {
+    return (std::is_same_v<Flag, Ts> || ...);
+  }
+  template <class... Ts2>
+  [[nodiscard]] constexpr auto operator|(StaticFlags<Tag, Ts2...>) const noexcept {
+    return []<class... Us>(detail::type_set<Us...>) {
+      return StaticFlags<Tag, Us...>{};
+    }(typename detail::get_unique<Ts..., Ts2...>::type{});
+  }
+};
 
-  template <class Tag> [[nodiscard]] static consteval Bits bit() {
-    constexpr std::size_t at = detail::indexOf<Tag, Tags...>();
-    static_assert(at < sizeof...(Tags), "not one of these flags");
+// A set of flags as a value, one bit per flag of the family: Ts are all the
+// flags a Tag has. Made from any StaticFlags of the family; a flag the
+// family does not have does not compile.
+//
+//   using Axes = Flags<AxisTag, axis::x, axis::y>;
+//   Axes both = axes::kX | axes::kY;
+//   both.has<axis::x>()
+template <class Tag, class... Ts> class Flags {
+  static_assert(sizeof...(Ts) <= 64, "at most 64 flags");
+  using Bits = detail::FlagBits<sizeof...(Ts)>;
+
+  template <class Flag> [[nodiscard]] static consteval Bits bit() {
+    constexpr std::size_t at = detail::indexOf<Flag, Ts...>();
+    static_assert(at < sizeof...(Ts), "not one of this family's flags");
     return static_cast<Bits>(Bits{1} << at);
   }
   constexpr explicit Flags(Bits bits) noexcept : fBits(bits) {}
 
 public:
   constexpr Flags() noexcept = default;
+  template <class... Some>
+  constexpr Flags(StaticFlags<Tag, Some...>) noexcept // NOLINT: a set is a value
+      : fBits(static_cast<Bits>((Bits{0} | ... | bit<Some>()))) {}
 
-  template <class... Some> [[nodiscard]] static constexpr Flags of() noexcept {
-    return Flags(static_cast<Bits>((Bits{0} | ... | bit<Some>())));
+  template <class Flag> [[nodiscard]] constexpr bool has() const noexcept {
+    return (fBits & bit<Flag>()) != 0;
   }
-  template <class Tag> [[nodiscard]] constexpr bool has() const noexcept {
-    return (fBits & bit<Tag>()) != 0;
+  template <class Flag> [[nodiscard]] constexpr Flags with() const noexcept {
+    return Flags(static_cast<Bits>(fBits | bit<Flag>()));
   }
-  template <class Tag> [[nodiscard]] constexpr Flags with() const noexcept {
-    return Flags(static_cast<Bits>(fBits | bit<Tag>()));
+  template <class Flag> [[nodiscard]] constexpr Flags without() const noexcept {
+    return Flags(static_cast<Bits>(fBits & ~bit<Flag>()));
   }
-  template <class Tag> [[nodiscard]] constexpr Flags without() const noexcept {
-    return Flags(static_cast<Bits>(fBits & ~bit<Tag>()));
-  }
-  template <class Tag>
+  template <class Flag>
   [[nodiscard]] constexpr Flags with(bool on) const noexcept {
-    return on ? this->with<Tag>() : this->without<Tag>();
+    return on ? this->with<Flag>() : this->without<Flag>();
   }
-  [[nodiscard]] constexpr Flags operator|(Flags other) const noexcept {
-    return Flags(static_cast<Bits>(fBits | other.fBits));
+  [[nodiscard]] friend constexpr Flags operator|(Flags a, Flags b) noexcept {
+    return Flags(static_cast<Bits>(a.fBits | b.fBits));
   }
-  [[nodiscard]] constexpr Flags operator&(Flags other) const noexcept {
-    return Flags(static_cast<Bits>(fBits & other.fBits));
+  [[nodiscard]] friend constexpr Flags operator&(Flags a, Flags b) noexcept {
+    return Flags(static_cast<Bits>(a.fBits & b.fBits));
   }
   // Every flag of `other` is set here.
   [[nodiscard]] constexpr bool contains(Flags other) const noexcept {
@@ -112,7 +176,7 @@ public:
     return (fBits & other.fBits) != 0;
   }
   [[nodiscard]] constexpr bool none() const noexcept { return fBits == 0; }
-  constexpr bool operator==(const Flags &) const noexcept = default;
+  friend constexpr bool operator==(Flags, Flags) noexcept = default;
 
 private:
   Bits fBits = 0;
@@ -120,17 +184,23 @@ private:
 
 // ---- geometry -------------------------------------------------------------
 
+
 namespace axis {
 struct x {};
 struct y {};
 } // namespace axis
-using Axes = Flags<axis::x, axis::y>;
+struct AxisTag {};
+using Axes = Flags<AxisTag, axis::x, axis::y>;
 namespace axes {
-inline constexpr Axes kNone{};
-inline constexpr Axes kX = Axes::of<axis::x>();
-inline constexpr Axes kY = Axes::of<axis::y>();
-inline constexpr Axes kBoth = Axes::of<axis::x, axis::y>();
+inline constexpr StaticFlags<AxisTag> kNone;
+inline constexpr StaticFlags<AxisTag, axis::x> kX;
+inline constexpr StaticFlags<AxisTag, axis::y> kY;
+inline constexpr auto kBoth = kX | kY;
 } // namespace axes
+static_assert(decltype(axes::kX | axes::kY | axes::kX)::has<axis::x>() &&
+              decltype(axes::kX | axes::kY | axes::kX)::has<axis::y>());
+static_assert(Axes(axes::kBoth).has<axis::x>() &&
+              !Axes(axes::kX).has<axis::y>());
 
 // A point of a box, as fractions of its width and height: where a node is
 // attached to its parent, and which of its own points lands there.
@@ -372,14 +442,15 @@ struct selected {};
 struct disabled {};
 struct focus {};
 } // namespace state
-using StyleStates = Flags<state::hover, state::selected, state::disabled,
-                          state::focus>;
+struct StateTag {};
+using StyleStates = Flags<StateTag, state::hover, state::selected,
+                          state::disabled, state::focus>;
 namespace states {
-inline constexpr StyleStates kNone{};
-inline constexpr StyleStates kHover = StyleStates::of<state::hover>();
-inline constexpr StyleStates kSelected = StyleStates::of<state::selected>();
-inline constexpr StyleStates kDisabled = StyleStates::of<state::disabled>();
-inline constexpr StyleStates kFocus = StyleStates::of<state::focus>();
+inline constexpr StaticFlags<StateTag> kNone;
+inline constexpr StaticFlags<StateTag, state::hover> kHover;
+inline constexpr StaticFlags<StateTag, state::selected> kSelected;
+inline constexpr StaticFlags<StateTag, state::disabled> kDisabled;
+inline constexpr StaticFlags<StateTag, state::focus> kFocus;
 } // namespace states
 
 // The declarations every node understands, plus the inheritable visual ones.
@@ -867,14 +938,15 @@ struct control {};
 struct alt {};
 struct super {};
 } // namespace modifier
-using Modifiers =
-    Flags<modifier::shift, modifier::control, modifier::alt, modifier::super>;
+struct ModifierTag {};
+using Modifiers = Flags<ModifierTag, modifier::shift, modifier::control,
+                        modifier::alt, modifier::super>;
 namespace modifiers {
-inline constexpr Modifiers kNone{};
-inline constexpr Modifiers kShift = Modifiers::of<modifier::shift>();
-inline constexpr Modifiers kControl = Modifiers::of<modifier::control>();
-inline constexpr Modifiers kAlt = Modifiers::of<modifier::alt>();
-inline constexpr Modifiers kSuper = Modifiers::of<modifier::super>();
+inline constexpr StaticFlags<ModifierTag> kNone;
+inline constexpr StaticFlags<ModifierTag, modifier::shift> kShift;
+inline constexpr StaticFlags<ModifierTag, modifier::control> kControl;
+inline constexpr StaticFlags<ModifierTag, modifier::alt> kAlt;
+inline constexpr StaticFlags<ModifierTag, modifier::super> kSuper;
 } // namespace modifiers
 
 namespace key {
