@@ -2075,6 +2075,12 @@ struct UpdateContext {
   double fNowMs = 0.0;
   float fViewportWidth = 0.0f;
   bool fAnimating = false;
+  // Whether this is a frame's step, at the time now: only then do nodes and
+  // their transforms advance. A restyle between frames walks the tree with
+  // the last frame's time, which after a while of nothing to draw is long
+  // gone -- an animation begun there would start in the past and end at
+  // once.
+  bool fTick = true;
 };
 
 // A path from a node to one below it: positions of the children taken, in
@@ -2308,8 +2314,10 @@ template <class N>
 void update(N &child, UpdateContext &context, StyleResolver resolver,
             const Style *inherited, bool restyleAll) {
   State &state = child.fState;
-  state.updateTransforms(context.fNowMs);
-  child.update(context.fNowMs);
+  if (context.fTick) {
+    state.updateTransforms(context.fNowMs);
+    child.update(context.fNowMs);
+  }
   if (!state.fTransforms.empty() || child.settling()) {
     context.fAnimating = true;
   }
@@ -3018,7 +3026,7 @@ public:
     if (viewportChanged) {
       // Width-constrained selectors are media queries: resolved before
       // layout, so their declarations take part in this pass.
-      UpdateContext context{fNowMs, viewport.width(), false};
+      UpdateContext context{fNowMs, viewport.width(), false, false};
       walk::update(fRoot, context, {}, nullptr, true);
     }
     const bool dirty = walk::markDirty(fRoot);
@@ -3300,7 +3308,7 @@ private:
   // Styles whose inputs changed, applied now, so what a handler sees next is
   // current.
   void restyleDirty() {
-    UpdateContext context{fNowMs, fViewport.width(), false};
+    UpdateContext context{fNowMs, fViewport.width(), false, false};
     walk::update(fRoot, context, {}, nullptr, false);
   }
 

@@ -955,4 +955,27 @@ TEST(Motion, ATweenTakesItsTimeEitherWay) {
   level = was;
 }
 
+// A node's time moves only with frames: a press between frames restyles the
+// tree, and must not hand the nodes the last frame's time as if it were now.
+struct Clocked : Node {
+  std::vector<double> seen;
+  void update(double nowMs) { seen.push_back(nowMs); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+};
+
+TEST(Frames, APressBetweenFramesDoesNotRunTheNodesClock) {
+  Scene<Clocked> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.update(1000.0);
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(100.0f, 100.0f));
+  (void)scene.finishFrame();
+  ASSERT_EQ(scene.root().seen.size(), 1u);
+  (void)scene.click(10.0f, 10.0f);
+  scene.focus(scene.root().id());
+  EXPECT_EQ(scene.root().seen.size(), 1u);
+  scene.update(61000.0);
+  ASSERT_EQ(scene.root().seen.size(), 2u);
+  EXPECT_EQ(scene.root().seen.back(), 61000.0);
+}
+
 } // namespace
