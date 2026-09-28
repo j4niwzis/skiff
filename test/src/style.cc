@@ -379,6 +379,41 @@ TEST(TextLayout, RelativeWidthIsOwnedByLayout) {
   Text::setFont(nullptr); // the font is this test's
 }
 
+// Wrapped text follows its parent's width from one layout to the next:
+// the width it wraps in is not written over the one it was given.
+struct WrappedTexts : Node {
+  Text filling = make<Text>({.fillX = true}, "one two three four five six seven eight nine ten",
+                            14.0f, skia::kWhite);
+  Text unsized{"one two three four five six seven eight nine ten", 14.0f, skia::kWhite};
+  WrappedTexts() {
+    filling.setWrapped(true);
+    unsized.setWrapped(true);
+  }
+  void forEachChild(auto &&f) {
+    f(filling);
+    f(unsized);
+  }
+};
+
+TEST(TextLayout, WrappedTextFollowsItsParentsWidth) {
+  skia::SkFont font;
+  Text::setFont(&font);
+  Scene<WrappedTexts> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(240.0f, 400.0f));
+  EXPECT_FLOAT_EQ(scene.root().filling.bounds().width(), 240.0f);
+  EXPECT_FLOAT_EQ(scene.root().unsized.bounds().width(), 240.0f);
+  const float tall = scene.root().filling.bounds().height();
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(120.0f, 400.0f));
+  EXPECT_FLOAT_EQ(scene.root().filling.bounds().width(), 120.0f);
+  EXPECT_FLOAT_EQ(scene.root().unsized.bounds().width(), 120.0f);
+  EXPECT_GT(scene.root().filling.bounds().height(), tall);
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(480.0f, 400.0f));
+  EXPECT_FLOAT_EQ(scene.root().filling.bounds().width(), 480.0f);
+  EXPECT_FLOAT_EQ(scene.root().unsized.bounds().width(), 480.0f);
+  Text::setFont(nullptr); // the font is this test's
+}
+
 // ---- children held in other ways
 
 struct Switching : Node {

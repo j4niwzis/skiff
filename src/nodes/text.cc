@@ -124,7 +124,14 @@ public:
       state.fHeight =
           static_cast<float>(std::max<std::size_t>(1, fLines.size())) *
           fSize * 1.25f;
-      if (!state.fGrowAxes.has<skiff::scene::axis::x>()) {
+      // Its width is the room it wraps in -- unless that width is its
+      // parent's to give, as a share of the parent's width, or its glyphs'.
+      // One given no width at all keeps taking the parent's: the width
+      // written here is not one it was given.
+      if (!state.fGrowAxes.has<skiff::scene::axis::x>() &&
+          !state.fRelativeSizeAxes.has<skiff::scene::axis::x>() &&
+          (fWrapsToParent || state.fWidth <= 0.0f)) {
+        fWrapsToParent = true;
         state.fWidth = room;
       }
       fMeasuredSize = fSize;
@@ -185,8 +192,9 @@ private:
     if (state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
       return parent.width() * state.fWidth - state.fMargin.totalX();
     }
-    return state.fWidth > 0.0f ? state.fWidth
-                               : parent.width() - state.fMargin.totalX();
+    return state.fWidth > 0.0f && !fWrapsToParent
+               ? state.fWidth
+               : parent.width() - state.fMargin.totalX();
   }
 
   std::string fText;
@@ -194,6 +202,9 @@ private:
   skia::SkColor fColour;
   bool fBold;
   bool fWrapped = false;
+  // Wrapped with no width of its own: it wraps to its parent's, whatever
+  // that is at the time.
+  bool fWrapsToParent = false;
   bool fElided = false;
   std::vector<std::string> fLines;
   float fMeasuredSize = -1.0f;
