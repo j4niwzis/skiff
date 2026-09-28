@@ -3246,6 +3246,29 @@ public:
     return out;
   }
 
+  // The pointer's shape: that of the node held, else of the node under the
+  // pointer or the nearest above it with a shape of its own.
+  [[nodiscard]] Cursor cursor() {
+    Path path;
+    if (fCapture != 0) {
+      if (!walk::findPath(fRoot, fCapture, path)) {
+        return cursor::arrow{};
+      }
+    } else if (!fHoverSeen || !walk::hitPath(fRoot, fHoverX, fHoverY, path)) {
+      return cursor::arrow{};
+    }
+    for (std::size_t n = path.size() + 1; n-- > 0;) {
+      const Path above(path.begin(),
+                       path.begin() + static_cast<std::ptrdiff_t>(n));
+      const std::optional<NodeInfo> about =
+          walk::info(fRoot, walk::idAt(fRoot, above, 0));
+      if (about && !isArrow(about->fCursor)) {
+        return about->fCursor;
+      }
+    }
+    return cursor::arrow{};
+  }
+
   // Gives a node focus, or takes it from all with 0.
   void focus(NodeId id) {
     std::optional<NodeInfo> now;
@@ -3339,29 +3362,6 @@ public:
 private:
   // Styles whose inputs changed, applied now, so what a handler sees next is
   // current.
-  // The pointer's shape: that of the node held, else of the node under the
-  // pointer or the nearest above it with a shape of its own.
-  [[nodiscard]] Cursor cursor() {
-    Path path;
-    if (fCapture != 0) {
-      if (!walk::findPath(fRoot, fCapture, path)) {
-        return cursor::arrow{};
-      }
-    } else if (!fHoverSeen || !walk::hitPath(fRoot, fHoverX, fHoverY, path)) {
-      return cursor::arrow{};
-    }
-    for (std::size_t n = path.size() + 1; n-- > 0;) {
-      const Path above(path.begin(),
-                       path.begin() + static_cast<std::ptrdiff_t>(n));
-      const std::optional<NodeInfo> about =
-          walk::info(fRoot, walk::idAt(fRoot, above, 0));
-      if (about && !isArrow(about->fCursor)) {
-        return about->fCursor;
-      }
-    }
-    return cursor::arrow{};
-  }
-
   void restyleDirty() {
     UpdateContext context{fNowMs, fViewport.width(), false, false};
     walk::update(fRoot, context, {}, nullptr, false);
