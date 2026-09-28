@@ -876,4 +876,53 @@ TEST(Input, HorizontalGestureDoesNotBecomeVerticalScroll) {
   EXPECT_FLOAT_EQ(scene.root().current(), 0.0f);
 }
 
+// ---- motion levels
+
+TEST(Motion, EachLevelMovesWhatItShould) {
+  using namespace skiff::paint;
+  auto &level = motionLevel();
+  const Motion was = level;
+  Eased knob{0.0f, 70.0f, movement::subtle{}};
+  Eased panel{0.0f, 70.0f, movement::sweeping{}};
+
+  level = motion::full{};
+  knob.setTarget(1.0f);
+  panel.setTarget(1.0f);
+  EXPECT_TRUE(knob.moving());
+  EXPECT_TRUE(panel.moving());
+  EXPECT_TRUE(knob.step(16.0));
+  EXPECT_GT(knob.value(), 0.0f);
+  EXPECT_LT(knob.value(), 1.0f);
+
+  level = motion::reduced{};
+  knob.jump(0.0f);
+  panel.jump(0.0f);
+  knob.setTarget(1.0f);
+  panel.setTarget(1.0f);
+  EXPECT_TRUE(knob.moving());
+  EXPECT_FALSE(panel.moving());
+  EXPECT_FLOAT_EQ(panel.value(), 1.0f);
+
+  level = motion::none{};
+  knob.jump(0.0f);
+  knob.setTarget(1.0f);
+  EXPECT_FALSE(knob.moving());
+  EXPECT_FLOAT_EQ(knob.value(), 1.0f);
+
+  level = was;
+}
+
+TEST(Motion, AnEasedValueArrivesExactly) {
+  using namespace skiff::paint;
+  Eased value{0.0f, 30.0f, movement::subtle{}};
+  value.setTarget(1.0f);
+  double now = 0.0;
+  for (int frame = 0; frame < 200 && value.moving(); ++frame) {
+    now += 16.0;
+    (void)value.step(now);
+  }
+  EXPECT_FALSE(value.moving());
+  EXPECT_EQ(value.value(), 1.0f);
+}
+
 } // namespace

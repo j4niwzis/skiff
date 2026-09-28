@@ -52,6 +52,93 @@ export namespace skiff::paint {
   return current == target;
 }
 
+// How much moves: nothing, only small movements (a knob sliding, a section
+// unfolding), or everything (a panel crossing the window too). Set once for
+// the whole program, as a user setting, through motionLevel().
+namespace motion {
+struct none {};
+struct reduced {};
+struct full {};
+} // namespace motion
+using Motion = std::variant<motion::none, motion::reduced, motion::full>;
+
+// What kind of movement an animation is: a subtle one stays where it is (a
+// knob, a fold), a sweeping one crosses the window.
+namespace movement {
+struct subtle {};
+struct sweeping {};
+} // namespace movement
+using Movement = std::variant<movement::subtle, movement::sweeping>;
+
+inline Motion &motionLevel() {
+  static Motion level = motion::full{};
+  return level;
+}
+
+// Whether a movement of this kind moves at this level.
+constexpr bool moves(motion::none, movement::subtle) { return false; }
+constexpr bool moves(motion::none, movement::sweeping) { return false; }
+constexpr bool moves(motion::reduced, movement::subtle) { return true; }
+constexpr bool moves(motion::reduced, movement::sweeping) { return false; }
+constexpr bool moves(motion::full, movement::subtle) { return true; }
+constexpr bool moves(motion::full, movement::sweeping) { return true; }
+[[nodiscard]] inline bool moves(const Movement &kind) {
+  return std::visit([](auto level, auto of) { return moves(level, of); },
+                    motionLevel(), kind);
+}
+
+// A value easing toward its target, one frame at a time, by approach(): what
+// a node keeps for anything it animates. Its step() is called from the
+// node's update(nowMs), and its moving() is the node's settling(). Where
+// motionLevel() does not move its kind of movement, it is at its target the
+// moment it is given one.
+class Eased {
+public:
+  explicit Eased(float value = 0.0f, float tauMs = 70.0f,
+                 Movement kind = movement::subtle{}) noexcept
+      : fValue(value), fTarget(value), fTauMs(tauMs), fKind(kind) {}
+
+  [[nodiscard]] float value() const noexcept { return fValue; }
+  [[nodiscard]] float target() const noexcept { return fTarget; }
+  [[nodiscard]] bool moving() const noexcept {
+    return !settled(fValue, fTarget);
+  }
+
+  // Where to go from here: at once, where this does not move.
+  void setTarget(float target) {
+    if (!this->moving()) {
+      fLastMs = 0.0; // a value at rest starts its next move from now
+    }
+    fTarget = target;
+    if (!moves(fKind)) {
+      fValue = target;
+    }
+  }
+  // There, without moving.
+  void jump(float value) noexcept {
+    fValue = value;
+    fTarget = value;
+    fLastMs = 0.0;
+  }
+  void setTau(float tauMs) noexcept { fTauMs = tauMs; }
+
+  // One frame's step, at `nowMs`: whether the value changed.
+  bool step(double nowMs) {
+    const double dt = fLastMs > 0.0 ? nowMs - fLastMs : 16.0;
+    fLastMs = nowMs;
+    const float before = fValue;
+    fValue = moves(fKind) ? approach(fValue, fTarget, fTauMs, dt) : fTarget;
+    return fValue != before;
+  }
+
+private:
+  float fValue;
+  float fTarget;
+  float fTauMs;
+  Movement fKind;
+  double fLastMs = 0.0;
+};
+
 // ---- Text with fallback ---------------------------------------------------
 //
 // Skia draws a string with exactly one typeface: a codepoint the typeface
