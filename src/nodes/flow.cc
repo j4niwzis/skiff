@@ -331,6 +331,56 @@ public:
   }
 };
 
+// Rows as a function of items, declared: the rows become one for each
+// item, in the items' order. A row whose item it still shows -- found by
+// its key, and said to by `shows` -- is kept as it is, with its layout,
+// hover and selection; the others are made from their items, and rows no
+// item has any more are dropped. A list updated this way does the work of
+// what changed, not of all of it, and nothing in it is cleared by hand.
+//
+//   reconcile(rows, chats, [](auto& c) { return c.id; },
+//             [](auto& row) { return row.id; },
+//             [](auto& c) { return ChatRow(c); },
+//             [](auto& row, auto& c) { return row.shown == view(c); });
+//
+// Keys may repeat (a message not yet given an id): each row is taken once.
+template <class Row, std::ranges::input_range Items, class KeyOf, class RowKey,
+          class Make, class Shows>
+bool reconcile(std::vector<Row> &rows, Items &&items, KeyOf keyOf,
+               RowKey rowKey, Make make, Shows shows) {
+  using Key = std::remove_cvref_t<std::invoke_result_t<RowKey, const Row &>>;
+  std::multimap<Key, std::size_t> old;
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    old.emplace(std::invoke(rowKey, std::as_const(rows[i])), i);
+  }
+  std::vector<bool> taken(rows.size(), false);
+  std::vector<Row> next;
+  bool changed = false;
+  std::size_t at = 0;
+  for (auto &&item : items) {
+    const auto [first, last] = old.equal_range(std::invoke(keyOf, item));
+    bool kept = false;
+    for (auto it = first; it != last; ++it) {
+      const std::size_t i = it->second;
+      if (!taken[i] && std::invoke(shows, std::as_const(rows[i]), item)) {
+        taken[i] = true;
+        changed |= i != at;
+        next.push_back(std::move(rows[i]));
+        kept = true;
+        break;
+      }
+    }
+    if (!kept) {
+      next.push_back(std::invoke(make, item));
+      changed = true;
+    }
+    ++at;
+  }
+  changed |= next.size() != rows.size();
+  rows = std::move(next);
+  return changed;
+}
+
 // A vertical flow and a horizontal one, as they are usually written.
 template <class... Children>
 [[nodiscard]] Flow<Children...> column(float spacing, Children... children) {
