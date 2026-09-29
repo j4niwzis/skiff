@@ -451,6 +451,10 @@ struct Spec {
   std::optional<bool> masking{};
   std::optional<float> scale{};
   std::optional<float> alpha{};
+  // Drawn moved by this much, where it is laid out not moving: a row
+  // swiped, a card dragged. Neither layout nor what is around it changes.
+  std::optional<float> shiftX{};
+  std::optional<float> shiftY{};
   std::optional<bool> visible{};
 
   std::vector<StyleRole> roles{};
@@ -1274,6 +1278,11 @@ public:
   // Painted in the box, under the rest: see Spec.
   std::optional<skia::SkColor> fBackground, fHoverBackground, fSelectedBackground, fFocusBackground;
   std::optional<Gradient> fGradient;
+  // Placed by its anchor where its parent is a flow, not in the flow: a
+  // badge over a corner, a mark beside a row.
+  bool fOutOfFlow = false;
+  // Drawn moved by this much: see Spec.
+  float fShiftX = 0.0f, fShiftY = 0.0f;
   std::optional<Border> fBorder;
   bool fVisible = true;
 
@@ -1456,6 +1465,15 @@ public:
     if (spec.place) {
       fAnchor = *spec.place;
       fOrigin = *spec.place;
+      fOutOfFlow = true;
+    }
+    if (spec.shiftX && *spec.shiftX != fShiftX) {
+      fShiftX = *spec.shiftX;
+      this->markDamaged();
+    }
+    if (spec.shiftY && *spec.shiftY != fShiftY) {
+      fShiftY = *spec.shiftY;
+      this->markDamaged();
     }
     if (spec.anchor) {
       fAnchor = *spec.anchor;
@@ -2520,13 +2538,15 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
       canvas->clipRect(state.fBounds, true);
     }
   }
+  if (state.fShiftX != 0.0f || state.fShiftY != 0.0f)
+    canvas->translate(state.fShiftX, state.fShiftY);
   paintBox(state, canvas, alpha);
   node.drawSelf(canvas, alpha);
   eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) {
     draw(child, canvas, alpha);
   });
   canvas->restoreToCount(saved);
-  state.fDrawnBounds = state.fBounds;
+  state.fDrawnBounds = state.fBounds.makeOffset(state.fShiftX, state.fShiftY);
 }
 } // namespace detail
 

@@ -116,12 +116,16 @@ template <class N> struct Flowing {
   // A row's room for what sizes itself: its width, less its fixed-size
   // children and the gaps between them all. Negative where not worked out.
   float fAutoRoom = -1.0f;
+  // Whether a child is laid out in the flow: shown, and not placed by its
+  // anchor instead.
+  [[nodiscard]] static bool inFlow(const skiff::scene::State &state) { return state.fVisible && !state.fOutOfFlow; }
+
   void workOutAutoRoom(const skia::SkRect &box) {
     float fixed = 0.0f;
     int shown = 0;
     skiff::scene::eachChild(fNode, [&](auto &child) {
       const skiff::scene::State &state = skiff::scene::stateOf(child);
-      if (!state.fVisible) {
+      if (!inFlow(state)) {
         return;
       }
       ++shown;
@@ -147,7 +151,7 @@ template <class N> struct Flowing {
     std::vector<skiff::scene::State *> shown;
     skiff::scene::eachChild(fNode, [&](auto &child) {
       skiff::scene::State &state = skiff::scene::stateOf(child);
-      if (state.fVisible) {
+      if (inFlow(state)) {
         skiff::scene::layout(child, boxFor(state, box));
         shown.push_back(&state);
       }
@@ -155,12 +159,17 @@ template <class N> struct Flowing {
     return shown;
   }
 
-  // And placed: a child that did not move keeps its layout.
+  // And placed: a child that did not move keeps its layout. A child out
+  // of the flow is laid out in the box by its anchor.
   void place(const skia::SkRect &box,
              const std::vector<std::pair<float, float>> &places) {
     std::size_t at = 0;
     skiff::scene::eachChild(fNode, [&](auto &child) {
       skiff::scene::State &state = skiff::scene::stateOf(child);
+      if (state.fVisible && state.fOutOfFlow) {
+        skiff::scene::layout(child, box);
+        return;
+      }
       if (!state.fVisible) {
         return;
       }
@@ -274,7 +283,7 @@ template <class N> struct Flowing {
     float taken = 0.0f;
     skiff::scene::eachChild(fNode, [&](auto &child) {
       skiff::scene::State &state = skiff::scene::stateOf(child);
-      if (!state.fVisible) {
+      if (!inFlow(state)) {
         return;
       }
       ++visible;
@@ -297,7 +306,7 @@ template <class N> struct Flowing {
       skiff::scene::State &state = skiff::scene::stateOf(child);
       // Its margins are in its share: the room it takes, margins and all,
       // is the share, so what comes after it still fits.
-      if (state.fVisible && state.fGrowAxes.template has<Axis>()) {
+      if (inFlow(state) && state.fGrowAxes.template has<Axis>()) {
         const float margins = horizontal ? state.fMargin.totalX() : state.fMargin.totalY();
         state.arrangeAxisSize(horizontal, std::max(0.0f, share - margins));
       }
