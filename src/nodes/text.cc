@@ -74,6 +74,11 @@ public:
     // A pill, as a mention is drawn: a rounded plate behind it and, at its
     // start, a picture the program paints (its text leaves room for it).
     bool pill = false;
+    // A picture in the line, in place of its range: a custom emoji. The
+    // range is a placeholder the program put in the text for the room it
+    // takes (an em space); the picture is the program's, for the target,
+    // as skiff::scene::inlinePicture says.
+    bool picture = false;
   };
   void setLinks(std::vector<Link> links, skia::SkColor colour) {
     fLinks = std::move(links);
@@ -486,6 +491,22 @@ private:
       const bool linked = link != nullptr;
       const skia::SkColor colour = linked ? fLinkColour : fColour;
       const float width = p.measure(piece, fSize, fBold);
+      if (link && link->picture) {
+        // The picture, square, a little over the text's size, standing on
+        // its baseline; nothing where the program has none (yet).
+        if (cuts[i] == link->first && skiff::scene::inlinePicture())
+          if (const skia::Sp<skia::SkImage> *picture = skiff::scene::inlinePicture()(link->target);
+              picture && *picture) {
+            const float side = fSize * 1.2f;
+            skia::SkPaint paint;
+            paint.setAlphaf(alpha);
+            canvas->drawImageRect(*picture,
+                                  skia::SkRect::MakeXYWH(at + (width - side) * 0.5f, y - fSize * 0.98f, side, side),
+                                  skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &paint);
+          }
+        at += width;
+        continue;
+      }
       if (link && link->pill) {
         // The plate, the picture at its start where the pill begins, the
         // text over it -- not underlined.

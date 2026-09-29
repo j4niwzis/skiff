@@ -1265,6 +1265,12 @@ inline std::function<std::optional<PillPicture>(std::string_view target)> &pillP
   static std::function<std::optional<PillPicture>(std::string_view)> kept;
   return kept;
 }
+// A picture in a line of text, given what it stands for -- a custom
+// emoji's mxc:// URL: the program's, as data; nothing where it has none.
+inline std::function<const skia::Sp<skia::SkImage> *(std::string_view target)> &inlinePicture() {
+  static std::function<const skia::Sp<skia::SkImage> *(std::string_view)> kept;
+  return kept;
+}
 
 // How many device pixels a unit is: the window's display scale, said by the
 // host each frame. What moves -- a scrolled list -- is placed on whole
