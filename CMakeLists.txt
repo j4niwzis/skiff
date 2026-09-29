@@ -92,7 +92,12 @@ if(SKIFF_TEXT_SHAPING)
     TARGETS alef)
   cme_options(alef "ALEF_TESTS OFF")
   cme_find_package(alef COMPONENTS grapheme line bidi REQUIRED)
-  cme_find_package(harfbuzz REQUIRED)
+  # Found once: something before this may have found it already, and the
+  # config file HarfBuzz installs makes its targets again every time it is
+  # read -- a second read is an error about targets that exist.
+  if(NOT TARGET harfbuzz::harfbuzz)
+    cme_find_package(harfbuzz REQUIRED)
+  endif()
 endif()
 
 # GL, where the Skia this links has a Ganesh in it. Nothing here calls a GL
