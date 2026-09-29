@@ -397,6 +397,13 @@ template <class Tag> inline constexpr StyleRole role = StyleRole::of<Tag>();
 //   place        anchor and origin at once
 //   fill         relative size on both axes at 1.0
 //   fillX/fillY  the same on one axis
+// A line around a node's box, inside it, following its corner radius.
+struct Border {
+  skia::SkColor colour = 0;
+  float width = 1.0f;
+  friend bool operator==(const Border &, const Border &) = default;
+};
+
 struct Spec {
   std::optional<Anchor> place{};
   std::optional<Anchor> anchor{};
@@ -423,6 +430,13 @@ struct Spec {
   Margin padding{};
 
   std::optional<float> cornerRadius{};
+  // What is painted under the node's own drawing and its children, in its
+  // box and its corner radius: a fill -- another while hovered, another
+  // while selected -- and a border. Declared, not drawn by hand.
+  std::optional<skia::SkColor> fill{};
+  std::optional<skia::SkColor> hoverFill{};
+  std::optional<skia::SkColor> selectedFill{};
+  std::optional<Border> border{};
   std::optional<bool> masking{};
   std::optional<float> scale{};
   std::optional<float> alpha{};
@@ -1272,6 +1286,9 @@ public:
   bool fMasking = false; // clip children to these bounds
   Cursor fCursor = cursor::arrow{};
   float fCornerRadius = 0.0f;
+  // Painted in the box, under the rest: see Spec.
+  std::optional<skia::SkColor> fFill, fHoverFill, fSelectedFill;
+  std::optional<Border> fBorder;
   bool fVisible = true;
 
   // -- the result of layout
@@ -1519,6 +1536,18 @@ public:
     }
     if (spec.cornerRadius) {
       fCornerRadius = *spec.cornerRadius;
+    }
+    if (spec.fill) {
+      fFill = spec.fill;
+    }
+    if (spec.hoverFill) {
+      fHoverFill = spec.hoverFill;
+    }
+    if (spec.selectedFill) {
+      fSelectedFill = spec.selectedFill;
+    }
+    if (spec.border) {
+      fBorder = spec.border;
     }
     if (spec.masking) {
       fMasking = *spec.masking;
@@ -2466,6 +2495,37 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   state.fSubtreeDirty = false;
 }
 
+// A node's declared box: its fill -- the selected one where it is
+// selected, the hovered one where it is hovered -- and its border, in its
+// corner radius.
+inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
+  const std::optional<skia::SkColor> fill = state.fSelected && state.fSelectedFill ? state.fSelectedFill
+                                            : state.fHovered && state.fHoverFill   ? state.fHoverFill
+                                                                                   : state.fFill;
+  if (!fill && !state.fBorder)
+    return;
+  const float radius = state.fCornerRadius;
+  if (fill) {
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor(*fill);
+    paint.setAlphaf(paint.getAlphaf() * alpha);
+    canvas->drawRRect(skia::SkRRect::MakeRectXY(state.fBounds, radius, radius), paint);
+  }
+  if (state.fBorder && state.fBorder->width > 0.0f) {
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setStyle(skia::kStrokeStyle);
+    paint.setStrokeWidth(state.fBorder->width);
+    paint.setColor(state.fBorder->colour);
+    paint.setAlphaf(paint.getAlphaf() * alpha);
+    const float inset = state.fBorder->width * 0.5f;
+    canvas->drawRRect(skia::SkRRect::MakeRectXY(state.fBounds.makeInset(inset, inset), std::max(0.0f, radius - inset),
+                                                std::max(0.0f, radius - inset)),
+                      paint);
+  }
+}
+
 template <class T>
 void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
   State &state = node.fState;
@@ -2490,6 +2550,7 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
       canvas->clipRect(state.fBounds, true);
     }
   }
+  paintBox(state, canvas, alpha);
   node.drawSelf(canvas, alpha);
   eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) {
     draw(child, canvas, alpha);
@@ -2689,7 +2750,7 @@ void hover(N &child, float x, float y, bool visibleAbove,
                               states::kHover)) {
       state.restyle(true);
     }
-    if (child.hoverChangesAppearance()) {
+    if (child.hoverChangesAppearance() || state.fHoverFill) {
       state.markDamaged();
     }
   }
