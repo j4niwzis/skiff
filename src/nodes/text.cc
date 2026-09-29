@@ -80,6 +80,36 @@ public:
     // as skiff::scene::inlinePicture says.
     bool picture = false;
   };
+  // Stretches of the text drawn otherwise: strong, emphasised (slanted),
+  // struck through, as code (on a tinted plate), as a quote (in the quote's
+  // colour, a bar at its line's start) -- what a message's HTML says of it.
+  struct Styled {
+    std::size_t first = 0;
+    std::size_t last = 0;
+    bool strong = false;
+    bool emphasis = false;
+    bool struck = false;
+    bool code = false;
+    bool quote = false;
+  };
+  void setStyles(std::vector<Styled> styles, skia::SkColor quote_colour) {
+    fStyles = std::move(styles);
+    fQuoteColour = quote_colour;
+    this->markDamaged();
+  }
+  [[nodiscard]] Styled styleAt(std::size_t offset) const {
+    Styled out;
+    for (const Styled &one : fStyles) {
+      if (offset >= one.first && offset < one.last) {
+        out.strong = out.strong || one.strong;
+        out.emphasis = out.emphasis || one.emphasis;
+        out.struck = out.struck || one.struck;
+        out.code = out.code || one.code;
+        out.quote = out.quote || one.quote;
+      }
+    }
+    return out;
+  }
   void setLinks(std::vector<Link> links, skia::SkColor colour) {
     fLinks = std::move(links);
     fLinkColour = colour;
@@ -345,7 +375,7 @@ public:
     this->drawSelection(canvas, p, alpha);
     if (fWrapped) {
       float y = bounds.fTop + fSize;
-      if (fLinks.empty()) {
+      if (fLinks.empty() && fStyles.empty()) {
         for (const std::string &line : fLines) {
           p.text(line, bounds.fLeft, y, fSize, fColour, alpha, fBold);
           y += fSize * 1.25f;
@@ -489,6 +519,20 @@ private:
         cuts.push_back(std::min(one.last, end));
       }
     }
+    for (const Styled &one : fStyles) {
+      if (one.last > start && one.first < end) {
+        cuts.push_back(std::max(one.first, start));
+        cuts.push_back(std::min(one.last, end));
+      }
+    }
+    // A quoted line: a bar in the quote's colour at its start.
+    if (this->styleAt(start).quote) {
+      skia::SkPaint bar;
+      bar.setAntiAlias(true);
+      bar.setColor(fQuoteColour);
+      bar.setAlphaf(bar.getAlphaf() * alpha);
+      canvas->drawRoundRect(skia::SkRect::MakeXYWH(x, y - fSize, 2.5f, fSize * 1.25f), 1.25f, 1.25f, bar);
+    }
     std::ranges::sort(cuts);
     cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
     float at = x;
@@ -496,8 +540,26 @@ private:
       const std::string piece(line.substr(cuts[i] - start, cuts[i + 1] - cuts[i]));
       const Link *link = this->linkAt(cuts[i]);
       const bool linked = link != nullptr;
-      const skia::SkColor colour = linked ? fLinkColour : fColour;
-      const float width = p.measure(piece, fSize, fBold);
+      const Styled style = this->styleAt(cuts[i]);
+      const bool bold = fBold || style.strong;
+      const skia::SkColor colour = linked ? fLinkColour : style.quote ? fQuoteColour : fColour;
+      const float width = p.measure(piece, fSize, bold);
+      // Code: on a plate of the text's colour, faint.
+      if (style.code) {
+        skia::SkPaint plate;
+        plate.setAntiAlias(true);
+        plate.setColor(fColour);
+        plate.setAlphaf(0.10f * alpha);
+        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, fSize * 1.25f), 3.0f, 3.0f,
+                              plate);
+      }
+      // Struck: a line through its middle.
+      if (style.struck) {
+        skia::SkPaint line;
+        line.setColor(colour);
+        line.setAlphaf(line.getAlphaf() * alpha);
+        canvas->drawRect(skia::SkRect::MakeXYWH(at, y - fSize * 0.32f, width, 1.0f), line);
+      }
       if (link && link->picture) {
         // The picture, square, a little over the text's size, standing on
         // its baseline; nothing where the program has none (yet).
@@ -533,7 +595,11 @@ private:
         at += width;
         continue;
       }
-      p.text(piece, at, y, fSize, colour, alpha, fBold);
+      if (style.emphasis && skiff::paint::defaultFont())
+        skiff::paint::defaultFont()->setSkewX(-0.2f);
+      p.text(piece, at, y, fSize, colour, alpha, bold);
+      if (style.emphasis && skiff::paint::defaultFont())
+        skiff::paint::defaultFont()->setSkewX(0.0f);
       if (linked) {
         skia::SkPaint under;
         under.setColor(colour);
@@ -568,6 +634,8 @@ private:
   // that is at the time.
   bool fWrapsToParent = false;
   bool fElided = false;
+  std::vector<Styled> fStyles;
+  skia::SkColor fQuoteColour = 0;
   std::vector<std::string> fLines;
   float fMeasuredSize = -1.0f;
   float fBaseSize = 0.0f;
