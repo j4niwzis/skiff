@@ -930,6 +930,11 @@ inline constexpr Key kHome{9};
 inline constexpr Key kEnd{10};
 inline constexpr Key kBackspace{11};
 inline constexpr Key kDelete{12};
+// Letters, for the shortcuts made with them: select all, copy, cut, paste.
+inline constexpr Key kA{101};
+inline constexpr Key kC{103};
+inline constexpr Key kV{122};
+inline constexpr Key kX{124};
 } // namespace keys
 
 namespace modifier {
@@ -1105,6 +1110,25 @@ void setTextFocusHook(Target &target) {
                      &target};
 }
 inline void clearTextFocusHook() { textFocusHook() = {}; }
+
+// The system's clipboard, as the host reaches it: text read from it and
+// written to it. Nothing there until the host says how.
+struct Clipboard {
+  std::string (*fGet)() = nullptr;
+  void (*fSet)(const std::string &) = nullptr;
+};
+inline Clipboard &clipboard() {
+  static Clipboard kept;
+  return kept;
+}
+[[nodiscard]] inline std::string clipboardText() {
+  return clipboard().fGet ? clipboard().fGet() : std::string();
+}
+inline void setClipboardText(const std::string &text) {
+  if (clipboard().fSet) {
+    clipboard().fSet(text);
+  }
+}
 
 // ---- the state every node has --------------------------------------------
 

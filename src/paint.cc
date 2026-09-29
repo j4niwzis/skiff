@@ -769,6 +769,8 @@ public:
   // The text broken into lines that each fit in `width`, split at spaces. A
   // word longer than the width gets a line of its own and overhangs, which is
   // what a browser does with an unbreakable string.
+  // Lines of at most `width`: a newline starts one, words go on while they
+  // fit, and a word wider than a line is broken where it has to be.
   [[nodiscard]] std::vector<std::string> wrap(const std::string &str,
                                               float width, float size,
                                               bool bold = false) const {
@@ -776,30 +778,68 @@ public:
     if (str.empty()) {
       return lines;
     }
-    if (width <= 0.0f) {
-      lines.push_back(str);
-      return lines;
-    }
-    std::string line;
-    std::size_t at = 0;
-    while (at < str.size()) {
-      const std::size_t space = str.find(' ', at);
-      const std::string word =
-          str.substr(at, space == std::string::npos ? space : space - at);
-      const std::string candidate = line.empty() ? word : line + " " + word;
-      if (!line.empty() && this->measure(candidate, size, bold) > width) {
-        lines.push_back(line);
-        line = word;
-      } else {
-        line = candidate;
+    const auto next = [&](std::size_t at) {
+      ++at;
+      while (at < str.size() &&
+             (static_cast<unsigned char>(str[at]) & 0xC0u) == 0x80u) {
+        ++at;
       }
-      if (space == std::string::npos) {
+      return at;
+    };
+    std::size_t start = 0;
+    while (true) {
+      const std::size_t newline = str.find('\n', start);
+      const std::string paragraph =
+          str.substr(start, newline == std::string::npos ? std::string::npos
+                                                         : newline - start);
+      if (width <= 0.0f) {
+        lines.push_back(paragraph);
+      } else {
+        std::string line;
+        std::size_t at = 0;
+        while (at <= paragraph.size()) {
+          const std::size_t space = paragraph.find(' ', at);
+          std::string word = paragraph.substr(
+              at, space == std::string::npos ? std::string::npos : space - at);
+          const std::string candidate = line.empty() ? word : line + " " + word;
+          if (this->measure(candidate, size, bold) <= width) {
+            line = candidate;
+          } else {
+            if (!line.empty()) {
+              lines.push_back(line);
+              line.clear();
+            }
+            // Too wide alone: as much of it to a line as fits.
+            while (this->measure(word, size, bold) > width) {
+              std::size_t cut = next(0);
+              for (std::size_t end = next(cut);
+                   cut < word.size() &&
+                   this->measure(word.substr(0, end), size, bold) <= width;
+                   end = next(end)) {
+                cut = end;
+                if (end >= word.size()) {
+                  break;
+                }
+              }
+              if (cut >= word.size()) {
+                break;
+              }
+              lines.push_back(word.substr(0, cut));
+              word = word.substr(cut);
+            }
+            line = word;
+          }
+          if (space == std::string::npos) {
+            break;
+          }
+          at = space + 1;
+        }
+        lines.push_back(line);
+      }
+      if (newline == std::string::npos) {
         break;
       }
-      at = space + 1;
-    }
-    if (!line.empty()) {
-      lines.push_back(line);
+      start = newline + 1;
     }
     return lines;
   }
