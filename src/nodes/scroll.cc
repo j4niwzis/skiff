@@ -65,6 +65,32 @@ public:
   }
   [[nodiscard]] bool settling() const { return fScroll.moving(); }
 
+  // The contents, and over them a thin bar on the right saying how much
+  // there is and where the view is in it: only where there is more than
+  // shows, and only while the pointer is over it or it moves.
+  void draw(skia::SkCanvas *canvas, float alpha) {
+    skiff::scene::drawDefault(*this, canvas, alpha);
+    if (fExtent <= 0.0f || !(fState.fHovered || fScroll.moving() || fScroll.dragging())) {
+      return;
+    }
+    const skia::SkRect &box = fState.fBounds;
+    const float view = box.height();
+    const float thumb = std::max(24.0f, view * view / (view + fExtent));
+    const float at = box.fTop + (view - thumb) * std::clamp(fScroll.offset() / fExtent, 0.0f, 1.0f);
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor(skia::colorSetARGB(255, 255, 255, 255));
+    paint.setAlphaf(alpha * 0.28f);
+    canvas->drawRRect(skia::SkRRect::MakeRectXY(
+                          skia::SkRect::MakeXYWH(box.fRight - 7.0f, at + 2.0f, 4.0f, thumb - 4.0f), 2.0f, 2.0f),
+                      paint);
+  }
+  [[nodiscard]] bool hoverChangesAppearance() const { return true; }
+  // Whether the view is at the end of the contents, as a chat's newest.
+  [[nodiscard]] bool atEnd(float slack = 4.0f) const noexcept {
+    return fScroll.offset() >= fExtent - slack;
+  }
+
   [[nodiscard]] bool onScroll(float ticks) {
     fScroll.wheel(ticks, 60.0f);
     this->invalidateLayout();
