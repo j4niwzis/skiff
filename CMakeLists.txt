@@ -86,12 +86,23 @@ set(SKIFF_SKIA_COMPONENTS "" CACHE STRING
 # says the same by hand. A build that asks for nothing decodes PNG and JPEG.
 set(skiff_components png jpeg gif webp gl fontmgr-directory text-shaping)
 if(COMMAND cme_port_feature)
-  cme_port_feature(skiff png SUMMARY "PNG, decoded and encoded through Skia")
-  cme_port_feature(skiff jpeg SUMMARY "JPEG, decoded and encoded through Skia")
-  cme_port_feature(skiff gif SUMMARY "GIF, animated too, decoded through Skia's Wuffs")
-  cme_port_feature(skiff webp SUMMARY "WebP, animated too, decoded through Skia's libwebp")
-  cme_port_feature(skiff gl SUMMARY "Drawing on the GPU, through Skia's Ganesh on GL")
-  cme_port_feature(skiff fontmgr-directory SUMMARY "The fonts read from a directory of them")
+  # Each says which of Skia's features it needs, where a description of
+  # skiff is read before skiff is: a build resolves what a port depends on
+  # before it reads the port's tree, and a Skia taken for less than was asked
+  # of skiff is taken for good -- skiff's own ask for gif, a moment later, is
+  # answered by the copy already in the build.
+  cme_port_feature(skiff png SUMMARY "PNG, decoded and encoded through Skia"
+    DEPENDS "skia[png]")
+  cme_port_feature(skiff jpeg SUMMARY "JPEG, decoded and encoded through Skia"
+    DEPENDS "skia[jpeg]")
+  cme_port_feature(skiff gif SUMMARY "GIF, animated too, decoded through Skia's Wuffs"
+    DEPENDS "skia[gif]")
+  cme_port_feature(skiff webp SUMMARY "WebP, animated too, decoded through Skia's libwebp"
+    DEPENDS "skia[webp]")
+  cme_port_feature(skiff gl SUMMARY "Drawing on the GPU, through Skia's Ganesh on GL"
+    DEPENDS "skia[gl]")
+  cme_port_feature(skiff fontmgr-directory SUMMARY "The fonts read from a directory of them"
+    DEPENDS "skia[fontmgr-directory]")
   cme_port_feature(skiff text-shaping
     SUMMARY "Text shaped with HarfBuzz and laid out by Unicode's rules with alef (C++26)")
 endif()
@@ -253,14 +264,15 @@ if(COMMAND cme_declare_port)
     GITHUB_REPOSITORY j4niwzis/skiff
     GIT_TAG main
     LICENSE AGPL-3.0-only
-    # The same Skia this asked for above, said again where a consumer of
-    # skiff will read it: whoever answers for skiff answers for Skia the same
-    # way, with the codecs and the font stack this compiles against.
+    # Skia with its font stack, said again where a consumer of skiff will
+    # read it. The codecs and the backend are the features' own, above: a
+    # description saying png and jpeg here had Skia taken for those alone,
+    # before skiff was asked for gif.
     #
     # No backend named: this library draws through the canvas and makes no
     # context of its own, so which backend there is -- Ganesh on GL, Graphite
     # on Vulkan, or none at all -- is decided by the program that draws.
-    DEPENDS "skia[png,jpeg,freetype]"
+    DEPENDS "skia[freetype]"
     TARGETS skiff::skiff
     CHECK_HEADER skiff/skiff.modules
   )
