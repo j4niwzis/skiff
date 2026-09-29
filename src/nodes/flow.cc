@@ -325,7 +325,7 @@ template <class N> struct Flowing {
 
   // Whether a node gives way along an axis: it says it does, or it takes
   // its size from what it holds and something it holds gives way.
-  template <class Axis, class N> static bool gives_way(N &node) {
+  template <class Axis, class Tree> static bool gives_way(Tree &node) {
     const skiff::scene::State &state = skiff::scene::stateOf(node);
     if (state.fShrinkAxes.template has<Axis>()) {
       return true;
