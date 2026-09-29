@@ -81,7 +81,18 @@ option(SKIFF_PNG "Decode and encode PNG, through Skia" ON)
 option(SKIFF_JPEG "Decode and encode JPEG, through Skia" ON)
 option(SKIFF_GIF "Decode GIF, animated too, through Skia (Wuffs)" OFF)
 option(SKIFF_WEBP "Decode WebP, animated too, through Skia (libwebp)" OFF)
+# What it draws with, likewise: Ganesh on GL, and the fonts read from a
+# directory of them. A consumer asks for these through its port's options
+# (cme_options), each a plain switch -- a list does not pass that way.
+option(SKIFF_GL "Draw on the GPU, through Skia's Ganesh on GL" OFF)
+option(SKIFF_FONTMGR_DIRECTORY "The fonts read from a directory of them" OFF)
 set(skiff_skia_components freetype)
+if(SKIFF_GL)
+  list(APPEND skiff_skia_components gl)
+endif()
+if(SKIFF_FONTMGR_DIRECTORY)
+  list(APPEND skiff_skia_components fontmgr-directory)
+endif()
 foreach(codec IN ITEMS png jpeg gif webp)
   string(TOUPPER ${codec} option_name)
   if(SKIFF_${option_name})
