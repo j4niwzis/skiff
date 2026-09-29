@@ -227,8 +227,14 @@ template <class N> struct Flowing {
     if (!fOptions.wrap) {
       this->workOutAutoRoom(box);
       grow<skiff::scene::axis::x>(box, fOptions.spacingX);
+      // Measured as they would be with room, then given way where there is
+      // not: what a row of the last layout asked of them asks nothing now.
+      skiff::scene::eachChild(fNode, [](auto &child) { skiff::scene::stateOf(child).fShrunkTo = 0.0f; });
     }
     const auto shown = measured(box);
+    if (!fOptions.wrap && !fNode.fState.fAutoSizeAxes.template has<skiff::scene::axis::x>()) {
+      this->shrink_to_fit(box);
+    }
     std::vector<std::pair<float, float>> places(shown.size());
     // Rows broken at the edge, then placed.
     std::size_t rowStart = 0;
@@ -315,6 +321,68 @@ template <class N> struct Flowing {
       state.fOverflowTold = true;
       report(skiff::scene::Overflow{typeid(child).name(), typeid(fNode).name(), x, y});
     });
+  }
+
+  // Whether a node gives way along an axis: it says it does, or it takes
+  // its size from what it holds and something it holds gives way.
+  template <class Axis, class N> static bool gives_way(N &node) {
+    const skiff::scene::State &state = skiff::scene::stateOf(node);
+    if (state.fShrinkAxes.template has<Axis>()) {
+      return true;
+    }
+    if (!state.fAutoSizeAxes.template has<Axis>()) {
+      return false;
+    }
+    bool any = false;
+    skiff::scene::eachChild(node, [&](auto &child) {
+      if (!any && inFlow(skiff::scene::stateOf(child)) && gives_way<Axis>(child)) {
+        any = true;
+      }
+    });
+    return any;
+  }
+
+  // CSS's flex-shrink, along a row: where what it holds is wider than it,
+  // those that give way do, each by its share of the excess in proportion
+  // to its width, down to what they can -- a few passes, as one that stops
+  // at its least leaves the rest to the others.
+  void shrink_to_fit(const skia::SkRect &box) {
+    for (int pass = 0; pass < 3; ++pass) {
+      float used = 0.0f;
+      int count = 0;
+      float giving = 0.0f;
+      skiff::scene::eachChild(fNode, [&](auto &child) {
+        const skiff::scene::State &state = skiff::scene::stateOf(child);
+        if (!inFlow(state)) {
+          return;
+        }
+        ++count;
+        used += state.fBounds.width() + state.fMargin.totalX();
+        if (gives_way<skiff::scene::axis::x>(child)) {
+          giving += state.fBounds.width();
+        }
+      });
+      used += fOptions.spacingX * static_cast<float>(std::max(0, count - 1));
+      const float excess = used - box.width();
+      if (excess <= 0.5f || giving <= 0.0f) {
+        return;
+      }
+      bool gave = false;
+      skiff::scene::eachChild(fNode, [&](auto &child) {
+        skiff::scene::State &state = skiff::scene::stateOf(child);
+        if (!inFlow(state) || !gives_way<skiff::scene::axis::x>(child)) {
+          return;
+        }
+        const float width = state.fBounds.width();
+        const float to = std::max(0.0f, width - excess * width / giving);
+        state.fShrunkTo = std::max(to, 0.01f);
+        skiff::scene::layout(child, boxFor(state, box));
+        gave = gave || state.fBounds.width() < width - 0.25f;
+      });
+      if (!gave) {
+        return;
+      }
+    }
   }
 
   // Children that grow take an equal share of what the rest leave along the

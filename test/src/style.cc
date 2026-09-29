@@ -1097,6 +1097,36 @@ TEST(Layout, WhatSticksOutOfAFlowIsTold) {
   EXPECT_FLOAT_EQ(told.front().y, 0.0f);
 }
 
+// A row with too little room: the child that gives way does -- to what the
+// row leaves it -- and the one that does not keeps its width; nothing sticks
+// out, and nothing is told.
+struct GivesWay : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> soft = make<Box>({.width = 80.0f, .height = 10.0f, .shrink = axes::kX}, kCard);
+    Box<> rigid = make<Box>({.width = 40.0f, .height = 10.0f}, kCard);
+  } parts;
+  GivesWay() { this->setHorizontal(); }
+};
+struct HoldsGivesWay : Node {
+  struct parts_t {
+    GivesWay row = make<GivesWay>({.width = 100.0f, .height = 10.0f});
+  } parts;
+};
+
+TEST(Layout, ARowTooNarrowShrinksWhatGivesWay) {
+  int told = 0;
+  skiff::scene::overflowReport() = [&](const skiff::scene::Overflow &) { ++told; };
+  Scene<HoldsGivesWay> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  skiff::scene::overflowReport() = nullptr;
+  const auto &row = scene.root().parts.row;
+  EXPECT_NEAR(row.parts.soft.bounds().width(), 60.0f, 0.6f);
+  EXPECT_FLOAT_EQ(row.parts.rigid.bounds().width(), 40.0f);
+  EXPECT_LE(row.parts.rigid.bounds().fRight, row.bounds().fRight + 0.5f);
+  EXPECT_EQ(told, 0);
+}
+
 // A menu: the arrows move the focus through its items, round from the last
 // to the first, and never out of it.
 struct ArrowMenu : skiff::nodes::Stack {

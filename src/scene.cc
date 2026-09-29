@@ -452,6 +452,10 @@ struct Spec {
   std::optional<Axes> relativeSize{};
   std::optional<Axes> autoSize{};
   std::optional<Axes> grow{};
+  // CSS's flex-shrink: along these axes, where the flow it is in has not the
+  // room for all it holds, it gives way -- down to its minWidth, as CSS's to
+  // its min-content. A text that elides gives way on its own.
+  std::optional<Axes> shrink{};
   std::optional<float> minWidth{}, maxWidth{};
   std::optional<float> minHeight{}, maxHeight{};
   std::optional<Align> alignSelf{};
@@ -1326,6 +1330,11 @@ public:
   // Inside a flow, takes an equal share of what the other children leave
   // along the flow's axis.
   Axes fGrowAxes;
+  // The axes it gives way along, and how narrow its flow asked it to be,
+  // where it asked (0: not asked): laid out no wider, and no narrower than
+  // its minWidth.
+  Axes fShrinkAxes;
+  float fShrunkTo = 0.0f;
   // Bounds on the computed size. Zero means no limit, on the maximums.
   float fMinWidth = 0.0f, fMaxWidth = 0.0f;
   float fMinHeight = 0.0f, fMaxHeight = 0.0f;
@@ -1585,6 +1594,9 @@ public:
     }
     if (spec.autoSize) {
       fAutoSizeAxes = *spec.autoSize;
+    }
+    if (spec.shrink) {
+      fShrinkAxes = *spec.shrink;
     }
     if (spec.grow) {
       fGrowAxes = *spec.grow;
@@ -2539,7 +2551,10 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   if (autoX || autoY) {
     // Within its largest size, where it has one: what wraps in it wraps
     // there, rather than at the parent's width it is then cut back from.
-    const float provisionalW = state.fMaxWidth > 0.0f ? std::min(parentW, state.fMaxWidth) : parentW;
+    float provisionalW = state.fMaxWidth > 0.0f ? std::min(parentW, state.fMaxWidth) : parentW;
+    if (state.fShrunkTo > 0.0f) {
+      provisionalW = std::min(provisionalW, state.fShrunkTo);
+    }
     const float provisionalH = state.fMaxHeight > 0.0f ? std::min(parentH, state.fMaxHeight) : parentH;
     state.fBounds = skia::SkRect::MakeXYWH(room.fLeft, room.fTop,
                                            autoX ? provisionalW : width,
@@ -2553,6 +2568,9 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
     }
   }
 
+  if (state.fShrunkTo > 0.0f) {
+    width = std::min(width, state.fShrunkTo);
+  }
   width = std::max(width, state.fMinWidth);
   height = std::max(height, state.fMinHeight);
   if (state.fMaxWidth > 0.0f) {

@@ -238,6 +238,13 @@ public:
       return;
     }
     fElided = elided;
+    // Cut where it runs out of room, it gives way in a row that has too
+    // little: it is shown with its ellipsis rather than past the row's end.
+    if (elided) {
+      fState.fShrinkAxes = skiff::scene::axes::kX;
+    } else {
+      fState.fShrinkAxes = skiff::scene::axes::kNone;
+    }
     this->markDamaged();
   }
 
