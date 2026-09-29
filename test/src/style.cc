@@ -1043,6 +1043,29 @@ TEST(Layout, AnAnchoredChildDoesNotWidenAContentSizedBox) {
   EXPECT_LE(badged.parts.badge.bounds().fRight, badged.bounds().fRight + 0.5f);
 }
 
+// Nor does a child that fills it: its width is the box's to give. The box
+// is as wide as its other children, and the one that fills it fills that.
+struct Filled : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> sized = make<Box>({.width = 40.0f, .height = 10.0f}, kCard);
+    Box<> filling = make<Box>({.fillX = true, .height = 6.0f}, kCard);
+  } parts;
+};
+struct HoldsFilled : Node {
+  struct parts_t {
+    Filled filled = make<Filled>({.autoSize = axes::kBoth, .maxWidth = 200.0f});
+  } parts;
+};
+
+TEST(Layout, AFillingChildDoesNotWidenAContentSizedBox) {
+  Scene<HoldsFilled> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  const auto &filled = scene.root().parts.filled;
+  EXPECT_FLOAT_EQ(filled.bounds().width(), 40.0f);
+  EXPECT_FLOAT_EQ(filled.parts.filling.bounds().width(), 40.0f);
+}
+
 // A menu: the arrows move the focus through its items, round from the last
 // to the first, and never out of it.
 struct ArrowMenu : skiff::nodes::Stack {

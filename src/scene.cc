@@ -2439,15 +2439,19 @@ template <class T> [[nodiscard]] skia::SkRect childBounds(T &node) {
   });
   return content;
 }
-// What a node sized by its content is sized by: its children in its flow.
-// One placed by its anchor instead -- a badge at a corner, a time at the
-// end of a line -- is placed in the box, not what makes it: counted, it was
-// placed in the widest box first and made the node as wide.
-template <class T> [[nodiscard]] skia::SkRect flowBounds(T &node) {
+// What a node sized by its content is sized by, along an axis: its children
+// in its flow that have a size of their own along it. One placed by its
+// anchor instead -- a badge at a corner, a time at the end of a line -- is
+// placed in the box, not what makes it; one sized as a share of the node
+// along the axis (fillX, say) takes its size from the node, and cannot give
+// it one. Counted, either was laid out in the widest box first and made the
+// node as wide: a quote filling its bubble made every bubble with one the
+// widest there is.
+template <class Axis, class T> [[nodiscard]] skia::SkRect flowBounds(T &node) {
   skia::SkRect content = skia::SkRect::MakeEmpty();
   eachChild(node, [&](auto &child) {
     const State &state = stateOf(child);
-    if (state.fVisible && !state.fOutOfFlow) {
+    if (state.fVisible && !state.fOutOfFlow && !state.fRelativeSizeAxes.template has<Axis>()) {
       content = joined(content, state.fBounds);
     }
   });
@@ -2519,12 +2523,11 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
                                            autoX ? provisionalW : width,
                                            autoY ? provisionalH : height);
     node.layoutChildren();
-    const skia::SkRect content = flowBounds(node);
     if (autoX) {
-      width = content.width() + state.fPadding.totalX();
+      width = flowBounds<axis::x>(node).width() + state.fPadding.totalX();
     }
     if (autoY) {
-      height = content.height() + state.fPadding.totalY();
+      height = flowBounds<axis::y>(node).height() + state.fPadding.totalY();
     }
   }
 
