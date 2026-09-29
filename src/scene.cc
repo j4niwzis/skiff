@@ -709,6 +709,7 @@ public:
     fPressOffset += delta;
   }
   void glideTo(float value) {
+    fFromRest = !this->moving();
     fTarget = std::clamp(value, fLo, fHi);
     fFlinging = false;
     fWheeling = false;
@@ -719,6 +720,7 @@ public:
   // apart -- make one motion, easing out after the last, rather than a jump
   // and a stop each.
   void wheel(float ticks, float step) {
+    fFromRest = !this->moving();
     fFlinging = false;
     fWheeling = true;
     fVelocity = 0.0f;
@@ -801,7 +803,11 @@ public:
   // laid out again.
   bool advance(double dtMs, float tauMs = 30.0f) {
     const float previous = fOffset;
-    const double dt = std::min(dtMs, 64.0);
+    // A glide begun from rest: its first step one frame's, not the time
+    // since the last frame drawn -- which, at rest, was long ago, and made
+    // the first step most of the way at once.
+    const double dt = std::min(dtMs, fFromRest ? 1000.0 / 60.0 : 64.0);
+    fFromRest = false;
     if (fDragging) {
       return false; // the finger owns it
     }
@@ -851,6 +857,7 @@ private:
   bool fDragging = false;
   bool fFlinging = false;
   bool fWheeling = false;
+  bool fFromRest = false;
 };
 
 // A node's id, which is what a scene keeps where it would have kept a
