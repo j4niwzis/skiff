@@ -2439,6 +2439,20 @@ template <class T> [[nodiscard]] skia::SkRect childBounds(T &node) {
   });
   return content;
 }
+// What a node sized by its content is sized by: its children in its flow.
+// One placed by its anchor instead -- a badge at a corner, a time at the
+// end of a line -- is placed in the box, not what makes it: counted, it was
+// placed in the widest box first and made the node as wide.
+template <class T> [[nodiscard]] skia::SkRect flowBounds(T &node) {
+  skia::SkRect content = skia::SkRect::MakeEmpty();
+  eachChild(node, [&](auto &child) {
+    const State &state = stateOf(child);
+    if (state.fVisible && !state.fOutOfFlow) {
+      content = joined(content, state.fBounds);
+    }
+  });
+  return content;
+}
 
 template <class N> void layout(N &child, const skia::SkRect &parentBox);
 void layout(AnyNode &child, const skia::SkRect &parentBox);
@@ -2505,7 +2519,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
                                            autoX ? provisionalW : width,
                                            autoY ? provisionalH : height);
     node.layoutChildren();
-    const skia::SkRect content = childBounds(node);
+    const skia::SkRect content = flowBounds(node);
     if (autoX) {
       width = content.width() + state.fPadding.totalX();
     }

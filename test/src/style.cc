@@ -1019,6 +1019,30 @@ TEST(Focus, APressFocusesWithoutShowingIt) {
   EXPECT_TRUE(focusVisible());
 }
 
+// A box sized by what it holds is as wide as that, whatever is anchored in
+// it: a badge at its corner is placed in the box, and does not widen it.
+struct Badged : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> content = make<Box>({.width = 30.0f, .height = 10.0f}, kCard);
+    Box<> badge = make<Box>({.place = anchor::kBottomRight, .width = 8.0f, .height = 8.0f}, kCard);
+  } parts;
+};
+struct HoldsBadged : Node {
+  struct parts_t {
+    Badged badged = make<Badged>({.autoSize = axes::kBoth, .maxWidth = 200.0f});
+  } parts;
+};
+
+TEST(Layout, AnAnchoredChildDoesNotWidenAContentSizedBox) {
+  Scene<HoldsBadged> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  const auto &badged = scene.root().parts.badged;
+  EXPECT_FLOAT_EQ(badged.bounds().width(), 30.0f);
+  EXPECT_FLOAT_EQ(badged.bounds().height(), 10.0f);
+  EXPECT_LE(badged.parts.badge.bounds().fRight, badged.bounds().fRight + 0.5f);
+}
+
 // A menu: the arrows move the focus through its items, round from the last
 // to the first, and never out of it.
 struct ArrowMenu : skiff::nodes::Stack {
