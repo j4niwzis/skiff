@@ -63,6 +63,19 @@ public:
     this->markDamaged();
   }
   [[nodiscard]] bool selectable() const noexcept { return fSelectable; }
+  // How wide its last line is, as drawn: what room it leaves at its end --
+  // a message's time sits there when it fits.
+  [[nodiscard]] float lastLineWidth() const {
+    skia::SkFont *font = skiff::paint::defaultFont();
+    if (font == nullptr) {
+      return 0.0f;
+    }
+    const skiff::paint::Painter p(nullptr, *font);
+    if (!fWrapped || fLines.empty()) {
+      return p.measure(fText, fSize, fBold);
+    }
+    return p.measure(fLines.back(), fSize, fBold);
+  }
   [[nodiscard]] bool hasSelection() const noexcept { return fAnchor != fCaret; }
   [[nodiscard]] std::string selected() const {
     return fText.substr(std::min(fAnchor, fCaret), std::max(fAnchor, fCaret) - std::min(fAnchor, fCaret));
