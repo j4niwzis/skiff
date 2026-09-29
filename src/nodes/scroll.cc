@@ -95,7 +95,10 @@ public:
     // left where it was to be glided down again. Not while it is moving: a
     // wheel moving it off the end is not pulled back.
     const bool following = fLaidOut && this->atEnd() && !fScroll.dragging() && !fScroll.moving();
-    if (fLaidOut && box == fLastBox && !this->atEnd()) {
+    // Not where the view is put somewhere on purpose -- an offset set, the
+    // end asked for: held to what was in view, a jump landed back near where
+    // it left, beside the message it went to.
+    if (fLaidOut && box == fLastBox && !this->atEnd() && !fJumpTo && !fToEnd) {
       this->eachItem([&](const scene::State &item) {
         if (anchors.size() < 4 && item.fVisible && item.fBounds.fBottom > box.fTop) {
           anchors.push_back(Anchor{item.fId, item.fBounds.fTop});
