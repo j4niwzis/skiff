@@ -2702,7 +2702,6 @@ template <class N> void shiftSubtree(N &node, float dx, float dy) {
   state.fLastConstraint.offset(dx, dy);
   eachChild(node, [&](auto &child) { shiftSubtree(child, dx, dy); });
 }
-inline void shiftSubtree(AnyNodeRef &node, float, float) { stateOf(node).fLayoutValid = false; }
 template <class N> void shiftSubtree(N &node, float dy) { shiftSubtree(node, 0.0f, dy); }
 
 // Lays a child out in a box: what a container's layoutChildren calls for each
@@ -3407,6 +3406,17 @@ inline void visitAsAny(AnyNodeRef &child, void *context, AnyChildVisit visit) { 
 template <class N> void visitAsAny(N &child, void *context, AnyChildVisit visit) {
   AnyNodeRef seen = AnyNodeRef::of(child);
   visit(context, seen);
+}
+// A child seen through its table, moved as it is -- its bounds, the box it
+// was laid out in, and all under it -- as a typed one is. A scrolled list
+// moves its rows this way without laying them out; a row only marked for a
+// new layout instead stayed where it was for a frame while the list went on
+// as if it had moved, and every list outside a release build jumped.
+inline void shiftSubtree(AnyNodeRef &node, float dx, float dy) {
+  State &state = node.state();
+  state.fBounds.offset(dx, dy);
+  state.fLastConstraint.offset(dx, dy);
+  node.forEachChild([&](AnyNodeRef &child) { shiftSubtree(child, dx, dy); });
 }
 // A child's own type, whether seen as itself or through an AnyNode.
 template <class N> [[nodiscard]] const std::type_info &typeOf(N &) { return typeid(N); }
