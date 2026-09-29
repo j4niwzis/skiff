@@ -1269,6 +1269,22 @@ inline std::vector<Overflow> &overflows() {
   static std::vector<Overflow> kept;
   return kept;
 }
+// Which nodes asked for another frame, by type, and whether for a transform
+// still running or for settling() -- where a program's frames never stop,
+// what keeps them going. Kept only while a program asks (traceSettling);
+// it drains them, and they are held to a number.
+struct Settling {
+  const std::type_info *type = nullptr;
+  bool transform = false;
+};
+inline bool &traceSettling() {
+  static bool on = false;
+  return on;
+}
+inline std::vector<Settling> &settlers() {
+  static std::vector<Settling> kept;
+  return kept;
+}
 inline void tellOverflow(Overflow one) {
   if (overflows().size() < 256) {
     overflows().push_back(std::move(one));
@@ -3190,7 +3206,11 @@ template <class N> void collectFocusable(N &child, std::vector<NodeId> &out) {
 }
 
 template <class N> bool animating(N &child) {
-  if (!child.fState.fTransforms.empty() || child.settling()) {
+  const bool transform = !child.fState.fTransforms.empty();
+  if (transform || child.settling()) {
+    if (traceSettling() && settlers().size() < 64) {
+      settlers().push_back({&typeid(N), transform});
+    }
     return true;
   }
   bool any = false;
