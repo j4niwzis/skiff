@@ -426,7 +426,9 @@ public:
       const bool wrap = room > 0.0f && fNatural > room + 0.5f;
       if (wrap != fWrapped) {
         fWrapped = wrap;
-        fWrapsToParent = false;
+        // Wrapped: at its parent's width, not at the one-line width it had
+        // (which would wrap it at its own length, one line past the edge).
+        fWrapsToParent = wrap;
         fWrappedRoom = -1.0f;
         fMeasuredSize = -1.0f;
         if (wrap) {
