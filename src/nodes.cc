@@ -19,3 +19,4 @@ export import :clickable;
 export import :grid;
 export import :group;
 export import :image;
+export import :icon;
