@@ -2606,7 +2606,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   }
   const auto r = [&](float each) { return std::max(0.0f, each - inset); };
   const Corners &c = *state.fCorners;
-  const skia::SkVector radii[4] = {{r(c.topLeft), r(c.topLeft)},
+  const skia::SkPoint radii[4] = {{r(c.topLeft), r(c.topLeft)},
                                    {r(c.topRight), r(c.topRight)},
                                    {r(c.bottomRight), r(c.bottomRight)},
                                    {r(c.bottomLeft), r(c.bottomLeft)}};
