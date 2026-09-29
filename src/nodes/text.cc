@@ -208,6 +208,7 @@ public:
       return;
     }
     fCaret = this->offsetAt(at.x, at.y);
+    this->takePillsWhole();
     this->markDamaged();
     reply.handle();
   }
@@ -490,6 +491,24 @@ private:
     }
     fAnchor = from;
     fCaret = to;
+    this->takePillsWhole();
+  }
+  // A pill -- a mention, a room -- is selected whole or not at all: an end
+  // of the selection inside one goes to the pill's end that takes it in.
+  void takePillsWhole() {
+    const bool forward = fCaret >= fAnchor;
+    for (const Link &one : fLinks) {
+      if (!one.pill) {
+        continue;
+      }
+      const auto inside = [&](std::size_t at) { return at > one.first && at < one.last; };
+      if (inside(fAnchor)) {
+        fAnchor = forward ? one.first : one.last;
+      }
+      if (inside(fCaret)) {
+        fCaret = forward ? one.last : one.first;
+      }
+    }
   }
   // Behind the selected part of each line, a plate in the selection's colour.
   void drawSelection(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float alpha) const {
