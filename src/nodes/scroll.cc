@@ -81,13 +81,12 @@ public:
   // shows, and only while the pointer is over it or it moves.
   void draw(skia::SkCanvas *canvas, float alpha) {
     skiff::scene::drawDefault(*this, canvas, alpha);
-    if (fExtent <= 0.0f || !(fState.fHovered || fScroll.moving() || fScroll.dragging())) {
+    if (fExtent <= 0.0f || !(fState.fHovered || fScroll.moving() || fScroll.dragging() || fBarDragging)) {
       return;
     }
     const skia::SkRect &box = fState.fBounds;
-    const float view = box.height();
-    const float thumb = std::max(24.0f, view * view / (view + fExtent));
-    const float at = box.fTop + (view - thumb) * std::clamp(fScroll.offset() / fExtent, 0.0f, 1.0f);
+    const float thumb = this->thumbLength();
+    const float at = this->thumbTop();
     skia::SkPaint paint;
     paint.setAntiAlias(true);
     paint.setColor(skia::colorSetARGB(255, 255, 255, 255));
@@ -107,6 +106,38 @@ public:
     this->invalidateLayout();
     return true;
   }
+  // A wheel over something inside that did not use it -- a message's text,
+  // a row that takes presses -- scrolls this on the way back up: the
+  // innermost container scrolls, as in any toolkit.
+  void onPointer(const skiff::scene::phase::bubble &, const skiff::scene::pointer::scroll &wheel,
+                 skiff::scene::PointerReply &reply) {
+    if (fExtent > 0.0f && this->onScroll(wheel.dy)) {
+      reply.handle();
+    }
+  }
+
+  // The bar: where its thumb is, and whether a point is over the bar.
+  [[nodiscard]] float thumbLength() const {
+    const float view = fState.fBounds.height();
+    return std::max(24.0f, view * view / (view + fExtent));
+  }
+  [[nodiscard]] float thumbTop() const {
+    const float view = fState.fBounds.height();
+    return fState.fBounds.fTop +
+           (view - this->thumbLength()) * std::clamp(fScroll.offset() / std::max(fExtent, 1.0f), 0.0f, 1.0f);
+  }
+  [[nodiscard]] bool overBar(float x, float y) const {
+    return fExtent > 0.0f && x >= fState.fBounds.fRight - kBarReach && x <= fState.fBounds.fRight &&
+           y >= fState.fBounds.fTop && y <= fState.fBounds.fBottom;
+  }
+  // The offset that puts the thumb's grabbed point under y.
+  void dragBarTo(float y) {
+    const float room = std::max(1.0f, fState.fBounds.height() - this->thumbLength());
+    const float at = std::clamp((y - fBarGrab - fState.fBounds.fTop) / room, 0.0f, 1.0f);
+    fScroll.jumpTo(at * fExtent);
+    this->invalidateLayout();
+  }
+  static constexpr float kBarReach = 12.0f;
 
   // Dragging the contents, which is how a finger scrolls. A press is watched
   // in the capture phase and only remembered -- a press that does not travel
@@ -119,6 +150,19 @@ public:
     requires(std::same_as<Phase, skiff::scene::phase::capture> ||
              std::same_as<Phase, skiff::scene::phase::target>)
   {
+    // On the bar: its thumb is taken where it was pressed, or, pressed
+    // beside the thumb, brought under the pointer by its middle.
+    if (this->overBar(press.x, press.y)) {
+      const float top = this->thumbTop();
+      const float length = this->thumbLength();
+      fBarGrab = press.y >= top && press.y <= top + length ? press.y - top : length * 0.5f;
+      fBarDragging = true;
+      this->dragBarTo(press.y);
+      reply.capturePointer();
+      reply.suppressHover();
+      reply.handle();
+      return;
+    }
     fArmed = fExtent > 0.0f; // nothing to scroll, nothing to drag
     fPressX = press.x;
     fPressY = press.y;
@@ -136,6 +180,11 @@ public:
     requires(std::same_as<Phase, skiff::scene::phase::capture> ||
              std::same_as<Phase, skiff::scene::phase::target>)
   {
+    if (fBarDragging) {
+      this->dragBarTo(move.y);
+      reply.handle();
+      return;
+    }
     if (!fArmed) {
       return;
     }
@@ -188,6 +237,12 @@ public:
 
   // What the gesture does at its end, released or cancelled.
   void finish(skiff::scene::PointerReply &reply) {
+    if (fBarDragging) {
+      fBarDragging = false;
+      reply.releasePointer();
+      reply.handle();
+      return;
+    }
     if (fArmed || fScroll.dragging()) {
       reply.suppressHover();
     }
@@ -217,6 +272,9 @@ private:
   float fPressX = 0.0f;
   float fPressY = 0.0f;
   bool fArmed = false;
+  // The bar's thumb being dragged, and where on it it was taken.
+  bool fBarDragging = false;
+  float fBarGrab = 0.0f;
   // Where the contents were last laid out: a scroll alone moves them.
   bool fLaidOut = false;
   skia::SkRect fLastBox = skia::SkRect::MakeEmpty();
