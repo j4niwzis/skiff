@@ -49,6 +49,45 @@ struct NoPictures {
   static const skia::Sp<skia::SkImage> *picture(std::string_view) { return nullptr; }
 };
 
+// A pill's picture, as an avatar: the picture where there is one, over
+// the gradient with the initials in white where there is not.
+inline void drawPillPicture(skia::SkCanvas *canvas, const skiff::paint::Painter &p, const skia::SkRect &disc,
+                            const skiff::scene::PillPicture &look, float alpha) {
+  const int saved = canvas->save();
+  canvas->clipRRect(skia::SkRRect::MakeOval(disc), true);
+  if (look.picture && *look.picture) {
+    skia::SkPaint paint;
+    paint.setAlphaf(alpha);
+    canvas->drawImageRect(*look.picture, disc, skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &paint);
+  } else {
+    skiff::paint::verticalGradient(canvas, disc, look.top, look.bottom, alpha);
+    const float size = disc.width() * 0.4f;
+    const float width = p.measure(look.initials, size, true);
+    p.textIn(disc, look.initials, size, skia::colorSetARGB(255, 255, 255, 255), alpha, true,
+             (disc.width() - width) * 0.5f);
+  }
+  canvas->restoreToCount(saved);
+}
+// A pill's plate, as a mention is drawn in a message and in a field: a
+// rounded plate in the pill's colour behind `width` of text at `x`, on the
+// baseline `y`, and its picture at its start where it has one. The text
+// over it is the caller's.
+inline void drawPill(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float x, float y, float width,
+                     float size, skia::SkColor colour, const std::optional<skiff::scene::PillPicture> &look,
+                     float alpha) {
+  const float height = size * 1.25f;
+  const skia::SkRect plate = skia::SkRect::MakeXYWH(x - 1.0f, y - size, width + 2.0f, height);
+  skia::SkPaint fill;
+  fill.setAntiAlias(true);
+  fill.setColor(colour);
+  fill.setAlphaf(0.18f * alpha);
+  canvas->drawRRect(skia::SkRRect::MakeRectXY(plate, height * 0.5f, height * 0.5f), fill);
+  if (look) {
+    const float side = height - 4.0f;
+    drawPillPicture(canvas, p, skia::SkRect::MakeXYWH(x + 1.0f, plate.fTop + 2.0f, side, side), *look, alpha);
+  }
+}
+
 // Which text's selection is shown, of all of them: the last pressed.
 inline std::uint64_t &textSelectionOwner() {
   static std::uint64_t owner = 0;
@@ -560,25 +599,6 @@ private:
 
   // A line in pieces: plain in the text's colour, links in theirs and
   // underlined.
-  // A pill's picture, as an avatar: the picture where there is one, over
-  // the gradient with the initials in white where there is not.
-  static void drawPillPicture(skia::SkCanvas *canvas, const skiff::paint::Painter &p, const skia::SkRect &disc,
-                              const skiff::scene::PillPicture &look, float alpha) {
-    const int saved = canvas->save();
-    canvas->clipRRect(skia::SkRRect::MakeOval(disc), true);
-    if (look.picture && *look.picture) {
-      skia::SkPaint paint;
-      paint.setAlphaf(alpha);
-      canvas->drawImageRect(*look.picture, disc, skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &paint);
-    } else {
-      skiff::paint::verticalGradient(canvas, disc, look.top, look.bottom, alpha);
-      const float size = disc.width() * 0.4f;
-      const float width = p.measure(look.initials, size, true);
-      p.textIn(disc, look.initials, size, skia::colorSetARGB(255, 255, 255, 255), alpha, true,
-               (disc.width() - width) * 0.5f);
-    }
-    canvas->restoreToCount(saved);
-  }
   void drawWithLinks(skia::SkCanvas *canvas, const skiff::paint::Painter &p, std::size_t start,
                      std::string_view line, float x, float y, float alpha) const {
     const std::size_t end = start + line.size();
@@ -658,18 +678,8 @@ private:
       if (link && link->pill) {
         // The plate, the picture at its start where the pill begins, the
         // text over it -- not underlined.
-        const float height = fSize * 1.25f;
-        const skia::SkRect plate = skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, height);
-        skia::SkPaint fill;
-        fill.setAntiAlias(true);
-        fill.setColor(colour);
-        fill.setAlphaf(0.18f * alpha);
-        canvas->drawRRect(skia::SkRRect::MakeRectXY(plate, height * 0.5f, height * 0.5f), fill);
-        if (cuts[i] == link->first)
-          if (const auto look = Pictures::pill(link->target)) {
-            const float side = height - 4.0f;
-            drawPillPicture(canvas, p, skia::SkRect::MakeXYWH(at + 1.0f, plate.fTop + 2.0f, side, side), *look, alpha);
-          }
+        drawPill(canvas, p, at, y, width, fSize, colour,
+                 cuts[i] == link->first ? Pictures::pill(link->target) : std::nullopt, alpha);
         p.text(piece, at, y, fSize, colour, alpha, fBold);
         at += width;
         continue;
