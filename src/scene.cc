@@ -3,7 +3,7 @@ export module skiff.scene;
 import std;
 import skia;
 import skiff.paint;
-import boost.pfr;
+import skiff.aggregate;
 
 // A retained scene whose type is its tree.
 //
@@ -496,10 +496,10 @@ struct Style {
   std::optional<Easing> transitionEasing{};
 
   // Each declaration of `other` that is made, over this one's: the members
-  // walked one by one (Boost.PFR), none listed.
+  // walked one by one, none listed.
   void overlay(const Style &other) {
-    boost::pfr::for_each_field(*this, [&](auto &mine, auto index) {
-      if (const auto &theirs = boost::pfr::get<decltype(index)::value>(other))
+    aggregate::eachPair(*this, other, [](auto &mine, const auto &theirs) {
+      if (theirs)
         mine = theirs;
     });
   }
@@ -2093,13 +2093,13 @@ struct Node {
 
   // -- structure: a leaf has no children; a node whose children are the
   // members of one aggregate, `parts`, has them in the order they are
-  // declared there -- walked one by one (Boost.PFR), not listed by hand. (A
+  // declared there -- walked one by one (skiff.aggregate), not listed by hand. (A
   // node cannot be walked itself: its State is a member of this base.)
   void forEachChild(this auto &, auto &&) {}
   template <class Self, class F>
     requires requires(Self &self) { self.parts; }
   void forEachChild(this Self &self, F &&f) {
-    boost::pfr::for_each_field(self.parts, [&](auto &each) { f(each); });
+    aggregate::each(self.parts, f);
   }
 
   // -- layout

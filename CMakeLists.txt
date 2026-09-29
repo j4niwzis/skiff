@@ -77,10 +77,6 @@ set(SKIFF_SKIA_COMPONENTS "" CACHE STRING
 find_package(Skia REQUIRED
              COMPONENTS png jpeg freetype ${SKIFF_SKIA_COMPONENTS})
 
-# Boost.PFR, as a module: the members of an aggregate walked one by one --
-# a node's parts, a style's declarations -- on C++23 as on C++26.
-cme_find_package(Boost COMPONENTS pfr[modules] REQUIRED)
-
 # Shaped text, if asked for: HarfBuzz for glyphs, alef for Unicode's rules
 # -- bidirectional runs, line breaks, characters. Off by default: alef is
 # C++26, so a build with this is too, and a program on C++23 keeps drawing
@@ -135,7 +131,22 @@ endif()
 file(GLOB skiff_node_partitions CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/src/nodes/*.cc")
 
+# The standard skiff is built as: C++26 where text is shaped (alef is
+# C++26) or the build asks for it, C++23 otherwise. An aggregate's members
+# -- a node's parts, a style's declarations -- are walked by the language's
+# binding packs on C++26, by Boost.PFR (as a module) on C++23: the one
+# module, skiff.aggregate, from one file or the other.
+if(SKIFF_TEXT_SHAPING OR (DEFINED CMAKE_CXX_STANDARD AND CMAKE_CXX_STANDARD GREATER_EQUAL 26))
+  set(skiff_cxx_standard 26)
+  set(skiff_aggregate ${CMAKE_CURRENT_SOURCE_DIR}/src/aggregate/packs.cc)
+else()
+  set(skiff_cxx_standard 23)
+  set(skiff_aggregate ${CMAKE_CURRENT_SOURCE_DIR}/src/aggregate/pfr.cc)
+  cme_find_package(Boost COMPONENTS pfr[modules] REQUIRED)
+endif()
+
 set(skiff_sources
+  ${skiff_aggregate}
   ${CMAKE_CURRENT_SOURCE_DIR}/src/skia.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/paint.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/scene.cc
@@ -155,14 +166,14 @@ add_library(skiff::skiff ALIAS ${PROJECT_NAME})
 target_sources(${PROJECT_NAME} PUBLIC
   FILE_SET CXX_MODULES FILES ${skiff_sources})
 
+set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD ${skiff_cxx_standard})
+target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_${skiff_cxx_standard})
+if(skiff_cxx_standard LESS 26)
+  target_link_libraries(${PROJECT_NAME} PUBLIC Boost::pfr)
+endif()
 if(SKIFF_TEXT_SHAPING)
-  set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 26)
-  target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_26)
   target_compile_definitions(${PROJECT_NAME} PUBLIC SKIFF_TEXT_SHAPING)
   target_link_libraries(${PROJECT_NAME} PUBLIC alef::alef ${skiff_harfbuzz_target})
-else()
-  set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 23)
-  target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_23)
 endif()
 
 # Skia as a target rather than as flags and paths. What its headers are cut
@@ -174,7 +185,7 @@ endif()
 # -- rightly, since what would be installed is a library whose dependency
 # exists nowhere else. So an installed copy names Skia the way a machine can
 # answer for it, which is what the config file below writes.
-target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:Skia::skia> Boost::pfr)
+target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:Skia::skia>)
 if(ANDROID AND SKIFF_EGL_LIBRARY AND SKIFF_GLES_LIBRARY)
   target_link_libraries(${PROJECT_NAME} PUBLIC
     ${SKIFF_EGL_LIBRARY} ${SKIFF_GLES_LIBRARY})
