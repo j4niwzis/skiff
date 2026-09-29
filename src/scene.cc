@@ -398,6 +398,13 @@ template <class Tag> inline constexpr StyleRole role = StyleRole::of<Tag>();
 //   place        anchor and origin at once
 //   fill         relative size on both axes at 1.0
 //   fillX/fillY  the same on one axis
+// A background going from one colour at the top to another at the bottom.
+struct Gradient {
+  skia::SkColor top = 0;
+  skia::SkColor bottom = 0;
+  friend bool operator==(const Gradient &, const Gradient &) = default;
+};
+
 // A line around a node's box, inside it, following its corner radius.
 struct Border {
   skia::SkColor colour = 0;
@@ -439,6 +446,7 @@ struct Spec {
   std::optional<skia::SkColor> hoverBackground{};
   std::optional<skia::SkColor> selectedBackground{};
   std::optional<skia::SkColor> focusBackground{};
+  std::optional<Gradient> gradient{};  // under the plain background, where there is none
   std::optional<Border> border{};
   std::optional<bool> masking{};
   std::optional<float> scale{};
@@ -1265,6 +1273,7 @@ public:
   float fCornerRadius = 0.0f;
   // Painted in the box, under the rest: see Spec.
   std::optional<skia::SkColor> fBackground, fHoverBackground, fSelectedBackground, fFocusBackground;
+  std::optional<Gradient> fGradient;
   std::optional<Border> fBorder;
   bool fVisible = true;
 
@@ -1525,6 +1534,9 @@ public:
     }
     if (spec.focusBackground) {
       fFocusBackground = spec.focusBackground;
+    }
+    if (spec.gradient) {
+      fGradient = spec.gradient;
     }
     if (spec.border) {
       fBorder = spec.border;
@@ -2454,9 +2466,15 @@ inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
                                             : state.fFocused && state.fFocusBackground     ? state.fFocusBackground
                                             : state.fHovered && state.fHoverBackground     ? state.fHoverBackground
                                                                                             : state.fBackground;
-  if (!fill && !state.fBorder)
+  if (!fill && !state.fBorder && !state.fGradient)
     return;
   const float radius = state.fCornerRadius;
+  if (state.fGradient && !fill) {
+    const int saved = canvas->save();
+    canvas->clipRRect(skia::SkRRect::MakeRectXY(state.fBounds, radius, radius), true);
+    paint::verticalGradient(canvas, state.fBounds, state.fGradient->top, state.fGradient->bottom, alpha);
+    canvas->restoreToCount(saved);
+  }
   if (fill) {
     skia::SkPaint paint;
     paint.setAntiAlias(true);

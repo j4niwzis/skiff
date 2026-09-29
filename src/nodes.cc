@@ -18,3 +18,4 @@ export import :cached;
 export import :clickable;
 export import :grid;
 export import :group;
+export import :image;
