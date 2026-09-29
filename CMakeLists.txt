@@ -74,40 +74,56 @@ endif()
 # packaging beside it.
 set(SKIFF_SKIA_COMPONENTS "" CACHE STRING
     "Backend components to ask Skia for, for a copy built on its own")
-# The pictures skiff decodes, each an option that asks Skia for its codec:
-# a Skia without one -- a system's, say -- is taken as it is where the
-# option is off, and the code for it is left out by Skia's own defines.
-option(SKIFF_PNG "Decode and encode PNG, through Skia" ON)
-option(SKIFF_JPEG "Decode and encode JPEG, through Skia" ON)
-option(SKIFF_GIF "Decode GIF, animated too, through Skia (Wuffs)" OFF)
-option(SKIFF_WEBP "Decode WebP, animated too, through Skia (libwebp)" OFF)
-# What it draws with, likewise: Ganesh on GL, and the fonts read from a
-# directory of them. A consumer asks for these through its port's options
-# (cme_options), each a plain switch -- a list does not pass that way.
-option(SKIFF_GL "Draw on the GPU, through Skia's Ganesh on GL" OFF)
-option(SKIFF_FONTMGR_DIRECTORY "The fonts read from a directory of them" OFF)
-set(skiff_skia_components freetype)
-if(SKIFF_GL)
-  list(APPEND skiff_skia_components gl)
+# What of skiff is built, by component, the way a consumer asks for it:
+#
+#   cme_find_package(skiff COMPONENTS gl fontmgr-directory png jpeg text-shaping)
+#
+# Each but text-shaping is one of Skia's features that skiff draws or decodes
+# with, asked of Skia only where it is asked of skiff -- so that a Skia
+# without it, a system's, is taken as it is, its code left out by Skia's own
+# defines. The components are declared below as cme features, so that a
+# consumer's COMPONENTS reach this file as CME_FEATURES_skiff; SKIFF_COMPONENTS
+# says the same by hand. A build that asks for nothing decodes PNG and JPEG.
+set(skiff_components png jpeg gif webp gl fontmgr-directory text-shaping)
+if(COMMAND cme_port_feature)
+  cme_port_feature(skiff png SUMMARY "PNG, decoded and encoded through Skia")
+  cme_port_feature(skiff jpeg SUMMARY "JPEG, decoded and encoded through Skia")
+  cme_port_feature(skiff gif SUMMARY "GIF, animated too, decoded through Skia's Wuffs")
+  cme_port_feature(skiff webp SUMMARY "WebP, animated too, decoded through Skia's libwebp")
+  cme_port_feature(skiff gl SUMMARY "Drawing on the GPU, through Skia's Ganesh on GL")
+  cme_port_feature(skiff fontmgr-directory SUMMARY "The fonts read from a directory of them")
+  cme_port_feature(skiff text-shaping
+    SUMMARY "Text shaped with HarfBuzz and laid out by Unicode's rules with alef (C++26)")
 endif()
-if(SKIFF_FONTMGR_DIRECTORY)
-  list(APPEND skiff_skia_components fontmgr-directory)
+set(SKIFF_COMPONENTS "" CACHE STRING
+    "The components of skiff to build, as a list; empty for png and jpeg")
+set(skiff_asked ${SKIFF_COMPONENTS})
+if(DEFINED CME_FEATURES_skiff)
+  list(APPEND skiff_asked ${CME_FEATURES_skiff})
 endif()
-foreach(codec IN ITEMS png jpeg gif webp)
-  string(TOUPPER ${codec} option_name)
-  if(SKIFF_${option_name})
-    list(APPEND skiff_skia_components ${codec})
+list(REMOVE_DUPLICATES skiff_asked)
+foreach(component IN LISTS skiff_asked)
+  if(NOT component IN_LIST skiff_components)
+    message(FATAL_ERROR "skiff has no component ${component}; it has ${skiff_components}")
   endif()
 endforeach()
+if(NOT skiff_asked)
+  set(skiff_asked png jpeg)
+endif()
+# Skia's components: freetype always, for text, and those asked for.
+set(skiff_skia_components freetype ${skiff_asked})
+list(REMOVE_ITEM skiff_skia_components text-shaping)
+set(SKIFF_TEXT_SHAPING OFF)
+if("text-shaping" IN_LIST skiff_asked)
+  set(SKIFF_TEXT_SHAPING ON)
+endif()
 find_package(Skia REQUIRED
              COMPONENTS ${skiff_skia_components} ${SKIFF_SKIA_COMPONENTS})
 
-# Shaped text, if asked for: HarfBuzz for glyphs, alef for Unicode's rules
-# -- bidirectional runs, line breaks, characters. Off by default: alef is
-# C++26, so a build with this is too, and a program on C++23 keeps drawing
-# text as before, one face's run at a time.
-option(SKIFF_TEXT_SHAPING
-       "Shape text with HarfBuzz and lay it out by Unicode's rules with alef (C++26)" OFF)
+# Shaped text, where text-shaping is asked for: HarfBuzz for glyphs, alef
+# for Unicode's rules -- bidirectional runs, line breaks, characters. Not by
+# default: alef is C++26, so a build with this is too, and a program on C++23
+# keeps drawing text as before, one face's run at a time.
 if(SKIFF_TEXT_SHAPING)
   cme_declare_port(NAME alef PROVIDES alef
     GITHUB_REPOSITORY j4niwzis/alef
