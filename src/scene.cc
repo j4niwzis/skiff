@@ -24,7 +24,7 @@ import skiff.aggregate;
 // the ones it cares about as overloads of onPointer. Sets of flags are Flags.
 export namespace skiff::scene {
 
-// Whether the walks over a tree see each child through an AnyNode: outside
+// Whether the walks over a tree see each child through an AnyNodeRef: outside
 // a release build. Each walk is then made once for AnyNode, not for every
 // type of node under it -- a program's tree of hundreds of types made its
 // walks most of a build -- and nothing is inlined across a node's edge.
@@ -2006,6 +2006,7 @@ private:
 // ---- children --------------------------------------------------------------
 
 class AnyNode;
+class AnyNodeRef;
 struct Node;
 
 // A node type that is also a range -- it has begin() and end() -- is walked
@@ -2027,9 +2028,9 @@ template <class T, class F> void visitChild(std::shared_ptr<T> &, F &&);
 template <class T, class F> void visitChild(std::reference_wrapper<T> &, F &&);
 template <class... Ts, class F> void visitChild(std::tuple<Ts...> &, F &&);
 template <class F> void visitChild(AnyNode &, F &&);
-// A child handed on as an AnyNode: itself where it is one, else borrowed.
-using AnyChildVisit = void (*)(void *context, AnyNode &child);
-void visitAsAny(AnyNode &child, void *context, AnyChildVisit visit);
+// A child handed on as an AnyNodeRef: itself where it is one, else a ref to it.
+using AnyChildVisit = void (*)(void *context, AnyNodeRef &child);
+void visitAsAny(AnyNodeRef &child, void *context, AnyChildVisit visit);
 template <class N> void visitAsAny(N &child, void *context, AnyChildVisit visit);
 template <class R, class F>
   requires(std::ranges::range<R> && !kTreatAsNode<R>)
@@ -2088,7 +2089,7 @@ template <class T, class F> void eachChild(T &node, F &&f) {
 template <class N> [[nodiscard]] State &stateOf(N &child) {
   return child.fState;
 }
-[[nodiscard]] State &stateOf(AnyNode &child);
+[[nodiscard]] State &stateOf(AnyNodeRef &child);
 
 // ---- default handling --------------------------------------------------------
 //
@@ -2477,9 +2478,9 @@ template <class Axis, class T> [[nodiscard]] skia::SkRect flowBounds(T &node) {
 }
 
 template <class N> void layout(N &child, const skia::SkRect &parentBox);
-void layout(AnyNode &child, const skia::SkRect &parentBox);
+void layout(AnyNodeRef &child, const skia::SkRect &parentBox);
 template <class N> void draw(N &child, skia::SkCanvas *canvas, float alpha);
-void draw(AnyNode &child, skia::SkCanvas *canvas, float alpha);
+void draw(AnyNodeRef &child, skia::SkCanvas *canvas, float alpha);
 
 // Lays every child out in the content box: what a node without its own
 // layoutChildren does.
@@ -2665,14 +2666,14 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
 // its bounds and the box it was laid out in, so that laying it out in the
 // moved box finds nothing changed. What a scrolled list does on a scroll.
 // An erased node in it is laid out again instead.
-inline void shiftSubtree(AnyNode &node, float dx, float dy);
+inline void shiftSubtree(AnyNodeRef &node, float dx, float dy);
 template <class N> void shiftSubtree(N &node, float dx, float dy) {
   State &state = stateOf(node);
   state.fBounds.offset(dx, dy);
   state.fLastConstraint.offset(dx, dy);
   eachChild(node, [&](auto &child) { shiftSubtree(child, dx, dy); });
 }
-inline void shiftSubtree(AnyNode &node, float, float) { stateOf(node).fLayoutValid = false; }
+inline void shiftSubtree(AnyNodeRef &node, float, float) { stateOf(node).fLayoutValid = false; }
 template <class N> void shiftSubtree(N &node, float dy) { shiftSubtree(node, 0.0f, dy); }
 
 // Lays a child out in a box: what a container's layoutChildren calls for each
@@ -2692,26 +2693,26 @@ template <class N> void draw(N &child, skia::SkCanvas *canvas, float alpha) {
 namespace walk {
 
 // Every walk, for an AnyNode: through its table.
-void update(AnyNode &, UpdateContext &, StyleResolver, const Style *, bool);
-[[nodiscard]] bool markDirty(AnyNode &);
-[[nodiscard]] skia::SkRect collectDamage(AnyNode &, bool);
-[[nodiscard]] bool hasDamage(AnyNode &);
-void hover(AnyNode &, float, float, bool, StyleResolver, float);
-[[nodiscard]] bool hitPath(AnyNode &, float, float, Path &);
-[[nodiscard]] bool findPath(AnyNode &, NodeId, Path &);
-[[nodiscard]] NodeId idAt(AnyNode &, const Path &, std::size_t);
-void routePointer(AnyNode &, const Path &, std::size_t, const PointerEvent &,
+void update(AnyNodeRef &, UpdateContext &, StyleResolver, const Style *, bool);
+[[nodiscard]] bool markDirty(AnyNodeRef &);
+[[nodiscard]] skia::SkRect collectDamage(AnyNodeRef &, bool);
+[[nodiscard]] bool hasDamage(AnyNodeRef &);
+void hover(AnyNodeRef &, float, float, bool, StyleResolver, float);
+[[nodiscard]] bool hitPath(AnyNodeRef &, float, float, Path &);
+[[nodiscard]] bool findPath(AnyNodeRef &, NodeId, Path &);
+[[nodiscard]] NodeId idAt(AnyNodeRef &, const Path &, std::size_t);
+void routePointer(AnyNodeRef &, const Path &, std::size_t, const PointerEvent &,
                   PointerReply &, Routed &, bool);
-void routeKey(AnyNode &, const Path &, std::size_t, const KeyEvent &, Reply &);
-void routeText(AnyNode &, const Path &, std::size_t, const TextEvent &, Reply &);
-void routeSemantic(AnyNode &, const Path &, std::size_t,
+void routeKey(AnyNodeRef &, const Path &, std::size_t, const KeyEvent &, Reply &);
+void routeText(AnyNodeRef &, const Path &, std::size_t, const TextEvent &, Reply &);
+void routeSemantic(AnyNodeRef &, const Path &, std::size_t,
                    const SemanticAction &, Reply &);
-[[nodiscard]] std::optional<NodeInfo> info(AnyNode &, NodeId);
-[[nodiscard]] bool focusChanged(AnyNode &, NodeId, bool, StyleResolver, float);
-void collectSemantics(AnyNode &, std::vector<Semantics> &, int, NodeId);
-void collectFocusable(AnyNode &, std::vector<NodeId> &);
-[[nodiscard]] bool animating(AnyNode &);
-[[nodiscard]] bool clickPath(AnyNode &, const Path &, std::size_t, float,
+[[nodiscard]] std::optional<NodeInfo> info(AnyNodeRef &, NodeId);
+[[nodiscard]] bool focusChanged(AnyNodeRef &, NodeId, bool, StyleResolver, float);
+void collectSemantics(AnyNodeRef &, std::vector<Semantics> &, int, NodeId);
+void collectFocusable(AnyNodeRef &, std::vector<NodeId> &);
+[[nodiscard]] bool animating(AnyNodeRef &);
+[[nodiscard]] bool clickPath(AnyNodeRef &, const Path &, std::size_t, float,
                              float);
 
 // Transforms, the node's own time, and styles.
@@ -3180,13 +3181,12 @@ public:
   AnyNode &operator=(const AnyNode &) = delete;
   AnyNode(AnyNode &&other) noexcept
       : fNode(std::exchange(other.fNode, nullptr)),
-        fOps(std::exchange(other.fOps, nullptr)), fOwned(other.fOwned) {}
+        fOps(std::exchange(other.fOps, nullptr)) {}
   AnyNode &operator=(AnyNode &&other) noexcept {
     if (this != &other) {
       this->reset();
       fNode = std::exchange(other.fNode, nullptr);
       fOps = std::exchange(other.fOps, nullptr);
-      fOwned = other.fOwned;
     }
     return *this;
   }
@@ -3194,35 +3194,13 @@ public:
 
   void reset() {
     if (fNode != nullptr) {
-      if (fOwned) {
-        fOps->fDestroy(fNode);
-      }
+      fOps->fDestroy(fNode);
       fNode = nullptr;
       fOps = nullptr;
     }
   }
-  // A node held elsewhere, seen through the table: not owned, never
-  // destroyed. The table is read through a volatile, so the optimizer
-  // cannot see which it is and inline the walks back into one another.
-  template <class T>
-    requires std::derived_from<T, Node>
-  [[nodiscard]] static AnyNode borrowing(T &node) {
-    static const Ops *volatile table = &kOps<T>;
-    AnyNode out;
-    out.fNode = &node;
-    out.fOps = table;
-    out.fOwned = false;
-    return out;
-  }
-  // The node's own type, for what names it.
-  [[nodiscard]] const std::type_info &type() const { return fOps->fType(); }
-  // Its children, each as an AnyNode: eachChild over an AnyNode, as over any
-  // node -- a walk that goes down on its own, as flex-shrink's does.
-  template <class F> void forEachChild(F &&f) {
-    fOps->fEachChild(fNode, &f, +[](void *context, AnyNode &child) {
-      (*static_cast<std::remove_reference_t<F> *>(context))(child);
-    });
-  }
+  // What the walks see of it: the node through its table, not owned.
+  [[nodiscard]] AnyNodeRef ref() const noexcept;
   [[nodiscard]] explicit operator bool() const noexcept {
     return fNode != nullptr;
   }
@@ -3331,93 +3309,136 @@ private:
 
   void *fNode = nullptr;
   const Ops *fOps = nullptr;
-  bool fOwned = true;
+
+public:
+  // The table for a type, as AnyNodeRef reaches it.
+  template <class T> [[nodiscard]] static const Ops &opsOf() noexcept { return kOps<T>; }
 };
+
+// A node seen through the table of its walks, and not owned: what every walk
+// takes for a child it does not know the type of -- an AnyNode's, or,
+// outside a release build (kErasedWalks), any child at all.
+class AnyNodeRef {
+public:
+  AnyNodeRef(void *node, const AnyNode::Ops *ops) noexcept : fNode(node), fOps(ops) {}
+  // A node held elsewhere. Its table is read through a volatile, so the
+  // optimizer cannot see which it is and inline the walks back into one
+  // another.
+  template <class T>
+    requires std::derived_from<T, Node>
+  [[nodiscard]] static AnyNodeRef of(T &node) {
+    static const AnyNode::Ops *volatile table = &AnyNode::opsOf<T>();
+    return AnyNodeRef(&node, table);
+  }
+  // The node, when it is a T.
+  template <class T> [[nodiscard]] T *get() noexcept {
+    return fOps == &AnyNode::opsOf<T>() ? static_cast<T *>(fNode) : nullptr;
+  }
+  [[nodiscard]] State &state() { return fOps->fState(fNode); }
+  [[nodiscard]] const AnyNode::Ops &ops() const noexcept { return *fOps; }
+  [[nodiscard]] void *node() const noexcept { return fNode; }
+  // The node's own type, for what names it.
+  [[nodiscard]] const std::type_info &type() const { return fOps->fType(); }
+  // Its children, each seen the same way: eachChild over a ref, as over any
+  // node -- for a walk that goes down on its own, as flex-shrink's does.
+  template <class F> void forEachChild(F &&f) {
+    fOps->fEachChild(fNode, &f, +[](void *context, AnyNodeRef &child) {
+      (*static_cast<std::remove_reference_t<F> *>(context))(child);
+    });
+  }
+
+private:
+  void *fNode;
+  const AnyNode::Ops *fOps;
+};
+
+inline AnyNodeRef AnyNode::ref() const noexcept { return AnyNodeRef(fNode, fOps); }
 
 template <class F> void visitChild(AnyNode &child, F &&f) {
   if (child) {
-    f(child);
+    AnyNodeRef seen = child.ref();
+    f(seen);
   }
 }
-// Outside a release build, a child is seen through an AnyNode borrowing it.
+// Outside a release build, every child is seen through an AnyNodeRef.
 template <class N, class F>
   requires(kErasedWalks && std::derived_from<N, Node>)
 void visitChild(N &child, F &&f) {
-  AnyNode seen = AnyNode::borrowing(child);
+  AnyNodeRef seen = AnyNodeRef::of(child);
   f(seen);
 }
-inline void visitAsAny(AnyNode &child, void *context, AnyChildVisit visit) { visit(context, child); }
+inline void visitAsAny(AnyNodeRef &child, void *context, AnyChildVisit visit) { visit(context, child); }
 template <class N> void visitAsAny(N &child, void *context, AnyChildVisit visit) {
-  AnyNode seen = AnyNode::borrowing(child);
+  AnyNodeRef seen = AnyNodeRef::of(child);
   visit(context, seen);
 }
 // A child's own type, whether seen as itself or through an AnyNode.
 template <class N> [[nodiscard]] const std::type_info &typeOf(N &) { return typeid(N); }
-[[nodiscard]] inline const std::type_info &typeOf(AnyNode &child) { return child.type(); }
-inline State &stateOf(AnyNode &child) { return child.state(); }
-inline void layout(AnyNode &child, const skia::SkRect &box) {
+[[nodiscard]] inline const std::type_info &typeOf(AnyNodeRef &child) { return child.type(); }
+inline State &stateOf(AnyNodeRef &child) { return child.state(); }
+inline void layout(AnyNodeRef &child, const skia::SkRect &box) {
   child.ops().fLayout(child.node(), box);
 }
-inline void draw(AnyNode &child, skia::SkCanvas *canvas, float alpha) {
+inline void draw(AnyNodeRef &child, skia::SkCanvas *canvas, float alpha) {
   child.ops().fDraw(child.node(), canvas, alpha);
 }
 
 namespace walk {
-inline void update(AnyNode &c, UpdateContext &context, StyleResolver r,
+inline void update(AnyNodeRef &c, UpdateContext &context, StyleResolver r,
                    const Style *s, bool all) {
   c.ops().fUpdate(c.node(), context, r, s, all);
 }
-inline bool markDirty(AnyNode &c) { return c.ops().fMarkDirty(c.node()); }
-inline skia::SkRect collectDamage(AnyNode &c, bool drawn) {
+inline bool markDirty(AnyNodeRef &c) { return c.ops().fMarkDirty(c.node()); }
+inline skia::SkRect collectDamage(AnyNodeRef &c, bool drawn) {
   return c.ops().fCollectDamage(c.node(), drawn);
 }
-inline bool hasDamage(AnyNode &c) { return c.ops().fHasDamage(c.node()); }
-inline void hover(AnyNode &c, float x, float y, bool visible, StyleResolver r,
+inline bool hasDamage(AnyNodeRef &c) { return c.ops().fHasDamage(c.node()); }
+inline void hover(AnyNodeRef &c, float x, float y, bool visible, StyleResolver r,
                   float width) {
   c.ops().fHover(c.node(), x, y, visible, r, width);
 }
-inline bool hitPath(AnyNode &c, float x, float y, Path &path) {
+inline bool hitPath(AnyNodeRef &c, float x, float y, Path &path) {
   return c.ops().fHitPath(c.node(), x, y, path);
 }
-inline bool findPath(AnyNode &c, NodeId id, Path &path) {
+inline bool findPath(AnyNodeRef &c, NodeId id, Path &path) {
   return c.ops().fFindPath(c.node(), id, path);
 }
-inline NodeId idAt(AnyNode &c, const Path &path, std::size_t at) {
+inline NodeId idAt(AnyNodeRef &c, const Path &path, std::size_t at) {
   return c.ops().fIdAt(c.node(), path, at);
 }
-inline void routePointer(AnyNode &c, const Path &path, std::size_t at,
+inline void routePointer(AnyNodeRef &c, const Path &path, std::size_t at,
                          const PointerEvent &e, PointerReply &reply,
                          Routed &routed, bool targetOnly) {
   c.ops().fRoutePointer(c.node(), path, at, e, reply, routed, targetOnly);
 }
-inline void routeKey(AnyNode &c, const Path &path, std::size_t at,
+inline void routeKey(AnyNodeRef &c, const Path &path, std::size_t at,
                      const KeyEvent &e, Reply &reply) {
   c.ops().fRouteKey(c.node(), path, at, e, reply);
 }
-inline void routeText(AnyNode &c, const Path &path, std::size_t at,
+inline void routeText(AnyNodeRef &c, const Path &path, std::size_t at,
                       const TextEvent &e, Reply &reply) {
   c.ops().fRouteText(c.node(), path, at, e, reply);
 }
-inline void routeSemantic(AnyNode &c, const Path &path, std::size_t at,
+inline void routeSemantic(AnyNodeRef &c, const Path &path, std::size_t at,
                           const SemanticAction &e, Reply &reply) {
   c.ops().fRouteSemantic(c.node(), path, at, e, reply);
 }
-inline std::optional<NodeInfo> info(AnyNode &c, NodeId id) {
+inline std::optional<NodeInfo> info(AnyNodeRef &c, NodeId id) {
   return c.ops().fInfo(c.node(), id);
 }
-inline bool focusChanged(AnyNode &c, NodeId id, bool focused, StyleResolver r,
+inline bool focusChanged(AnyNodeRef &c, NodeId id, bool focused, StyleResolver r,
                          float width) {
   return c.ops().fFocusChanged(c.node(), id, focused, r, width);
 }
-inline void collectSemantics(AnyNode &c, std::vector<Semantics> &out,
+inline void collectSemantics(AnyNodeRef &c, std::vector<Semantics> &out,
                              int parent, NodeId focused) {
   c.ops().fCollectSemantics(c.node(), out, parent, focused);
 }
-inline void collectFocusable(AnyNode &c, std::vector<NodeId> &out) {
+inline void collectFocusable(AnyNodeRef &c, std::vector<NodeId> &out) {
   c.ops().fCollectFocusable(c.node(), out);
 }
-inline bool animating(AnyNode &c) { return c.ops().fAnimating(c.node()); }
-inline bool clickPath(AnyNode &c, const Path &path, std::size_t at, float x,
+inline bool animating(AnyNodeRef &c) { return c.ops().fAnimating(c.node()); }
+inline bool clickPath(AnyNodeRef &c, const Path &path, std::size_t at, float x,
                       float y) {
   return c.ops().fClickPath(c.node(), path, at, x, y);
 }
