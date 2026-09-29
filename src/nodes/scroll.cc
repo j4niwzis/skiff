@@ -80,6 +80,10 @@ public:
     const skia::SkRect content = scene::childBounds(*this);
     fExtent = std::max(0.0f, content.height() - box.height());
     fScroll.setBounds(0.0f, fExtent);
+    // What of the contents is in view -- and a screen above and below, so
+    // what is scrolled to next is ready: the frame's walks go no further.
+    const skia::SkRect seen = box.makeOutset(0.0f, box.height());
+    scene::eachChild(*this, [&](auto &child) { scene::stateOf(child).fInView = seen; });
     if (anchor) {
       float moved = 0.0f;
       this->eachItem([&](const scene::State &item) {

@@ -1755,6 +1755,10 @@ public:
   bool fSubtreeDirty = true;
   // Placed somewhere else since its last layout, and nothing else changed.
   bool fPlacementDirty = false;
+  // What of this node's children is in view, where something scrolls it:
+  // the walks a frame makes visit only the children that reach into it.
+  // Layout still sees them all.
+  std::optional<skia::SkRect> fInView;
   // The children, as they were last time: a variant that switched, a row
   // added to a vector. Compared each frame; a different set is laid out and
   // repainted.
@@ -2178,6 +2182,24 @@ struct NodeInfo {
   Cursor fCursor = cursor::arrow{};
 };
 
+// The children a frame's walks visit: all of them -- or, below a node told
+// what of it is in view (a scrolled list's content), those that reach into
+// it, and those not laid out yet. What a frame costs is then what is on the
+// screen, not what the list holds.
+template <class T, class F> void eachChildInView(T &node, F &&f) {
+  const std::optional<skia::SkRect> &view = stateOf(node).fInView;
+  if (!view) {
+    eachChild(node, f);
+    return;
+  }
+  eachChild(node, [&](auto &child) {
+    const skia::SkRect &at = stateOf(child).fBounds;
+    if (at.isEmpty() || skia::SkRect::Intersects(at, *view)) {
+      f(child);
+    }
+  });
+}
+
 // The children in the order they are drawn: eachChild's order, unless one of
 // them has a depth. `f` gets the child and its position in eachChild order.
 template <class T, class F> void eachChildInDrawOrder(T &node, F &&f) {
@@ -2455,9 +2477,14 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
   }
   const Style *passed = state.fStyleApplied ? &state.fResolvedStyle
                                             : inherited;
-  eachChild(child, [&](auto &each) {
-    walk::update(each, context, own, passed, restyle);
-  });
+  // Out of view, a child's time and styles wait: all are walked when all
+  // are restyled.
+  const auto visit = [&](auto &each) { walk::update(each, context, own, passed, restyle); };
+  if (restyle) {
+    eachChild(child, visit);
+  } else {
+    eachChildInView(child, visit);
+  }
 }
 
 // What has to be laid out again, found bottom-up: nothing below can tell its
@@ -2467,10 +2494,17 @@ template <class N> bool markDirty(N &child) {
   State &state = child.fState;
   bool below = false;
   std::size_t signature = 0;
+  const std::optional<skia::SkRect> &view = state.fInView;
   eachChild(child, [&](auto &each) {
-    below = walk::markDirty(each) || below;
-    signature = signature * 1099511628211ull ^
-                static_cast<std::size_t>(stateOf(each).fId);
+    const State &one = stateOf(each);
+    // Out of view, only whether it changed itself: what changed below it is
+    // found when it comes into view.
+    if (view && !one.fBounds.isEmpty() && !skia::SkRect::Intersects(one.fBounds, *view)) {
+      below = below || !one.fLayoutValid || one.fPlacementDirty;
+    } else {
+      below = walk::markDirty(each) || below;
+    }
+    signature = signature * 1099511628211ull ^ static_cast<std::size_t>(one.fId);
   });
   if (signature != state.fChildSignature) {
     state.fChildSignature = signature;
@@ -2500,7 +2534,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   const bool drawn = drawnAbove && state.fVisible && state.fAlpha > 0.001f;
   skia::SkRect below = skia::SkRect::MakeEmpty();
   skia::SkRect area = skia::SkRect::MakeEmpty();
-  eachChild(child, [&](auto &each) {
+  eachChildInView(child, [&](auto &each) {
     below = joined(below, walk::collectDamage(each, drawn));
     const State &one = stateOf(each);
     area = joined(joined(area, one.fBounds), one.fDrawnBounds);
@@ -2519,7 +2553,7 @@ template <class N> bool hasDamage(N &child) {
     return true;
   }
   bool any = false;
-  eachChild(child, [&](auto &each) { any = any || walk::hasDamage(each); });
+  eachChildInView(child, [&](auto &each) { any = any || walk::hasDamage(each); });
   return any;
 }
 
@@ -2547,7 +2581,7 @@ void hover(N &child, float x, float y, bool visibleAbove,
   }
   const bool childrenVisible =
       visible && (!state.fMasking || state.fBounds.contains(x, y));
-  eachChild(child, [&](auto &each) {
+  eachChildInView(child, [&](auto &each) {
     walk::hover(each, x, y, childrenVisible, own, viewportWidth);
   });
 }
@@ -2833,7 +2867,7 @@ template <class N> bool animating(N &child) {
     return true;
   }
   bool any = false;
-  eachChild(child, [&](auto &each) { any = any || walk::animating(each); });
+  eachChildInView(child, [&](auto &each) { any = any || walk::animating(each); });
   return any;
 }
 
