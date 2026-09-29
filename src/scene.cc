@@ -941,11 +941,34 @@ inline constexpr Key kHome{9};
 inline constexpr Key kEnd{10};
 inline constexpr Key kBackspace{11};
 inline constexpr Key kDelete{12};
-// Letters, for the shortcuts made with them: select all, copy, cut, paste.
+// Letters, for the shortcuts made with them: select all, copy, cut, paste,
+// find, and the rest.
 inline constexpr Key kA{101};
+inline constexpr Key kB{102};
 inline constexpr Key kC{103};
+inline constexpr Key kD{104};
+inline constexpr Key kE{105};
+inline constexpr Key kF{106};
+inline constexpr Key kG{107};
+inline constexpr Key kH{108};
+inline constexpr Key kI{109};
+inline constexpr Key kJ{110};
+inline constexpr Key kK{111};
+inline constexpr Key kL{112};
+inline constexpr Key kM{113};
+inline constexpr Key kN{114};
+inline constexpr Key kO{115};
+inline constexpr Key kP{116};
+inline constexpr Key kQ{117};
+inline constexpr Key kR{118};
+inline constexpr Key kS{119};
+inline constexpr Key kT{120};
+inline constexpr Key kU{121};
 inline constexpr Key kV{122};
+inline constexpr Key kW{123};
 inline constexpr Key kX{124};
+inline constexpr Key kY{125};
+inline constexpr Key kZ{126};
 } // namespace keys
 
 namespace modifier {
