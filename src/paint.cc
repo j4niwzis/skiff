@@ -226,12 +226,18 @@ public:
     // second and at 60.
     fPrimaryBold.reset();
     if (fPrimary) {
-      skia::SkFontArguments::VariationPosition::Coordinate coordinate{
-          kWeightAxis, 600.0f};
-      skia::SkFontArguments::VariationPosition position{&coordinate, 1};
-      skia::SkFontArguments arguments;
-      arguments.setVariationDesignPosition(position);
-      fPrimaryBold = fPrimary->makeClone(arguments);
+      const auto weighed = [&](float weight) {
+        skia::SkFontArguments::VariationPosition::Coordinate coordinate{kWeightAxis, weight};
+        skia::SkFontArguments::VariationPosition position{&coordinate, 1};
+        skia::SkFontArguments arguments;
+        arguments.setVariationDesignPosition(position);
+        return fPrimary->makeClone(arguments);
+      };
+      fPrimaryBold = weighed(600.0f);
+      // Regular at 400 too: a variable face's own default can be heavier,
+      // and text then looks almost bold -- heavier than the bold names.
+      if (auto regular = weighed(400.0f))
+        fPrimary = std::move(regular);
     }
     this->invalidateCaches();
   }
@@ -248,6 +254,11 @@ public:
       font.setTypeface(fPrimary);
     }
     font.setEmbolden(bold);
+  }
+  // Where faces for characters none of the fallbacks has are looked for.
+  void setFontManager(skia::Sp<skia::SkFontMgr> manager) {
+    fManager = std::move(manager);
+    this->invalidateCaches();
   }
   void addFallback(skia::Sp<skia::SkTypeface> face) {
     if (face) {
@@ -374,6 +385,16 @@ private:
         break;
       }
     }
+    // None of the faces had it: the system's fonts are asked for one that
+    // has, which then stays among the fallbacks -- a box only where no font
+    // on the machine has the character.
+    if (found < 0 && fManager) {
+      if (auto face = fManager->matchFamilyStyleCharacter(nullptr, skia::SkFontStyle(), nullptr, 0, codepoint);
+          face && face->unicharToGlyph(codepoint) != 0) {
+        fFallbacks.push_back(std::move(face));
+        found = static_cast<int>(fFallbacks.size()) - 1;
+      }
+    }
     fCoverage.emplace(codepoint, found);
     return found;
   }
@@ -465,6 +486,7 @@ private:
   skia::Sp<skia::SkTypeface> fPrimaryBold;
   std::vector<skia::Sp<skia::SkTypeface>> fFallbacks;
   mutable std::unordered_map<std::int32_t, int> fCoverage;
+  skia::Sp<skia::SkFontMgr> fManager;
   mutable std::unordered_map<const skia::SkTypeface *, bool> fAsciiCovered;
   mutable std::unordered_map<std::uint64_t, float> fWidths;
 };
