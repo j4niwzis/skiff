@@ -92,11 +92,22 @@ if(SKIFF_TEXT_SHAPING)
     TARGETS alef)
   cme_options(alef "ALEF_TESTS OFF")
   cme_find_package(alef COMPONENTS grapheme line bidi REQUIRED)
-  # Found once: something before this may have found it already, and the
-  # config file HarfBuzz installs makes its targets again every time it is
-  # read -- a second read is an error about targets that exist.
-  if(NOT TARGET harfbuzz::harfbuzz)
-    cme_find_package(harfbuzz REQUIRED)
+  # A machine's HarfBuzz through pkg-config, read once. The config file it
+  # installs makes its targets again each time it is read, and a provider
+  # that looks at a system package before answering with it reads it twice
+  # -- an error about targets that exist. Without one on the machine, the
+  # port builds it from its source, which reads no such file.
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(skiff_harfbuzz QUIET IMPORTED_TARGET GLOBAL harfbuzz)
+  endif()
+  if(TARGET PkgConfig::skiff_harfbuzz)
+    set(skiff_harfbuzz_target PkgConfig::skiff_harfbuzz)
+  else()
+    if(NOT TARGET harfbuzz::harfbuzz)
+      cme_find_package(harfbuzz REQUIRED)
+    endif()
+    set(skiff_harfbuzz_target harfbuzz::harfbuzz)
   endif()
 endif()
 
@@ -144,7 +155,7 @@ if(SKIFF_TEXT_SHAPING)
   set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 26)
   target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_26)
   target_compile_definitions(${PROJECT_NAME} PUBLIC SKIFF_TEXT_SHAPING)
-  target_link_libraries(${PROJECT_NAME} PUBLIC alef::alef harfbuzz::harfbuzz)
+  target_link_libraries(${PROJECT_NAME} PUBLIC alef::alef ${skiff_harfbuzz_target})
 else()
   set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 23)
   target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_23)
