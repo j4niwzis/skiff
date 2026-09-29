@@ -122,6 +122,24 @@ module;
 export module skia;
 
 
+// sk_sp's comparisons, for those who import this: Skia's own are in its
+// headers, which an importer does not see, and its global set of operator==
+// cannot be exported whole -- some of it is static (SkISize's). These are
+// the same ones, in the same namespace as sk_sp, so that sp == nullptr is
+// found through sk_sp itself; != and nullptr == sp are C++20's rewritings of
+// them. Constrained, so that where Skia's are seen as well -- here -- these
+// are taken over them rather than clash.
+export template <class T>
+  requires true
+[[nodiscard]] inline bool operator==(const ::sk_sp<T> &a, std::nullptr_t) noexcept {
+  return !a;
+}
+export template <class T, class U>
+  requires true
+[[nodiscard]] inline bool operator==(const ::sk_sp<T> &a, const ::sk_sp<U> &b) noexcept {
+  return a.get() == b.get();
+}
+
 export namespace skia {
 
 template <class T> using Sp = ::sk_sp<T>;
