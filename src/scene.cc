@@ -845,8 +845,9 @@ private:
   static constexpr float kMinVelocity = 0.05f;
   static constexpr float kVelocityMix = 0.35f;
   static constexpr float kOverscroll = 0.4f;
-  // A wheel's glide: its time constant, long enough to join its notches.
-  static constexpr float kWheelTauMs = 110.0f;
+  // A wheel's glide: its time constant -- short enough to feel quick, long
+  // enough to join a turn's notches.
+  static constexpr float kWheelTauMs = 55.0f;
 
   float fOffset = 0.0f;
   float fTarget = 0.0f;
