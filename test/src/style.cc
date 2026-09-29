@@ -1038,4 +1038,24 @@ TEST(Stack, ItsChildrenGoOneUnderAnother) {
   EXPECT_FLOAT_EQ(scene.root().second.bounds().width(), 100.0f);
 }
 
+// A row lines its children up across the whole of its box, as a column
+// does, not across its tallest child: in the middle of a 60 px row, a 20 px
+// box is 20 px down, whatever else is beside it.
+struct Centred : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> tall = make<Box>({.width = 30.0f, .height = 40.0f}, kCard);
+    Box<> middle = make<Box>(
+        {.width = 20.0f, .height = 20.0f, .alignSelf = align::kMiddle}, kCard);
+  } parts;
+  Centred() { this->setHorizontal(); }
+};
+
+TEST(Stack, ARowAlignsAcrossItsWholeHeight) {
+  Scene<Centred> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(200.0f, 60.0f));
+  EXPECT_FLOAT_EQ(scene.root().parts.tall.bounds().fTop, 0.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.middle.bounds().fTop, 20.0f);
+}
+
 } // namespace

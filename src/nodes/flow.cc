@@ -242,6 +242,15 @@ template <class N> struct Flowing {
         rowHeight = std::max(rowHeight, shown[i]->fBounds.height() +
                                             shown[i]->fMargin.totalY());
       }
+      // What a child is aligned against across the row: a row not wrapped
+      // is the whole box across, as a column is (unless the box takes its
+      // height from what it holds); wrapped rows, each its tallest child.
+      const float line =
+          !fOptions.wrap &&
+                  !fNode.fState.fAutoSizeAxes
+                       .template has<skiff::scene::axis::y>()
+              ? std::max(rowHeight, box.height())
+              : rowHeight;
       const Spread gaps =
           fOptions.centreRows
               ? Spread{(box.width() - rowWidth) * 0.5f, 0.0f}
@@ -250,7 +259,7 @@ template <class N> struct Flowing {
       float x = gaps.fStart;
       for (std::size_t i = rowStart; i < end; ++i) {
         const skiff::scene::State &state = *shown[i];
-        places[i] = {x, y + crossOffset(state, rowHeight,
+        places[i] = {x, y + crossOffset(state, line,
                                               state.fBounds.height() +
                                                   state.fMargin.totalY())};
         x += state.fBounds.width() + state.fMargin.totalX() +
