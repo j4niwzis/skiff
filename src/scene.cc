@@ -3350,6 +3350,24 @@ public:
 };
 template <class T> const AnyNode::Ops &AnyNode::opsOf() noexcept { return kOps<T>; }
 
+// A type whose table the program makes in a unit of its own: kOpsElsewhere
+// specialized true for it, and opsElsewhere<T>() -- only declared here --
+// defined there, as `return AnyNode::opsOf<T>();`. Where a tree is walked,
+// the table of such a type is then a call to a function it cannot see into:
+// nothing of the type's walks, or of all under it, is made or inlined there.
+// (An extern template does not do it: clang instantiates what is declared
+// extern anyway, to inline it, where it optimizes.)
+template <class T> inline constexpr bool kOpsElsewhere = false;
+template <class T> const AnyNode::Ops &opsElsewhere() noexcept;
+// The table a walk takes for a type: its own, or the program's.
+template <class T> [[nodiscard]] const AnyNode::Ops *tableOf() noexcept {
+  if constexpr (kOpsElsewhere<T>) {
+    return &opsElsewhere<T>();
+  } else {
+    return &AnyNode::opsOf<T>();
+  }
+}
+
 // A node seen through the table of its walks, and not owned: what every walk
 // takes for a child it does not know the type of -- an AnyNode's, or,
 // outside a release build (kErasedWalks), any child at all.
@@ -3362,12 +3380,12 @@ public:
   template <class T>
     requires std::derived_from<T, Node>
   [[nodiscard]] static AnyNodeRef of(T &node) {
-    static const AnyNode::Ops *volatile table = &AnyNode::opsOf<T>();
+    static const AnyNode::Ops *volatile table = tableOf<T>();
     return AnyNodeRef(&node, table);
   }
   // The node, when it is a T.
   template <class T> [[nodiscard]] T *get() noexcept {
-    return fOps == &AnyNode::opsOf<T>() ? static_cast<T *>(fNode) : nullptr;
+    return fOps == tableOf<T>() ? static_cast<T *>(fNode) : nullptr;
   }
   [[nodiscard]] State &state() { return fOps->fState(fNode); }
   [[nodiscard]] const AnyNode::Ops &ops() const noexcept { return *fOps; }
