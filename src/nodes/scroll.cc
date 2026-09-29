@@ -66,7 +66,10 @@ public:
   void layoutChildren() {
     namespace scene = skiff::scene;
     const skia::SkRect box = fState.contentBox();
-    const float offset = fScroll.offset();
+    // Placed on whole device pixels: the glide goes on smoothly, and what
+    // is drawn follows it a whole pixel at a time -- every row, its text
+    // and its fills together.
+    const float offset = scene::snapToPixel(fScroll.offset());
     const skia::SkRect scrolled = skia::SkRect::MakeXYWH(
         box.fLeft, box.fTop - offset, box.width(), box.height());
     // Only scrolled: the contents move as they are, not laid out again --
@@ -107,15 +110,15 @@ public:
     if (fJumpTo) {
       const float to = std::clamp(*fJumpTo, 0.0f, fExtent);
       fJumpTo.reset();
-      const float dy = fScroll.offset() - to;
+      const float dy = offset - scene::snapToPixel(to);
       fScroll.jumpTo(to);
       scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
-      fLastOffset = to;
+      fLastOffset = scene::snapToPixel(to);
     } else if (following && !fToEnd && fScroll.offset() != fExtent) {
-      const float dy = fScroll.offset() - fExtent;
+      const float dy = offset - scene::snapToPixel(fExtent);
       fScroll.jumpTo(fExtent);
       scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
-      fLastOffset = fExtent;
+      fLastOffset = scene::snapToPixel(fExtent);
     }
     if (fToEnd) {
       fToEnd = false;
@@ -123,9 +126,9 @@ public:
         fScroll.glideTo(fExtent);
       } else {
         fScroll.jumpTo(fExtent);
-        const float dy = fLastOffset - fExtent;
+        const float dy = fLastOffset - scene::snapToPixel(fExtent);
         scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
-        fLastOffset = fExtent;
+        fLastOffset = scene::snapToPixel(fExtent);
       }
     }
     // What of the contents is in view -- and a screen above and below, so
@@ -149,8 +152,9 @@ public:
       // snapping back and forth.
       if (moved != 0.0f) {
         fScroll.shift(moved);
-        scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, -moved); });
-        fLastOffset = offset + moved;
+        const float placed = scene::snapToPixel(moved);
+        scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, -placed); });
+        fLastOffset = offset + placed;
       }
     }
   }

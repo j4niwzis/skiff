@@ -1192,6 +1192,20 @@ inline PillPainter &pillPainter() {
   return kept;
 }
 
+// How many device pixels a unit is: the window's display scale, said by the
+// host each frame. What moves -- a scrolled list -- is placed on whole
+// device pixels with it, so that its text and its fills move together
+// rather than the glyphs creeping by fractions first.
+inline float &pixelScale() {
+  static float kept = 1.0f;
+  return kept;
+}
+// A position on the device pixel grid.
+[[nodiscard]] inline float snapToPixel(float v) {
+  const float scale = pixelScale() > 0.0f ? pixelScale() : 1.0f;
+  return std::round(v * scale) / scale;
+}
+
 // ---- the state every node has --------------------------------------------
 
 // What every node is, beyond what its own type adds: its layout inputs and
