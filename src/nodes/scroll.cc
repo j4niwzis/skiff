@@ -46,6 +46,14 @@ public:
     fScroll.jumpTo(offset);
     this->invalidateLayout();
   }
+  // To the end, however long the contents turn out to be: where they are
+  // not laid out yet, once they are.
+  // Gliding there, or at once -- a list shown anew starts at its end.
+  void scrollToEnd(bool glide = true) {
+    fToEnd = true;
+    fToEndGlide = glide;
+    this->invalidateLayout();
+  }
   // Eased: the view glides there rather than jumping.
   void scrollTo(float offset) {
     fScroll.glideTo(offset);
@@ -91,6 +99,17 @@ public:
     const skia::SkRect content = scene::childBounds(*this);
     fExtent = std::max(0.0f, content.height() - box.height());
     fScroll.setBounds(0.0f, fExtent);
+    if (fToEnd) {
+      fToEnd = false;
+      if (fToEndGlide) {
+        fScroll.glideTo(fExtent);
+      } else {
+        fScroll.jumpTo(fExtent);
+        const float dy = fLastOffset - fExtent;
+        scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
+        fLastOffset = fExtent;
+      }
+    }
     // What of the contents is in view -- and a screen above and below, so
     // what is scrolled to next is ready: the frame's walks go no further.
     const skia::SkRect seen = box.makeOutset(0.0f, box.height());
@@ -340,6 +359,8 @@ private:
   float fPressX = 0.0f;
   float fPressY = 0.0f;
   bool fArmed = false;
+  bool fToEnd = false;
+  bool fToEndGlide = true;
   // When the press was, and how long it may rest before a move is no
   // longer a scroll.
   std::chrono::steady_clock::time_point fPressedAt{};
