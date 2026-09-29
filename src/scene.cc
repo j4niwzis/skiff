@@ -2167,6 +2167,12 @@ struct Node {
   [[nodiscard]] bool focusable(this const auto &self) {
     return self.acceptsInput();
   }
+  // Whether a press on it moves the keyboard's focus to it: a text field's
+  // does, a button's, a row's or a selectable text's does not -- they are
+  // reached by Tab, and a click on them leaves the focus where it is (Qt's
+  // ClickFocus and NoFocus, GTK's focus-on-click). A program where the
+  // input keeps the focus through clicks elsewhere needs no work for it.
+  [[nodiscard]] bool takesFocusOnPress(this const auto &) { return false; }
   [[nodiscard]] bool hoverChangesAppearance(this const auto &) {
     return false;
   }
@@ -2859,7 +2865,7 @@ void routePointer(N &child, const Path &path, std::size_t at,
   if (at == path.size()) {
     if (!reply.fHandled) {
       routed.fTargetDelivered = true;
-      routed.fTargetFocusable = child.focusable();
+      routed.fTargetFocusable = child.focusable() && child.takesFocusOnPress();
       deliver(phase::target{});
     }
     return;
@@ -3414,9 +3420,8 @@ public:
                    [](const auto &) { return false; }},
         input);
     if (!found) {
-      if (press) {
-        this->focus(0);
-      }
+      // A press on nothing leaves the focus where it is: typing still goes
+      // where it went.
       if (ending) {
         fCapture = 0;
         fDown = 0;
