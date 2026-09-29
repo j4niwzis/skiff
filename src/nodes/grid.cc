@@ -1,4 +1,4 @@
-export module skiff.nodes:grid;
+export module skiff.nodes.grid;
 
 import std;
 import skia;

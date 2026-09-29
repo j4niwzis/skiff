@@ -9,14 +9,14 @@ import skiff.scene;
 // scroll containers, caches and clickable areas. Each derives from
 // scene::Node and holds its children as members of their own types.
 
-export import :box;
-export import :text;
-export import :sprite;
-export import :flow;
-export import :scroll;
-export import :cached;
-export import :clickable;
-export import :grid;
-export import :group;
-export import :image;
-export import :icon;
+export import skiff.nodes.box;
+export import skiff.nodes.text;
+export import skiff.nodes.sprite;
+export import skiff.nodes.flow;
+export import skiff.nodes.scroll;
+export import skiff.nodes.cached;
+export import skiff.nodes.clickable;
+export import skiff.nodes.grid;
+export import skiff.nodes.group;
+export import skiff.nodes.image;
+export import skiff.nodes.icon;

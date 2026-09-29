@@ -1,4 +1,4 @@
-export module skiff.nodes:cached;
+export module skiff.nodes.cached;
 
 import std;
 import skia;

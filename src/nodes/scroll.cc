@@ -1,4 +1,4 @@
-export module skiff.nodes:scroll;
+export module skiff.nodes.scroll;
 
 import std;
 import skia;

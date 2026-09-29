@@ -1,4 +1,4 @@
-export module skiff.nodes:text;
+export module skiff.nodes.text;
 
 import std;
 import skia;

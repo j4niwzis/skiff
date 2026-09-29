@@ -1,4 +1,4 @@
-export module skiff.nodes:box;
+export module skiff.nodes.box;
 
 import std;
 import skia;

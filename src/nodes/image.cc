@@ -1,4 +1,4 @@
-export module skiff.nodes:image;
+export module skiff.nodes.image;
 
 import std;
 import skia;

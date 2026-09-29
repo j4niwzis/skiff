@@ -1,4 +1,4 @@
-export module skiff.nodes:group;
+export module skiff.nodes.group;
 
 import std;
 import skia;

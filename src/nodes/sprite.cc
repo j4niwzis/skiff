@@ -1,4 +1,4 @@
-export module skiff.nodes:sprite;
+export module skiff.nodes.sprite;
 
 import std;
 import skia;

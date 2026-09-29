@@ -1,4 +1,4 @@
-export module skiff.nodes:flow;
+export module skiff.nodes.flow;
 
 import std;
 import skia;

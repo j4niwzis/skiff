@@ -1,4 +1,4 @@
-export module skiff.nodes:clickable;
+export module skiff.nodes.clickable;
 
 import std;
 import skia;

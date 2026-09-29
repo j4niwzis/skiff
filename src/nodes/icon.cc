@@ -1,4 +1,4 @@
-export module skiff.nodes:icon;
+export module skiff.nodes.icon;
 
 import std;
 import skia;
