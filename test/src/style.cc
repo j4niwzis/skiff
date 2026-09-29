@@ -1018,6 +1018,45 @@ TEST(Focus, APressFocusesWithoutShowingIt) {
   EXPECT_TRUE(focusVisible());
 }
 
+// A menu: the arrows move the focus through its items, round from the last
+// to the first, and never out of it.
+struct ArrowMenu : skiff::nodes::Stack {
+  struct parts_t {
+    ClickProbe first = make<ClickProbe>({.width = 10.0f, .height = 10.0f});
+    ClickProbe second = make<ClickProbe>({.width = 10.0f, .height = 10.0f});
+  } parts;
+  using Node::onKey;
+  void onKey(phase::bubble, const key::down &press, Reply &reply) {
+    if (press.key == keys::kUp || press.key == keys::kDown) {
+      reply.moveFocus(press.key == keys::kUp);
+    }
+  }
+};
+struct WithMenu : Node {
+  struct parts_t {
+    ClickProbe outside = make<ClickProbe>({.width = 10.0f, .height = 10.0f});
+    ArrowMenu menu;
+  } parts;
+};
+
+TEST(Focus, ArrowsGoRoundAMenu) {
+  Scene<WithMenu> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(100.0f, 100.0f));
+  const std::array layers{InputRouter::Layer{scene.handle(), false}};
+  InputRouter router;
+  router.setLayers(layers);
+  auto &menu = scene.root().parts.menu.parts;
+  scene.focus(menu.first);
+  router.key(KeyEvent{key::down{keys::kDown, Modifiers{}, false}});
+  EXPECT_TRUE(menu.second.focused());
+  router.key(KeyEvent{key::down{keys::kDown, Modifiers{}, false}});
+  EXPECT_TRUE(menu.first.focused()) << "round to the first, not out to the node outside";
+  router.key(KeyEvent{key::down{keys::kUp, Modifiers{}, false}});
+  EXPECT_TRUE(menu.second.focused());
+  EXPECT_FALSE(scene.root().parts.outside.focused());
+}
+
 // A Stack lays its own children out as a column: declared, not placed.
 struct Declared : skiff::nodes::Stack {
   Box<> first = make<Box>({.fillX = true, .height = 10.0f}, kCard);

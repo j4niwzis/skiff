@@ -1119,9 +1119,19 @@ struct Reply {
   NodeId fCurrent = 0;
   bool fHandled = false;
   bool fRequestFocus = false;
+  // The focus moved on among the focusable nodes inside the node that asks,
+  // back where `true`, round from the last to the first: as arrows go
+  // through a menu, and never out of it.
+  std::optional<bool> fMoveFocus;
+  NodeId fFocusScope = 0;
 
   void handle() noexcept { fHandled = true; }
   void requestFocus() noexcept { fRequestFocus = true; }
+  void moveFocus(bool backwards) noexcept {
+    fMoveFocus = backwards;
+    fFocusScope = fCurrent;
+    fHandled = true;
+  }
 };
 
 struct Semantics {
@@ -3549,6 +3559,10 @@ public:
     Reply reply;
     reply.fTarget = fFocus;
     walk::routeKey(fRoot, path, 0, input, reply);
+    if (reply.fMoveFocus) {
+      focusVisible() = true;
+      this->focusNextWithin(reply.fFocusScope, *reply.fMoveFocus);
+    }
     this->restyleDirty();
     return reply.fHandled;
   }
@@ -3669,6 +3683,34 @@ public:
     std::vector<NodeId> out;
     walk::collectFocusable(fRoot, out);
     return out;
+  }
+
+  // As focusNext, among the focusable nodes inside `scope` only.
+  void focusNextWithin(NodeId scope, bool backwards) {
+    Path inside;
+    if (!walk::findPath(fRoot, scope, inside)) {
+      return;
+    }
+    std::vector<NodeId> nodes;
+    for (const NodeId id : this->focusableIds()) {
+      Path path;
+      if (id != scope && walk::findPath(fRoot, id, path) &&
+          std::ranges::starts_with(path, inside)) {
+        nodes.push_back(id);
+      }
+    }
+    if (nodes.empty()) {
+      return;
+    }
+    const auto found = std::ranges::find(nodes, fFocus);
+    std::size_t index = found == nodes.end()
+                            ? (backwards ? nodes.size() - 1 : 0)
+                            : static_cast<std::size_t>(found - nodes.begin());
+    if (found != nodes.end()) {
+      index = backwards ? (index + nodes.size() - 1) % nodes.size()
+                        : (index + 1) % nodes.size();
+    }
+    this->focus(nodes[index]);
   }
 
   void focusNext(bool backwards) {
