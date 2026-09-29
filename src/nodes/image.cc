@@ -28,6 +28,12 @@ public:
   explicit Image(ImageSource source, Fit how = fit::cover{})
       : fSource(std::move(source)), fFit(how) {}
 
+  // Another picture: drawn from where it comes from now.
+  void setSource(ImageSource source) {
+    fSource = std::move(source);
+    this->markDamaged();
+  }
+
   [[nodiscard]] const skia::Sp<skia::SkImage> *image() const {
     const skia::Sp<skia::SkImage> *found = fSource ? fSource() : nullptr;
     return found && *found ? found : nullptr;
