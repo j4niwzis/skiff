@@ -2706,8 +2706,17 @@ template <class N> void shiftSubtree(N &node, float dy) { shiftSubtree(node, 0.0
 
 // Lays a child out in a box: what a container's layoutChildren calls for each
 // of its children, after placing it.
+// Outside a release build, a node laid out by what holds it -- a dialog its
+// content, a slide-over its pages -- goes through its table too, as a walk's
+// child does: not the typed layout, which made the node's whole subtree
+// wherever its holder was, past the program's own boundaries.
 template <class N> void layout(N &child, const skia::SkRect &parentBox) {
-  detail::layoutNode(child, parentBox);
+  if constexpr (kErasedWalks && std::derived_from<N, Node>) {
+    AnyNodeRef seen = AnyNodeRef::of(child);
+    layout(seen, parentBox);
+  } else {
+    detail::layoutNode(child, parentBox);
+  }
 }
 // Draws a node and its subtree the way the scene does; a node that draws its
 // subtree another way calls this for what it does not do itself.
@@ -2715,7 +2724,12 @@ template <class T> void drawDefault(T &node, skia::SkCanvas *canvas, float alpha
   detail::drawNode(node, canvas, alpha);
 }
 template <class N> void draw(N &child, skia::SkCanvas *canvas, float alpha) {
-  child.draw(canvas, alpha);
+  if constexpr (kErasedWalks && std::derived_from<N, Node>) {
+    AnyNodeRef seen = AnyNodeRef::of(child);
+    draw(seen, canvas, alpha);
+  } else {
+    child.draw(canvas, alpha);
+  }
 }
 
 namespace walk {
@@ -3284,10 +3298,8 @@ private:
   static constexpr Ops kOps{
       +[](void *n) { delete static_cast<T *>(n); },
       +[](void *n) -> State & { return as<T>(n).fState; },
-      +[](void *n, const skia::SkRect &box) { scene::layout(as<T>(n), box); },
-      +[](void *n, skia::SkCanvas *canvas, float alpha) {
-        scene::draw(as<T>(n), canvas, alpha);
-      },
+      +[](void *n, const skia::SkRect &box) { detail::layoutNode(as<T>(n), box); },
+      +[](void *n, skia::SkCanvas *canvas, float alpha) { as<T>(n).draw(canvas, alpha); },
       +[](void *n, UpdateContext &c, StyleResolver r, const Style *s,
           bool all) { walk::update(as<T>(n), c, r, s, all); },
       +[](void *n) { return walk::markDirty(as<T>(n)); },
