@@ -179,14 +179,15 @@ struct ProbeTheme {
 // ---- styles
 
 struct CardScreen : Node {
-  Box<> card = make<Box>({.width = 10.0f, .height = 6.0f, .roles = {role<Card>}},
-                         kOriginal);
-  void forEachChild(auto &&f) { f(card); }
+  struct parts_t {
+    Box<> card = make<Box>({.width = 10.0f, .height = 6.0f, .roles = {role<Card>}},
+                           kOriginal);
+  } parts;
 };
 
 TEST(Style, ResolvesTypedRolesStatesAndViewport) {
   Scene<CardScreen> scene{std::in_place};
-  Box<> &card = scene.root().card;
+  Box<> &card = scene.root().parts.card;
   scene.setStyleSheet<CardTheme>();
   scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
 
@@ -223,20 +224,18 @@ TEST(Style, ResolvesTypedRolesStatesAndViewport) {
 }
 
 struct TextPanel : Node {
-  Text inherited = make<Text>({}, "Inherited", 11.0f, kOriginal, false);
-  Text overridden =
-      make<Text>({.roles = {role<OwnText>}}, "Own", 12.0f, kOriginal, true);
-  void forEachChild(auto &&f) {
-    f(inherited);
-    f(overridden);
-  }
+  struct parts_t {
+    Text inherited = make<Text>({}, "Inherited", 11.0f, kOriginal, false);
+    Text overridden =
+        make<Text>({.roles = {role<OwnText>}}, "Own", 12.0f, kOriginal, true);
+  } parts;
 };
 
 TEST(Style, InheritsTextPropertiesAndAllowsOverrides) {
   Scene<TextPanel> scene{std::in_place};
   scene.root().fState.apply({.roles = {role<Panel>}});
-  Text &inherited = scene.root().inherited;
-  Text &overridden = scene.root().overridden;
+  Text &inherited = scene.root().parts.inherited;
+  Text &overridden = scene.root().parts.overridden;
   scene.setStyleSheet<TextTheme>();
 
   EXPECT_EQ(inherited.colour(), kInheritedText);
@@ -256,8 +255,9 @@ TEST(Style, InheritsTextPropertiesAndAllowsOverrides) {
 }
 
 struct LaterScreen : Node {
-  std::optional<Box<>> card;
-  void forEachChild(auto &&f) { f(card); }
+  struct parts_t {
+    std::optional<Box<>> card;
+  } parts;
 };
 
 TEST(Style, StylesNodesAddedAfterTheSheetIsInstalled) {
@@ -265,7 +265,7 @@ TEST(Style, StylesNodesAddedAfterTheSheetIsInstalled) {
   scene.layoutIfNeeded(skia::SkRect::MakeWH(800.0f, 300.0f));
   scene.setStyleSheet<CardTheme>();
 
-  Box<> &card = scene.root().card.emplace(
+  Box<> &card = scene.root().parts.card.emplace(
       make<Box>({.roles = {role<Card>}, .selected = true}, kOriginal));
   scene.update(1.0);
 
@@ -290,15 +290,16 @@ TEST(Style, StylesNodesAddedAfterTheSheetIsInstalled) {
 }
 
 struct WidgetScreen : Node {
-  WidgetBox widget = placed({.roles = {role<Widget>}}, WidgetBox(kOriginal));
-  void forEachChild(auto &&f) { f(widget); }
+  struct parts_t {
+    WidgetBox widget = placed({.roles = {role<Widget>}}, WidgetBox(kOriginal));
+  } parts;
 };
 
 TEST(Style, SelectsANodeTypeOfItsOwnWithoutRtti) {
   Scene<WidgetScreen> scene{std::in_place};
   scene.setStyleSheet<WidgetTheme>();
-  EXPECT_FLOAT_EQ(scene.root().widget.fState.width(), 64.0f);
-  EXPECT_EQ(scene.root().widget.colour(), kCard);
+  EXPECT_FLOAT_EQ(scene.root().parts.widget.fState.width(), 64.0f);
+  EXPECT_EQ(scene.root().parts.widget.colour(), kCard);
 }
 
 struct AnyBoxTheme {
@@ -306,20 +307,18 @@ struct AnyBoxTheme {
       makeStyleSheet().rule(select<Box>(), {.alpha = 0.5f});
 };
 struct TwoBoxes : Node {
-  Box<> plain{kOriginal};
-  Box<Box<>> holding{kOriginal, Box<>(kOriginal)};
-  void forEachChild(auto &&f) {
-    f(plain);
-    f(holding);
-  }
+  struct parts_t {
+    Box<> plain{kOriginal};
+    Box<Box<>> holding{kOriginal, Box<>(kOriginal)};
+  } parts;
 };
 
 TEST(Style, ARuleForATemplateMatchesEverySpecialisation) {
   Scene<TwoBoxes> scene{std::in_place};
   scene.setStyleSheet<AnyBoxTheme>();
-  EXPECT_FLOAT_EQ(scene.root().plain.fState.alpha(), 0.5f);
-  EXPECT_FLOAT_EQ(scene.root().holding.fState.alpha(), 0.5f);
-  EXPECT_FLOAT_EQ(std::get<0>(scene.root().holding.fChildren).fState.alpha(),
+  EXPECT_FLOAT_EQ(scene.root().parts.plain.fState.alpha(), 0.5f);
+  EXPECT_FLOAT_EQ(scene.root().parts.holding.fState.alpha(), 0.5f);
+  EXPECT_FLOAT_EQ(std::get<0>(scene.root().parts.holding.fChildren).fState.alpha(),
                   0.5f);
   EXPECT_FLOAT_EQ(scene.root().fState.alpha(), 1.0f);
 }
@@ -327,9 +326,10 @@ TEST(Style, ARuleForATemplateMatchesEverySpecialisation) {
 // ---- state and damage
 
 struct OneBox : Node {
-  Box<> child = make<Box>(
-      {.x = 12.0f, .y = 8.0f, .width = 40.0f, .height = 20.0f}, kCard);
-  void forEachChild(auto &&f) { f(child); }
+  struct parts_t {
+    Box<> child = make<Box>(
+        {.x = 12.0f, .y = 8.0f, .width = 40.0f, .height = 20.0f}, kCard);
+  } parts;
 };
 
 TEST(State, DamagesNodesWithoutStateStyleRules) {
@@ -337,36 +337,38 @@ TEST(State, DamagesNodesWithoutStateStyleRules) {
   scene.layoutIfNeeded(kViewport);
   (void)scene.finishFrame();
 
-  scene.root().child.setSelected(true);
+  scene.root().parts.child.setSelected(true);
   EXPECT_FALSE(scene.finishFrame().fDamage.isEmpty());
 
-  scene.root().child.setDisabled(true);
+  scene.root().parts.child.setDisabled(true);
   EXPECT_FALSE(scene.finishFrame().fDamage.isEmpty());
 }
 
 struct ProbeScreen : Node {
-  StyleProbe probe = make<StyleProbe>(
-      {.width = 40.0f, .height = 20.0f, .roles = {role<ProbeRole>}});
-  void forEachChild(auto &&f) { f(probe); }
+  struct parts_t {
+    StyleProbe probe = make<StyleProbe>(
+        {.width = 40.0f, .height = 20.0f, .roles = {role<ProbeRole>}});
+  } parts;
 };
 
 TEST(State, HoverOnlyRestylesNodesWithHoverRules) {
   Scene<ProbeScreen> scene{std::in_place};
   scene.setStyleSheet<ProbeTheme>();
   scene.layoutIfNeeded(kViewport);
-  const int applications = scene.root().probe.fApplications;
+  const int applications = scene.root().parts.probe.fApplications;
   (void)scene.finishFrame();
 
   scene.setHover(10.0f, 10.0f);
-  EXPECT_TRUE(scene.root().probe.hovered());
-  EXPECT_EQ(scene.root().probe.fApplications, applications);
+  EXPECT_TRUE(scene.root().parts.probe.hovered());
+  EXPECT_EQ(scene.root().parts.probe.fApplications, applications);
   EXPECT_TRUE(scene.finishFrame().fDamage.isEmpty());
 }
 
 struct HalfText : Node {
-  Text text = make<Text>({.width = 0.5f, .relativeSize = axes::kX}, "short",
-                         14.0f, skia::kWhite);
-  void forEachChild(auto &&f) { f(text); }
+  struct parts_t {
+    Text text = make<Text>({.width = 0.5f, .relativeSize = axes::kX}, "short",
+                           14.0f, skia::kWhite);
+  } parts;
 };
 
 TEST(TextLayout, RelativeWidthIsOwnedByLayout) {
@@ -375,23 +377,21 @@ TEST(TextLayout, RelativeWidthIsOwnedByLayout) {
   Scene<HalfText> scene{std::in_place};
   scene.state().apply({.fill = true});
   scene.layoutIfNeeded(skia::SkRect::MakeWH(240.0f, 80.0f));
-  EXPECT_FLOAT_EQ(scene.root().text.bounds().width(), 120.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.text.bounds().width(), 120.0f);
   Text::setFont(nullptr); // the font is this test's
 }
 
 // Wrapped text follows its parent's width from one layout to the next:
 // the width it wraps in is not written over the one it was given.
 struct WrappedTexts : Node {
-  Text filling = make<Text>({.fillX = true}, "one two three four five six seven eight nine ten",
-                            14.0f, skia::kWhite);
-  Text unsized{"one two three four five six seven eight nine ten", 14.0f, skia::kWhite};
+  struct parts_t {
+    Text filling = make<Text>({.fillX = true}, "one two three four five six seven eight nine ten",
+                              14.0f, skia::kWhite);
+    Text unsized{"one two three four five six seven eight nine ten", 14.0f, skia::kWhite};
+  } parts;
   WrappedTexts() {
-    filling.setWrapped(true);
-    unsized.setWrapped(true);
-  }
-  void forEachChild(auto &&f) {
-    f(filling);
-    f(unsized);
+    parts.filling.setWrapped(true);
+    parts.unsized.setWrapped(true);
   }
 };
 
@@ -401,33 +401,34 @@ TEST(TextLayout, WrappedTextFollowsItsParentsWidth) {
   Scene<WrappedTexts> scene{std::in_place};
   scene.state().apply({.fill = true});
   scene.layoutIfNeeded(skia::SkRect::MakeWH(240.0f, 400.0f));
-  EXPECT_FLOAT_EQ(scene.root().filling.bounds().width(), 240.0f);
-  EXPECT_FLOAT_EQ(scene.root().unsized.bounds().width(), 240.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.filling.bounds().width(), 240.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.unsized.bounds().width(), 240.0f);
   scene.layoutIfNeeded(skia::SkRect::MakeWH(120.0f, 400.0f));
-  EXPECT_FLOAT_EQ(scene.root().filling.bounds().width(), 120.0f);
-  EXPECT_FLOAT_EQ(scene.root().unsized.bounds().width(), 120.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.filling.bounds().width(), 120.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.unsized.bounds().width(), 120.0f);
   scene.layoutIfNeeded(skia::SkRect::MakeWH(480.0f, 400.0f));
-  EXPECT_FLOAT_EQ(scene.root().filling.bounds().width(), 480.0f);
-  EXPECT_FLOAT_EQ(scene.root().unsized.bounds().width(), 480.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.filling.bounds().width(), 480.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.unsized.bounds().width(), 480.0f);
   Text::setFont(nullptr); // the font is this test's
 }
 
 // ---- children held in other ways
 
 struct Switching : Node {
-  std::variant<Box<>, Text> body{std::in_place_type<Box<>>, kCard};
-  void forEachChild(auto &&f) { f(body); }
+  struct parts_t {
+    std::variant<Box<>, Text> body{std::in_place_type<Box<>>, kCard};
+  } parts;
 };
 
 TEST(Children, AVariantAlternativeIsLaidOutAndOldIdsStopResolving) {
   Scene<Switching> scene{std::in_place};
-  std::get<Box<>>(scene.root().body).apply({.width = 30.0f, .height = 10.0f});
+  std::get<Box<>>(scene.root().parts.body).apply({.width = 30.0f, .height = 10.0f});
   scene.layoutIfNeeded(kViewport);
-  const NodeId before = std::get<Box<>>(scene.root().body).id();
-  EXPECT_FLOAT_EQ(std::get<Box<>>(scene.root().body).bounds().width(), 30.0f);
+  const NodeId before = std::get<Box<>>(scene.root().parts.body).id();
+  EXPECT_FLOAT_EQ(std::get<Box<>>(scene.root().parts.body).bounds().width(), 30.0f);
   (void)scene.finishFrame();
 
-  scene.root().body.emplace<Text>("now text", 12.0f, kOriginal);
+  scene.root().parts.body.emplace<Text>("now text", 12.0f, kOriginal);
   EXPECT_TRUE(scene.layoutIfNeeded(kViewport));
   EXPECT_FALSE(scene.finishFrame().fDamage.isEmpty());
   scene.focus(before);
@@ -435,54 +436,54 @@ TEST(Children, AVariantAlternativeIsLaidOutAndOldIdsStopResolving) {
 }
 
 struct Rows : Node {
-  std::vector<Box<>> rows;
-  std::vector<AnyNode> mixed;
-  void forEachChild(auto &&f) {
-    f(rows);
-    f(mixed);
-  }
+  struct parts_t {
+    std::vector<Box<>> rows;
+    std::vector<AnyNode> mixed;
+  } parts;
 };
 
 TEST(Children, AVectorOfNodesAndOfAnyNodes) {
   Scene<Rows> scene{std::in_place};
-  scene.root().rows.push_back(make<Box>({.width = 10.0f, .height = 5.0f}, kCard));
-  scene.root().rows.push_back(make<Box>({.y = 5.0f, .width = 10.0f, .height = 5.0f}, kCard));
-  scene.root().mixed.emplace_back(make<Box>({.y = 10.0f, .width = 20.0f, .height = 5.0f}, kCard));
-  scene.root().mixed.emplace_back(make<ClickProbe>({.y = 20.0f, .width = 20.0f, .height = 10.0f}));
+  scene.root().parts.rows.push_back(make<Box>({.width = 10.0f, .height = 5.0f}, kCard));
+  scene.root().parts.rows.push_back(make<Box>({.y = 5.0f, .width = 10.0f, .height = 5.0f}, kCard));
+  scene.root().parts.mixed.emplace_back(make<Box>({.y = 10.0f, .width = 20.0f, .height = 5.0f}, kCard));
+  scene.root().parts.mixed.emplace_back(make<ClickProbe>({.y = 20.0f, .width = 20.0f, .height = 10.0f}));
   EXPECT_TRUE(scene.layoutIfNeeded(kViewport));
-  EXPECT_FLOAT_EQ(scene.root().mixed[0].state().fBounds.width(), 20.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.mixed[0].state().fBounds.width(), 20.0f);
 
   PointerEvent down = pointer::down{5.0f, 25.0f};
   EXPECT_TRUE(scene.dispatchPointer(down));
-  ASSERT_NE(scene.root().mixed[1].get<ClickProbe>(), nullptr);
-  EXPECT_EQ(scene.root().mixed[1].get<ClickProbe>()->fClicks, 1);
-  EXPECT_EQ(scene.root().mixed[0].get<ClickProbe>(), nullptr);
+  ASSERT_NE(scene.root().parts.mixed[1].get<ClickProbe>(), nullptr);
+  EXPECT_EQ(scene.root().parts.mixed[1].get<ClickProbe>()->fClicks, 1);
+  EXPECT_EQ(scene.root().parts.mixed[0].get<ClickProbe>(), nullptr);
 }
 
 // A node that is also a range of its own items, marked as a node.
 struct Listing : Node {
-  std::vector<Box<>> items;
-  auto begin() { return items.begin(); }
-  auto end() { return items.end(); }
-  void forEachChild(auto &&f) { f(items); }
+  struct parts_t {
+    std::vector<Box<>> items;
+  } parts;
+  auto begin() { return parts.items.begin(); }
+  auto end() { return parts.items.end(); }
 };
 } // namespace
 template <> inline constexpr bool skiff::scene::kTreatAsNode<Listing> = true;
 namespace {
 
 struct HasListing : Node {
-  Listing listing;
-  void forEachChild(auto &&f) { f(listing); }
+  struct parts_t {
+    Listing listing;
+  } parts;
 };
 
 TEST(Children, ARangeMarkedAsANodeIsWalkedAsOne) {
   Scene<HasListing> scene{std::in_place};
-  scene.root().listing.apply({.width = 50.0f, .height = 20.0f});
-  scene.root().listing.items.push_back(
+  scene.root().parts.listing.apply({.width = 50.0f, .height = 20.0f});
+  scene.root().parts.listing.parts.items.push_back(
       make<Box>({.width = 10.0f, .height = 5.0f}, kCard));
   scene.layoutIfNeeded(kViewport);
-  EXPECT_FLOAT_EQ(scene.root().listing.bounds().width(), 50.0f);
-  EXPECT_FLOAT_EQ(scene.root().listing.items[0].bounds().width(), 10.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.listing.bounds().width(), 50.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.listing.parts.items[0].bounds().width(), 10.0f);
 }
 
 // ---- input
@@ -506,17 +507,18 @@ TEST(Input, PropagatesCaptureTargetAndBubbleInOrder) {
 }
 
 struct Dragged : Node {
-  InputProbe<> drag;
+  struct parts_t {
+    InputProbe<> drag;
+  } parts;
   explicit Dragged(std::vector<std::string> *events)
-      : drag(make<InputProbe>({.width = 40.0f, .height = 20.0f}, events,
-                              "drag", true)) {}
-  void forEachChild(auto &&f) { f(drag); }
+      : parts{.drag = make<InputProbe>({.width = 40.0f, .height = 20.0f}, events,
+                              "drag", true)} {}
 };
 
 TEST(Input, PointerCaptureSurvivesLeavingTheControl) {
   std::vector<std::string> events;
   Scene<Dragged> scene{std::in_place, &events};
-  InputProbe<> &child = scene.root().drag;
+  InputProbe<> &child = scene.root().parts.drag;
   scene.layoutIfNeeded(kViewport);
 
   PointerEvent down = pointer::down{10.0f, 10.0f};
@@ -621,11 +623,12 @@ TEST(Input, TabTraversesAcrossSceneRoots) {
 }
 
 struct Placed : Node {
-  InputProbe<> probe;
+  struct parts_t {
+    InputProbe<> probe;
+  } parts;
   Placed(std::vector<std::string> *events, const char *name, float x)
-      : probe(make<InputProbe>({.x = x, .width = 40.0f, .height = 40.0f},
-                               events, name, true)) {}
-  void forEachChild(auto &&f) { f(probe); }
+      : parts{.probe = make<InputProbe>({.x = x, .width = 40.0f, .height = 40.0f},
+                               events, name, true)} {}
 };
 
 TEST(Input, PointerFocusHasOneOwnerAcrossSceneRoots) {
@@ -634,8 +637,8 @@ TEST(Input, PointerFocusHasOneOwnerAcrossSceneRoots) {
   Scene<Placed> secondScene{std::in_place, &events, "second", 60.0f};
   firstScene.layoutIfNeeded(kViewport);
   secondScene.layoutIfNeeded(kViewport);
-  const NodeId first = firstScene.root().probe.id();
-  const NodeId second = secondScene.root().probe.id();
+  const NodeId first = firstScene.root().parts.probe.id();
+  const NodeId second = secondScene.root().parts.probe.id();
   const std::array<InputRouter::Layer, 2> layers = {
       InputRouter::Layer{firstScene.handle(), false},
       InputRouter::Layer{secondScene.handle(), false}};
@@ -704,13 +707,14 @@ TEST(Input, DestroyedSceneMakesRetainedLayerInert) {
 // ---- frames and layout
 
 struct OneGroup : Node {
-  Group<> child = make<Group<>>({.width = 20.0f, .height = 10.0f});
-  void forEachChild(auto &&f) { f(child); }
+  struct parts_t {
+    Group<> child = make<Group<>>({.width = 20.0f, .height = 10.0f});
+  } parts;
 };
 
 TEST(Frame, RuntimePropertiesInvalidateAndReportContinuationTogether) {
   Scene<OneGroup> scene{std::in_place};
-  Group<> &child = scene.root().child;
+  Group<> &child = scene.root().parts.child;
   scene.layoutIfNeeded(kViewport);
   (void)scene.finishFrame();
 
@@ -728,22 +732,20 @@ TEST(Frame, RuntimePropertiesInvalidateAndReportContinuationTogether) {
 }
 
 struct Branches : Node {
-  Group<LayoutProbe> dirty{make<LayoutProbe>({.width = 20.0f, .height = 10.0f})};
-  Group<LayoutProbe> clean{make<LayoutProbe>({.width = 20.0f, .height = 10.0f})};
+  struct parts_t {
+    Group<LayoutProbe> dirty{make<LayoutProbe>({.width = 20.0f, .height = 10.0f})};
+    Group<LayoutProbe> clean{make<LayoutProbe>({.width = 20.0f, .height = 10.0f})};
+  } parts;
   Branches() {
-    dirty.apply({.width = 50.0f, .height = 60.0f});
-    clean.apply({.x = 50.0f, .width = 50.0f, .height = 60.0f});
-  }
-  void forEachChild(auto &&f) {
-    f(dirty);
-    f(clean);
+    parts.dirty.apply({.width = 50.0f, .height = 60.0f});
+    parts.clean.apply({.x = 50.0f, .width = 50.0f, .height = 60.0f});
   }
 };
 
 TEST(Layout, SkipsCleanSiblingSubtrees) {
   Scene<Branches> scene{std::in_place};
-  LayoutProbe &dirty = std::get<0>(scene.root().dirty.fChildren);
-  LayoutProbe &clean = std::get<0>(scene.root().clean.fChildren);
+  LayoutProbe &dirty = std::get<0>(scene.root().parts.dirty.fChildren);
+  LayoutProbe &clean = std::get<0>(scene.root().parts.clean.fChildren);
 
   EXPECT_TRUE(scene.layoutIfNeeded(kViewport));
   EXPECT_EQ(dirty.fLayouts, 1);
@@ -760,13 +762,14 @@ TEST(Layout, SkipsCleanSiblingSubtrees) {
 }
 
 struct OneProbe : Node {
-  LayoutProbe child = make<LayoutProbe>({.width = 20.0f, .height = 10.0f});
-  void forEachChild(auto &&f) { f(child); }
+  struct parts_t {
+    LayoutProbe child = make<LayoutProbe>({.width = 20.0f, .height = 10.0f});
+  } parts;
 };
 
 TEST(Layout, PaintOnlyAnimationDoesNotDirtyLayout) {
   Scene<OneProbe> scene{std::in_place};
-  LayoutProbe &child = scene.root().child;
+  LayoutProbe &child = scene.root().parts.child;
   scene.layoutIfNeeded(kViewport);
   ASSERT_EQ(child.fLayouts, 1);
 
@@ -981,13 +984,11 @@ TEST(Frames, APressBetweenFramesDoesNotRunTheNodesClock) {
 // The pointer's shape is the node's under it, or the nearest above it with
 // one.
 struct Shaped : Node {
-  ClickProbe edge = make<ClickProbe>({.x = 0.0f, .width = 10.0f, .height = 100.0f});
-  ClickProbe plain = make<ClickProbe>({.x = 50.0f, .width = 10.0f, .height = 100.0f});
-  Shaped() { edge.fState.setCursor(cursor::resize_horizontal{}); }
-  void forEachChild(auto &&f) {
-    f(edge);
-    f(plain);
-  }
+  struct parts_t {
+    ClickProbe edge = make<ClickProbe>({.x = 0.0f, .width = 10.0f, .height = 100.0f});
+    ClickProbe plain = make<ClickProbe>({.x = 50.0f, .width = 10.0f, .height = 100.0f});
+  } parts;
+  Shaped() { parts.edge.fState.setCursor(cursor::resize_horizontal{}); }
 };
 
 TEST(Cursor, ThePointersShapeIsTheNodesUnderIt) {
@@ -1012,8 +1013,8 @@ TEST(Focus, APressFocusesWithoutShowingIt) {
   router.setLayers(layers);
   router.pointer(PointerEvent{pointer::down{55.0f, 50.0f}});
   router.pointer(PointerEvent{pointer::up{55.0f, 50.0f}});
-  EXPECT_TRUE(scene.root().plain.focused());
-  EXPECT_FALSE(scene.root().plain.showsFocus());
+  EXPECT_TRUE(scene.root().parts.plain.focused());
+  EXPECT_FALSE(scene.root().parts.plain.showsFocus());
   router.key(KeyEvent{key::down{keys::kTab, Modifiers{}, false}});
   EXPECT_TRUE(focusVisible());
 }
@@ -1059,22 +1060,20 @@ TEST(Focus, ArrowsGoRoundAMenu) {
 
 // A Stack lays its own children out as a column: declared, not placed.
 struct Declared : skiff::nodes::Stack {
-  Box<> first = make<Box>({.fillX = true, .height = 10.0f}, kCard);
-  Box<> second = make<Box>({.fillX = true, .height = 20.0f}, kCard);
+  struct parts_t {
+    Box<> first = make<Box>({.fillX = true, .height = 10.0f}, kCard);
+    Box<> second = make<Box>({.fillX = true, .height = 20.0f}, kCard);
+  } parts;
   Declared() { this->setGap(5.0f); }
-  void forEachChild(auto &&f) {
-    f(first);
-    f(second);
-  }
 };
 
 TEST(Stack, ItsChildrenGoOneUnderAnother) {
   Scene<Declared> scene{std::in_place};
   scene.state().apply({.fill = true});
   scene.layoutIfNeeded(skia::SkRect::MakeWH(100.0f, 100.0f));
-  EXPECT_FLOAT_EQ(scene.root().first.bounds().fTop, 0.0f);
-  EXPECT_FLOAT_EQ(scene.root().second.bounds().fTop, 15.0f);
-  EXPECT_FLOAT_EQ(scene.root().second.bounds().width(), 100.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.first.bounds().fTop, 0.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.second.bounds().fTop, 15.0f);
+  EXPECT_FLOAT_EQ(scene.root().parts.second.bounds().width(), 100.0f);
 }
 
 // A row lines its children up across the whole of its box, as a column
