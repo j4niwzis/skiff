@@ -2706,30 +2706,10 @@ template <class N> void shiftSubtree(N &node, float dy) { shiftSubtree(node, 0.0
 
 // Lays a child out in a box: what a container's layoutChildren calls for each
 // of its children, after placing it.
-// Outside a release build, a node laid out by what holds it -- a dialog its
-// content, a slide-over its pages -- goes through its table too, as a walk's
-// child does: not the typed layout, which made the node's whole subtree
-// wherever its holder was, past the program's own boundaries.
-template <class N> void layout(N &child, const skia::SkRect &parentBox) {
-  if constexpr (kErasedWalks && std::derived_from<N, Node>) {
-    AnyNodeRef seen = AnyNodeRef::of(child);
-    layout(seen, parentBox);
-  } else {
-    detail::layoutNode(child, parentBox);
-  }
-}
 // Draws a node and its subtree the way the scene does; a node that draws its
 // subtree another way calls this for what it does not do itself.
 template <class T> void drawDefault(T &node, skia::SkCanvas *canvas, float alpha) {
   detail::drawNode(node, canvas, alpha);
-}
-template <class N> void draw(N &child, skia::SkCanvas *canvas, float alpha) {
-  if constexpr (kErasedWalks && std::derived_from<N, Node>) {
-    AnyNodeRef seen = AnyNodeRef::of(child);
-    draw(seen, canvas, alpha);
-  } else {
-    child.draw(canvas, alpha);
-  }
 }
 
 namespace walk {
@@ -3448,6 +3428,27 @@ inline void shiftSubtree(AnyNodeRef &node, float dx, float dy) {
   state.fLastConstraint.offset(dx, dy);
   node.forEachChild([&](AnyNodeRef &child) { shiftSubtree(child, dx, dy); });
 }
+// Outside a release build, a node laid out by what holds it -- a dialog its
+// content, a slide-over its pages -- goes through its table too, as a walk's
+// child does: not the typed layout, which made the node's whole subtree
+// wherever its holder was, past the program's own boundaries.
+template <class N> void layout(N &child, const skia::SkRect &parentBox) {
+  if constexpr (kErasedWalks && std::derived_from<N, Node>) {
+    AnyNodeRef seen = AnyNodeRef::of(child);
+    layout(seen, parentBox);
+  } else {
+    detail::layoutNode(child, parentBox);
+  }
+}
+template <class N> void draw(N &child, skia::SkCanvas *canvas, float alpha) {
+  if constexpr (kErasedWalks && std::derived_from<N, Node>) {
+    AnyNodeRef seen = AnyNodeRef::of(child);
+    draw(seen, canvas, alpha);
+  } else {
+    child.draw(canvas, alpha);
+  }
+}
+
 // A child's own type, whether seen as itself or through an AnyNode.
 template <class N> [[nodiscard]] const std::type_info &typeOf(N &) { return typeid(N); }
 [[nodiscard]] inline const std::type_info &typeOf(AnyNodeRef &child) { return child.type(); }
