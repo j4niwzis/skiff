@@ -448,6 +448,25 @@ private:
 
   // A line in pieces: plain in the text's colour, links in theirs and
   // underlined.
+  // A pill's picture, as an avatar: the picture where there is one, over
+  // the gradient with the initials in white where there is not.
+  static void drawPillPicture(skia::SkCanvas *canvas, const skiff::paint::Painter &p, const skia::SkRect &disc,
+                              const skiff::scene::PillPicture &look, float alpha) {
+    const int saved = canvas->save();
+    canvas->clipRRect(skia::SkRRect::MakeOval(disc), true);
+    if (look.picture && *look.picture) {
+      skia::SkPaint paint;
+      paint.setAlphaf(alpha);
+      canvas->drawImageRect(*look.picture, disc, skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &paint);
+    } else {
+      skiff::paint::verticalGradient(canvas, disc, look.top, look.bottom, alpha);
+      const float size = disc.width() * 0.4f;
+      const float width = p.measure(look.initials, size, true);
+      p.textIn(disc, look.initials, size, skia::colorSetARGB(255, 255, 255, 255), alpha, true,
+               (disc.width() - width) * 0.5f);
+    }
+    canvas->restoreToCount(saved);
+  }
   void drawWithLinks(skia::SkCanvas *canvas, const skiff::paint::Painter &p, std::size_t start,
                      std::string_view line, float x, float y, float alpha) const {
     const std::size_t end = start + line.size();
@@ -477,12 +496,11 @@ private:
         fill.setColor(colour);
         fill.setAlphaf(0.18f * alpha);
         canvas->drawRRect(skia::SkRRect::MakeRectXY(plate, height * 0.5f, height * 0.5f), fill);
-        if (cuts[i] == link->first && skiff::scene::pillPainter().fPaint) {
-          const float side = height - 4.0f;
-          skiff::scene::pillPainter().fPaint(skiff::scene::pillPainter().fContext, canvas,
-                                             skia::SkRect::MakeXYWH(at + 1.0f, plate.fTop + 2.0f, side, side),
-                                             link->target, alpha);
-        }
+        if (cuts[i] == link->first && skiff::scene::pillPicture())
+          if (const auto look = skiff::scene::pillPicture()(link->target)) {
+            const float side = height - 4.0f;
+            drawPillPicture(canvas, p, skia::SkRect::MakeXYWH(at + 1.0f, plate.fTop + 2.0f, side, side), *look, alpha);
+          }
         p.text(piece, at, y, fSize, colour, alpha, fBold);
         at += width;
         continue;

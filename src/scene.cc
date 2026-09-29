@@ -1224,15 +1224,17 @@ inline void openLink(std::string_view target) {
   }
 }
 
-// What draws a pill's picture -- a mention's avatar, in a text -- given
-// where and what the pill is of: the program says, as it does for links.
-struct PillPainter {
-  void (*fPaint)(void *context, skia::SkCanvas *canvas, const skia::SkRect &disc, std::string_view target,
-                 float alpha) = nullptr;
-  void *fContext = nullptr;
+// What a pill's picture is -- a mention's avatar, in a text -- given what
+// the pill links to: the program says, as data, and the text draws it as an
+// avatar is drawn: the picture where there is one, over a gradient with
+// initials in white. No drawing in the program.
+struct PillPicture {
+  const skia::Sp<skia::SkImage> *picture = nullptr;
+  skia::SkColor top = 0, bottom = 0;  // the gradient, where there is no picture
+  std::string initials;
 };
-inline PillPainter &pillPainter() {
-  static PillPainter kept;
+inline std::function<std::optional<PillPicture>(std::string_view target)> &pillPicture() {
+  static std::function<std::optional<PillPicture>(std::string_view)> kept;
   return kept;
 }
 

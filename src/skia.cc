@@ -138,6 +138,16 @@ inline ::sk_sp<::SkImage> decodeImage(const void *bytes, std::size_t size) {
   return result == ::SkCodec::kSuccess ? image : nullptr;
 }
 
+// An image from pixels made here, four bytes each -- red, green, blue,
+// alpha, not premultiplied -- row after row: copied.
+inline ::sk_sp<::SkImage> imageFromRGBA(int width, int height, const std::uint8_t *rgba) {
+  if (width <= 0 || height <= 0 || rgba == nullptr) {
+    return nullptr;
+  }
+  const ::SkImageInfo info = ::SkImageInfo::Make(width, height, ::kRGBA_8888_SkColorType, ::kUnpremul_SkAlphaType);
+  return ::SkImages::RasterFromPixmapCopy(::SkPixmap(info, rgba, static_cast<std::size_t>(width) * 4u));
+}
+
 // The bytes of a file of an image, written anew -- PNG, or JPEG at a good
 // quality -- from its pixels alone: nothing of the file it came from, its
 // metadata among it, goes with them. Empty where the build cannot write
