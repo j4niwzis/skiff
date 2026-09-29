@@ -15,27 +15,31 @@ struct contain {};
 } // namespace fit
 using Fit = std::variant<fit::cover, fit::contain>;
 
-// Where a picture comes from: asked for each frame it is drawn, so a
-// picture that comes later -- fetched, decoded -- is drawn once it is there,
-// and one let go by a cache is not held here.
-using ImageSource = std::function<const skia::Sp<skia::SkImage> *()>;
+// Where a picture comes from: a value called for each frame it is drawn,
+// so a picture that comes later -- fetched, decoded -- is drawn once it is
+// there, and one let go by a cache is not held here. Its type is the
+// Image's parameter: a key and the cache it is looked up in, say.
+template <class Source>
+concept ImageSource = std::copy_constructible<Source> && requires(const Source &source) {
+  { source() } -> std::convertible_to<const skia::Sp<skia::SkImage> *>;
+};
 
 // A picture in a box, in the box's corner radius; nothing where it has not
 // come -- the box's background shows, as a placeholder. Its proportions,
 // for a box that follows them, are what it says.
-class Image : public skiff::scene::Node {
+template <ImageSource Source> class Image : public skiff::scene::Node {
 public:
-  explicit Image(ImageSource source, Fit how = fit::cover{})
+  explicit Image(Source source, Fit how = fit::cover{})
       : fSource(std::move(source)), fFit(how) {}
 
   // Another picture: drawn from where it comes from now.
-  void setSource(ImageSource source) {
+  void setSource(Source source) {
     fSource = std::move(source);
     this->markDamaged();
   }
 
   [[nodiscard]] const skia::Sp<skia::SkImage> *image() const {
-    const skia::Sp<skia::SkImage> *found = fSource ? fSource() : nullptr;
+    const skia::Sp<skia::SkImage> *found = fSource();
     return found && *found ? found : nullptr;
   }
   // Width over height of the picture, where it has come.
@@ -97,7 +101,7 @@ private:
     canvas->drawImageRect(image, to, sampling, &paint);
   }
 
-  ImageSource fSource;
+  Source fSource;
   Fit fFit;
   bool fHad = false;
 };
