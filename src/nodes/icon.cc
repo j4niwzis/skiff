@@ -89,27 +89,28 @@ public:
         paint.setStrokeWidth(one.width);
         paint.setStrokeCap(skia::kRoundCap);
       }
-      std::visit([&](const auto &shape) { draw(canvas, shape, paint); }, one.shape);
+      std::visit([&](const auto &shape) { drawMark(canvas, shape, paint); }, one.shape);
     }
     canvas->restoreToCount(saved);
   }
 
 private:
-  static void draw(skia::SkCanvas *canvas, const mark::line &one, const skia::SkPaint &paint) {
+  // Each mark by its own overload -- not named draw, which is the node's hook.
+  static void drawMark(skia::SkCanvas *canvas, const mark::line &one, const skia::SkPaint &paint) {
     canvas->drawLine(one.x1, one.y1, one.x2, one.y2, paint);
   }
-  static void draw(skia::SkCanvas *canvas, const mark::circle &one, const skia::SkPaint &paint) {
+  static void drawMark(skia::SkCanvas *canvas, const mark::circle &one, const skia::SkPaint &paint) {
     canvas->drawCircle(one.x, one.y, one.radius, paint);
   }
-  static void draw(skia::SkCanvas *canvas, const mark::arc &one, const skia::SkPaint &paint) {
+  static void drawMark(skia::SkCanvas *canvas, const mark::arc &one, const skia::SkPaint &paint) {
     canvas->drawArc(skia::SkRect::MakeLTRB(one.left, one.top, one.right, one.bottom), one.start, one.sweep, false,
                     paint);
   }
-  static void draw(skia::SkCanvas *canvas, const mark::rect &one, const skia::SkPaint &paint) {
+  static void drawMark(skia::SkCanvas *canvas, const mark::rect &one, const skia::SkPaint &paint) {
     canvas->drawRoundRect(skia::SkRect::MakeLTRB(one.left, one.top, one.right, one.bottom), one.radius, one.radius,
                           paint);
   }
-  static void draw(skia::SkCanvas *canvas, const mark::path &one, const skia::SkPaint &paint) {
+  static void drawMark(skia::SkCanvas *canvas, const mark::path &one, const skia::SkPaint &paint) {
     skia::SkPathBuilder built;
     for (const PathStep &step : one.steps)
       std::visit(overloaded{[&](const path_step::move &at) { built.moveTo(at.x, at.y); },
