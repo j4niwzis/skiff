@@ -1138,6 +1138,22 @@ inline void setClipboardText(const std::string &text) {
   }
 }
 
+// Where a link pressed in a text goes: the program says, as it says what the
+// clipboard is. Nothing happens until it does.
+struct LinkOpener {
+  void (*fOpen)(void *context, std::string_view target) = nullptr;
+  void *fContext = nullptr;
+};
+inline LinkOpener &linkOpener() {
+  static LinkOpener kept;
+  return kept;
+}
+inline void openLink(std::string_view target) {
+  if (linkOpener().fOpen) {
+    linkOpener().fOpen(linkOpener().fContext, target);
+  }
+}
+
 // ---- the state every node has --------------------------------------------
 
 // What every node is, beyond what its own type adds: its layout inputs and

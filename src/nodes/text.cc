@@ -63,6 +63,30 @@ public:
     this->markDamaged();
   }
   [[nodiscard]] bool selectable() const noexcept { return fSelectable; }
+
+  // Links in the text: a range of it, and where it goes. Drawn in their own
+  // colour, underlined, where they stand; a press on one that does not
+  // become a selection opens it through skiff::scene::openLink.
+  struct Link {
+    std::size_t first = 0;
+    std::size_t last = 0;
+    std::string target;
+  };
+  void setLinks(std::vector<Link> links, skia::SkColor colour) {
+    fLinks = std::move(links);
+    fLinkColour = colour;
+    this->markDamaged();
+  }
+  [[nodiscard]] const std::vector<Link> &links() const noexcept { return fLinks; }
+  // The link at an offset, if one is there.
+  [[nodiscard]] const Link *linkAt(std::size_t offset) const {
+    for (const Link &one : fLinks) {
+      if (offset >= one.first && offset < one.last) {
+        return &one;
+      }
+    }
+    return nullptr;
+  }
   // How wide its last line is, as drawn: what room it leaves at its end --
   // a message's time sits there when it fits.
   [[nodiscard]] float lastLineWidth() const {
@@ -122,6 +146,15 @@ public:
   }
   void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::up &,
                  skiff::scene::PointerReply &reply) {
+    // Pressed and let go without selecting: a link there is opened.
+    if (fPressed && !fDragging) {
+      if (const Link *link = this->linkAt(fLastOffset)) {
+        fPressed = false;
+        skiff::scene::openLink(link->target);
+        reply.handle();
+        return;
+      }
+    }
     fPressed = false;
     if (fDragging) {
       fDragging = false;
@@ -292,9 +325,16 @@ public:
     this->drawSelection(canvas, p, alpha);
     if (fWrapped) {
       float y = bounds.fTop + fSize;
-      for (const std::string &line : fLines) {
-        p.text(line, bounds.fLeft, y, fSize, fColour, alpha, fBold);
-        y += fSize * 1.25f;
+      if (fLinks.empty()) {
+        for (const std::string &line : fLines) {
+          p.text(line, bounds.fLeft, y, fSize, fColour, alpha, fBold);
+          y += fSize * 1.25f;
+        }
+      } else {
+        for (const auto &[start, line] : this->shownLines()) {
+          this->drawWithLinks(canvas, p, start, line, bounds.fLeft, y, alpha);
+          y += fSize * 1.25f;
+        }
       }
       canvas->restoreToCount(saved);
       return;
@@ -398,6 +438,37 @@ private:
     }
   }
 
+  // A line in pieces: plain in the text's colour, links in theirs and
+  // underlined.
+  void drawWithLinks(skia::SkCanvas *canvas, const skiff::paint::Painter &p, std::size_t start,
+                     std::string_view line, float x, float y, float alpha) const {
+    const std::size_t end = start + line.size();
+    std::vector<std::size_t> cuts{start, end};
+    for (const Link &one : fLinks) {
+      if (one.last > start && one.first < end) {
+        cuts.push_back(std::max(one.first, start));
+        cuts.push_back(std::min(one.last, end));
+      }
+    }
+    std::ranges::sort(cuts);
+    cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
+    float at = x;
+    for (std::size_t i = 0; i + 1 < cuts.size(); ++i) {
+      const std::string piece(line.substr(cuts[i] - start, cuts[i + 1] - cuts[i]));
+      const bool linked = this->linkAt(cuts[i]) != nullptr;
+      const skia::SkColor colour = linked ? fLinkColour : fColour;
+      p.text(piece, at, y, fSize, colour, alpha, fBold);
+      const float width = p.measure(piece, fSize, fBold);
+      if (linked) {
+        skia::SkPaint under;
+        under.setColor(colour);
+        under.setAlphaf(under.getAlphaf() * alpha);
+        canvas->drawRect(skia::SkRect::MakeXYWH(at, y + 2.0f, width, 1.0f), under);
+      }
+      at += width;
+    }
+  }
+
   // The width a wrapped line has to fit into, resolved as layout would.
   [[nodiscard]] float roomFor(const skia::SkRect &parent) const {
     const skiff::scene::State &state = fState;
@@ -432,6 +503,8 @@ private:
   bool fShrinks = false;
   bool fDragging = false;
   bool fPressed = false;
+  std::vector<Link> fLinks;
+  skia::SkColor fLinkColour = skia::colorSetARGB(255, 82, 160, 230);
   std::size_t fAnchor = 0;
   std::size_t fCaret = 0;
   std::chrono::steady_clock::time_point fLastPress{};
