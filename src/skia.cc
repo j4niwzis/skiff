@@ -22,6 +22,12 @@ module;
 #if defined(SK_CODEC_DECODES_JPEG)
 #include <skia/codec/SkJpegDecoder.h>
 #endif
+#if defined(SK_CODEC_ENCODES_PNG)
+#include <skia/encode/SkPngEncoder.h>
+#endif
+#if defined(SK_CODEC_ENCODES_JPEG)
+#include <skia/encode/SkJpegEncoder.h>
+#endif
 #include <skia/core/SkBitmap.h>
 #include <skia/core/SkBlendMode.h>
 #include <skia/core/SkCanvas.h>
@@ -130,6 +136,40 @@ inline ::sk_sp<::SkImage> decodeImage(const void *bytes, std::size_t size) {
   }
   auto [image, result] = codec->getImage();
   return result == ::SkCodec::kSuccess ? image : nullptr;
+}
+
+// The bytes of a file of an image, written anew -- PNG, or JPEG at a good
+// quality -- from its pixels alone: nothing of the file it came from, its
+// metadata among it, goes with them. Empty where the build cannot write
+// that format.
+inline std::string encodeImage(const ::SkImage &image, bool jpeg) {
+  ::SkPixmap pixels;
+  ::SkBitmap bitmap;
+  if (!image.peekPixels(&pixels)) {
+    if (!bitmap.tryAllocPixels(image.imageInfo()) || !image.readPixels(nullptr, bitmap.pixmap(), 0, 0)) {
+      return {};
+    }
+    pixels = bitmap.pixmap();
+  }
+  ::SkDynamicMemoryWStream out;
+  bool written = false;
+#if defined(SK_CODEC_ENCODES_JPEG)
+  if (jpeg) {
+    ::SkJpegEncoder::Options options;
+    options.fQuality = 92;
+    written = ::SkJpegEncoder::Encode(&out, pixels, options);
+  }
+#endif
+#if defined(SK_CODEC_ENCODES_PNG)
+  if (!jpeg) {
+    written = ::SkPngEncoder::Encode(&out, pixels, {});
+  }
+#endif
+  if (!written) {
+    return {};
+  }
+  const auto data = out.detachAsData();
+  return std::string(static_cast<const char *>(data->data()), data->size());
 }
 
 using ::SkAlphaType;
