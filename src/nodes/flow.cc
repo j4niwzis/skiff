@@ -381,6 +381,41 @@ bool reconcile(std::vector<Row> &rows, Items &&items, KeyOf keyOf,
   return changed;
 }
 
+// A part as a function of a value, declared: shown a view, it makes its
+// content from it -- and only when the view differs from the one it was
+// made from. Nothing in the content is set after it is made: a changed view
+// is a new content. Its own Spec places it; the content fills it.
+//
+//   Memo<HeaderView, Header> header;
+//   header.show(view_of(chat), [&](const HeaderView& v) { return Header(v); });
+template <class View, class Content> class Memo : public skiff::scene::Node {
+public:
+  // Made again, from the view, where the view is not the one it shows.
+  template <class Make> bool show(const View &view, Make &&make) {
+    if (fView && *fView == view) {
+      return false;
+    }
+    fContent.reset();
+    fContent.emplace(Made<Make>{make, view});
+    fView = view;
+    this->invalidateLayout();
+    return true;
+  }
+  [[nodiscard]] Content *content() noexcept { return fContent ? &*fContent : nullptr; }
+  [[nodiscard]] const View *view() const noexcept { return fView ? &*fView : nullptr; }
+  void forEachChild(auto &&f) { f(fContent); }
+
+private:
+  // What the content is made from: made in its place, never moved.
+  template <class Make> struct Made {
+    Make &make;
+    const View &view;
+    operator Content() const { return std::invoke(make, view); }
+  };
+  std::optional<View> fView;
+  std::optional<Content> fContent;
+};
+
 // A vertical flow and a horizontal one, as they are usually written.
 template <class... Children>
 [[nodiscard]] Flow<Children...> column(float spacing, Children... children) {
