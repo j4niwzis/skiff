@@ -206,7 +206,7 @@ template <class N> struct Flowing {
   }
 
   void lay(direction::vertical) {
-    const skia::SkRect box = fNode.fState.contentBox();
+    const skia::SkRect box = skiff::scene::stateOf(fNode).contentBox();
     grow<skiff::scene::axis::y>(box, fOptions.spacingY);
     const auto shown = measured(box);
     float used = 0.0f;
@@ -223,7 +223,7 @@ template <class N> struct Flowing {
     // to align against, not the room it may take: aligned to that, a child
     // at the end pulled the column out to its largest.
     float line = box.width();
-    if (fNode.fState.fAutoSizeAxes.template has<skiff::scene::axis::x>()) {
+    if (skiff::scene::stateOf(fNode).fAutoSizeAxes.template has<skiff::scene::axis::x>()) {
       line = 0.0f;
       for (const skiff::scene::State *state : shown) {
         line = std::max(line, state->fBounds.width() + state->fMargin.totalX());
@@ -244,7 +244,7 @@ template <class N> struct Flowing {
   }
 
   void lay(direction::horizontal) {
-    const skia::SkRect box = fNode.fState.contentBox();
+    const skia::SkRect box = skiff::scene::stateOf(fNode).contentBox();
     if (!fOptions.wrap) {
       this->workOutAutoRoom(box);
       grow<skiff::scene::axis::x>(box, fOptions.spacingX);
@@ -253,7 +253,7 @@ template <class N> struct Flowing {
       skiff::scene::eachChild(fNode, [](auto &child) { skiff::scene::stateOf(child).fShrunkTo = 0.0f; });
     }
     const auto shown = measured(box);
-    if (!fOptions.wrap && !fNode.fState.fAutoSizeAxes.template has<skiff::scene::axis::x>()) {
+    if (!fOptions.wrap && !skiff::scene::stateOf(fNode).fAutoSizeAxes.template has<skiff::scene::axis::x>()) {
       this->shrink_to_fit(box);
     }
     std::vector<std::pair<float, float>> places(shown.size());
@@ -275,7 +275,7 @@ template <class N> struct Flowing {
       // height from what it holds); wrapped rows, each its tallest child.
       const float line =
           !fOptions.wrap &&
-                  !fNode.fState.fAutoSizeAxes
+                  !skiff::scene::stateOf(fNode).fAutoSizeAxes
                        .template has<skiff::scene::axis::y>()
               ? std::max(rowHeight, box.height())
               : rowHeight;
@@ -317,11 +317,11 @@ template <class N> struct Flowing {
   // set width whose row of buttons was wider than it put its last button
   // past its edge, and nothing said so.
   void told(const skia::SkRect &box) {
-    if (fNode.fState.fMasking) {
+    if (skiff::scene::stateOf(fNode).fMasking) {
       return;
     }
-    const bool freeX = !fNode.fState.fAutoSizeAxes.template has<skiff::scene::axis::x>();
-    const bool freeY = !fNode.fState.fAutoSizeAxes.template has<skiff::scene::axis::y>();
+    const bool freeX = !skiff::scene::stateOf(fNode).fAutoSizeAxes.template has<skiff::scene::axis::x>();
+    const bool freeY = !skiff::scene::stateOf(fNode).fAutoSizeAxes.template has<skiff::scene::axis::y>();
     skiff::scene::eachChild(fNode, [&](auto &child) {
       skiff::scene::State &state = skiff::scene::stateOf(child);
       if (!inFlow(state)) {
@@ -513,8 +513,16 @@ public:
     fStack.direction = direction::horizontal{};
     this->invalidateLayout();
   }
+  // Laid out by the one flow for every stack outside a release build -- the
+  // stack seen through its table, as the walks see it -- not a flow made
+  // again for each type of node that is a stack; in a release build, its own.
   void layoutChildren(this auto &self) {
-    detail::Flowing<std::remove_reference_t<decltype(self)>>{self, self.fStack}.layout();
+    if constexpr (skiff::scene::kErasedWalks) {
+      skiff::scene::AnyNodeRef seen = skiff::scene::AnyNodeRef::of(self);
+      detail::Flowing<skiff::scene::AnyNodeRef>{seen, self.fStack}.layout();
+    } else {
+      detail::Flowing<std::remove_reference_t<decltype(self)>>{self, self.fStack}.layout();
+    }
   }
 };
 
