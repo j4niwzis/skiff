@@ -484,7 +484,8 @@ private:
 
   skia::Sp<skia::SkTypeface> fPrimary;
   skia::Sp<skia::SkTypeface> fPrimaryBold;
-  std::vector<skia::Sp<skia::SkTypeface>> fFallbacks;
+  // Mutable: a face found on demand while drawing is added to them.
+  mutable std::vector<skia::Sp<skia::SkTypeface>> fFallbacks;
   mutable std::unordered_map<std::int32_t, int> fCoverage;
   skia::Sp<skia::SkFontMgr> fManager;
   mutable std::unordered_map<const skia::SkTypeface *, bool> fAsciiCovered;
