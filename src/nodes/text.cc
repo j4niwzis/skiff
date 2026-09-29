@@ -646,8 +646,15 @@ private:
         cuts.push_back(std::min(one.last, end));
       }
     }
-    // A quoted line: a bar in the quote's colour at its start.
+    // A quoted line, as tdesktop's blockquote: a faint plate of the quote's
+    // colour across the text's width, a bar in it at its start; the words
+    // in the text's own colour over it -- readable on any bubble.
     if (this->styleAt(start).quote) {
+      skia::SkPaint plate;
+      plate.setAntiAlias(true);
+      plate.setColor(fQuoteColour);
+      plate.setAlphaf(0.12f * alpha);
+      canvas->drawRect(skia::SkRect::MakeXYWH(x, y - fSize, fState.fBounds.fRight - x, fSize * 1.25f), plate);
       skia::SkPaint bar;
       bar.setAntiAlias(true);
       bar.setColor(fQuoteColour);
@@ -663,7 +670,7 @@ private:
       const bool linked = link != nullptr;
       const Styled style = this->styleAt(cuts[i]);
       const bool bold = fBold || style.strong;
-      const skia::SkColor colour = linked ? fLinkColour : style.quote ? fQuoteColour : fColour;
+      const skia::SkColor colour = linked ? fLinkColour : fColour;
       const float width = p.measure(piece, fSize, bold);
       // Marked: on a plate of the quote's colour.
       if (style.marked) {
