@@ -96,6 +96,13 @@ inline std::uint64_t &textSelectionOwner() {
 
 // A line of text, or a paragraph when wrapped. Sizes itself to what it
 // draws, so a flow can lay it out without anyone measuring by hand.
+//
+// As CSS's text, by default: one line where it fits its parent, wrapped at
+// the parent's width -- as wide as its widest line -- where it does not;
+// never run past the parent's edge. setWrapped(true) always wraps,
+// setWrapped(false) never does, setElided(true) keeps one line cut with an
+// ellipsis; a text sized by its row (grow, or a share of the width) keeps
+// one line, clipped, as that width is its row's to give.
 template <class Pictures = NoPictures> class BasicText : public skiff::scene::Node {
 public:
   using Link = TextLink;
@@ -336,8 +343,10 @@ public:
     fMeasuredSize = -1.0f;
     this->invalidateLayout();
   }
-  // Broken across lines at spaces instead of running past the width.
+  // Broken across lines at spaces instead of running past the width --
+  // always, or (false) never; by default, where it does not fit.
   void setWrapped(bool wrapped) {
+    fWrapChoice = wrapped;
     if (wrapped == fWrapped) {
       return;
     }
@@ -394,7 +403,10 @@ public:
 
   void measure(const skia::SkRect &parent) {
     skiff::scene::State &state = fState;
-    if (fMeasuredSize == fSize && !fWrapped) {
+    // Wrapped or not as it fits, where nothing chose: as CSS's text.
+    const bool automatic = !fWrapChoice && !fElided && !state.fGrowAxes.has<skiff::scene::axis::x>() &&
+                           !state.fRelativeSizeAxes.has<skiff::scene::axis::x>();
+    if (fMeasuredSize == fSize && !fWrapped && !automatic) {
       return; // measured at this size, and the text has not changed
     }
     skia::SkFont *font = skiff::paint::defaultFont();
@@ -402,6 +414,25 @@ public:
       return;
     }
     const skiff::paint::Painter p(nullptr, *font);
+    // Its width on one line: measured again only as the text or size change.
+    if (fMeasuredSize != fSize) {
+      fNatural = p.measure(fText, fSize, fBold);
+    }
+    if (automatic) {
+      const float room = state.fMaxWidth > 0.0f ? state.fMaxWidth : parent.width() - state.fMargin.totalX();
+      const bool wrap = room > 0.0f && fNatural > room + 0.5f;
+      if (wrap != fWrapped) {
+        fWrapped = wrap;
+        fWrapsToParent = false;
+        fWrappedRoom = -1.0f;
+        fMeasuredSize = -1.0f;
+        if (wrap) {
+          fShrinks = true;  // as wide as its widest line, not the parent
+        }
+      } else if (!wrap && fMeasuredSize == fSize) {
+        return;
+      }
+    }
     if (fWrapped) {
       const float room = this->roomFor(parent);
       // Wrapped at this width already, the text and size as they were: its
@@ -438,7 +469,7 @@ public:
       fMeasuredSize = fSize;
       return;
     }
-    const float measured = p.measure(fText, fSize, fBold);
+    const float measured = fNatural;
     // Sized by its flow or parent, it clips to the width it was given rather
     // than replacing that width with the glyphs'.
     if (!state.fGrowAxes.has<skiff::scene::axis::x>() && !state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
@@ -723,6 +754,10 @@ private:
   skia::SkColor fColour;
   bool fBold;
   bool fWrapped = false;
+  // Wrapped or not as chosen; none chosen, as it fits.
+  std::optional<bool> fWrapChoice;
+  // Its width on one line, at fMeasuredSize.
+  float fNatural = 0.0f;
   float fWrappedRoom = -1.0f;
   // Wrapped with no width of its own: it wraps to its parent's, whatever
   // that is at the time.
