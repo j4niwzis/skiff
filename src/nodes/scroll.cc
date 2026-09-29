@@ -90,9 +90,10 @@ public:
     // Several, in case the first goes with the change: the first of them
     // still there is kept in place.
     std::vector<Anchor> anchors;
-    // At the end, the view stays at the end, however much comes above: not
-    // left where it was to be glided down again, a jerk each time.
-    const bool following = fLaidOut && box == fLastBox && this->atEnd() && !fScroll.dragging();
+    // At the end, the view stays at the end, however much comes above, and
+    // however its own box changes (a bar opened under it): not left where it
+    // was to be glided down again, a jerk each time.
+    const bool following = fLaidOut && this->atEnd() && !fScroll.dragging();
     if (fLaidOut && box == fLastBox && !this->atEnd()) {
       this->eachItem([&](const scene::State &item) {
         if (anchors.size() < 4 && item.fVisible && item.fBounds.fBottom > box.fTop) {
