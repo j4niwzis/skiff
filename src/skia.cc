@@ -125,10 +125,6 @@ export module skia;
 export namespace skia {
 
 template <class T> using Sp = ::sk_sp<T>;
-// Its comparisons -- with another, with nullptr -- from Skia's header, so
-// that sp == nullptr and sp != nullptr read as they do outside a module (!=
-// is rewritten through ==).
-using ::operator==;
 
 // The formats the build decodes: PNG and JPEG, and GIF and WebP where Skia
 // was built with them.
