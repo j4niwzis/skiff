@@ -43,6 +43,7 @@ module;
 #include <skia/core/SkStream.h>
 #include <skia/core/SkString.h>
 #include <skia/core/SkSurface.h>
+#include <skia/core/SkTextBlob.h>
 #include <skia/core/SkTypeface.h>
 #include <skia/core/SkVertices.h>
 #include <skia/effects/SkGradient.h>
@@ -119,6 +120,9 @@ using ::SkColorFilters;
 using ::SkColorSpace;
 using ::SkColorType;
 using ::SkData;
+using ::SkGlyphID;
+using ::SkTextBlob;
+using ::SkTextBlobBuilder;
 using ::SkFilterMode;
 using ::SkFont;
 using ::SkFontArguments;
@@ -372,6 +376,7 @@ inline constexpr Version kSL300 = ::SkSL::Version::k300;
 template class ::sk_sp<SkSurface>;
 template class ::sk_sp<SkImage>;
 template class ::sk_sp<SkData>;
+template class ::sk_sp<SkTextBlob>;
 template class ::sk_sp<SkTypeface>;
 template class ::sk_sp<SkFontMgr>;
 template class ::sk_sp<SkColorSpace>;

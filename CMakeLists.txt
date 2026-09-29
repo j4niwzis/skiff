@@ -77,6 +77,24 @@ set(SKIFF_SKIA_COMPONENTS "" CACHE STRING
 find_package(Skia REQUIRED
              COMPONENTS png jpeg freetype ${SKIFF_SKIA_COMPONENTS})
 
+# Shaped text, if asked for: HarfBuzz for glyphs, alef for Unicode's rules
+# -- bidirectional runs, line breaks, characters. Off by default: alef is
+# C++26, so a build with this is too, and a program on C++23 keeps drawing
+# text as before, one face's run at a time.
+option(SKIFF_TEXT_SHAPING
+       "Shape text with HarfBuzz and lay it out by Unicode's rules with alef (C++26)" OFF)
+if(SKIFF_TEXT_SHAPING)
+  cme_declare_port(NAME alef PROVIDES alef
+    GITHUB_REPOSITORY j4niwzis/alef
+    GIT_TAG 583c3a85adfecf60e68dccd2742e7ad97e667645
+    LICENSE AGPL-3.0-only
+    SYSTEM NEVER
+    TARGETS alef)
+  cme_options(alef "ALEF_TESTS OFF")
+  cme_find_package(alef COMPONENTS grapheme line bidi REQUIRED)
+  cme_find_package(harfbuzz REQUIRED)
+endif()
+
 # GL, where the Skia this links has a Ganesh in it. Nothing here calls a GL
 # function: the header is included for the constant that names a texture
 # format, and the libraries are on the interface because a program drawing
@@ -117,8 +135,15 @@ add_library(skiff::skiff ALIAS ${PROJECT_NAME})
 target_sources(${PROJECT_NAME} PUBLIC
   FILE_SET CXX_MODULES FILES ${skiff_sources})
 
-set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 23)
-target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_23)
+if(SKIFF_TEXT_SHAPING)
+  set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 26)
+  target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_26)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC SKIFF_TEXT_SHAPING)
+  target_link_libraries(${PROJECT_NAME} PUBLIC alef::alef harfbuzz::harfbuzz)
+else()
+  set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 23)
+  target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_23)
+endif()
 
 # Skia as a target rather than as flags and paths. What its headers are cut
 # by -- SK_GANESH, SK_GRAPHITE, SK_VULKAN, which codecs are compiled in --

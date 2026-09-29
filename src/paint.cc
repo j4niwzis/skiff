@@ -1,7 +1,22 @@
+module;
+
+// Shaped text, where the build asks for it: HarfBuzz turns a run of
+// characters into positioned glyphs -- joining, conjuncts, ligatures, emoji
+// sequences -- and alef says where runs of one direction are (UAX #9),
+// where a line may end (UAX #14) and where a character ends (UAX #29).
+#ifdef SKIFF_TEXT_SHAPING
+#include <hb.h>
+#endif
+
 export module skiff.paint;
 
 import std;
 import skia;
+#ifdef SKIFF_TEXT_SHAPING
+import alef.bidi;
+import alef.grapheme;
+import alef.line;
+#endif
 
 // Text and paint: the font stack that puts fallbacks behind a primary face,
 // and a thin wrapper over the canvas so callers do not repeat paint setup.
@@ -278,6 +293,10 @@ public:
     fCoverage.clear();
     fAsciiCovered.clear();
     fWidths.clear();
+#ifdef SKIFF_TEXT_SHAPING
+    fShaped.clear();
+    fHarfBuzz.clear();
+#endif
   }
   [[nodiscard]] const skia::Sp<skia::SkTypeface> &primary() const noexcept {
     return fPrimary;
@@ -298,12 +317,16 @@ public:
     if (const auto it = fWidths.find(key); it != fWidths.end()) {
       return it->second;
     }
+#ifdef SKIFF_TEXT_SHAPING
+    const float width = this->shaped(font, text).width;
+#else
     float width = 0.0f;
     this->forEachRun(font, text,
                      [&](const skia::SkFont &runFont, std::string_view run) {
                        width += runFont.measureText(
                            run.data(), run.size(), skia::SkTextEncoding::kUTF8);
                      });
+#endif
     if (fWidths.size() > kMaxCachedWidths) {
       fWidths.clear(); // a whole screen's worth of labels fits many times over
     }
@@ -314,6 +337,25 @@ public:
   void draw(skia::SkCanvas *canvas, const skia::SkFont &font,
             std::string_view text, float x, float y,
             const skia::SkPaint &paint) const {
+#ifdef SKIFF_TEXT_SHAPING
+    // Shaped: each run's glyphs where HarfBuzz put them, in one blob.
+    const ShapedLine &line = this->shaped(font, text);
+    if (line.runs.empty()) {
+      return;
+    }
+    skia::SkTextBlobBuilder builder;
+    for (const ShapedRun &run : line.runs) {
+      const auto &buffer = builder.allocRunPosH(run.font, static_cast<int>(run.glyphs.size()), y);
+      std::ranges::copy(run.glyphs, buffer.glyphs);
+      for (std::size_t i = 0; i < run.xs.size(); ++i) {
+        buffer.pos[i] = x + run.xs[i];
+      }
+    }
+    if (auto blob = builder.make()) {
+      canvas->drawTextBlob(blob, 0.0f, 0.0f, paint);
+    }
+    return;
+#endif
     // Nothing to split when every byte is plain ASCII and the primary face
     // covers it, which is most of the text this client draws.
     if (isAscii(text) && this->asciiCovered(font.getTypeface())) {
@@ -331,7 +373,137 @@ public:
                      });
   }
 
+#ifdef SKIFF_TEXT_SHAPING
+  // A run of glyphs of one face, each where it starts from the line's left.
+  struct ShapedRun {
+    skia::SkFont font;
+    std::vector<skia::SkGlyphID> glyphs;
+    std::vector<float> xs;
+  };
+  // A line shaped: its runs left to right, and how wide it is.
+  struct ShapedLine {
+    std::vector<ShapedRun> runs;
+    float width = 0.0f;
+  };
+
+  // The line as glyphs: split into runs of one direction by UAX #9, each
+  // into runs of one face at character boundaries, each shaped by HarfBuzz
+  // with the whole line as its context. Kept by the text, the size and the
+  // face, as widths are: the same labels are drawn every frame.
+  [[nodiscard]] const ShapedLine &shaped(const skia::SkFont &font, std::string_view text) const {
+    const std::uint64_t key = cacheKey(font, text);
+    if (const auto it = fShaped.find(key); it != fShaped.end()) {
+      return it->second;
+    }
+    if (fShaped.size() > kMaxCachedWidths) {
+      fShaped.clear();
+    }
+    ShapedLine line;
+    const skia::SkTypeface *base = font.getTypeface();
+    float x = 0.0f;
+    const alef::bidi_paragraph paragraph(text);
+    for (const alef::bidi_run run : paragraph.runs(0, text.size())) {
+      const std::string_view piece = text.substr(run.first, run.last - run.first);
+      // Where the face changes, at characters' edges only: a cluster's face
+      // is its first code point's.
+      struct Part {
+        std::size_t first, last;
+        int face;
+      };
+      std::vector<Part> parts;
+      for (auto cluster : piece | alef::graphemes) {
+        const std::string_view one(cluster.begin(), cluster.end());
+        std::size_t at = 0;
+        const int face = this->faceFor(decodeUtf8(one, at), base);
+        const std::size_t first = run.first + static_cast<std::size_t>(one.data() - piece.data());
+        if (!parts.empty() && parts.back().face == face && parts.back().last == first) {
+          parts.back().last = first + one.size();
+        } else {
+          parts.push_back({first, first + one.size(), face});
+        }
+      }
+      // Right to left, the last of them is drawn first.
+      if (run.right_to_left()) {
+        std::ranges::reverse(parts);
+      }
+      for (const Part &part : parts) {
+        ShapedRun out;
+        out.font = this->fontFor(font, part.face);
+        const skia::SkTypeface *face = out.font.getTypeface();
+        const HarfBuzzFont *hb = face ? this->harfBuzz(*face) : nullptr;
+        if (hb == nullptr) {
+          continue;
+        }
+        hb_buffer_t *buffer = hb_buffer_create();
+        hb_buffer_add_utf8(buffer, text.data(), static_cast<int>(text.size()), static_cast<unsigned>(part.first),
+                           static_cast<int>(part.last - part.first));
+        hb_buffer_set_direction(buffer, run.right_to_left() ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
+        hb_buffer_guess_segment_properties(buffer);
+        hb_shape(hb->font.get(), buffer, nullptr, 0);
+        unsigned count = 0;
+        const hb_glyph_info_t *infos = hb_buffer_get_glyph_infos(buffer, &count);
+        const hb_glyph_position_t *positions = hb_buffer_get_glyph_positions(buffer, &count);
+        const float scale = out.font.getSize() / static_cast<float>(hb->unitsPerEm);
+        out.glyphs.reserve(count);
+        out.xs.reserve(count);
+        for (unsigned i = 0; i < count; ++i) {
+          out.glyphs.push_back(static_cast<skia::SkGlyphID>(infos[i].codepoint));
+          out.xs.push_back(x + static_cast<float>(positions[i].x_offset) * scale);
+          x += static_cast<float>(positions[i].x_advance) * scale;
+        }
+        hb_buffer_destroy(buffer);
+        if (!out.glyphs.empty()) {
+          line.runs.push_back(std::move(out));
+        }
+      }
+    }
+    line.width = x;
+    return fShaped.emplace(key, std::move(line)).first->second;
+  }
+
 private:
+  // A face as HarfBuzz reads it: its file's bytes, at its own units, with
+  // the variation the typeface is an instance of -- the weight of a clone.
+  struct HarfBuzzFont {
+    std::unique_ptr<hb_font_t, decltype(&hb_font_destroy)> font{nullptr, &hb_font_destroy};
+    unsigned unitsPerEm = 1000;
+  };
+  [[nodiscard]] const HarfBuzzFont *harfBuzz(const skia::SkTypeface &face) const {
+    if (const auto it = fHarfBuzz.find(&face); it != fHarfBuzz.end()) {
+      return &it->second;
+    }
+    int index = 0;
+    const auto stream = face.openStream(&index);
+    if (!stream) {
+      return nullptr;
+    }
+    std::vector<char> bytes(stream->getLength());
+    bytes.resize(stream->read(bytes.data(), bytes.size()));
+    hb_blob_t *blob = hb_blob_create(bytes.data(), static_cast<unsigned>(bytes.size()), HB_MEMORY_MODE_DUPLICATE,
+                                     nullptr, nullptr);
+    hb_face_t *hbFace = hb_face_create(blob, static_cast<unsigned>(index));
+    hb_blob_destroy(blob);
+    HarfBuzzFont made;
+    made.unitsPerEm = std::max(1u, hb_face_get_upem(hbFace));
+    made.font.reset(hb_font_create(hbFace));
+    hb_face_destroy(hbFace);
+    hb_font_set_scale(made.font.get(), static_cast<int>(made.unitsPerEm), static_cast<int>(made.unitsPerEm));
+    if (const int axes = face.getVariationDesignPosition(nullptr, 0); axes > 0) {
+      std::vector<skia::SkFontArguments::VariationPosition::Coordinate> coordinates(static_cast<std::size_t>(axes));
+      face.getVariationDesignPosition(coordinates.data(), axes);
+      std::vector<hb_variation_t> variations;
+      for (const auto &one : coordinates) {
+        variations.push_back({one.axis, one.value});
+      }
+      hb_font_set_variations(made.font.get(), variations.data(), static_cast<unsigned>(variations.size()));
+    }
+    return &fHarfBuzz.emplace(&face, std::move(made)).first->second;
+  }
+  mutable std::unordered_map<std::uint64_t, ShapedLine> fShaped;
+  mutable std::unordered_map<const skia::SkTypeface *, HarfBuzzFont> fHarfBuzz;
+#else
+private:
+#endif
   static constexpr std::size_t kMaxCachedWidths = 8192;
 
   [[nodiscard]] static bool isAscii(std::string_view text) {
@@ -809,6 +981,67 @@ public:
     if (str.empty()) {
       return lines;
     }
+#ifdef SKIFF_TEXT_SHAPING
+    // Lines end where UAX #14 lets them -- after a space, between two CJK
+    // characters, after a hyphen -- and must where it says so. A piece wider
+    // than a line alone is cut between characters.
+    if (width > 0.0f) {
+      const auto trimmed = [](std::string_view line) {
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\n' || line.back() == '\r')) {
+          line.remove_suffix(1);
+        }
+        return std::string(line);
+      };
+      const std::string_view all(str);
+      std::size_t lineStart = 0;
+      std::size_t lineEnd = 0;  // where the line as it stands ends
+      float lineWidth = 0.0f;   // its pieces' widths, spaces and all
+      // Each piece measured once, on its own: a line's width is its pieces'.
+      for (auto piece : all | alef::line_breaks) {
+        const std::string_view text(piece.text.begin(), piece.text.end());
+        const std::size_t first = static_cast<std::size_t>(text.data() - all.data());
+        const std::size_t last = first + text.size();
+        const float whole = this->measure(std::string(text), size, bold);
+        const float bare = this->measure(trimmed(text), size, bold);
+        if (lineEnd > lineStart && lineWidth + bare > width) {
+          lines.push_back(trimmed(all.substr(lineStart, lineEnd - lineStart)));
+          lineStart = first;
+          lineWidth = 0.0f;
+        }
+        // Alone and still too wide: as much of it to a line as fits, cut
+        // between characters.
+        if (bare > width) {
+          std::size_t from = first;
+          float taken = 0.0f;
+          for (auto cluster : text | alef::graphemes) {
+            const std::string_view one(cluster.begin(), cluster.end());
+            const float w = this->measure(std::string(one), size, bold);
+            const std::size_t at = static_cast<std::size_t>(one.data() - all.data());
+            if (at > from && taken + w > width) {
+              lines.push_back(std::string(all.substr(from, at - from)));
+              from = at;
+              taken = 0.0f;
+            }
+            taken += w;
+          }
+          lineStart = from;
+          lineWidth = taken;
+        } else {
+          lineWidth += whole;
+        }
+        lineEnd = last;
+        if (piece.mandatory) {
+          lines.push_back(trimmed(all.substr(lineStart, lineEnd - lineStart)));
+          lineStart = lineEnd;
+          lineWidth = 0.0f;
+        }
+      }
+      if (lineEnd > lineStart || lines.empty()) {
+        lines.push_back(trimmed(all.substr(lineStart, lineEnd - lineStart)));
+      }
+      return lines;
+    }
+#endif
     const auto next = [&](std::size_t at) {
       ++at;
       while (at < str.size() &&
