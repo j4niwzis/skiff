@@ -7,6 +7,17 @@ import skiff.scene;
 
 export namespace skiff::nodes {
 
+// The colours of scroll bars, as the program's theme gives them: the bar,
+// and the bar under the pointer or dragged. Light on dark by default.
+struct ScrollBarColours {
+  skia::SkColor bar = skia::colorSetARGB(0x53, 255, 255, 255);
+  skia::SkColor over = skia::colorSetARGB(0x7a, 255, 255, 255);
+};
+inline ScrollBarColours &scrollBarColours() {
+  static ScrollBarColours colours;
+  return colours;
+}
+
 // A container that scrolls its children and clips them to itself.
 template <class... Children> class ScrollContainer : public skiff::scene::Node {
 public:
@@ -131,8 +142,9 @@ public:
     const float at = this->thumbTop();
     skia::SkPaint paint;
     paint.setAntiAlias(true);
-    paint.setColor(skia::colorSetARGB(255, 255, 255, 255));
-    paint.setAlphaf(alpha * 0.28f);
+    const bool over = fBarDragging || this->overBar(fState.fHoverX, fState.fHoverY);
+    paint.setColor(over ? scrollBarColours().over : scrollBarColours().bar);
+    paint.setAlphaf(paint.getAlphaf() * alpha);
     canvas->drawRRect(skia::SkRRect::MakeRectXY(
                           skia::SkRect::MakeXYWH(box.fRight - 5.0f, at + 2.0f, 4.0f, thumb - 4.0f), 2.0f, 2.0f),
                       paint);
