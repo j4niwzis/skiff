@@ -221,7 +221,10 @@ target_sources(${PROJECT_NAME} PUBLIC
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD ${skiff_cxx_standard})
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_${skiff_cxx_standard})
 if(skiff_cxx_standard LESS 26)
-  target_link_libraries(${PROJECT_NAME} PUBLIC Boost::pfr)
+  # In this build only, as Skia below: Boost.PFR built here as a module is a
+  # target of this build directory, and install(EXPORT) refuses one that
+  # needs it. An installed copy finds Boost's pfr again, in its config.
+  target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:Boost::pfr>)
 endif()
 if(SKIFF_TEXT_SHAPING)
   target_compile_definitions(${PROJECT_NAME} PUBLIC SKIFF_TEXT_SHAPING)
@@ -319,6 +322,10 @@ if(SKIFF_INSTALL)
   if(NOT ANDROID AND NOT SKIFF_EMSCRIPTEN)
     string(APPEND skiff_config "find_dependency(OpenGL)\n")
   endif()
+  # Built on C++23, its aggregates are walked by Boost.PFR, found again.
+  if(skiff_cxx_standard LESS 26)
+    string(APPEND skiff_config "find_dependency(Boost COMPONENTS pfr)\n")
+  endif()
   string(APPEND skiff_config
     "include(\"\${CMAKE_CURRENT_LIST_DIR}/skiffTargets.cmake\")\n")
   # And Skia put back on the target, since the exported one carries it only
@@ -339,6 +346,11 @@ if(SKIFF_INSTALL)
     "             INTERFACE_INCLUDE_DIRECTORIES \${SKIA_INCLUDE_DIRS})\n"
     "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
     "             INTERFACE_LINK_LIBRARIES \${SKIA_LDFLAGS} \${SKIA_LIBRARIES})\n")
+  if(skiff_cxx_standard LESS 26)
+    string(APPEND skiff_config
+      "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
+      "             INTERFACE_LINK_LIBRARIES Boost::pfr)\n")
+  endif()
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake" "${skiff_config}")
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/skiff)
