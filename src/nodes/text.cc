@@ -46,6 +46,92 @@ public:
     this->invalidateLayout();
   }
   [[nodiscard]] const std::string &text() const noexcept { return fText; }
+
+  // Selectable, as a message's text is: a drag across it selects, a double
+  // press selects a word, Ctrl+A all of it, and Ctrl+C copies what is
+  // selected through skiff::scene::clipboard(). The selection shows while
+  // the text has the focus a press gives it.
+  void setSelectable(bool selectable) {
+    fSelectable = selectable;
+    if (!selectable) {
+      fAnchor = fCaret = 0;
+    }
+    this->markDamaged();
+  }
+  void setSelectionColour(skia::SkColor colour) {
+    fSelectionColour = colour;
+    this->markDamaged();
+  }
+  [[nodiscard]] bool selectable() const noexcept { return fSelectable; }
+  [[nodiscard]] bool hasSelection() const noexcept { return fAnchor != fCaret; }
+  [[nodiscard]] std::string selected() const {
+    return fText.substr(std::min(fAnchor, fCaret), std::max(fAnchor, fCaret) - std::min(fAnchor, fCaret));
+  }
+  [[nodiscard]] bool acceptsInput() const { return fSelectable; }
+  [[nodiscard]] bool showsFocus() const { return false; }
+
+  using Node::onPointer;
+  void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::down &at,
+                 skiff::scene::PointerReply &reply) {
+    if (!fSelectable || at.button != 1) {
+      return;
+    }
+    const std::size_t at_offset = this->offsetAt(at.x, at.y);
+    // A second press where the first was, soon: the word there.
+    const auto now = std::chrono::steady_clock::now();
+    if (now - fLastPress < std::chrono::milliseconds(400) && at_offset == fLastOffset) {
+      this->selectWordAt(at_offset);
+      fLastPress = {};
+      this->markDamaged();
+      return;
+    }
+    fLastPress = now;
+    fLastOffset = at_offset;
+    fAnchor = fCaret = at_offset;
+    fDragging = true;
+    reply.capturePointer();
+    this->markDamaged();
+  }
+  void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::move &at,
+                 skiff::scene::PointerReply &reply) {
+    if (!fDragging) {
+      return;
+    }
+    fCaret = this->offsetAt(at.x, at.y);
+    this->markDamaged();
+    reply.handle();
+  }
+  void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::up &,
+                 skiff::scene::PointerReply &reply) {
+    if (fDragging) {
+      fDragging = false;
+      reply.releasePointer();
+    }
+  }
+  void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::cancel &,
+                 skiff::scene::PointerReply &reply) {
+    if (fDragging) {
+      fDragging = false;
+      reply.releasePointer();
+    }
+  }
+
+  using Node::onKey;
+  void onKey(skiff::scene::phase::target, const skiff::scene::key::down &press, skiff::scene::Reply &reply) {
+    namespace keys = skiff::scene::keys;
+    if (!fSelectable || !press.modifiers.has<skiff::scene::modifier::control>()) {
+      return;
+    }
+    if (press.key == keys::kC && this->hasSelection()) {
+      skiff::scene::setClipboardText(this->selected());
+      reply.handle();
+    } else if (press.key == keys::kA) {
+      fAnchor = 0;
+      fCaret = fText.size();
+      this->markDamaged();
+      reply.handle();
+    }
+  }
   [[nodiscard]] float fontSize() const noexcept { return fSize; }
   [[nodiscard]] skia::SkColor colour() const noexcept { return fColour; }
   [[nodiscard]] bool bold() const noexcept { return fBold; }
@@ -165,6 +251,7 @@ public:
     const skiff::paint::Painter p(canvas, *font);
     const int saved = canvas->save();
     const skia::SkRect &bounds = state.fBounds;
+    this->drawSelection(canvas, p, alpha);
     if (fWrapped) {
       float y = bounds.fTop + fSize;
       for (const std::string &line : fLines) {
@@ -190,6 +277,89 @@ public:
   }
 
 private:
+  // Where each shown line starts in the text: the wrapped lines are its
+  // pieces, in order.
+  [[nodiscard]] std::vector<std::pair<std::size_t, std::string_view>> shownLines() const {
+    std::vector<std::pair<std::size_t, std::string_view>> out;
+    if (!fWrapped) {
+      out.emplace_back(0, fText);
+      return out;
+    }
+    std::size_t from = 0;
+    for (const std::string &line : fLines) {
+      const std::size_t at = fText.find(line, from);
+      const std::size_t start = at == std::string::npos ? from : at;
+      out.emplace_back(start, std::string_view(fText).substr(start, line.size()));
+      from = start + line.size();
+    }
+    return out;
+  }
+  // The offset in the text nearest a point: its line, then the character
+  // boundary nearest across it.
+  [[nodiscard]] std::size_t offsetAt(float x, float y) const {
+    skia::SkFont *font = skiff::paint::defaultFont();
+    const auto lines = this->shownLines();
+    if (font == nullptr || lines.empty()) {
+      return 0;
+    }
+    const skiff::paint::Painter p(nullptr, *font);
+    const skia::SkRect &bounds = fState.fBounds;
+    const float lineHeight = fSize * 1.25f;
+    const auto index = static_cast<std::size_t>(
+        std::clamp((y - bounds.fTop) / lineHeight, 0.0f, static_cast<float>(lines.size() - 1)));
+    const auto [start, line] = lines[index];
+    const float into = x - bounds.fLeft;
+    std::size_t best = 0;
+    float bestDistance = std::abs(into);
+    for (std::size_t i = 1; i <= line.size(); ++i) {
+      if (i < line.size() && (static_cast<unsigned char>(line[i]) & 0xC0) == 0x80) {
+        continue;  // inside a character
+      }
+      const float distance = std::abs(p.measure(std::string(line.substr(0, i)), fSize, fBold) - into);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = i;
+      }
+    }
+    return start + best;
+  }
+  void selectWordAt(std::size_t at) {
+    const auto wordy = [](unsigned char c) { return c >= 0x80 || std::isalnum(c) || c == '_'; };
+    std::size_t from = std::min(at, fText.size());
+    std::size_t to = from;
+    while (from > 0 && wordy(static_cast<unsigned char>(fText[from - 1]))) {
+      --from;
+    }
+    while (to < fText.size() && wordy(static_cast<unsigned char>(fText[to]))) {
+      ++to;
+    }
+    fAnchor = from;
+    fCaret = to;
+  }
+  // Behind the selected part of each line, a plate in the selection's colour.
+  void drawSelection(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float alpha) const {
+    if (!fSelectable || fAnchor == fCaret || !this->focused()) {
+      return;
+    }
+    const std::size_t low = std::min(fAnchor, fCaret), high = std::max(fAnchor, fCaret);
+    const skia::SkRect &bounds = fState.fBounds;
+    const float lineHeight = fSize * 1.25f;
+    float top = bounds.fTop;
+    skia::SkPaint plate;
+    plate.setColor(fSelectionColour);
+    plate.setAlphaf(plate.getAlphaf() * alpha);
+    for (const auto &[start, line] : this->shownLines()) {
+      const std::size_t end = start + line.size();
+      if (high > start && low < end) {
+        const std::size_t a = std::max(low, start) - start, b = std::min(high, end) - start;
+        const float left = p.measure(std::string(line.substr(0, a)), fSize, fBold);
+        const float right = p.measure(std::string(line.substr(0, b)), fSize, fBold);
+        canvas->drawRect(skia::SkRect::MakeLTRB(bounds.fLeft + left, top, bounds.fLeft + right, top + lineHeight), plate);
+      }
+      top += lineHeight;
+    }
+  }
+
   // The width a wrapped line has to fit into, resolved as layout would.
   [[nodiscard]] float roomFor(const skia::SkRect &parent) const {
     const skiff::scene::State &state = fState;
@@ -220,6 +390,13 @@ private:
   skia::SkColor fBaseColour = 0;
   bool fBaseBold = false;
   bool fNodeStyleActive = false;
+  bool fSelectable = false;
+  bool fDragging = false;
+  std::size_t fAnchor = 0;
+  std::size_t fCaret = 0;
+  std::chrono::steady_clock::time_point fLastPress{};
+  std::size_t fLastOffset = 0;
+  skia::SkColor fSelectionColour = skia::colorSetARGB(110, 64, 167, 227);
 };
 
 } // namespace skiff::nodes
