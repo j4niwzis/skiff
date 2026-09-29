@@ -2269,9 +2269,13 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
 
   // Auto-sized axes need the children laid out first, in a provisional box.
   if (autoX || autoY) {
+    // Within its largest size, where it has one: what wraps in it wraps
+    // there, rather than at the parent's width it is then cut back from.
+    const float provisionalW = state.fMaxWidth > 0.0f ? std::min(parentW, state.fMaxWidth) : parentW;
+    const float provisionalH = state.fMaxHeight > 0.0f ? std::min(parentH, state.fMaxHeight) : parentH;
     state.fBounds = skia::SkRect::MakeXYWH(room.fLeft, room.fTop,
-                                           autoX ? parentW : width,
-                                           autoY ? parentH : height);
+                                           autoX ? provisionalW : width,
+                                           autoY ? provisionalH : height);
     node.layoutChildren();
     const skia::SkRect content = childBounds(node);
     if (autoX) {

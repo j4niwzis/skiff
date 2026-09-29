@@ -145,6 +145,16 @@ public:
     fMeasuredSize = -1.0f;
     this->invalidateLayout();
   }
+  // Wrapped, as wide as its widest line rather than all the room it wraps
+  // in: a message's bubble is as wide as what it says.
+  void setShrinksToLines(bool shrinks) {
+    if (shrinks == fShrinks) {
+      return;
+    }
+    fShrinks = shrinks;
+    fMeasuredSize = -1.0f;
+    this->invalidateLayout();
+  }
   // Broken across lines at spaces instead of running past the width.
   void setWrapped(bool wrapped) {
     if (wrapped == fWrapped) {
@@ -226,6 +236,13 @@ public:
           (fWrapsToParent || state.fWidth <= 0.0f)) {
         fWrapsToParent = true;
         state.fWidth = room;
+        if (fShrinks) {
+          float widest = 0.0f;
+          for (const std::string &line : fLines) {
+            widest = std::max(widest, p.measure(line, fSize, fBold));
+          }
+          state.fWidth = std::min(room, std::ceil(widest) + 1.0f);
+        }
       }
       fMeasuredSize = fSize;
       return;
@@ -391,6 +408,7 @@ private:
   bool fBaseBold = false;
   bool fNodeStyleActive = false;
   bool fSelectable = false;
+  bool fShrinks = false;
   bool fDragging = false;
   std::size_t fAnchor = 0;
   std::size_t fCaret = 0;
