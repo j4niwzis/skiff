@@ -431,11 +431,13 @@ struct Spec {
 
   std::optional<float> cornerRadius{};
   // What is painted under the node's own drawing and its children, in its
-  // box and its corner radius: a fill -- another while hovered, another
-  // while selected -- and a border. Declared, not drawn by hand.
-  std::optional<skia::SkColor> fill{};
-  std::optional<skia::SkColor> hoverFill{};
-  std::optional<skia::SkColor> selectedFill{};
+  // box and its corner radius: a background -- another while hovered,
+  // another while selected, another while it has the keyboard's focus --
+  // and a border. Declared, not drawn by hand. (`fill` above is its size.)
+  std::optional<skia::SkColor> background{};
+  std::optional<skia::SkColor> hoverBackground{};
+  std::optional<skia::SkColor> selectedBackground{};
+  std::optional<skia::SkColor> focusBackground{};
   std::optional<Border> border{};
   std::optional<bool> masking{};
   std::optional<float> scale{};
@@ -1260,7 +1262,7 @@ public:
   Cursor fCursor = cursor::arrow{};
   float fCornerRadius = 0.0f;
   // Painted in the box, under the rest: see Spec.
-  std::optional<skia::SkColor> fFill, fHoverFill, fSelectedFill;
+  std::optional<skia::SkColor> fBackground, fHoverBackground, fSelectedBackground, fFocusBackground;
   std::optional<Border> fBorder;
   bool fVisible = true;
 
@@ -1510,14 +1512,17 @@ public:
     if (spec.cornerRadius) {
       fCornerRadius = *spec.cornerRadius;
     }
-    if (spec.fill) {
-      fFill = spec.fill;
+    if (spec.background) {
+      fBackground = spec.background;
     }
-    if (spec.hoverFill) {
-      fHoverFill = spec.hoverFill;
+    if (spec.hoverBackground) {
+      fHoverBackground = spec.hoverBackground;
     }
-    if (spec.selectedFill) {
-      fSelectedFill = spec.selectedFill;
+    if (spec.selectedBackground) {
+      fSelectedBackground = spec.selectedBackground;
+    }
+    if (spec.focusBackground) {
+      fFocusBackground = spec.focusBackground;
     }
     if (spec.border) {
       fBorder = spec.border;
@@ -2440,13 +2445,14 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   state.fSubtreeDirty = false;
 }
 
-// A node's declared box: its fill -- the selected one where it is
-// selected, the hovered one where it is hovered -- and its border, in its
-// corner radius.
+// A node's declared box: its background -- the selected one where it is
+// selected, the focused one where it has the focus, the hovered one where it
+// is hovered -- and its border, in its corner radius.
 inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
-  const std::optional<skia::SkColor> fill = state.fSelected && state.fSelectedFill ? state.fSelectedFill
-                                            : state.fHovered && state.fHoverFill   ? state.fHoverFill
-                                                                                   : state.fFill;
+  const std::optional<skia::SkColor> fill = state.fSelected && state.fSelectedBackground ? state.fSelectedBackground
+                                            : state.fFocused && state.fFocusBackground     ? state.fFocusBackground
+                                            : state.fHovered && state.fHoverBackground     ? state.fHoverBackground
+                                                                                            : state.fBackground;
   if (!fill && !state.fBorder)
     return;
   const float radius = state.fCornerRadius;
@@ -2695,7 +2701,7 @@ void hover(N &child, float x, float y, bool visibleAbove,
                               states::kHover)) {
       state.restyle(true);
     }
-    if (child.hoverChangesAppearance() || state.fHoverFill) {
+    if (child.hoverChangesAppearance() || state.fHoverBackground) {
       state.markDamaged();
     }
   }
@@ -2933,7 +2939,7 @@ bool focusChanged(N &child, NodeId id, bool focused, StyleResolver resolver,
                               states::kFocus)) {
       state.restyle(true);
     }
-    if (child.focusChangesAppearance()) {
+    if (child.focusChangesAppearance() || child.fState.fFocusBackground) {
       state.markDamaged();
     }
     return true;
