@@ -22,6 +22,12 @@ module;
 #if defined(SK_CODEC_DECODES_JPEG)
 #include <skia/codec/SkJpegDecoder.h>
 #endif
+#if defined(SK_CODEC_DECODES_GIF)
+#include <skia/codec/SkGifDecoder.h>
+#endif
+#if defined(SK_CODEC_DECODES_WEBP)
+#include <skia/codec/SkWebpDecoder.h>
+#endif
 #if defined(SK_CODEC_ENCODES_PNG)
 #include <skia/encode/SkPngEncoder.h>
 #endif
@@ -120,22 +126,83 @@ export namespace skia {
 
 template <class T> using Sp = ::sk_sp<T>;
 
-// An image from the bytes of a file of it -- PNG or JPEG, as the build
-// decodes them -- or nothing where they are neither, or broken.
-inline ::sk_sp<::SkImage> decodeImage(const void *bytes, std::size_t size) {
-  std::vector<::SkCodecs::Decoder> decoders;
+// The formats the build decodes: PNG and JPEG, and GIF and WebP where Skia
+// was built with them.
+inline std::vector<::SkCodecs::Decoder> decoders() {
+  std::vector<::SkCodecs::Decoder> out;
 #if defined(SK_CODEC_DECODES_PNG)
-  decoders.push_back(::SkPngDecoder::Decoder());
+  out.push_back(::SkPngDecoder::Decoder());
 #endif
 #if defined(SK_CODEC_DECODES_JPEG)
-  decoders.push_back(::SkJpegDecoder::Decoder());
+  out.push_back(::SkJpegDecoder::Decoder());
 #endif
-  auto codec = ::SkCodec::MakeFromData(::SkData::MakeWithCopy(bytes, size), decoders);
+#if defined(SK_CODEC_DECODES_GIF)
+  out.push_back(::SkGifDecoder::Decoder());
+#endif
+#if defined(SK_CODEC_DECODES_WEBP)
+  out.push_back(::SkWebpDecoder::Decoder());
+#endif
+  return out;
+}
+
+// An image from the bytes of a file of it -- as the build decodes them; the
+// first frame of an animated one -- or nothing where it is none of them, or
+// broken.
+inline ::sk_sp<::SkImage> decodeImage(const void *bytes, std::size_t size) {
+  auto codec = ::SkCodec::MakeFromData(::SkData::MakeWithCopy(bytes, size), decoders());
   if (!codec) {
     return nullptr;
   }
   auto [image, result] = codec->getImage();
   return result == ::SkCodec::kSuccess ? image : nullptr;
+}
+
+// One frame of an animated picture: whole, as it is shown -- drawn over the
+// frame it is drawn on, where it is drawn on one -- and how long it stays.
+struct Frame {
+  ::sk_sp<::SkImage> image;
+  int durationMs = 100;
+};
+// Every frame of an animated picture (a GIF, an animated WebP), in order; the
+// one of a still picture; none where it cannot be read. Frames stop where
+// they would pass `budget` bytes of pixels in all: what came so far plays.
+inline std::vector<Frame> decodeFrames(const void *bytes, std::size_t size,
+                                       std::size_t budget = 64u << 20) {
+  std::vector<Frame> out;
+  auto codec = ::SkCodec::MakeFromData(::SkData::MakeWithCopy(bytes, size), decoders());
+  if (!codec) {
+    return out;
+  }
+  const ::SkImageInfo info = codec->getInfo().makeColorType(::kN32_SkColorType).makeAlphaType(::kPremul_SkAlphaType);
+  const int count = std::max(1, codec->getFrameCount());
+  std::size_t used = 0;
+  for (int i = 0; i < count; ++i) {
+    if (used + info.computeMinByteSize() > budget) {
+      break;
+    }
+    ::SkCodec::FrameInfo frame{};
+    const bool described = codec->getFrameInfo(i, &frame);
+    ::SkBitmap bitmap;
+    if (!bitmap.tryAllocPixels(info)) {
+      break;
+    }
+    ::SkCodec::Options options;
+    options.fFrameIndex = i;
+    // Drawn over another: that one's pixels first.
+    if (described && frame.fRequiredFrame != ::SkCodec::kNoFrame &&
+        frame.fRequiredFrame < static_cast<int>(out.size())) {
+      out[static_cast<std::size_t>(frame.fRequiredFrame)].image->readPixels(bitmap.pixmap(), 0, 0);
+      options.fPriorFrame = frame.fRequiredFrame;
+    }
+    const ::SkCodec::Result result = codec->getPixels(bitmap.pixmap(), &options);
+    if (result != ::SkCodec::kSuccess && result != ::SkCodec::kIncompleteInput) {
+      break;
+    }
+    bitmap.setImmutable();
+    out.push_back(Frame{::SkImages::RasterFromBitmap(bitmap), described && frame.fDuration > 0 ? frame.fDuration : 100});
+    used += info.computeMinByteSize();
+  }
+  return out;
 }
 
 // An image from pixels made here, four bytes each -- red, green, blue,
