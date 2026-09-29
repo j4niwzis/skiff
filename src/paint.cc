@@ -242,6 +242,14 @@ public:
     this->invalidateCaches();
   }
 
+  // A family whose weights are files of their own, as most static faces
+  // are: its regular, and the face its bold text is drawn with.
+  void setPrimary(skia::Sp<skia::SkTypeface> regular, skia::Sp<skia::SkTypeface> bold) {
+    fPrimary = std::move(regular);
+    fPrimaryBold = std::move(bold);
+    this->invalidateCaches();
+  }
+
   // Picks the face for the weight instead of asking the rasteriser to
   // thicken one, falling back to that only when there is no bold instance.
   void applyWeight(skia::SkFont &font, bool bold) const {
