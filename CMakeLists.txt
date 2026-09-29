@@ -77,6 +77,10 @@ set(SKIFF_SKIA_COMPONENTS "" CACHE STRING
 find_package(Skia REQUIRED
              COMPONENTS png jpeg freetype ${SKIFF_SKIA_COMPONENTS})
 
+# Boost.PFR, as a module: the members of an aggregate walked one by one --
+# a node's parts, a style's declarations -- on C++23 as on C++26.
+cme_find_package(Boost COMPONENTS pfr[modules] REQUIRED)
+
 # Shaped text, if asked for: HarfBuzz for glyphs, alef for Unicode's rules
 # -- bidirectional runs, line breaks, characters. Off by default: alef is
 # C++26, so a build with this is too, and a program on C++23 keeps drawing
@@ -170,7 +174,7 @@ endif()
 # -- rightly, since what would be installed is a library whose dependency
 # exists nowhere else. So an installed copy names Skia the way a machine can
 # answer for it, which is what the config file below writes.
-target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:Skia::skia>)
+target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:Skia::skia> Boost::pfr)
 if(ANDROID AND SKIFF_EGL_LIBRARY AND SKIFF_GLES_LIBRARY)
   target_link_libraries(${PROJECT_NAME} PUBLIC
     ${SKIFF_EGL_LIBRARY} ${SKIFF_GLES_LIBRARY})

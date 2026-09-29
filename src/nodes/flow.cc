@@ -313,13 +313,7 @@ public:
       : fChildren(std::move(children)...), fOptions(options) {}
 
   void forEachChild(auto &&f) {
-#if defined(__cpp_structured_bindings) && __cpp_structured_bindings >= 202411L
-    // C++26's binding packs, where the build has them.
-    auto &[... each] = fChildren;
-    (f(each), ...);
-#else
     std::apply([&](auto &...each) { (f(each), ...); }, fChildren);
-#endif
   }
 
   [[nodiscard]] const FlowOptions &options() const noexcept {
