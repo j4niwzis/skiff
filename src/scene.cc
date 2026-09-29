@@ -1198,63 +1198,30 @@ using Cursor = std::variant<cursor::arrow, cursor::text, cursor::hand,
                     role);
 }
 
-// Whether whatever holds focus is somewhere text is typed, told to the host
-// when it changes. The host keeps what it passes and clears the hook before
-// that goes away.
-struct TextFocusHook {
-  void (*fCall)(void *target, bool text) = nullptr;
-  void *fTarget = nullptr;
-  explicit operator bool() const noexcept { return fCall != nullptr; }
-  void operator()(bool text) const { fCall(fTarget, text); }
+// What the scene has for the host, as data the host reads between events
+// -- nothing is called: whether whatever holds focus takes text (the host
+// starts and stops its text input as that changes), what was copied, to go
+// on the system's clipboard, and the links pressed in texts, to follow.
+struct HostWork {
+  bool typing = false;
+  std::optional<std::string> copied;
+  std::vector<std::string> links;
 };
-inline TextFocusHook &textFocusHook() {
-  static TextFocusHook hook;
-  return hook;
+inline HostWork &hostWork() {
+  static HostWork kept;
+  return kept;
 }
-template <class Target>
-  requires std::invocable<Target &, bool>
-void setTextFocusHook(Target &target) {
-  textFocusHook() = {+[](void *kept, bool text) {
-                       std::invoke(*static_cast<Target *>(kept), text);
-                     },
-                     &target};
-}
-inline void clearTextFocusHook() { textFocusHook() = {}; }
-
-// The system's clipboard, as the host reaches it: text read from it and
-// written to it. Nothing there until the host says how.
-struct Clipboard {
-  std::string (*fGet)() = nullptr;
-  void (*fSet)(const std::string &) = nullptr;
-};
-inline Clipboard &clipboard() {
-  static Clipboard kept;
+// The system's clipboard as the host last read it: what a paste puts in.
+inline std::string &clipboardContents() {
+  static std::string kept;
   return kept;
 }
 [[nodiscard]] inline std::string clipboardText() {
-  return clipboard().fGet ? clipboard().fGet() : std::string();
+  return hostWork().copied ? *hostWork().copied : clipboardContents();
 }
-inline void setClipboardText(const std::string &text) {
-  if (clipboard().fSet) {
-    clipboard().fSet(text);
-  }
-}
+inline void setClipboardText(const std::string &text) { hostWork().copied = text; }
+inline void openLink(std::string_view target) { hostWork().links.emplace_back(target); }
 
-// Where a link pressed in a text goes: the program says, as it says what the
-// clipboard is. Nothing happens until it does.
-struct LinkOpener {
-  void (*fOpen)(void *context, std::string_view target) = nullptr;
-  void *fContext = nullptr;
-};
-inline LinkOpener &linkOpener() {
-  static LinkOpener kept;
-  return kept;
-}
-inline void openLink(std::string_view target) {
-  if (linkOpener().fOpen) {
-    linkOpener().fOpen(linkOpener().fContext, target);
-  }
-}
 
 // What a pill's picture is -- a mention's avatar, in a text -- given what
 // the pill links to: the program says, as data, and the text draws it as an
@@ -3695,16 +3662,8 @@ public:
       return;
     }
     const NodeId previous = fFocus;
-    const std::optional<NodeInfo> before =
-        previous != 0 ? walk::info(fRoot, previous) : std::nullopt;
     fFocus = id;
-    if (auto &hook = textFocusHook(); hook) {
-      const bool wasText = before && before->fTakesText;
-      const bool isText = now && now->fTakesText;
-      if (wasText != isText) {
-        hook(isText);
-      }
-    }
+    hostWork().typing = now && now->fTakesText;
     if (previous != 0) {
       (void)walk::focusChanged(fRoot, previous, false, {}, fViewport.width());
     }

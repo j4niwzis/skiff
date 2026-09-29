@@ -100,7 +100,7 @@ public:
 
   // Selectable, as a message's text is: a drag across it selects, a double
   // press selects a word, Ctrl+A all of it, and Ctrl+C copies what is
-  // selected through skiff::scene::clipboard(). The selection shows while
+  // selected through skiff::scene::setClipboardText(). The selection shows while
   // the text has the focus a press gives it.
   void setSelectable(bool selectable) {
     fSelectable = selectable;
