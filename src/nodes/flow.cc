@@ -100,11 +100,41 @@ template <class N> struct Flowing {
   // it had every child laid out again at each: every row of a long list,
   // twice at each level of auto-sizing. A child's own height, its content's
   // or the one a flow gives it, never came from that box.
-  [[nodiscard]] static skia::SkRect boxFor(const skiff::scene::State &child, const skia::SkRect &box) {
+  //
+  // And in a row, a child sized by its content is given the width its
+  // fixed siblings leave rather than the row's: a bubble beside an avatar's
+  // room shrinks with the row instead of running past its end.
+  [[nodiscard]] skia::SkRect boxFor(const skiff::scene::State &child, const skia::SkRect &box) const {
+    const float width = fAutoRoom >= 0.0f && child.fAutoSizeAxes.template has<skiff::scene::axis::x>()
+                            ? std::min(box.width(), fAutoRoom)
+                            : box.width();
     if (child.fRelativeSizeAxes.template has<skiff::scene::axis::y>()) {
-      return box;
+      return skia::SkRect::MakeXYWH(box.fLeft, box.fTop, width, box.height());
     }
-    return skia::SkRect::MakeXYWH(box.fLeft, box.fTop, box.width(), 0.0f);
+    return skia::SkRect::MakeXYWH(box.fLeft, box.fTop, width, 0.0f);
+  }
+  // A row's room for what sizes itself: its width, less its fixed-size
+  // children and the gaps between them all. Negative where not worked out.
+  float fAutoRoom = -1.0f;
+  void workOutAutoRoom(const skia::SkRect &box) {
+    float fixed = 0.0f;
+    int shown = 0;
+    skiff::scene::eachChild(fNode, [&](auto &child) {
+      const skiff::scene::State &state = skiff::scene::stateOf(child);
+      if (!state.fVisible) {
+        return;
+      }
+      ++shown;
+      fixed += state.fMargin.totalX();
+      if (state.fGrowAxes.template has<skiff::scene::axis::x>() ||
+          state.fAutoSizeAxes.template has<skiff::scene::axis::x>()) {
+        return;
+      }
+      fixed += state.fRelativeSizeAxes.template has<skiff::scene::axis::x>() ? box.width() * state.fWidth
+                                                                          : state.fWidth;
+    });
+    fixed += fOptions.spacingX * static_cast<float>(std::max(0, shown - 1));
+    fAutoRoom = std::max(0.0f, box.width() - fixed);
   }
 
   void layout() {
@@ -175,6 +205,7 @@ template <class N> struct Flowing {
   void lay(direction::horizontal) {
     const skia::SkRect box = fNode.fState.contentBox();
     if (!fOptions.wrap) {
+      this->workOutAutoRoom(box);
       grow<skiff::scene::axis::x>(box, fOptions.spacingX);
     }
     const auto shown = measured(box);

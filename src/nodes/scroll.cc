@@ -57,6 +57,22 @@ public:
       const float dy = fLastOffset - offset;
       scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
     }
+    // What the reader is looking at stays where it is when what is above
+    // it changes -- history coming in above, a row above growing: the first
+    // item in view is remembered, and the view follows it. Not at the end,
+    // where the view follows the newest instead.
+    struct Anchor {
+      scene::NodeId id = 0;
+      float top = 0.0f;
+    };
+    std::optional<Anchor> anchor;
+    if (fLaidOut && box == fLastBox && !this->atEnd()) {
+      this->eachItem([&](const scene::State &item) {
+        if (!anchor && item.fVisible && item.fBounds.fBottom > box.fTop) {
+          anchor = Anchor{item.fId, item.fBounds.fTop};
+        }
+      });
+    }
     fLaidOut = true;
     fLastBox = box;
     fLastOffset = offset;
@@ -64,6 +80,28 @@ public:
     const skia::SkRect content = scene::childBounds(*this);
     fExtent = std::max(0.0f, content.height() - box.height());
     fScroll.setBounds(0.0f, fExtent);
+    if (anchor) {
+      float moved = 0.0f;
+      this->eachItem([&](const scene::State &item) {
+        if (item.fId == anchor->id) {
+          moved = item.fBounds.fTop - anchor->top;
+        }
+      });
+      if (moved != 0.0f) {
+        const float to = std::clamp(offset + moved, 0.0f, fExtent);
+        fScroll.jumpTo(to);
+        const float dy = offset - to;
+        scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
+        fLastOffset = to;
+      }
+    }
+  }
+
+  // The items of the list: the children of what this scrolls.
+  template <class F> void eachItem(F &&f) {
+    skiff::scene::eachChild(*this, [&](auto &child) {
+      skiff::scene::eachChild(child, [&](auto &item) { f(skiff::scene::stateOf(item)); });
+    });
   }
 
   void update(double nowMs) {
@@ -92,7 +130,7 @@ public:
     paint.setColor(skia::colorSetARGB(255, 255, 255, 255));
     paint.setAlphaf(alpha * 0.28f);
     canvas->drawRRect(skia::SkRRect::MakeRectXY(
-                          skia::SkRect::MakeXYWH(box.fRight - 7.0f, at + 2.0f, 4.0f, thumb - 4.0f), 2.0f, 2.0f),
+                          skia::SkRect::MakeXYWH(box.fRight - 5.0f, at + 2.0f, 4.0f, thumb - 4.0f), 2.0f, 2.0f),
                       paint);
   }
   [[nodiscard]] bool hoverChangesAppearance() const { return true; }
@@ -150,6 +188,12 @@ public:
     requires(std::same_as<Phase, skiff::scene::phase::capture> ||
              std::same_as<Phase, skiff::scene::phase::target>)
   {
+    // Only the main button drags or scrolls: a right press is for what is
+    // under it -- a message's menu -- and was caught as the end of a glide
+    // a wheel had started, and never reached it.
+    if (press.button > 1) {
+      return;
+    }
     // On the bar: its thumb is taken where it was pressed, or, pressed
     // beside the thumb, brought under the pointer by its middle.
     if (this->overBar(press.x, press.y)) {
@@ -164,6 +208,7 @@ public:
       return;
     }
     fArmed = fExtent > 0.0f; // nothing to scroll, nothing to drag
+    fPressedAt = std::chrono::steady_clock::now();
     fPressX = press.x;
     fPressY = press.y;
     if (fArmed) {
@@ -186,6 +231,12 @@ public:
       return;
     }
     if (!fArmed) {
+      return;
+    }
+    // Held still a while before moving: the press was for what is under it
+    // -- a selection being begun in a text -- not for scrolling.
+    if (!fScroll.dragging() && std::chrono::steady_clock::now() - fPressedAt > kHoldBeforeSelecting) {
+      fArmed = false;
       return;
     }
     if (!fScroll.dragging()) {
@@ -272,6 +323,10 @@ private:
   float fPressX = 0.0f;
   float fPressY = 0.0f;
   bool fArmed = false;
+  // When the press was, and how long it may rest before a move is no
+  // longer a scroll.
+  std::chrono::steady_clock::time_point fPressedAt{};
+  static constexpr std::chrono::milliseconds kHoldBeforeSelecting{250};
   // The bar's thumb being dragged, and where on it it was taken.
   bool fBarDragging = false;
   float fBarGrab = 0.0f;

@@ -88,12 +88,18 @@ public:
     fLastPress = now;
     fLastOffset = at_offset;
     fAnchor = fCaret = at_offset;
-    fDragging = true;
-    reply.capturePointer();
+    // Not taken yet: a scrolled list around this may take a press that
+    // moves at once as a scroll. A move that reaches this selects, and the
+    // pointer is taken then.
+    fPressed = true;
     this->markDamaged();
   }
   void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::move &at,
                  skiff::scene::PointerReply &reply) {
+    if (fPressed && !fDragging) {
+      fDragging = true;
+      reply.capturePointer();
+    }
     if (!fDragging) {
       return;
     }
@@ -103,6 +109,7 @@ public:
   }
   void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::up &,
                  skiff::scene::PointerReply &reply) {
+    fPressed = false;
     if (fDragging) {
       fDragging = false;
       reply.releasePointer();
@@ -110,6 +117,7 @@ public:
   }
   void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::cancel &,
                  skiff::scene::PointerReply &reply) {
+    fPressed = false;
     if (fDragging) {
       fDragging = false;
       reply.releasePointer();
@@ -410,6 +418,7 @@ private:
   bool fSelectable = false;
   bool fShrinks = false;
   bool fDragging = false;
+  bool fPressed = false;
   std::size_t fAnchor = 0;
   std::size_t fCaret = 0;
   std::chrono::steady_clock::time_point fLastPress{};
