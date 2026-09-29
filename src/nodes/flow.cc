@@ -189,10 +189,20 @@ template <class N> struct Flowing {
         used + fOptions.spacingY * static_cast<float>(std::max(0, count - 1)),
         count);
     std::vector<std::pair<float, float>> places(shown.size());
+    // Across a column sized by its content, its widest child is the line
+    // to align against, not the room it may take: aligned to that, a child
+    // at the end pulled the column out to its largest.
+    float line = box.width();
+    if (fNode.fState.fAutoSizeAxes.template has<skiff::scene::axis::x>()) {
+      line = 0.0f;
+      for (const skiff::scene::State *state : shown) {
+        line = std::max(line, state->fBounds.width() + state->fMargin.totalX());
+      }
+    }
     float y = gaps.fStart;
     for (std::size_t i = 0; i < shown.size(); ++i) {
       const skiff::scene::State &state = *shown[i];
-      places[i] = {crossOffset(state, box.width(),
+      places[i] = {crossOffset(state, line,
                                      state.fBounds.width() +
                                          state.fMargin.totalX()),
                    y};
