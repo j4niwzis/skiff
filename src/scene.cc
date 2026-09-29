@@ -699,6 +699,14 @@ public:
     fFlinging = false;
     fVelocity = 0.0f;
   }
+  // Everything moved by `delta` -- the contents grew above what is looked
+  // at: the view, where it is going, and where a drag began, together, so
+  // a drag or a glide under way goes on as it was.
+  void shift(float delta) {
+    fOffset += delta;
+    fTarget += delta;
+    fPressOffset += delta;
+  }
   void glideTo(float value) {
     fTarget = std::clamp(value, fLo, fHi);
     fFlinging = false;

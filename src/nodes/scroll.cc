@@ -102,12 +102,13 @@ public:
           moved = item.fBounds.fTop - anchor->top;
         }
       });
+      // Shifted, not jumped: a drag or a glide under way -- a finger past
+      // the top pulling history in -- goes on from where it is instead of
+      // snapping back and forth.
       if (moved != 0.0f) {
-        const float to = std::clamp(offset + moved, 0.0f, fExtent);
-        fScroll.jumpTo(to);
-        const float dy = offset - to;
-        scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
-        fLastOffset = to;
+        fScroll.shift(moved);
+        scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, -moved); });
+        fLastOffset = offset + moved;
       }
     }
   }
