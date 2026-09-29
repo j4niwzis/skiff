@@ -1157,6 +1157,18 @@ inline void openLink(std::string_view target) {
   }
 }
 
+// What draws a pill's picture -- a mention's avatar, in a text -- given
+// where and what the pill is of: the program says, as it does for links.
+struct PillPainter {
+  void (*fPaint)(void *context, skia::SkCanvas *canvas, const skia::SkRect &disc, std::string_view target,
+                 float alpha) = nullptr;
+  void *fContext = nullptr;
+};
+inline PillPainter &pillPainter() {
+  static PillPainter kept;
+  return kept;
+}
+
 // ---- the state every node has --------------------------------------------
 
 // What every node is, beyond what its own type adds: its layout inputs and

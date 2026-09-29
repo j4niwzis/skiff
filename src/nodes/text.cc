@@ -71,6 +71,9 @@ public:
     std::size_t first = 0;
     std::size_t last = 0;
     std::string target;
+    // A pill, as a mention is drawn: a rounded plate behind it and, at its
+    // start, a picture the program paints (its text leaves room for it).
+    bool pill = false;
   };
   void setLinks(std::vector<Link> links, skia::SkColor colour) {
     fLinks = std::move(links);
@@ -133,7 +136,12 @@ public:
   }
   void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::move &at,
                  skiff::scene::PointerReply &reply) {
+    // A selection is begun by a press held still a moment first: one that
+    // moves at once is a scroll or a swipe, which what holds this takes.
     if (fPressed && !fDragging) {
+      if (std::chrono::steady_clock::now() - fLastPress < std::chrono::milliseconds(250)) {
+        return;
+      }
       fDragging = true;
       reply.capturePointer();
     }
@@ -455,10 +463,31 @@ private:
     float at = x;
     for (std::size_t i = 0; i + 1 < cuts.size(); ++i) {
       const std::string piece(line.substr(cuts[i] - start, cuts[i + 1] - cuts[i]));
-      const bool linked = this->linkAt(cuts[i]) != nullptr;
+      const Link *link = this->linkAt(cuts[i]);
+      const bool linked = link != nullptr;
       const skia::SkColor colour = linked ? fLinkColour : fColour;
-      p.text(piece, at, y, fSize, colour, alpha, fBold);
       const float width = p.measure(piece, fSize, fBold);
+      if (link && link->pill) {
+        // The plate, the picture at its start where the pill begins, the
+        // text over it -- not underlined.
+        const float height = fSize * 1.25f;
+        const skia::SkRect plate = skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, height);
+        skia::SkPaint fill;
+        fill.setAntiAlias(true);
+        fill.setColor(colour);
+        fill.setAlphaf(0.18f * alpha);
+        canvas->drawRRect(skia::SkRRect::MakeRectXY(plate, height * 0.5f, height * 0.5f), fill);
+        if (cuts[i] == link->first && skiff::scene::pillPainter().fPaint) {
+          const float side = height - 4.0f;
+          skiff::scene::pillPainter().fPaint(skiff::scene::pillPainter().fContext, canvas,
+                                             skia::SkRect::MakeXYWH(at + 1.0f, plate.fTop + 2.0f, side, side),
+                                             link->target, alpha);
+        }
+        p.text(piece, at, y, fSize, colour, alpha, fBold);
+        at += width;
+        continue;
+      }
+      p.text(piece, at, y, fSize, colour, alpha, fBold);
       if (linked) {
         skia::SkPaint under;
         under.setColor(colour);
