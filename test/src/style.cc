@@ -1018,4 +1018,24 @@ TEST(Focus, APressFocusesWithoutShowingIt) {
   EXPECT_TRUE(focusVisible());
 }
 
+// A Stack lays its own children out as a column: declared, not placed.
+struct Declared : skiff::nodes::Stack {
+  Box<> first = make<Box>({.fillX = true, .height = 10.0f}, kCard);
+  Box<> second = make<Box>({.fillX = true, .height = 20.0f}, kCard);
+  Declared() { this->setGap(5.0f); }
+  void forEachChild(auto &&f) {
+    f(first);
+    f(second);
+  }
+};
+
+TEST(Stack, ItsChildrenGoOneUnderAnother) {
+  Scene<Declared> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(100.0f, 100.0f));
+  EXPECT_FLOAT_EQ(scene.root().first.bounds().fTop, 0.0f);
+  EXPECT_FLOAT_EQ(scene.root().second.bounds().fTop, 15.0f);
+  EXPECT_FLOAT_EQ(scene.root().second.bounds().width(), 100.0f);
+}
+
 } // namespace

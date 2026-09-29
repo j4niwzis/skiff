@@ -87,13 +87,182 @@ static_assert(stack<3>({10.0f, 20.0f, 30.0f}, 4.0f, {}) ==
 
 // FillFlowContainer: children laid end to end, wrapping when they run out of
 // room, which is how lazer builds every list and row of filters.
+namespace detail {
+// How a flow lays out a node's children -- the ones its forEachChild names --
+// with its options: Flow's own, and any node's that says it is laid out so.
+template <class N> struct Flowing {
+  N &fNode;
+  const FlowOptions &fOptions;
+
+  void layout() {
+    std::visit([this](const auto &along) { lay(along); }, fOptions.direction);
+  }
+
+  // The children that show, laid out at their own size in the box; what the
+  // placing is worked out from.
+  std::vector<skiff::scene::State *> measured(const skia::SkRect &box) {
+    std::vector<skiff::scene::State *> shown;
+    skiff::scene::eachChild(fNode, [&](auto &child) {
+      skiff::scene::State &state = skiff::scene::stateOf(child);
+      if (state.fVisible) {
+        skiff::scene::layout(child, box);
+        shown.push_back(&state);
+      }
+    });
+    return shown;
+  }
+
+  // And placed: a child that did not move keeps its layout.
+  void place(const skia::SkRect &box,
+             const std::vector<std::pair<float, float>> &places) {
+    std::size_t at = 0;
+    skiff::scene::eachChild(fNode, [&](auto &child) {
+      skiff::scene::State &state = skiff::scene::stateOf(child);
+      if (!state.fVisible) {
+        return;
+      }
+      state.arrange(places[at].first, places[at].second);
+      skiff::scene::layout(child, box);
+      ++at;
+    });
+  }
+
+  [[nodiscard]] float crossOffset(const skiff::scene::State &child,
+                                  float line, float own) const {
+    return (line - own) * child.fAlignSelf.value_or(fOptions.crossAlign).at;
+  }
+
+  void lay(direction::vertical) {
+    const skia::SkRect box = fNode.fState.contentBox();
+    grow<skiff::scene::axis::y>(box, fOptions.spacingY);
+    const auto shown = measured(box);
+    float used = 0.0f;
+    for (const skiff::scene::State *state : shown) {
+      used += state->fBounds.height() + state->fMargin.totalY();
+    }
+    const int count = static_cast<int>(shown.size());
+    const Spread gaps = spread(
+        fOptions.justify, box.height(),
+        used + fOptions.spacingY * static_cast<float>(std::max(0, count - 1)),
+        count);
+    std::vector<std::pair<float, float>> places(shown.size());
+    float y = gaps.fStart;
+    for (std::size_t i = 0; i < shown.size(); ++i) {
+      const skiff::scene::State &state = *shown[i];
+      places[i] = {crossOffset(state, box.width(),
+                                     state.fBounds.width() +
+                                         state.fMargin.totalX()),
+                   y};
+      y += state.fBounds.height() + state.fMargin.totalY() +
+           fOptions.spacingY + gaps.fBetween;
+    }
+    place(box, places);
+  }
+
+  void lay(direction::horizontal) {
+    const skia::SkRect box = fNode.fState.contentBox();
+    if (!fOptions.wrap) {
+      grow<skiff::scene::axis::x>(box, fOptions.spacingX);
+    }
+    const auto shown = measured(box);
+    std::vector<std::pair<float, float>> places(shown.size());
+    // Rows broken at the edge, then placed.
+    std::size_t rowStart = 0;
+    float rowWidth = 0.0f;
+    float y = 0.0f;
+    const auto flush = [&](std::size_t end) {
+      if (end == rowStart) {
+        return;
+      }
+      float rowHeight = 0.0f;
+      for (std::size_t i = rowStart; i < end; ++i) {
+        rowHeight = std::max(rowHeight, shown[i]->fBounds.height() +
+                                            shown[i]->fMargin.totalY());
+      }
+      const Spread gaps =
+          fOptions.centreRows
+              ? Spread{(box.width() - rowWidth) * 0.5f, 0.0f}
+              : spread(fOptions.justify, box.width(), rowWidth,
+                       static_cast<int>(end - rowStart));
+      float x = gaps.fStart;
+      for (std::size_t i = rowStart; i < end; ++i) {
+        const skiff::scene::State &state = *shown[i];
+        places[i] = {x, y + crossOffset(state, rowHeight,
+                                              state.fBounds.height() +
+                                                  state.fMargin.totalY())};
+        x += state.fBounds.width() + state.fMargin.totalX() +
+             fOptions.spacingX + gaps.fBetween;
+      }
+      y += rowHeight + fOptions.spacingY;
+      rowStart = end;
+      rowWidth = 0.0f;
+    };
+    for (std::size_t i = 0; i < shown.size(); ++i) {
+      const float width =
+          shown[i]->fBounds.width() + shown[i]->fMargin.totalX();
+      // Half a pixel of slack: four quarters add up to the width.
+      if (fOptions.wrap && i > rowStart &&
+          rowWidth + fOptions.spacingX + width > box.width() + 0.5f) {
+        flush(i);
+      }
+      rowWidth += i == rowStart ? width : fOptions.spacingX + width;
+    }
+    flush(shown.size());
+    place(box, places);
+  }
+
+  // Children that grow take an equal share of what the rest leave along the
+  // axis, written before anything is placed.
+  template <class Axis> void grow(const skia::SkRect &box, float spacing) {
+    constexpr bool horizontal = std::same_as<Axis, skiff::scene::axis::x>;
+    int growers = 0;
+    int visible = 0;
+    float taken = 0.0f;
+    skiff::scene::eachChild(fNode, [&](auto &child) {
+      skiff::scene::State &state = skiff::scene::stateOf(child);
+      if (!state.fVisible) {
+        return;
+      }
+      ++visible;
+      if (state.fGrowAxes.template has<Axis>()) {
+        ++growers;
+        return;
+      }
+      skiff::scene::layout(child, box);
+      taken += horizontal ? state.fBounds.width() + state.fMargin.totalX()
+                          : state.fBounds.height() + state.fMargin.totalY();
+    });
+    if (growers == 0) {
+      return;
+    }
+    const float gaps = spacing * static_cast<float>(std::max(0, visible - 1));
+    const float room = horizontal ? box.width() : box.height();
+    const float share =
+        std::max(0.0f, (room - taken - gaps) / static_cast<float>(growers));
+    skiff::scene::eachChild(fNode, [&](auto &child) {
+      skiff::scene::State &state = skiff::scene::stateOf(child);
+      if (state.fVisible && state.fGrowAxes.template has<Axis>()) {
+        state.arrangeAxisSize(horizontal, share);
+      }
+    });
+  }
+
+};
+} // namespace detail
+
 template <class... Children> class Flow : public skiff::scene::Node {
 public:
   explicit Flow(FlowOptions options, Children... children)
       : fChildren(std::move(children)...), fOptions(options) {}
 
   void forEachChild(auto &&f) {
+#if defined(__cpp_structured_bindings) && __cpp_structured_bindings >= 202411L
+    // C++26's binding packs, where the build has them.
+    auto &[... each] = fChildren;
+    (f(each), ...);
+#else
     std::apply([&](auto &...each) { (f(each), ...); }, fChildren);
+#endif
   }
 
   [[nodiscard]] const FlowOptions &options() const noexcept {
@@ -128,164 +297,35 @@ public:
     this->invalidateLayout();
   }
 
-  void layoutChildren() {
-    std::visit([this](const auto &along) { this->lay(along); },
-               fOptions.direction);
-  }
+  void layoutChildren() { detail::Flowing<Flow>{*this, fOptions}.layout(); }
 
   std::tuple<Children...> fChildren;
 
 private:
-  // The children that show, laid out at their own size in the box; what the
-  // placing is worked out from.
-  std::vector<skiff::scene::State *> measured(const skia::SkRect &box) {
-    std::vector<skiff::scene::State *> shown;
-    skiff::scene::eachChild(*this, [&](auto &child) {
-      skiff::scene::State &state = skiff::scene::stateOf(child);
-      if (state.fVisible) {
-        skiff::scene::layout(child, box);
-        shown.push_back(&state);
-      }
-    });
-    return shown;
-  }
-
-  // And placed: a child that did not move keeps its layout.
-  void place(const skia::SkRect &box,
-             const std::vector<std::pair<float, float>> &places) {
-    std::size_t at = 0;
-    skiff::scene::eachChild(*this, [&](auto &child) {
-      skiff::scene::State &state = skiff::scene::stateOf(child);
-      if (!state.fVisible) {
-        return;
-      }
-      state.arrange(places[at].first, places[at].second);
-      skiff::scene::layout(child, box);
-      ++at;
-    });
-  }
-
-  [[nodiscard]] float crossOffset(const skiff::scene::State &child,
-                                  float line, float own) const {
-    return (line - own) * child.fAlignSelf.value_or(fOptions.crossAlign).at;
-  }
-
-  void lay(direction::vertical) {
-    const skia::SkRect box = fState.contentBox();
-    this->grow<skiff::scene::axis::y>(box, fOptions.spacingY);
-    const auto shown = this->measured(box);
-    float used = 0.0f;
-    for (const skiff::scene::State *state : shown) {
-      used += state->fBounds.height() + state->fMargin.totalY();
-    }
-    const int count = static_cast<int>(shown.size());
-    const Spread gaps = spread(
-        fOptions.justify, box.height(),
-        used + fOptions.spacingY * static_cast<float>(std::max(0, count - 1)),
-        count);
-    std::vector<std::pair<float, float>> places(shown.size());
-    float y = gaps.fStart;
-    for (std::size_t i = 0; i < shown.size(); ++i) {
-      const skiff::scene::State &state = *shown[i];
-      places[i] = {this->crossOffset(state, box.width(),
-                                     state.fBounds.width() +
-                                         state.fMargin.totalX()),
-                   y};
-      y += state.fBounds.height() + state.fMargin.totalY() +
-           fOptions.spacingY + gaps.fBetween;
-    }
-    this->place(box, places);
-  }
-
-  void lay(direction::horizontal) {
-    const skia::SkRect box = fState.contentBox();
-    if (!fOptions.wrap) {
-      this->grow<skiff::scene::axis::x>(box, fOptions.spacingX);
-    }
-    const auto shown = this->measured(box);
-    std::vector<std::pair<float, float>> places(shown.size());
-    // Rows broken at the edge, then placed.
-    std::size_t rowStart = 0;
-    float rowWidth = 0.0f;
-    float y = 0.0f;
-    const auto flush = [&](std::size_t end) {
-      if (end == rowStart) {
-        return;
-      }
-      float rowHeight = 0.0f;
-      for (std::size_t i = rowStart; i < end; ++i) {
-        rowHeight = std::max(rowHeight, shown[i]->fBounds.height() +
-                                            shown[i]->fMargin.totalY());
-      }
-      const Spread gaps =
-          fOptions.centreRows
-              ? Spread{(box.width() - rowWidth) * 0.5f, 0.0f}
-              : spread(fOptions.justify, box.width(), rowWidth,
-                       static_cast<int>(end - rowStart));
-      float x = gaps.fStart;
-      for (std::size_t i = rowStart; i < end; ++i) {
-        const skiff::scene::State &state = *shown[i];
-        places[i] = {x, y + this->crossOffset(state, rowHeight,
-                                              state.fBounds.height() +
-                                                  state.fMargin.totalY())};
-        x += state.fBounds.width() + state.fMargin.totalX() +
-             fOptions.spacingX + gaps.fBetween;
-      }
-      y += rowHeight + fOptions.spacingY;
-      rowStart = end;
-      rowWidth = 0.0f;
-    };
-    for (std::size_t i = 0; i < shown.size(); ++i) {
-      const float width =
-          shown[i]->fBounds.width() + shown[i]->fMargin.totalX();
-      // Half a pixel of slack: four quarters add up to the width.
-      if (fOptions.wrap && i > rowStart &&
-          rowWidth + fOptions.spacingX + width > box.width() + 0.5f) {
-        flush(i);
-      }
-      rowWidth += i == rowStart ? width : fOptions.spacingX + width;
-    }
-    flush(shown.size());
-    this->place(box, places);
-  }
-
-  // Children that grow take an equal share of what the rest leave along the
-  // axis, written before anything is placed.
-  template <class Axis> void grow(const skia::SkRect &box, float spacing) {
-    constexpr bool horizontal = std::same_as<Axis, skiff::scene::axis::x>;
-    int growers = 0;
-    int visible = 0;
-    float taken = 0.0f;
-    skiff::scene::eachChild(*this, [&](auto &child) {
-      skiff::scene::State &state = skiff::scene::stateOf(child);
-      if (!state.fVisible) {
-        return;
-      }
-      ++visible;
-      if (state.fGrowAxes.template has<Axis>()) {
-        ++growers;
-        return;
-      }
-      skiff::scene::layout(child, box);
-      taken += horizontal ? state.fBounds.width() + state.fMargin.totalX()
-                          : state.fBounds.height() + state.fMargin.totalY();
-    });
-    if (growers == 0) {
-      return;
-    }
-    const float gaps = spacing * static_cast<float>(std::max(0, visible - 1));
-    const float room = horizontal ? box.width() : box.height();
-    const float share =
-        std::max(0.0f, (room - taken - gaps) / static_cast<float>(growers));
-    skiff::scene::eachChild(*this, [&](auto &child) {
-      skiff::scene::State &state = skiff::scene::stateOf(child);
-      if (state.fVisible && state.fGrowAxes.template has<Axis>()) {
-        state.arrangeAxisSize(horizontal, share);
-      }
-    });
-  }
-
   FlowOptions fOptions;
+};
+
+// A node laid out as a flow of its own children, in the order its
+// forEachChild names them, with the options it keeps: a screen declares
+// what it holds, in what order, and how each sizes itself (fill, autoSize,
+// grow, margins); where each goes is the layout's, never placed by hand.
+// Vertical and not wrapping to begin with.
+class Stack : public skiff::scene::Node {
+public:
+  FlowOptions fStack{.direction = direction::vertical{}, .wrap = false};
+
+  void setGap(float gap) {
+    fStack.spacingX = gap;
+    fStack.spacingY = gap;
+    this->invalidateLayout();
+  }
+  void setHorizontal() {
+    fStack.direction = direction::horizontal{};
+    this->invalidateLayout();
+  }
+  void layoutChildren(this auto &self) {
+    detail::Flowing<std::remove_reference_t<decltype(self)>>{self, self.fStack}.layout();
+  }
 };
 
 // A vertical flow and a horizontal one, as they are usually written.
