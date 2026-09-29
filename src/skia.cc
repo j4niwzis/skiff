@@ -16,6 +16,12 @@ module;
 #endif
 
 #include <skia/codec/SkCodec.h>
+#if defined(SK_CODEC_DECODES_PNG)
+#include <skia/codec/SkPngDecoder.h>
+#endif
+#if defined(SK_CODEC_DECODES_JPEG)
+#include <skia/codec/SkJpegDecoder.h>
+#endif
 #include <skia/core/SkBitmap.h>
 #include <skia/core/SkBlendMode.h>
 #include <skia/core/SkCanvas.h>
@@ -107,6 +113,24 @@ export module skia;
 export namespace skia {
 
 template <class T> using Sp = ::sk_sp<T>;
+
+// An image from the bytes of a file of it -- PNG or JPEG, as the build
+// decodes them -- or nothing where they are neither, or broken.
+inline ::sk_sp<::SkImage> decodeImage(const void *bytes, std::size_t size) {
+  std::vector<::SkCodecs::Decoder> decoders;
+#if defined(SK_CODEC_DECODES_PNG)
+  decoders.push_back(::SkPngDecoder::Decoder());
+#endif
+#if defined(SK_CODEC_DECODES_JPEG)
+  decoders.push_back(::SkJpegDecoder::Decoder());
+#endif
+  auto codec = ::SkCodec::MakeFromData(::SkData::MakeWithCopy(bytes, size), decoders);
+  if (!codec) {
+    return nullptr;
+  }
+  auto [image, result] = codec->getImage();
+  return result == ::SkCodec::kSuccess ? image : nullptr;
+}
 
 using ::SkAlphaType;
 using ::SkBitmap;
