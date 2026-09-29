@@ -39,11 +39,11 @@ public:
   }
   // Carried across a rebuild: a list that grew should stay where the reader
   // left it.
+  // Put there at once -- once the contents are laid out: a list shown anew
+  // is not as long yet as it will be, and an offset clamped to what it was
+  // then was glided on from.
   void setCurrent(float offset) {
-    if (fScroll.offset() == offset && fScroll.target() == offset) {
-      return;
-    }
-    fScroll.jumpTo(offset);
+    fJumpTo = offset;
     this->invalidateLayout();
   }
   // To the end, however long the contents turn out to be: where they are
@@ -102,7 +102,14 @@ public:
     const skia::SkRect content = scene::childBounds(*this);
     fExtent = std::max(0.0f, content.height() - box.height());
     fScroll.setBounds(0.0f, fExtent);
-    if (following && !fToEnd && fScroll.offset() != fExtent) {
+    if (fJumpTo) {
+      const float to = std::clamp(*fJumpTo, 0.0f, fExtent);
+      fJumpTo.reset();
+      const float dy = fScroll.offset() - to;
+      fScroll.jumpTo(to);
+      scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
+      fLastOffset = to;
+    } else if (following && !fToEnd && fScroll.offset() != fExtent) {
       const float dy = fScroll.offset() - fExtent;
       fScroll.jumpTo(fExtent);
       scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
@@ -369,6 +376,7 @@ private:
   float fPressY = 0.0f;
   bool fArmed = false;
   bool fToEnd = false;
+  std::optional<float> fJumpTo;
   bool fToEndGlide = true;
   // When the press was, and how long it may rest before a move is no
   // longer a scroll.

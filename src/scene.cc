@@ -914,6 +914,9 @@ struct PointerReply {
   // tap but must not activate until the ancestor has had its chance to turn
   // the press into a drag.
   void deferClick() noexcept { fDeferClick = true; }
+  // A click the node under the pointer did not take, where it was: told to
+  // each node above it in turn, as a click at a point is.
+  std::optional<skia::SkPoint> fClickAbove;
   // Touch scrolling is not pointing: what is under a finger deciding between
   // a tap and a drag does not hover.
   void suppressHover() noexcept { fSuppressHover = true; }
@@ -1944,22 +1947,32 @@ template <class T, class Phase, class Input>
 void defaultPointer(T &, const Phase &, const Input &, PointerReply &) {}
 // A press is a click -- unless a gesture-owning ancestor deferred it, when
 // the click waits for the release.
+// Only the main button clicks: a right press is a menu's, never a click.
+// A click the node does not take goes on to the nodes above it -- at once,
+// or, deferred, on the release -- as a click at a point does: a list that
+// scrolls deferred every click in it, and one its rows did not take never
+// reached the list itself.
 template <class T>
 void defaultPointer(T &node, const phase::target &, const pointer::down &press,
                     PointerReply &reply) {
+  if (press.button > 1) {
+    return;
+  }
   if (reply.fDeferClick) {
     node.fState.fDeferredClick = true;
     reply.handle();
   } else if (node.onClick(press.x, press.y)) {
     reply.handle();
+  } else {
+    reply.fClickAbove = skia::SkPoint::Make(press.x, press.y);
   }
 }
 template <class T>
 void defaultPointer(T &node, const phase::target &, const pointer::up &release,
                     PointerReply &reply) {
   if (std::exchange(node.fState.fDeferredClick, false)) {
-    if (node.fState.fBounds.contains(release.x, release.y)) {
-      (void)node.onClick(release.x, release.y);
+    if (node.fState.fBounds.contains(release.x, release.y) && !node.onClick(release.x, release.y)) {
+      reply.fClickAbove = skia::SkPoint::Make(release.x, release.y);
     }
     // The release belongs to where the deferred gesture began, even when it
     // ended outside.
@@ -3270,6 +3283,10 @@ public:
     reply.fCaptured = fCapture != 0;
     Routed routed;
     walk::routePointer(fRoot, path, 0, input, reply, routed, false);
+    // A click the target did not take: to the nodes above it, in turn.
+    if (reply.fClickAbove) {
+      (void)walk::clickPath(fRoot, path, 0, reply.fClickAbove->fX, reply.fClickAbove->fY);
+    }
 
     if (routed.fReleaseRequest || ending) {
       fCapture = 0;
