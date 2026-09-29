@@ -91,11 +91,26 @@ public:
     bool struck = false;
     bool code = false;
     bool quote = false;
+    // Marked: a stretch pointed at -- the part of a message a reply quoted
+    // -- on a plate of the quote's colour, apart from what is selected.
+    bool marked = false;
   };
   void setStyles(std::vector<Styled> styles, skia::SkColor quote_colour) {
     fStyles = std::move(styles);
     fQuoteColour = quote_colour;
     this->markDamaged();
+  }
+  [[nodiscard]] const std::vector<Styled> &styles() const noexcept { return fStyles; }
+  // How far down from its top the line an offset is on starts, as drawn.
+  [[nodiscard]] float lineTopOf(std::size_t offset) const {
+    float y = 0.0f;
+    for (const auto &[start, line] : this->shownLines()) {
+      if (offset < start + line.size() + 1) {
+        return y;
+      }
+      y += fSize * 1.25f;
+    }
+    return y;
   }
   [[nodiscard]] Styled styleAt(std::size_t offset) const {
     Styled out;
@@ -106,6 +121,7 @@ public:
         out.struck = out.struck || one.struck;
         out.code = out.code || one.code;
         out.quote = out.quote || one.quote;
+        out.marked = out.marked || one.marked;
       }
     }
     return out;
@@ -544,6 +560,15 @@ private:
       const bool bold = fBold || style.strong;
       const skia::SkColor colour = linked ? fLinkColour : style.quote ? fQuoteColour : fColour;
       const float width = p.measure(piece, fSize, bold);
+      // Marked: on a plate of the quote's colour.
+      if (style.marked) {
+        skia::SkPaint plate;
+        plate.setAntiAlias(true);
+        plate.setColor(fQuoteColour);
+        plate.setAlphaf(0.28f * alpha);
+        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, fSize * 1.25f), 3.0f, 3.0f,
+                              plate);
+      }
       // Code: on a plate of the text's colour, faint.
       if (style.code) {
         skia::SkPaint plate;
