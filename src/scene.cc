@@ -448,6 +448,13 @@ struct Border {
   friend bool operator==(const Border &, const Border &) = default;
 };
 
+// Each corner's radius, where they differ: a chat bubble's corner on its
+// sender's side squared, as the last of a run is.
+struct Corners {
+  float topLeft = 0.0f, topRight = 0.0f, bottomRight = 0.0f, bottomLeft = 0.0f;
+  friend bool operator==(const Corners &, const Corners &) = default;
+};
+
 struct Spec {
   std::optional<Anchor> place{};
   std::optional<Anchor> anchor{};
@@ -478,6 +485,8 @@ struct Spec {
   Margin padding{};
 
   std::optional<float> cornerRadius{};
+  // Or each corner its own; given, it is drawn and clipped by, not the one.
+  std::optional<Corners> corners{};
   // What is painted under the node's own drawing and its children, in its
   // box and its corner radius: a background -- another while hovered,
   // another while selected, another while it has the keyboard's focus --
@@ -1335,6 +1344,7 @@ public:
   bool fOverflowTold = false;
   Cursor fCursor = cursor::arrow{};
   float fCornerRadius = 0.0f;
+  std::optional<Corners> fCorners;
   // Painted in the box, under the rest: see Spec.
   std::optional<skia::SkColor> fBackground, fHoverBackground, fSelectedBackground, fFocusBackground;
   std::optional<Gradient> fGradient;
@@ -1604,6 +1614,10 @@ public:
     }
     if (spec.cornerRadius) {
       fCornerRadius = *spec.cornerRadius;
+    }
+    if (spec.corners && spec.corners != fCorners) {
+      fCorners = spec.corners;
+      this->markDamaged();
     }
     if (spec.background) {
       fBackground = spec.background;
@@ -2582,6 +2596,25 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
 
 // A node's declared box: its background -- the selected one where it is
 // selected, the focused one where it has the focus, the hovered one where it
+// A node's box rounded as it says: each corner its own where it gives them,
+// else all by its one radius -- drawn in by `inset`, as a border is.
+[[nodiscard]] inline skia::SkRRect roundedBox(const State &state, const skia::SkRect &box, float inset = 0.0f) {
+  const skia::SkRect in = box.makeInset(inset, inset);
+  if (!state.fCorners) {
+    const float radius = std::max(0.0f, state.fCornerRadius - inset);
+    return skia::SkRRect::MakeRectXY(in, radius, radius);
+  }
+  const auto r = [&](float each) { return std::max(0.0f, each - inset); };
+  const Corners &c = *state.fCorners;
+  const skia::SkVector radii[4] = {{r(c.topLeft), r(c.topLeft)},
+                                   {r(c.topRight), r(c.topRight)},
+                                   {r(c.bottomRight), r(c.bottomRight)},
+                                   {r(c.bottomLeft), r(c.bottomLeft)}};
+  skia::SkRRect out;
+  out.setRectRadii(in, radii);
+  return out;
+}
+
 // is hovered -- and its border, in its corner radius.
 inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
   const std::optional<skia::SkColor> fill = state.fSelected && state.fSelectedBackground ? state.fSelectedBackground
@@ -2590,18 +2623,16 @@ inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
                                                                                             : state.fBackground;
   if (!fill && !state.fBorder && !state.fGradient && !state.fShadow)
     return;
-  const float radius = state.fCornerRadius;
   if (state.fShadow) {
     skia::SkPaint paint;
     paint.setAntiAlias(true);
     paint.setColor(state.fShadow->colour);
     paint.setAlphaf(paint.getAlphaf() * alpha);
-    canvas->drawRRect(skia::SkRRect::MakeRectXY(state.fBounds.makeOffset(0.0f, state.fShadow->offsetY), radius, radius),
-                      paint);
+    canvas->drawRRect(roundedBox(state, state.fBounds.makeOffset(0.0f, state.fShadow->offsetY)), paint);
   }
   if (state.fGradient && !fill) {
     const int saved = canvas->save();
-    canvas->clipRRect(skia::SkRRect::MakeRectXY(state.fBounds, radius, radius), true);
+    canvas->clipRRect(roundedBox(state, state.fBounds), true);
     paint::verticalGradient(canvas, state.fBounds, state.fGradient->top, state.fGradient->bottom, alpha);
     canvas->restoreToCount(saved);
   }
@@ -2610,7 +2641,7 @@ inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
     paint.setAntiAlias(true);
     paint.setColor(*fill);
     paint.setAlphaf(paint.getAlphaf() * alpha);
-    canvas->drawRRect(skia::SkRRect::MakeRectXY(state.fBounds, radius, radius), paint);
+    canvas->drawRRect(roundedBox(state, state.fBounds), paint);
   }
   if (state.fBorder && state.fBorder->width > 0.0f) {
     skia::SkPaint paint;
@@ -2619,10 +2650,7 @@ inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
     paint.setStrokeWidth(state.fBorder->width);
     paint.setColor(state.fBorder->colour);
     paint.setAlphaf(paint.getAlphaf() * alpha);
-    const float inset = state.fBorder->width * 0.5f;
-    canvas->drawRRect(skia::SkRRect::MakeRectXY(state.fBounds.makeInset(inset, inset), std::max(0.0f, radius - inset),
-                                                std::max(0.0f, radius - inset)),
-                      paint);
+    canvas->drawRRect(roundedBox(state, state.fBounds, state.fBorder->width * 0.5f), paint);
   }
 }
 
@@ -2641,11 +2669,8 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
   const float alpha = inheritedAlpha * state.fAlpha;
   const int saved = canvas->save();
   if (state.fMasking) {
-    if (state.fCornerRadius > 0.0f) {
-      canvas->clipRRect(skia::SkRRect::MakeRectXY(state.fBounds,
-                                                  state.fCornerRadius,
-                                                  state.fCornerRadius),
-                        true);
+    if (state.fCornerRadius > 0.0f || state.fCorners) {
+      canvas->clipRRect(roundedBox(state, state.fBounds), true);
     } else {
       canvas->clipRect(state.fBounds, true);
     }
