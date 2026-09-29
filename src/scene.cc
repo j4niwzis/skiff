@@ -2339,6 +2339,19 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
 }
 } // namespace detail
 
+// A laid-out subtree moved by `dy` as it is, without laying it out again:
+// its bounds and the box it was laid out in, so that laying it out in the
+// moved box finds nothing changed. What a scrolled list does on a scroll.
+// An erased node in it is laid out again instead.
+inline void shiftSubtree(AnyNode &node, float dy);
+template <class N> void shiftSubtree(N &node, float dy) {
+  State &state = stateOf(node);
+  state.fBounds.offset(0.0f, dy);
+  state.fLastConstraint.offset(0.0f, dy);
+  eachChild(node, [&](auto &child) { shiftSubtree(child, dy); });
+}
+inline void shiftSubtree(AnyNode &node, float) { stateOf(node).fLayoutValid = false; }
+
 // Lays a child out in a box: what a container's layoutChildren calls for each
 // of its children, after placing it.
 template <class N> void layout(N &child, const skia::SkRect &parentBox) {

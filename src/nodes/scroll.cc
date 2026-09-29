@@ -47,8 +47,19 @@ public:
   void layoutChildren() {
     namespace scene = skiff::scene;
     const skia::SkRect box = fState.contentBox();
+    const float offset = fScroll.offset();
     const skia::SkRect scrolled = skia::SkRect::MakeXYWH(
-        box.fLeft, box.fTop - fScroll.offset(), box.width(), box.height());
+        box.fLeft, box.fTop - offset, box.width(), box.height());
+    // Only scrolled: the contents move as they are, not laid out again --
+    // with many rows, measuring them all at every step is what made a
+    // scroll stutter. What changed in them is laid out as ever.
+    if (fLaidOut && box == fLastBox && offset != fLastOffset) {
+      const float dy = fLastOffset - offset;
+      scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
+    }
+    fLaidOut = true;
+    fLastBox = box;
+    fLastOffset = offset;
     scene::eachChild(*this, [&](auto &child) { scene::layout(child, scrolled); });
     const skia::SkRect content = scene::childBounds(*this);
     fExtent = std::max(0.0f, content.height() - box.height());
@@ -206,6 +217,10 @@ private:
   float fPressX = 0.0f;
   float fPressY = 0.0f;
   bool fArmed = false;
+  // Where the contents were last laid out: a scroll alone moves them.
+  bool fLaidOut = false;
+  skia::SkRect fLastBox = skia::SkRect::MakeEmpty();
+  float fLastOffset = 0.0f;
 };
 
 } // namespace skiff::nodes

@@ -120,6 +120,13 @@ public:
     const skiff::paint::Painter p(nullptr, *font);
     if (fWrapped) {
       const float room = this->roomFor(parent);
+      // Wrapped at this width already, the text and size as they were: its
+      // lines stand. Measuring them again is what a long list cannot pay
+      // for at every frame.
+      if (fMeasuredSize == fSize && room == fWrappedRoom) {
+        return;
+      }
+      fWrappedRoom = room;
       fLines = p.wrap(fText, room, fSize, fBold);
       state.fHeight =
           static_cast<float>(std::max<std::size_t>(1, fLines.size())) *
@@ -202,6 +209,7 @@ private:
   skia::SkColor fColour;
   bool fBold;
   bool fWrapped = false;
+  float fWrappedRoom = -1.0f;
   // Wrapped with no width of its own: it wraps to its parent's, whatever
   // that is at the time.
   bool fWrapsToParent = false;
