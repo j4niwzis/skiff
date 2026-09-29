@@ -1950,8 +1950,13 @@ public:
   // added to a vector. Compared each frame; a different set is laid out and
   // repainted.
   std::size_t fChildSignature = 0;
-  // Where the children were at the last frame, for when they are gone.
-  skia::SkRect fChildArea = skia::SkRect::MakeEmpty();
+  // Where each child was drawn at the last frame, by id: for when it is
+  // gone, only its place is repainted.
+  struct DrawnChild {
+    NodeId fId;
+    skia::SkRect fArea;
+  };
+  std::vector<DrawnChild> fDrawnChildren;
   skia::SkRect fLastConstraint = skia::SkRect::MakeEmpty();
   bool fDamaged = true;
   skia::SkRect fMovedDamage = skia::SkRect::MakeEmpty();
@@ -2820,8 +2825,17 @@ template <class N> bool markDirty(N &child) {
   if (signature != state.fChildSignature) {
     state.fChildSignature = signature;
     state.fLayoutValid = false;
-    state.fDamaged = true;
-    state.fMovedDamage = joined(state.fMovedDamage, state.fChildArea);
+    // Repainted where a child that went was drawn -- not the whole: one that
+    // came is new and repaints itself, one that stayed and moved repaints
+    // where it was and is, as the layout finds it.
+    std::vector<NodeId> now;
+    eachChild(child, [&](auto &each) { now.push_back(stateOf(each).fId); });
+    std::ranges::sort(now);
+    for (const auto &was : state.fDrawnChildren) {
+      if (!std::ranges::binary_search(now, was.fId)) {
+        state.fMovedDamage = joined(state.fMovedDamage, was.fArea);
+      }
+    }
   }
   state.fSubtreeDirty = below || !state.fLayoutValid;
   // A pending move is the parent's to carry out: it lays out again, and this
@@ -2847,14 +2861,13 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   state.fDamaged = false;
   const bool drawn = drawnAbove && state.fVisible && state.fAlpha > 0.001f;
   skia::SkRect below = skia::SkRect::MakeEmpty();
-  skia::SkRect area = skia::SkRect::MakeEmpty();
+  state.fDrawnChildren.clear();
   eachChildInView(child, [&](auto &each) {
     below = joined(below, walk::collectDamage(each, drawn));
     const State &one = stateOf(each);
-    area = joined(joined(area, one.fBounds), one.fDrawnBounds);
+    // Where it is, laid out and drawn: what is repainted if it goes.
+    state.fDrawnChildren.push_back({one.fId, joined(one.fBounds, one.fDrawnBounds)});
   });
-  // Where the children are, laid out: what is repainted if they go.
-  state.fChildArea = area;
   if (!below.isEmpty() && state.fMasking && !below.intersect(state.fBounds)) {
     below = skia::SkRect::MakeEmpty();
   }
