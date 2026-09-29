@@ -405,6 +405,13 @@ struct Gradient {
   friend bool operator==(const Gradient &, const Gradient &) = default;
 };
 
+// A shadow under a node's box: its shape, moved down, in a colour.
+struct Shadow {
+  skia::SkColor colour = 0;
+  float offsetY = 3.0f;
+  friend bool operator==(const Shadow &, const Shadow &) = default;
+};
+
 // A line around a node's box, inside it, following its corner radius.
 struct Border {
   skia::SkColor colour = 0;
@@ -448,6 +455,7 @@ struct Spec {
   std::optional<skia::SkColor> focusBackground{};
   std::optional<Gradient> gradient{};  // under the plain background, where there is none
   std::optional<Border> border{};
+  std::optional<Shadow> shadow{};
   std::optional<bool> masking{};
   std::optional<float> scale{};
   std::optional<float> alpha{};
@@ -1279,6 +1287,7 @@ public:
   // Painted in the box, under the rest: see Spec.
   std::optional<skia::SkColor> fBackground, fHoverBackground, fSelectedBackground, fFocusBackground;
   std::optional<Gradient> fGradient;
+  std::optional<Shadow> fShadow;
   // Placed by its anchor where its parent is a flow, not in the flow: a
   // badge over a corner, a mark beside a row.
   bool fOutOfFlow = false;
@@ -1556,6 +1565,9 @@ public:
     }
     if (spec.gradient) {
       fGradient = spec.gradient;
+    }
+    if (spec.shadow) {
+      fShadow = spec.shadow;
     }
     if (spec.border) {
       fBorder = spec.border;
@@ -2485,9 +2497,17 @@ inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
                                             : state.fFocused && state.fFocusBackground     ? state.fFocusBackground
                                             : state.fHovered && state.fHoverBackground     ? state.fHoverBackground
                                                                                             : state.fBackground;
-  if (!fill && !state.fBorder && !state.fGradient)
+  if (!fill && !state.fBorder && !state.fGradient && !state.fShadow)
     return;
   const float radius = state.fCornerRadius;
+  if (state.fShadow) {
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor(state.fShadow->colour);
+    paint.setAlphaf(paint.getAlphaf() * alpha);
+    canvas->drawRRect(skia::SkRRect::MakeRectXY(state.fBounds.makeOffset(0.0f, state.fShadow->offsetY), radius, radius),
+                      paint);
+  }
   if (state.fGradient && !fill) {
     const int saved = canvas->save();
     canvas->clipRRect(skia::SkRRect::MakeRectXY(state.fBounds, radius, radius), true);
