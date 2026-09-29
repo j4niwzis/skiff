@@ -488,9 +488,10 @@ private:
     made.font.reset(hb_font_create(hbFace));
     hb_face_destroy(hbFace);
     hb_font_set_scale(made.font.get(), static_cast<int>(made.unitsPerEm), static_cast<int>(made.unitsPerEm));
-    if (const int axes = face.getVariationDesignPosition(nullptr, 0); axes > 0) {
+    // Skia takes a span: an empty one asks how many axes there are.
+    if (const int axes = face.getVariationDesignPosition({}); axes > 0) {
       std::vector<skia::SkFontArguments::VariationPosition::Coordinate> coordinates(static_cast<std::size_t>(axes));
-      face.getVariationDesignPosition(coordinates.data(), axes);
+      face.getVariationDesignPosition(coordinates);
       std::vector<hb_variation_t> variations;
       for (const auto &one : coordinates) {
         variations.push_back({one.axis, one.value});
