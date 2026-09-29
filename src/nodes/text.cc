@@ -750,8 +750,11 @@ private:
   // The width a wrapped line has to fit into, resolved as layout would.
   [[nodiscard]] float roomFor(const skia::SkRect &parent) const {
     const skiff::scene::State &state = fState;
+    // At most its own maximum, as CSS's max-width -- and never more than its
+    // parent has.
     if (state.fMaxWidth > 0.0f) {
-      return state.fMaxWidth;
+      const float parentRoom = parent.width() - state.fMargin.totalX();
+      return parentRoom > 0.0f ? std::min(state.fMaxWidth, parentRoom) : state.fMaxWidth;
     }
     if (state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
       return parent.width() * state.fWidth - state.fMargin.totalX();
