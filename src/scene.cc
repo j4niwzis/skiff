@@ -492,39 +492,12 @@ struct Style {
   std::optional<double> transitionMs{};
   std::optional<Easing> transitionEasing{};
 
-  void overlay(const Style &other) {
-#define SKIFF_OVERLAY(member)                                                  \
-  if (other.member)                                                            \
-  member = other.member
-    SKIFF_OVERLAY(anchor);
-    SKIFF_OVERLAY(origin);
-    SKIFF_OVERLAY(x);
-    SKIFF_OVERLAY(y);
-    SKIFF_OVERLAY(width);
-    SKIFF_OVERLAY(height);
-    SKIFF_OVERLAY(relativeSize);
-    SKIFF_OVERLAY(autoSize);
-    SKIFF_OVERLAY(grow);
-    SKIFF_OVERLAY(minWidth);
-    SKIFF_OVERLAY(maxWidth);
-    SKIFF_OVERLAY(minHeight);
-    SKIFF_OVERLAY(maxHeight);
-    SKIFF_OVERLAY(alignSelf);
-    SKIFF_OVERLAY(depth);
-    SKIFF_OVERLAY(margin);
-    SKIFF_OVERLAY(padding);
-    SKIFF_OVERLAY(cornerRadius);
-    SKIFF_OVERLAY(masking);
-    SKIFF_OVERLAY(scale);
-    SKIFF_OVERLAY(alpha);
-    SKIFF_OVERLAY(visible);
-    SKIFF_OVERLAY(colour);
-    SKIFF_OVERLAY(backgroundColour);
-    SKIFF_OVERLAY(fontSize);
-    SKIFF_OVERLAY(fontBold);
-    SKIFF_OVERLAY(transitionMs);
-    SKIFF_OVERLAY(transitionEasing);
-#undef SKIFF_OVERLAY
+  // Each declaration of `other` that is made, over this one's: the members
+  // walked as a pack, none listed.
+  template <class Self> void overlay(this Self &self, const Style &other) {
+    auto &[... mine] = self;
+    const auto &[... theirs] = other;
+    ((theirs ? void(mine = theirs) : void()), ...);
   }
 };
 
@@ -1684,29 +1657,82 @@ public:
     bool operator==(const Common &) const = default;
   };
 
-  [[nodiscard]] Common commonValues() const {
-    return {fAnchor,     fOrigin,       fX,           fY,
-            fWidth,      fHeight,       fRelativeSizeAxes,
-            fAutoSizeAxes, fGrowAxes,   fMinWidth,    fMaxWidth,
-            fMinHeight,  fMaxHeight,    fAlignSelf,   fDepth,
-            fMargin,     fPadding,      fCornerRadius, fMasking,
-            fScale,      fAlpha,        fVisible};
+  // One property a style sheet can declare: where it is in a Style, in the
+  // snapshot of a node's common values, and live on the node; whether it is
+  // part of the layout; and how a sheet sets it -- at once, or animated as
+  // a property.
+  struct at_once {};
+  template <class Animated> struct animated {
+    Animated property;
+  };
+  template <auto InStyle, auto InCommon, auto Live, bool Layout, class How>
+  struct style_field {
+    static constexpr auto style = InStyle;
+    static constexpr auto common = InCommon;
+    static constexpr auto live = Live;
+    static constexpr bool layout = Layout;
+    using how = How;
+  };
+  // The table of them: the one place they are named.
+  static constexpr auto styleFields() {
+    return std::tuple{
+        style_field<&Style::anchor, &Common::fAnchor, &State::fAnchor, true, at_once>{},
+        style_field<&Style::origin, &Common::fOrigin, &State::fOrigin, true, at_once>{},
+        style_field<&Style::x, &Common::fX, &State::fX, true, animated<property::x>>{},
+        style_field<&Style::y, &Common::fY, &State::fY, true, animated<property::y>>{},
+        style_field<&Style::width, &Common::fWidth, &State::fWidth, true, animated<property::width>>{},
+        style_field<&Style::height, &Common::fHeight, &State::fHeight, true, animated<property::height>>{},
+        style_field<&Style::relativeSize, &Common::fRelativeSize, &State::fRelativeSizeAxes, true, at_once>{},
+        style_field<&Style::autoSize, &Common::fAutoSize, &State::fAutoSizeAxes, true, at_once>{},
+        style_field<&Style::grow, &Common::fGrow, &State::fGrowAxes, true, at_once>{},
+        style_field<&Style::minWidth, &Common::fMinWidth, &State::fMinWidth, true, at_once>{},
+        style_field<&Style::maxWidth, &Common::fMaxWidth, &State::fMaxWidth, true, at_once>{},
+        style_field<&Style::minHeight, &Common::fMinHeight, &State::fMinHeight, true, at_once>{},
+        style_field<&Style::maxHeight, &Common::fMaxHeight, &State::fMaxHeight, true, at_once>{},
+        style_field<&Style::alignSelf, &Common::fAlignSelf, &State::fAlignSelf, true, at_once>{},
+        style_field<&Style::depth, &Common::fDepth, &State::fDepth, false, at_once>{},
+        style_field<&Style::margin, &Common::fMargin, &State::fMargin, true, at_once>{},
+        style_field<&Style::padding, &Common::fPadding, &State::fPadding, true, at_once>{},
+        style_field<&Style::cornerRadius, &Common::fCornerRadius, &State::fCornerRadius, false, at_once>{},
+        style_field<&Style::masking, &Common::fMasking, &State::fMasking, false, at_once>{},
+        style_field<&Style::scale, &Common::fScale, &State::fScale, true, animated<property::scale>>{},
+        style_field<&Style::alpha, &Common::fAlpha, &State::fAlpha, false, animated<property::alpha>>{},
+        style_field<&Style::visible, &Common::fVisible, &State::fVisible, true, at_once>{},
+    };
   }
-  [[nodiscard]] static bool sameLayout(const Common &a,
-                                       const Common &b) noexcept {
-    return a.fAnchor == b.fAnchor && a.fOrigin == b.fOrigin && a.fX == b.fX &&
-           a.fY == b.fY && a.fWidth == b.fWidth && a.fHeight == b.fHeight &&
-           a.fRelativeSize == b.fRelativeSize && a.fAutoSize == b.fAutoSize &&
-           a.fGrow == b.fGrow && a.fMinWidth == b.fMinWidth &&
-           a.fMaxWidth == b.fMaxWidth && a.fMinHeight == b.fMinHeight &&
-           a.fMaxHeight == b.fMaxHeight && a.fAlignSelf == b.fAlignSelf &&
-           a.fMargin == b.fMargin && a.fPadding == b.fPadding &&
-           a.fScale == b.fScale && a.fVisible == b.fVisible;
+  template <class F> static void eachStyleField(F &&f) {
+    std::apply([&](auto... field) { (f(field), ...); }, styleFields());
+  }
+
+  [[nodiscard]] Common commonValues() const {
+    Common out;
+    eachStyleField([&]<class Field>(Field) { out.*Field::common = this->*Field::live; });
+    return out;
+  }
+  [[nodiscard]] static bool sameLayout(const Common &a, const Common &b) noexcept {
+    bool same = true;
+    eachStyleField([&]<class Field>(Field) {
+      if (Field::layout)
+        same = same && a.*Field::common == b.*Field::common;
+    });
+    return same;
   }
 
   void restyle(bool animate) {
     fStyleDirty = true;
     fStyleAnimate = fStyleAnimate || animate;
+  }
+
+  // A declaration set on the node: at once, or animated from where it was.
+  template <class Field>
+  void setStyled(at_once, const Style &, const Common &target, const Common &, double, const Easing &, bool) {
+    this->*Field::live = target.*Field::common;
+  }
+  template <class Field, class Animated>
+  void setStyled(animated<Animated> how, const Style &, const Common &target, const Common &current, double duration,
+                 const Easing &easing, bool animate) {
+    const float previous = fResolvedStyle.*Field::style ? fStyledTarget.*Field::common : current.*Field::common;
+    this->setStyledProperty(how.property, target.*Field::common, previous, duration, easing, animate);
   }
 
   // Applies the declarations a sheet resolved to this node's common
@@ -1721,108 +1747,27 @@ public:
       fStyledTarget = fStyleBase;
     }
     const Common current = this->commonValues();
-#define SKIFF_REFRESH_BASE(declaration, member)                               \
-  if (!fResolvedStyle.declaration) {                                         \
-    fStyleBase.member = current.member;                                      \
-  }
-    SKIFF_REFRESH_BASE(anchor, fAnchor);
-    SKIFF_REFRESH_BASE(origin, fOrigin);
-    SKIFF_REFRESH_BASE(x, fX);
-    SKIFF_REFRESH_BASE(y, fY);
-    SKIFF_REFRESH_BASE(width, fWidth);
-    SKIFF_REFRESH_BASE(height, fHeight);
-    SKIFF_REFRESH_BASE(relativeSize, fRelativeSize);
-    SKIFF_REFRESH_BASE(autoSize, fAutoSize);
-    SKIFF_REFRESH_BASE(grow, fGrow);
-    SKIFF_REFRESH_BASE(minWidth, fMinWidth);
-    SKIFF_REFRESH_BASE(maxWidth, fMaxWidth);
-    SKIFF_REFRESH_BASE(minHeight, fMinHeight);
-    SKIFF_REFRESH_BASE(maxHeight, fMaxHeight);
-    SKIFF_REFRESH_BASE(alignSelf, fAlignSelf);
-    SKIFF_REFRESH_BASE(depth, fDepth);
-    SKIFF_REFRESH_BASE(margin, fMargin);
-    SKIFF_REFRESH_BASE(padding, fPadding);
-    SKIFF_REFRESH_BASE(cornerRadius, fCornerRadius);
-    SKIFF_REFRESH_BASE(masking, fMasking);
-    SKIFF_REFRESH_BASE(scale, fScale);
-    SKIFF_REFRESH_BASE(alpha, fAlpha);
-    SKIFF_REFRESH_BASE(visible, fVisible);
-#undef SKIFF_REFRESH_BASE
-
+    // What is not declared any more follows the node as it is now.
+    eachStyleField([&]<class Field>(Field) {
+      if (!(fResolvedStyle.*Field::style))
+        fStyleBase.*Field::common = current.*Field::common;
+    });
+    // What is declared goes where it says; what stopped being, back.
     Common target = current;
-#define SKIFF_STYLE_TARGET(declaration, member)                               \
-  if (style.declaration) {                                                    \
-    target.member = *style.declaration;                                      \
-  } else if (fResolvedStyle.declaration) {                                   \
-    target.member = fStyleBase.member;                                       \
-  }
-    SKIFF_STYLE_TARGET(anchor, fAnchor);
-    SKIFF_STYLE_TARGET(origin, fOrigin);
-    SKIFF_STYLE_TARGET(x, fX);
-    SKIFF_STYLE_TARGET(y, fY);
-    SKIFF_STYLE_TARGET(width, fWidth);
-    SKIFF_STYLE_TARGET(height, fHeight);
-    SKIFF_STYLE_TARGET(relativeSize, fRelativeSize);
-    SKIFF_STYLE_TARGET(autoSize, fAutoSize);
-    SKIFF_STYLE_TARGET(grow, fGrow);
-    SKIFF_STYLE_TARGET(minWidth, fMinWidth);
-    SKIFF_STYLE_TARGET(maxWidth, fMaxWidth);
-    SKIFF_STYLE_TARGET(minHeight, fMinHeight);
-    SKIFF_STYLE_TARGET(maxHeight, fMaxHeight);
-    SKIFF_STYLE_TARGET(alignSelf, fAlignSelf);
-    SKIFF_STYLE_TARGET(depth, fDepth);
-    SKIFF_STYLE_TARGET(margin, fMargin);
-    SKIFF_STYLE_TARGET(padding, fPadding);
-    SKIFF_STYLE_TARGET(cornerRadius, fCornerRadius);
-    SKIFF_STYLE_TARGET(masking, fMasking);
-    SKIFF_STYLE_TARGET(scale, fScale);
-    SKIFF_STYLE_TARGET(alpha, fAlpha);
-    SKIFF_STYLE_TARGET(visible, fVisible);
-#undef SKIFF_STYLE_TARGET
-
+    eachStyleField([&]<class Field>(Field) {
+      if (style.*Field::style)
+        target.*Field::common = *(style.*Field::style);
+      else if (fResolvedStyle.*Field::style)
+        target.*Field::common = fStyleBase.*Field::common;
+    });
     const bool changed = target != current;
     const bool layoutChanged = !sameLayout(target, current);
     const double duration = style.transitionMs.value_or(0.0);
     const Easing how = style.transitionEasing.value_or(easing::out_quint{});
-
-#define SKIFF_STYLE_DIRECT(declaration, targetMember, liveMember)             \
-  if (style.declaration || fResolvedStyle.declaration) {                      \
-    liveMember = target.targetMember;                                         \
-  }
-    SKIFF_STYLE_DIRECT(anchor, fAnchor, fAnchor);
-    SKIFF_STYLE_DIRECT(origin, fOrigin, fOrigin);
-    SKIFF_STYLE_DIRECT(relativeSize, fRelativeSize, fRelativeSizeAxes);
-    SKIFF_STYLE_DIRECT(autoSize, fAutoSize, fAutoSizeAxes);
-    SKIFF_STYLE_DIRECT(grow, fGrow, fGrowAxes);
-    SKIFF_STYLE_DIRECT(minWidth, fMinWidth, fMinWidth);
-    SKIFF_STYLE_DIRECT(maxWidth, fMaxWidth, fMaxWidth);
-    SKIFF_STYLE_DIRECT(minHeight, fMinHeight, fMinHeight);
-    SKIFF_STYLE_DIRECT(maxHeight, fMaxHeight, fMaxHeight);
-    SKIFF_STYLE_DIRECT(alignSelf, fAlignSelf, fAlignSelf);
-    SKIFF_STYLE_DIRECT(depth, fDepth, fDepth);
-    SKIFF_STYLE_DIRECT(margin, fMargin, fMargin);
-    SKIFF_STYLE_DIRECT(padding, fPadding, fPadding);
-    SKIFF_STYLE_DIRECT(cornerRadius, fCornerRadius, fCornerRadius);
-    SKIFF_STYLE_DIRECT(masking, fMasking, fMasking);
-    SKIFF_STYLE_DIRECT(visible, fVisible, fVisible);
-#undef SKIFF_STYLE_DIRECT
-
-#define SKIFF_STYLE_ANIMATED(declaration, member, property)                   \
-  if (style.declaration || fResolvedStyle.declaration) {                      \
-    const float previous = fResolvedStyle.declaration                        \
-                               ? fStyledTarget.member                         \
-                               : current.member;                              \
-    this->setStyledProperty(property, target.member, previous, duration,      \
-                            how, animate);                                    \
-  }
-    SKIFF_STYLE_ANIMATED(x, fX, property::x{});
-    SKIFF_STYLE_ANIMATED(y, fY, property::y{});
-    SKIFF_STYLE_ANIMATED(width, fWidth, property::width{});
-    SKIFF_STYLE_ANIMATED(height, fHeight, property::height{});
-    SKIFF_STYLE_ANIMATED(scale, fScale, property::scale{});
-    SKIFF_STYLE_ANIMATED(alpha, fAlpha, property::alpha{});
-#undef SKIFF_STYLE_ANIMATED
-
+    eachStyleField([&]<class Field>(Field) {
+      if (style.*Field::style || fResolvedStyle.*Field::style)
+        this->template setStyled<Field>(typename Field::how{}, style, target, current, duration, how, animate);
+    });
     fStyledTarget = target;
     if (layoutChanged) {
       this->invalidateLayout();
