@@ -697,6 +697,7 @@ public:
   void jumpTo(float value) {
     fOffset = fTarget = std::clamp(value, fLo, fHi);
     fFlinging = false;
+    fWheeling = false;
     fVelocity = 0.0f;
   }
   // Everything moved by `delta` -- the contents grew above what is looked
@@ -710,10 +711,16 @@ public:
   void glideTo(float value) {
     fTarget = std::clamp(value, fLo, fHi);
     fFlinging = false;
+    fWheeling = false;
     fVelocity = 0.0f;
   }
+  // A wheel's notch: the target moved by a step, and the view glides there
+  // slowly enough that the notches of a turn -- a tenth of a second or so
+  // apart -- make one motion, easing out after the last, rather than a jump
+  // and a stop each.
   void wheel(float ticks, float step) {
     fFlinging = false;
+    fWheeling = true;
     fVelocity = 0.0f;
     fTarget = std::clamp(fTarget - ticks * step, fLo, fHi);
   }
@@ -728,6 +735,7 @@ public:
     fVelocity = 0.0f;
     fDragging = false;
     const bool caught = fFlinging;
+    fWheeling = false;
     if (caught) {
       fFlinging = false;
       fTarget = fOffset;
@@ -811,9 +819,10 @@ public:
         fTarget = fOffset;
       }
     } else {
-      fOffset = paint::approach(fOffset, fTarget, tauMs, dt);
+      fOffset = paint::approach(fOffset, fTarget, fWheeling ? kWheelTauMs : tauMs, dt);
       if (std::abs(fOffset - fTarget) < 0.05f) {
         fOffset = fTarget;
+        fWheeling = false;
       }
     }
     return fOffset != previous;
@@ -827,6 +836,8 @@ private:
   static constexpr float kMinVelocity = 0.05f;
   static constexpr float kVelocityMix = 0.35f;
   static constexpr float kOverscroll = 0.4f;
+  // A wheel's glide: its time constant, long enough to join its notches.
+  static constexpr float kWheelTauMs = 110.0f;
 
   float fOffset = 0.0f;
   float fTarget = 0.0f;
@@ -839,6 +850,7 @@ private:
   float fVelocity = 0.0f; // units per millisecond
   bool fDragging = false;
   bool fFlinging = false;
+  bool fWheeling = false;
 };
 
 // A node's id, which is what a scene keeps where it would have kept a
