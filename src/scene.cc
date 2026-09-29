@@ -2059,6 +2059,18 @@ template <class... Ts, class F>
 void visitChild(std::variant<Ts...> &child, F &&f) {
   std::visit([&](auto &alternative) { visitChild(alternative, f); }, child);
 }
+// Anything holding one of several and visiting it as C++26's variant does:
+// a program's own variant, walked as std::variant is.
+template <class V>
+concept one_of_several = requires(V &v) {
+  v.index();
+  v.valueless_by_exception();
+};
+template <class V, class F>
+  requires(one_of_several<V> && !std::derived_from<V, Node>)
+void visitChild(V &child, F &&f) {
+  child.visit([&](auto &alternative) { visitChild(alternative, f); });
+}
 template <class T, class F> void visitChild(std::optional<T> &child, F &&f) {
   if (child) {
     visitChild(*child, f);
