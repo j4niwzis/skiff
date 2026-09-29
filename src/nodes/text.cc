@@ -98,6 +98,7 @@ public:
   void setStyles(std::vector<Styled> styles, skia::SkColor quote_colour) {
     fStyles = std::move(styles);
     fQuoteColour = quote_colour;
+    fWrappedRoom = -1.0f;  // a quote's lines wrap narrower: wrapped again
     this->markDamaged();
   }
   [[nodiscard]] const std::vector<Styled> &styles() const noexcept { return fStyles; }
@@ -350,7 +351,10 @@ public:
         return;
       }
       fWrappedRoom = room;
-      fLines = p.wrap(fText, room, fSize, fBold);
+      // Where some of it is quoted, every line wraps as narrow as a quoted
+      // one, which stands in by kQuoteIndent past its bar.
+      const float indent = std::ranges::any_of(fStyles, &Styled::quote) ? kQuoteIndent : 0.0f;
+      fLines = p.wrap(fText, room - indent, fSize, fBold);
       state.fHeight =
           static_cast<float>(std::max<std::size_t>(1, fLines.size())) *
           fSize * 1.25f;
@@ -368,7 +372,7 @@ public:
           for (const std::string &line : fLines) {
             widest = std::max(widest, p.measure(line, fSize, fBold));
           }
-          state.fWidth = std::min(room, std::ceil(widest) + 1.0f);
+          state.fWidth = std::min(room, std::ceil(widest + indent) + 1.0f);
         }
       }
       fMeasuredSize = fSize;
@@ -459,7 +463,7 @@ private:
     const auto index = static_cast<std::size_t>(
         std::clamp((y - bounds.fTop) / lineHeight, 0.0f, static_cast<float>(lines.size() - 1)));
     const auto [start, line] = lines[index];
-    const float into = x - bounds.fLeft;
+    const float into = x - bounds.fLeft - this->indentOf(start);
     std::size_t best = 0;
     float bestDistance = std::abs(into);
     for (std::size_t i = 1; i <= line.size(); ++i) {
@@ -508,7 +512,8 @@ private:
         const std::size_t a = std::max(low, start) - start, b = std::min(high, end) - start;
         const float left = p.measure(std::string(line.substr(0, a)), fSize, fBold);
         const float right = p.measure(std::string(line.substr(0, b)), fSize, fBold);
-        canvas->drawRect(skia::SkRect::MakeLTRB(bounds.fLeft + left, top, bounds.fLeft + right, top + lineHeight), plate);
+        const float from = bounds.fLeft + this->indentOf(start);
+        canvas->drawRect(skia::SkRect::MakeLTRB(from + left, top, from + right, top + lineHeight), plate);
       }
       top += lineHeight;
     }
@@ -561,7 +566,7 @@ private:
     }
     std::ranges::sort(cuts);
     cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
-    float at = x;
+    float at = x + this->indentOf(start);
     for (std::size_t i = 0; i + 1 < cuts.size(); ++i) {
       const std::string piece(line.substr(cuts[i] - start, cuts[i + 1] - cuts[i]));
       const Link *link = this->linkAt(cuts[i]);
@@ -645,6 +650,11 @@ private:
     }
   }
 
+  // How far a line's text stands in: a quoted one's, past its bar.
+  static constexpr float kQuoteIndent = 10.0f;
+  [[nodiscard]] float indentOf(std::size_t start) const {
+    return this->styleAt(start).quote ? kQuoteIndent : 0.0f;
+  }
   // The width a wrapped line has to fit into, resolved as layout would.
   [[nodiscard]] float roomFor(const skia::SkRect &parent) const {
     const skiff::scene::State &state = fState;
