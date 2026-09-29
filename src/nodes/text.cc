@@ -179,6 +179,10 @@ public:
     fLastPress = now;
     fLastOffset = at_offset;
     fAnchor = fCaret = at_offset;
+    fPressX = at.x;
+    fPressY = at.y;
+    // The selection shown is this one's from now: one text's at a time.
+    selectionOwner() = fState.fId;
     // Not taken yet: a scrolled list around this may take a press that
     // moves at once as a scroll. A move that reaches this selects, and the
     // pointer is taken then.
@@ -187,10 +191,13 @@ public:
   }
   void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::move &at,
                  skiff::scene::PointerReply &reply) {
-    // A selection is begun by a press held still a moment first: one that
-    // moves at once is a scroll or a swipe, which what holds this takes.
+    // A selection is begun by a press held still a moment first, where the
+    // pointer moves up or down at once -- that is a scroll, which what holds
+    // this takes. Across, it is a selection at once, as a mouse drags over
+    // words: made to wait, a drag over a message's text selected nothing.
     if (fPressed && !fDragging) {
-      if (std::chrono::steady_clock::now() - fLastPress < std::chrono::milliseconds(250)) {
+      const bool across = std::abs(at.x - fPressX) >= std::abs(at.y - fPressY);
+      if (!across && std::chrono::steady_clock::now() - fLastPress < std::chrono::milliseconds(250)) {
         return;
       }
       fDragging = true;
@@ -482,7 +489,10 @@ private:
   }
   // Behind the selected part of each line, a plate in the selection's colour.
   void drawSelection(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float alpha) const {
-    if (!fSelectable || fAnchor == fCaret || !this->focused()) {
+    // The last text pressed shows its selection -- whether or not it has the
+    // keyboard's focus: a selectable text does not take it on a press, and
+    // required, no selection was ever drawn.
+    if (!fSelectable || fAnchor == fCaret || selectionOwner() != fState.fId) {
       return;
     }
     const std::size_t low = std::min(fAnchor, fCaret), high = std::max(fAnchor, fCaret);
@@ -668,6 +678,12 @@ private:
   bool fBaseBold = false;
   bool fNodeStyleActive = false;
   bool fSelectable = false;
+  float fPressX = 0.0f, fPressY = 0.0f;
+  // Which text's selection is shown: the last pressed.
+  static std::uint64_t &selectionOwner() {
+    static std::uint64_t owner = 0;
+    return owner;
+  }
   bool fShrinks = false;
   bool fDragging = false;
   bool fPressed = false;
