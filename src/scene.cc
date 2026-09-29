@@ -2661,13 +2661,19 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
     return;
   }
   // What lies outside what is being repainted is skipped with its subtree.
+  // Where it is drawn: its bounds moved by its shift -- what is skipped,
+  // clipped and repainted goes by that, not by where layout put it.
   ++visitedCount();
-  if (!state.fBounds.isEmpty() && canvas->quickReject(state.fBounds)) {
+  if (!state.fBounds.isEmpty() && canvas->quickReject(state.fBounds.makeOffset(state.fShiftX, state.fShiftY))) {
     return;
   }
   ++drawnCount();
   const float alpha = inheritedAlpha * state.fAlpha;
   const int saved = canvas->save();
+  // Moved first, then cut to its shape: the cut goes with it (a round
+  // avatar swiped aside stays round, not cut where it stood).
+  if (state.fShiftX != 0.0f || state.fShiftY != 0.0f)
+    canvas->translate(state.fShiftX, state.fShiftY);
   if (state.fMasking) {
     if (state.fCornerRadius > 0.0f || state.fCorners) {
       canvas->clipRRect(roundedBox(state, state.fBounds), true);
@@ -2675,8 +2681,6 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
       canvas->clipRect(state.fBounds, true);
     }
   }
-  if (state.fShiftX != 0.0f || state.fShiftY != 0.0f)
-    canvas->translate(state.fShiftX, state.fShiftY);
   paintBox(state, canvas, alpha);
   node.drawSelf(canvas, alpha);
   eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) {
@@ -2828,7 +2832,10 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   if (drawnAbove) {
     damage = state.fMovedDamage;
     if (state.fDamaged) {
-      damage = joined(joined(damage, state.fBounds), state.fDrawnBounds);
+      // Where it was drawn and where it will be: a shift moves it past both
+      // its laid-out bounds and its last drawn ones.
+      damage = joined(joined(joined(damage, state.fBounds), state.fDrawnBounds),
+                      state.fBounds.makeOffset(state.fShiftX, state.fShiftY));
     }
   }
   state.fMovedDamage = skia::SkRect::MakeEmpty();
