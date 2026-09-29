@@ -85,6 +85,9 @@ public:
       float top = 0.0f;
     };
     std::optional<Anchor> anchor;
+    // At the end, the view stays at the end, however much comes above: not
+    // left where it was to be glided down again, a jerk each time.
+    const bool following = fLaidOut && box == fLastBox && this->atEnd() && !fScroll.dragging();
     if (fLaidOut && box == fLastBox && !this->atEnd()) {
       this->eachItem([&](const scene::State &item) {
         if (!anchor && item.fVisible && item.fBounds.fBottom > box.fTop) {
@@ -99,6 +102,12 @@ public:
     const skia::SkRect content = scene::childBounds(*this);
     fExtent = std::max(0.0f, content.height() - box.height());
     fScroll.setBounds(0.0f, fExtent);
+    if (following && !fToEnd && fScroll.offset() != fExtent) {
+      const float dy = fScroll.offset() - fExtent;
+      fScroll.jumpTo(fExtent);
+      scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
+      fLastOffset = fExtent;
+    }
     if (fToEnd) {
       fToEnd = false;
       if (fToEndGlide) {
