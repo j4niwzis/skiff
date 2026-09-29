@@ -286,7 +286,6 @@ template <class N> struct Flowing {
   // Children that grow take an equal share of what the rest leave along the
   // axis, written before anything is placed.
   template <class Axis> void grow(const skia::SkRect &box, float spacing) {
-    constexpr bool horizontal = std::same_as<Axis, skiff::scene::axis::x>;
     int growers = 0;
     int visible = 0;
     float taken = 0.0f;
@@ -301,14 +300,13 @@ template <class N> struct Flowing {
         return;
       }
       skiff::scene::layout(child, boxFor(state, box));
-      taken += horizontal ? state.fBounds.width() + state.fMargin.totalX()
-                          : state.fBounds.height() + state.fMargin.totalY();
+      taken += Axis::length(state.fBounds) + Axis::margins(state.fMargin);
     });
     if (growers == 0) {
       return;
     }
     const float gaps = spacing * static_cast<float>(std::max(0, visible - 1));
-    const float room = horizontal ? box.width() : box.height();
+    const float room = Axis::length(box);
     const float share =
         std::max(0.0f, (room - taken - gaps) / static_cast<float>(growers));
     skiff::scene::eachChild(fNode, [&](auto &child) {
@@ -316,8 +314,8 @@ template <class N> struct Flowing {
       // Its margins are in its share: the room it takes, margins and all,
       // is the share, so what comes after it still fits.
       if (inFlow(state) && state.fGrowAxes.template has<Axis>()) {
-        const float margins = horizontal ? state.fMargin.totalX() : state.fMargin.totalY();
-        state.arrangeAxisSize(horizontal, std::max(0.0f, share - margins));
+        const float margins = Axis::margins(state.fMargin);
+        state.arrangeAxisSize(Axis::kHorizontal, std::max(0.0f, share - margins));
       }
     });
   }

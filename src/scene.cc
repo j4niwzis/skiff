@@ -186,9 +186,27 @@ private:
 // ---- geometry -------------------------------------------------------------
 
 
+// Each axis says what it is along a box and its margins, so that what is
+// written for one is written for both, by the axis, not by asking which.
 namespace axis {
-struct x {};
-struct y {};
+struct x {
+  static constexpr bool kHorizontal = true;
+  [[nodiscard]] static constexpr float length(const auto &box) {
+    return box.width();
+  }
+  [[nodiscard]] static constexpr float margins(const auto &margin) {
+    return margin.totalX();
+  }
+};
+struct y {
+  static constexpr bool kHorizontal = false;
+  [[nodiscard]] static constexpr float length(const auto &box) {
+    return box.height();
+  }
+  [[nodiscard]] static constexpr float margins(const auto &margin) {
+    return margin.totalY();
+  }
+};
 } // namespace axis
 struct AxisTag {};
 using Axes = Flags<AxisTag, axis::x, axis::y>;
