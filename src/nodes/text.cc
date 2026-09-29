@@ -179,6 +179,9 @@ public:
     }
     return y;
   }
+  // Whether a point in it is on a quoted stretch: for the program to act on
+  // a press there (a reply's quote, to what it quotes).
+  [[nodiscard]] bool quotedAt(float x, float y) const { return this->styleAt(this->offsetAt(x, y)).quote; }
   [[nodiscard]] Styled styleAt(std::size_t offset) const {
     Styled out;
     for (const Styled &one : fStyles) {
