@@ -1524,7 +1524,10 @@ public:
     fY = y;
     fAnchor = at;
     fOrigin = origin;
-    fLayoutValid = false;
+    // Only where it goes changed: its subtree is moved as it is at the next
+    // layout, not laid out again. A list whose rows all move down when
+    // something comes above them measured every row again.
+    fPlacementDirty = true;
   }
   void arrangeAxisSize(bool horizontal, float size) {
     float &axis = horizontal ? fWidth : fHeight;
@@ -1750,6 +1753,8 @@ public:
   // Somewhere below has to be laid out again: found by the walk from the
   // root each frame, since nothing below can tell its ancestors.
   bool fSubtreeDirty = true;
+  // Placed somewhere else since its last layout, and nothing else changed.
+  bool fPlacementDirty = false;
   // The children, as they were last time: a variant that switched, a row
   // added to a vector. Compared each frame; a different set is laid out and
   // repainted.
@@ -2250,8 +2255,23 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
           : parentBox;
   if (state.fLayoutValid && !state.fSubtreeDirty &&
       parent == state.fLastConstraint) {
+    if (state.fPlacementDirty) {
+      // Moved, not changed: the subtree goes where it is placed as it is.
+      state.fPlacementDirty = false;
+      const skia::SkRect moved =
+          anchoredBox(inset(parent, state.fMargin), state.fBounds.width(), state.fBounds.height(), state.fAnchor,
+                      state.fOrigin, state.fX, state.fY);
+      const float dx = moved.fLeft - state.fBounds.fLeft;
+      const float dy = moved.fTop - state.fBounds.fTop;
+      if (dx != 0.0f || dy != 0.0f) {
+        state.fMovedDamage = joined(joined(state.fMovedDamage, state.fBounds), moved);
+        state.fBounds = moved;
+        eachChild(node, [&](auto &child) { shiftSubtree(child, dx, dy); });
+      }
+    }
     return;
   }
+  state.fPlacementDirty = false;
   state.fLastConstraint = parent;
   // A node that knows its own size says so first, given its box.
   node.measure(parent);
@@ -2347,14 +2367,15 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
 // its bounds and the box it was laid out in, so that laying it out in the
 // moved box finds nothing changed. What a scrolled list does on a scroll.
 // An erased node in it is laid out again instead.
-inline void shiftSubtree(AnyNode &node, float dy);
-template <class N> void shiftSubtree(N &node, float dy) {
+inline void shiftSubtree(AnyNode &node, float dx, float dy);
+template <class N> void shiftSubtree(N &node, float dx, float dy) {
   State &state = stateOf(node);
-  state.fBounds.offset(0.0f, dy);
-  state.fLastConstraint.offset(0.0f, dy);
-  eachChild(node, [&](auto &child) { shiftSubtree(child, dy); });
+  state.fBounds.offset(dx, dy);
+  state.fLastConstraint.offset(dx, dy);
+  eachChild(node, [&](auto &child) { shiftSubtree(child, dx, dy); });
 }
-inline void shiftSubtree(AnyNode &node, float) { stateOf(node).fLayoutValid = false; }
+inline void shiftSubtree(AnyNode &node, float, float) { stateOf(node).fLayoutValid = false; }
+template <class N> void shiftSubtree(N &node, float dy) { shiftSubtree(node, 0.0f, dy); }
 
 // Lays a child out in a box: what a container's layoutChildren calls for each
 // of its children, after placing it.
@@ -2458,7 +2479,9 @@ template <class N> bool markDirty(N &child) {
     state.fMovedDamage = joined(state.fMovedDamage, state.fChildArea);
   }
   state.fSubtreeDirty = below || !state.fLayoutValid;
-  return state.fSubtreeDirty;
+  // A pending move is the parent's to carry out: it lays out again, and this
+  // is moved rather than laid out.
+  return state.fSubtreeDirty || state.fPlacementDirty;
 }
 
 // What has to be repainted, and forgets it. A masking node clips what its

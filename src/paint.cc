@@ -576,6 +576,30 @@ private:
         found = static_cast<int>(fFallbacks.size()) - 1;
       }
     }
+    // A manager that cannot say which font has a character -- the one that
+    // reads a directory of fonts says nothing, whatever is in it -- has
+    // every one of its fonts asked instead, the first that has it taken.
+    // Each character is asked about once: the answer is kept below.
+    if (found < 0 && fManager) {
+      if (!fEveryFaceListed) {
+        fEveryFaceListed = true;
+        for (int family = 0; family < fManager->countFamilies(); ++family) {
+          const auto styles = fManager->createStyleSet(family);
+          for (int style = 0; styles && style < styles->count(); ++style) {
+            if (auto face = styles->createTypeface(style)) {
+              fEveryFace.push_back(std::move(face));
+            }
+          }
+        }
+      }
+      for (const auto &face : fEveryFace) {
+        if (face->unicharToGlyph(codepoint) != 0) {
+          fFallbacks.push_back(face);
+          found = static_cast<int>(fFallbacks.size()) - 1;
+          break;
+        }
+      }
+    }
     fCoverage.emplace(codepoint, found);
     return found;
   }
@@ -669,6 +693,9 @@ private:
   mutable std::vector<skia::Sp<skia::SkTypeface>> fFallbacks;
   mutable std::unordered_map<std::int32_t, int> fCoverage;
   skia::Sp<skia::SkFontMgr> fManager;
+  // Every font the manager has, listed the first time one is needed.
+  mutable bool fEveryFaceListed = false;
+  mutable std::vector<skia::Sp<skia::SkTypeface>> fEveryFace;
   mutable std::unordered_map<const skia::SkTypeface *, bool> fAsciiCovered;
   mutable std::unordered_map<std::uint64_t, float> fWidths;
 };

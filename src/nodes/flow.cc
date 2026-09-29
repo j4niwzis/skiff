@@ -94,6 +94,19 @@ template <class N> struct Flowing {
   N &fNode;
   const FlowOptions &fOptions;
 
+  // What a child is laid out in: the flow's box -- with no height, for a
+  // child whose height is not a share of it. An auto-sized flow is laid out
+  // twice, provisionally and then at its size, and a box that changed with
+  // it had every child laid out again at each: every row of a long list,
+  // twice at each level of auto-sizing. A child's own height, its content's
+  // or the one a flow gives it, never came from that box.
+  [[nodiscard]] static skia::SkRect boxFor(const skiff::scene::State &child, const skia::SkRect &box) {
+    if (child.fRelativeSizeAxes.template has<skiff::scene::axis::y>()) {
+      return box;
+    }
+    return skia::SkRect::MakeXYWH(box.fLeft, box.fTop, box.width(), 0.0f);
+  }
+
   void layout() {
     std::visit([this](const auto &along) { lay(along); }, fOptions.direction);
   }
@@ -105,7 +118,7 @@ template <class N> struct Flowing {
     skiff::scene::eachChild(fNode, [&](auto &child) {
       skiff::scene::State &state = skiff::scene::stateOf(child);
       if (state.fVisible) {
-        skiff::scene::layout(child, box);
+        skiff::scene::layout(child, boxFor(state, box));
         shown.push_back(&state);
       }
     });
@@ -122,7 +135,7 @@ template <class N> struct Flowing {
         return;
       }
       state.arrange(places[at].first, places[at].second);
-      skiff::scene::layout(child, box);
+      skiff::scene::layout(child, boxFor(state, box));
       ++at;
     });
   }
@@ -228,7 +241,7 @@ template <class N> struct Flowing {
         ++growers;
         return;
       }
-      skiff::scene::layout(child, box);
+      skiff::scene::layout(child, boxFor(state, box));
       taken += horizontal ? state.fBounds.width() + state.fMargin.totalX()
                           : state.fBounds.height() + state.fMargin.totalY();
     });

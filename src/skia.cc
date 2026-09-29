@@ -379,6 +379,7 @@ template class ::sk_sp<SkData>;
 template class ::sk_sp<SkTextBlob>;
 template class ::sk_sp<SkTypeface>;
 template class ::sk_sp<SkFontMgr>;
+template class ::sk_sp<SkFontStyleSet>;
 template class ::sk_sp<SkColorSpace>;
 template class ::sk_sp<SkShader>;
 template class ::sk_sp<SkColorFilter>;
