@@ -2110,8 +2110,17 @@ template <class T> void drawDefault(T &node, skia::SkCanvas *canvas, float alpha
 struct Node {
   State fState;
 
-  // -- structure: a leaf has no children
+  // -- structure: a leaf has no children; a node whose children are the
+  // members of one aggregate, `parts`, has them in the order they are
+  // declared there -- bound as a pack (C++26), not listed by hand. (A node
+  // cannot bind itself: its State is a member of this base.)
   void forEachChild(this auto &, auto &&) {}
+  template <class Self, class F>
+    requires requires(Self &self) { self.parts; }
+  void forEachChild(this Self &self, F &&f) {
+    auto &[... each] = self.parts;
+    (f(each), ...);
+  }
 
   // -- layout
   // Sets fWidth/fHeight from content before layout uses them.
