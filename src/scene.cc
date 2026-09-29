@@ -1000,6 +1000,19 @@ inline constexpr Key kW{123};
 inline constexpr Key kX{124};
 inline constexpr Key kY{125};
 inline constexpr Key kZ{126};
+// Paging, and the digits of the row above the letters.
+inline constexpr Key kPageUp{13};
+inline constexpr Key kPageDown{14};
+inline constexpr Key k0{130};
+inline constexpr Key k1{131};
+inline constexpr Key k2{132};
+inline constexpr Key k3{133};
+inline constexpr Key k4{134};
+inline constexpr Key k5{135};
+inline constexpr Key k6{136};
+inline constexpr Key k7{137};
+inline constexpr Key k8{138};
+inline constexpr Key k9{139};
 } // namespace keys
 
 namespace modifier {
@@ -3494,7 +3507,9 @@ public:
     // Tab moves the focus; Shift+Tab back.
     const std::optional<bool> tab = std::visit(
         overloaded{[](const key::down &press) -> std::optional<bool> {
-                     if (press.key == keys::kTab) {
+                     // Ctrl+Tab is not the focus's: a program's, as
+                     // tdesktop's to the next chat.
+                     if (press.key == keys::kTab && !press.modifiers.has<modifier::control>()) {
                        return press.modifiers.has<modifier::shift>();
                      }
                      return std::nullopt;
@@ -3880,7 +3895,9 @@ public:
   bool key(const KeyEvent &input) {
     const std::optional<bool> tab = std::visit(
         overloaded{[](const key::down &press) -> std::optional<bool> {
-                     if (press.key == keys::kTab) {
+                     // Ctrl+Tab is not the focus's: a program's, as
+                     // tdesktop's to the next chat.
+                     if (press.key == keys::kTab && !press.modifiers.has<modifier::control>()) {
                        return press.modifiers.has<modifier::shift>();
                      }
                      return std::nullopt;
