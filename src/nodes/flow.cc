@@ -219,6 +219,7 @@ template <class N> struct Flowing {
            fOptions.spacingY + gaps.fBetween;
     }
     place(box, places);
+    told(box);
   }
 
   void lay(direction::horizontal) {
@@ -281,6 +282,39 @@ template <class N> struct Flowing {
     }
     flush(shown.size());
     place(box, places);
+    told(box);
+  }
+
+  // What sticks out of the box, told: along an axis the box does not take
+  // from what it holds, where it does not clip what it holds. A menu of a
+  // set width whose row of buttons was wider than it put its last button
+  // past its edge, and nothing said so.
+  void told(const skia::SkRect &box) {
+    const auto &report = skiff::scene::overflowReport();
+    if (!report || fNode.fState.fMasking) {
+      return;
+    }
+    const bool freeX = !fNode.fState.fAutoSizeAxes.template has<skiff::scene::axis::x>();
+    const bool freeY = !fNode.fState.fAutoSizeAxes.template has<skiff::scene::axis::y>();
+    skiff::scene::eachChild(fNode, [&](auto &child) {
+      skiff::scene::State &state = skiff::scene::stateOf(child);
+      if (!inFlow(state)) {
+        return;
+      }
+      const skia::SkRect &at = state.fBounds;
+      // Half a pixel of slack, as rows are broken with.
+      const float x = freeX ? std::max({0.0f, at.fRight - box.fRight - 0.5f, box.fLeft - at.fLeft - 0.5f}) : 0.0f;
+      const float y = freeY ? std::max({0.0f, at.fBottom - box.fBottom - 0.5f, box.fTop - at.fTop - 0.5f}) : 0.0f;
+      if (x <= 0.0f && y <= 0.0f) {
+        state.fOverflowTold = false;
+        return;
+      }
+      if (state.fOverflowTold) {
+        return;
+      }
+      state.fOverflowTold = true;
+      report(skiff::scene::Overflow{typeid(child).name(), typeid(fNode).name(), x, y});
+    });
   }
 
   // Children that grow take an equal share of what the rest leave along the

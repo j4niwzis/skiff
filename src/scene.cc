@@ -1265,6 +1265,20 @@ inline std::function<std::optional<PillPicture>(std::string_view target)> &pillP
   static std::function<std::optional<PillPicture>(std::string_view)> kept;
   return kept;
 }
+// A node laid out past its parent's content box, in a flow that does not
+// grow to hold it and does not clip it: nothing the layout meant. The node
+// and its parent, by their types, and by how much on each axis -- told once
+// a node, until it fits again. A program logs it, a test fails on it.
+struct Overflow {
+  std::string_view node;
+  std::string_view parent;
+  float x = 0.0f, y = 0.0f;
+};
+inline std::function<void(const Overflow &)> &overflowReport() {
+  static std::function<void(const Overflow &)> kept;
+  return kept;
+}
+
 // A picture in a line of text, given what it stands for -- a custom
 // emoji's mxc:// URL: the program's, as data; nothing where it has none.
 inline std::function<const skia::Sp<skia::SkImage> *(std::string_view target)> &inlinePicture() {
@@ -1331,6 +1345,8 @@ public:
   // earlier in the tree) and does not move in memory while followed.
   const State *fFollow = nullptr;
   bool fMasking = false; // clip children to these bounds
+  // Told already that it sticks out of its parent: told once, until it fits.
+  bool fOverflowTold = false;
   Cursor fCursor = cursor::arrow{};
   float fCornerRadius = 0.0f;
   // Painted in the box, under the rest: see Spec.

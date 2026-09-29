@@ -1066,6 +1066,37 @@ TEST(Layout, AFillingChildDoesNotWidenAContentSizedBox) {
   EXPECT_FLOAT_EQ(filled.parts.filling.bounds().width(), 40.0f);
 }
 
+// A row of a set width holding more than it has room for: the last child
+// sticks out, and the layout says so -- once -- through overflowReport. A row
+// sized by its content holds the same children without a word.
+struct TooNarrow : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> first = make<Box>({.width = 80.0f, .height = 10.0f}, kCard);
+    Box<> second = make<Box>({.width = 80.0f, .height = 10.0f}, kCard);
+  } parts;
+  TooNarrow() { this->setHorizontal(); }
+};
+struct HoldsTooNarrow : Node {
+  struct parts_t {
+    TooNarrow fixed = make<TooNarrow>({.width = 100.0f, .height = 10.0f});
+    TooNarrow sized = make<TooNarrow>({.autoSize = axes::kBoth});
+  } parts;
+};
+
+TEST(Layout, WhatSticksOutOfAFlowIsTold) {
+  std::vector<skiff::scene::Overflow> told;
+  skiff::scene::overflowReport() = [&](const skiff::scene::Overflow &one) { told.push_back(one); };
+  Scene<HoldsTooNarrow> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  scene.root().parts.fixed.invalidateLayout();
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  skiff::scene::overflowReport() = nullptr;
+  ASSERT_EQ(told.size(), 1u);  // the fixed row's second box, once; the sized row, never
+  EXPECT_NEAR(told.front().x, 60.0f, 0.6f);
+  EXPECT_FLOAT_EQ(told.front().y, 0.0f);
+}
+
 // A menu: the arrows move the focus through its items, round from the last
 // to the first, and never out of it.
 struct ArrowMenu : skiff::nodes::Stack {
