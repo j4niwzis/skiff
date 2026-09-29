@@ -75,7 +75,7 @@ endif()
 set(SKIFF_SKIA_COMPONENTS "" CACHE STRING
     "Backend components to ask Skia for, for a copy built on its own")
 find_package(Skia REQUIRED
-             COMPONENTS png jpeg gif webp freetype ${SKIFF_SKIA_COMPONENTS})
+             COMPONENTS png jpeg freetype ${SKIFF_SKIA_COMPONENTS})
 
 # Shaped text, if asked for: HarfBuzz for glyphs, alef for Unicode's rules
 # -- bidirectional runs, line breaks, characters. Off by default: alef is
