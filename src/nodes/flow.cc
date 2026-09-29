@@ -340,7 +340,7 @@ template <class N> struct Flowing {
       }
       state.fOverflowTold = true;
       skiff::scene::tellOverflow(skiff::scene::Overflow{
-          flow_names::readable(typeid(child)), flow_names::readable(typeid(fNode)), x, y});
+          flow_names::readable(skiff::scene::typeOf(child)), flow_names::readable(typeid(fNode)), x, y});
     });
   }
 

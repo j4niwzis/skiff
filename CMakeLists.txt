@@ -212,6 +212,9 @@ endif()
 
 add_library(${PROJECT_NAME} STATIC ${skiff_sources})
 add_library(skiff::skiff ALIAS ${PROJECT_NAME})
+# Outside a release build, the walks over a tree see each child through an
+# AnyNode (scene.cc, kErasedWalks): made once, not per type of node.
+target_compile_definitions(${PROJECT_NAME} PUBLIC $<$<NOT:$<CONFIG:Release>>:SKIFF_ERASED_WALKS>)
 
 # PUBLIC: anything linking this gets `import skia`, `import skiff.paint`,
 # `import skiff.scene` and `import skiff.nodes`.

@@ -24,6 +24,17 @@ import skiff.aggregate;
 // the ones it cares about as overloads of onPointer. Sets of flags are Flags.
 export namespace skiff::scene {
 
+// Whether the walks over a tree see each child through an AnyNode: outside
+// a release build. Each walk is then made once for AnyNode, not for every
+// type of node under it -- a program's tree of hundreds of types made its
+// walks most of a build -- and nothing is inlined across a node's edge.
+// skiff's CMake says which build this is: C++ cannot see it.
+#ifdef SKIFF_ERASED_WALKS
+inline constexpr bool kErasedWalks = true;
+#else
+inline constexpr bool kErasedWalks = false;
+#endif
+
 // The overloaded pattern: a visitor made of several callables.
 template <class... Fs> struct overloaded : Fs... {
   using Fs::operator()...;
@@ -2016,10 +2027,17 @@ template <class T, class F> void visitChild(std::shared_ptr<T> &, F &&);
 template <class T, class F> void visitChild(std::reference_wrapper<T> &, F &&);
 template <class... Ts, class F> void visitChild(std::tuple<Ts...> &, F &&);
 template <class F> void visitChild(AnyNode &, F &&);
+// A child handed on as an AnyNode: itself where it is one, else borrowed.
+using AnyChildVisit = void (*)(void *context, AnyNode &child);
+void visitAsAny(AnyNode &child, void *context, AnyChildVisit visit);
+template <class N> void visitAsAny(N &child, void *context, AnyChildVisit visit);
 template <class R, class F>
   requires(std::ranges::range<R> && !kTreatAsNode<R>)
 void visitChild(R &, F &&);
 template <class N, class F> void visitChild(N &, F &&);
+template <class N, class F>
+  requires(kErasedWalks && std::derived_from<N, Node>)
+void visitChild(N &, F &&);
 
 template <class F> void visitChild(std::monostate &, F &&) {}
 template <class... Ts, class F>
@@ -3162,12 +3180,13 @@ public:
   AnyNode &operator=(const AnyNode &) = delete;
   AnyNode(AnyNode &&other) noexcept
       : fNode(std::exchange(other.fNode, nullptr)),
-        fOps(std::exchange(other.fOps, nullptr)) {}
+        fOps(std::exchange(other.fOps, nullptr)), fOwned(other.fOwned) {}
   AnyNode &operator=(AnyNode &&other) noexcept {
     if (this != &other) {
       this->reset();
       fNode = std::exchange(other.fNode, nullptr);
       fOps = std::exchange(other.fOps, nullptr);
+      fOwned = other.fOwned;
     }
     return *this;
   }
@@ -3175,10 +3194,34 @@ public:
 
   void reset() {
     if (fNode != nullptr) {
-      fOps->fDestroy(fNode);
+      if (fOwned) {
+        fOps->fDestroy(fNode);
+      }
       fNode = nullptr;
       fOps = nullptr;
     }
+  }
+  // A node held elsewhere, seen through the table: not owned, never
+  // destroyed. The table is read through a volatile, so the optimizer
+  // cannot see which it is and inline the walks back into one another.
+  template <class T>
+    requires std::derived_from<T, Node>
+  [[nodiscard]] static AnyNode borrowing(T &node) {
+    static const Ops *volatile table = &kOps<T>;
+    AnyNode out;
+    out.fNode = &node;
+    out.fOps = table;
+    out.fOwned = false;
+    return out;
+  }
+  // The node's own type, for what names it.
+  [[nodiscard]] const std::type_info &type() const { return fOps->fType(); }
+  // Its children, each as an AnyNode: eachChild over an AnyNode, as over any
+  // node -- a walk that goes down on its own, as flex-shrink's does.
+  template <class F> void forEachChild(F &&f) {
+    fOps->fEachChild(fNode, &f, +[](void *context, AnyNode &child) {
+      (*static_cast<std::remove_reference_t<F> *>(context))(child);
+    });
   }
   [[nodiscard]] explicit operator bool() const noexcept {
     return fNode != nullptr;
@@ -3217,6 +3260,8 @@ public:
     void (*fCollectFocusable)(void *, std::vector<NodeId> &);
     bool (*fAnimating)(void *);
     bool (*fClickPath)(void *, const Path &, std::size_t, float, float);
+    const std::type_info &(*fType)();
+    void (*fEachChild)(void *, void *context, AnyChildVisit visit);
   };
   [[nodiscard]] const Ops &ops() const noexcept { return *fOps; }
   [[nodiscard]] void *node() const noexcept { return fNode; }
@@ -3278,10 +3323,15 @@ private:
       +[](void *n, const Path &path, std::size_t at, float x, float y) {
         return walk::clickPath(as<T>(n), path, at, x, y);
       },
+      +[]() -> const std::type_info & { return typeid(T); },
+      +[](void *n, void *context, AnyChildVisit visit) {
+        eachChild(as<T>(n), [&](auto &child) { visitAsAny(child, context, visit); });
+      },
   };
 
   void *fNode = nullptr;
   const Ops *fOps = nullptr;
+  bool fOwned = true;
 };
 
 template <class F> void visitChild(AnyNode &child, F &&f) {
@@ -3289,6 +3339,21 @@ template <class F> void visitChild(AnyNode &child, F &&f) {
     f(child);
   }
 }
+// Outside a release build, a child is seen through an AnyNode borrowing it.
+template <class N, class F>
+  requires(kErasedWalks && std::derived_from<N, Node>)
+void visitChild(N &child, F &&f) {
+  AnyNode seen = AnyNode::borrowing(child);
+  f(seen);
+}
+inline void visitAsAny(AnyNode &child, void *context, AnyChildVisit visit) { visit(context, child); }
+template <class N> void visitAsAny(N &child, void *context, AnyChildVisit visit) {
+  AnyNode seen = AnyNode::borrowing(child);
+  visit(context, seen);
+}
+// A child's own type, whether seen as itself or through an AnyNode.
+template <class N> [[nodiscard]] const std::type_info &typeOf(N &) { return typeid(N); }
+[[nodiscard]] inline const std::type_info &typeOf(AnyNode &child) { return child.type(); }
 inline State &stateOf(AnyNode &child) { return child.state(); }
 inline void layout(AnyNode &child, const skia::SkRect &box) {
   child.ops().fLayout(child.node(), box);
