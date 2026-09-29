@@ -3207,7 +3207,7 @@ public:
     requires std::derived_from<std::remove_cvref_t<T>, Node>
   AnyNode(T &&node) // NOLINT: converting, as std::function's is
       : fNode(new std::remove_cvref_t<T>(std::forward<T>(node))),
-        fOps(&kOps<std::remove_cvref_t<T>>) {}
+        fOps(&opsOf<std::remove_cvref_t<T>>()) {}
 
   AnyNode(const AnyNode &) = delete;
   AnyNode &operator=(const AnyNode &) = delete;
@@ -3238,7 +3238,7 @@ public:
   }
   // The node, when it is a T.
   template <class T> [[nodiscard]] T *get() noexcept {
-    return fOps == &kOps<T> ? static_cast<T *>(fNode) : nullptr;
+    return fOps == &opsOf<T>() ? static_cast<T *>(fNode) : nullptr;
   }
   [[nodiscard]] State &state() { return fOps->fState(fNode); }
 
@@ -3343,9 +3343,13 @@ private:
   const Ops *fOps = nullptr;
 
 public:
-  // The table for a type, as AnyNodeRef reaches it.
-  template <class T> [[nodiscard]] static const Ops &opsOf() noexcept { return kOps<T>; }
+  // The table for a type, as AnyNodeRef reaches it. Not inline: a program
+  // can declare it extern for a type and make it in a unit of its own --
+  // that type's walks, and those of all under it, compiled there and not
+  // wherever the tree above it is walked.
+  template <class T> [[nodiscard]] static const Ops &opsOf() noexcept;
 };
+template <class T> const AnyNode::Ops &AnyNode::opsOf() noexcept { return kOps<T>; }
 
 // A node seen through the table of its walks, and not owned: what every walk
 // takes for a child it does not know the type of -- an AnyNode's, or,
