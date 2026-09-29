@@ -1067,7 +1067,7 @@ TEST(Layout, AFillingChildDoesNotWidenAContentSizedBox) {
 }
 
 // A row of a set width holding more than it has room for: the last child
-// sticks out, and the layout says so -- once -- through overflowReport. A row
+// sticks out, and the layout says so -- once -- in overflows(). A row
 // sized by its content holds the same children without a word.
 struct TooNarrow : skiff::nodes::Stack {
   struct parts_t {
@@ -1084,14 +1084,13 @@ struct HoldsTooNarrow : Node {
 };
 
 TEST(Layout, WhatSticksOutOfAFlowIsTold) {
-  std::vector<skiff::scene::Overflow> told;
-  skiff::scene::overflowReport() = [&](const skiff::scene::Overflow &one) { told.push_back(one); };
+  skiff::scene::overflows().clear();
   Scene<HoldsTooNarrow> scene{std::in_place};
   scene.state().apply({.fill = true});
   scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
   scene.root().parts.fixed.invalidateLayout();
   scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
-  skiff::scene::overflowReport() = nullptr;
+  const auto told = std::exchange(skiff::scene::overflows(), {});
   ASSERT_EQ(told.size(), 1u);  // the fixed row's second box, once; the sized row, never
   EXPECT_NEAR(told.front().x, 60.0f, 0.6f);
   EXPECT_FLOAT_EQ(told.front().y, 0.0f);
@@ -1114,17 +1113,16 @@ struct HoldsGivesWay : Node {
 };
 
 TEST(Layout, ARowTooNarrowShrinksWhatGivesWay) {
-  int told = 0;
-  skiff::scene::overflowReport() = [&](const skiff::scene::Overflow &) { ++told; };
+  skiff::scene::overflows().clear();
   Scene<HoldsGivesWay> scene{std::in_place};
   scene.state().apply({.fill = true});
   scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
-  skiff::scene::overflowReport() = nullptr;
+  const std::size_t told = std::exchange(skiff::scene::overflows(), {}).size();
   const auto &row = scene.root().parts.row;
   EXPECT_NEAR(row.parts.soft.bounds().width(), 60.0f, 0.6f);
   EXPECT_FLOAT_EQ(row.parts.rigid.bounds().width(), 40.0f);
   EXPECT_LE(row.parts.rigid.bounds().fRight, row.bounds().fRight + 0.5f);
-  EXPECT_EQ(told, 0);
+  EXPECT_EQ(told, 0u);
 }
 
 // A menu: the arrows move the focus through its items, round from the last

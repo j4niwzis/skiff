@@ -1,9 +1,30 @@
+module;
+// The ABI's demangler, where there is one: what sticks out is told by the
+// names of the types as written.
+#if __has_include(<cxxabi.h>)
+#include <cxxabi.h>
+#endif
 export module skiff.nodes.flow;
 
 import std;
 import skia;
 import skiff.paint;
 import skiff.scene;
+
+namespace skiff::nodes::flow_names {
+// A type's name as written, not as mangled, where the ABI can say it.
+inline std::string readable(const std::type_info &type) {
+#if __has_include(<cxxabi.h>)
+  int status = 0;
+  const std::unique_ptr<char, void (*)(void *)> said(abi::__cxa_demangle(type.name(), nullptr, nullptr, &status),
+                                                     std::free);
+  if (status == 0 && said) {
+    return said.get();
+  }
+#endif
+  return type.name();
+}
+} // namespace skiff::nodes::flow_names
 
 export namespace skiff::nodes {
 
@@ -296,8 +317,7 @@ template <class N> struct Flowing {
   // set width whose row of buttons was wider than it put its last button
   // past its edge, and nothing said so.
   void told(const skia::SkRect &box) {
-    const auto &report = skiff::scene::overflowReport();
-    if (!report || fNode.fState.fMasking) {
+    if (fNode.fState.fMasking) {
       return;
     }
     const bool freeX = !fNode.fState.fAutoSizeAxes.template has<skiff::scene::axis::x>();
@@ -319,7 +339,8 @@ template <class N> struct Flowing {
         return;
       }
       state.fOverflowTold = true;
-      report(skiff::scene::Overflow{typeid(child).name(), typeid(fNode).name(), x, y});
+      skiff::scene::tellOverflow(skiff::scene::Overflow{
+          flow_names::readable(typeid(child)), flow_names::readable(typeid(fNode)), x, y});
     });
   }
 

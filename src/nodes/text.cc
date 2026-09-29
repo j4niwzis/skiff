@@ -7,11 +7,62 @@ import skiff.scene;
 
 export namespace skiff::nodes {
 
+// Links in the text: a range of it, and where it goes. Drawn in their own
+// colour, underlined, where they stand; a press on one that does not
+// become a selection opens it through skiff::scene::openLink.
+struct TextLink {
+  std::size_t first = 0;
+  std::size_t last = 0;
+  std::string target;
+  // A pill, as a mention is drawn: a rounded plate behind it and, at its
+  // start, a picture the program paints (its text leaves room for it).
+  bool pill = false;
+  // A picture in the line, in place of its range: a custom emoji. The
+  // range is a placeholder the program put in the text for the room it
+  // takes (an em space); the picture is the program's, for the target,
+  // as the text's Pictures say.
+  bool picture = false;
+};
+
+// Stretches of the text drawn otherwise: strong, emphasised (slanted),
+// struck through, as code (on a tinted plate), as a quote (in the quote's
+// colour, a bar at its line's start) -- what a message's HTML says of it.
+struct TextStyled {
+  std::size_t first = 0;
+  std::size_t last = 0;
+  bool strong = false;
+  bool emphasis = false;
+  bool struck = false;
+  bool code = false;
+  bool quote = false;
+  // Marked: a stretch pointed at -- the part of a message a reply quoted
+  // -- on a plate of the quote's colour, apart from what is selected.
+  bool marked = false;
+};
+
+// What a text draws of the program's, by what it stands for: a pill's
+// picture, and a picture in the line (a custom emoji). A type with static
+// members, given as the text's template parameter: nothing is set while
+// the program runs. These draw none.
+struct NoPictures {
+  static std::optional<skiff::scene::PillPicture> pill(std::string_view) { return std::nullopt; }
+  static const skia::Sp<skia::SkImage> *picture(std::string_view) { return nullptr; }
+};
+
+// Which text's selection is shown, of all of them: the last pressed.
+inline std::uint64_t &textSelectionOwner() {
+  static std::uint64_t owner = 0;
+  return owner;
+}
+
 // A line of text, or a paragraph when wrapped. Sizes itself to what it
 // draws, so a flow can lay it out without anyone measuring by hand.
-class Text : public skiff::scene::Node {
+template <class Pictures = NoPictures> class BasicText : public skiff::scene::Node {
 public:
-  Text(std::string text, float size, skia::SkColor colour, bool bold = false)
+  using Link = TextLink;
+  using Styled = TextStyled;
+
+  BasicText(std::string text, float size, skia::SkColor colour, bool bold = false)
       : fText(std::move(text)), fSize(size), fColour(colour), fBold(bold) {}
 
   void setText(std::string text) {
@@ -64,37 +115,6 @@ public:
   }
   [[nodiscard]] bool selectable() const noexcept { return fSelectable; }
 
-  // Links in the text: a range of it, and where it goes. Drawn in their own
-  // colour, underlined, where they stand; a press on one that does not
-  // become a selection opens it through skiff::scene::openLink.
-  struct Link {
-    std::size_t first = 0;
-    std::size_t last = 0;
-    std::string target;
-    // A pill, as a mention is drawn: a rounded plate behind it and, at its
-    // start, a picture the program paints (its text leaves room for it).
-    bool pill = false;
-    // A picture in the line, in place of its range: a custom emoji. The
-    // range is a placeholder the program put in the text for the room it
-    // takes (an em space); the picture is the program's, for the target,
-    // as skiff::scene::inlinePicture says.
-    bool picture = false;
-  };
-  // Stretches of the text drawn otherwise: strong, emphasised (slanted),
-  // struck through, as code (on a tinted plate), as a quote (in the quote's
-  // colour, a bar at its line's start) -- what a message's HTML says of it.
-  struct Styled {
-    std::size_t first = 0;
-    std::size_t last = 0;
-    bool strong = false;
-    bool emphasis = false;
-    bool struck = false;
-    bool code = false;
-    bool quote = false;
-    // Marked: a stretch pointed at -- the part of a message a reply quoted
-    // -- on a plate of the quote's colour, apart from what is selected.
-    bool marked = false;
-  };
   void setStyles(std::vector<Styled> styles, skia::SkColor quote_colour) {
     fStyles = std::move(styles);
     fQuoteColour = quote_colour;
@@ -183,7 +203,7 @@ public:
     fPressX = at.x;
     fPressY = at.y;
     // The selection shown is this one's from now: one text's at a time.
-    selectionOwner() = fState.fId;
+    textSelectionOwner() = fState.fId;
     // Not taken yet: a scrolled list around this may take a press that
     // moves at once as a scroll. A move that reaches this selects, and the
     // pointer is taken then.
@@ -515,7 +535,7 @@ private:
     // The last text pressed shows its selection -- whether or not it has the
     // keyboard's focus: a selectable text does not take it on a press, and
     // required, no selection was ever drawn.
-    if (!fSelectable || fAnchor == fCaret || selectionOwner() != fState.fId) {
+    if (!fSelectable || fAnchor == fCaret || textSelectionOwner() != fState.fId) {
       return;
     }
     const std::size_t low = std::min(fAnchor, fCaret), high = std::max(fAnchor, fCaret);
@@ -622,8 +642,8 @@ private:
       if (link && link->picture) {
         // The picture, square, a little over the text's size, standing on
         // its baseline; nothing where the program has none (yet).
-        if (cuts[i] == link->first && skiff::scene::inlinePicture())
-          if (const skia::Sp<skia::SkImage> *picture = skiff::scene::inlinePicture()(link->target);
+        if (cuts[i] == link->first)
+          if (const skia::Sp<skia::SkImage> *picture = Pictures::picture(link->target);
               picture && *picture) {
             const float side = fSize * 1.2f;
             skia::SkPaint paint;
@@ -645,8 +665,8 @@ private:
         fill.setColor(colour);
         fill.setAlphaf(0.18f * alpha);
         canvas->drawRRect(skia::SkRRect::MakeRectXY(plate, height * 0.5f, height * 0.5f), fill);
-        if (cuts[i] == link->first && skiff::scene::pillPicture())
-          if (const auto look = skiff::scene::pillPicture()(link->target)) {
+        if (cuts[i] == link->first)
+          if (const auto look = Pictures::pill(link->target)) {
             const float side = height - 4.0f;
             drawPillPicture(canvas, p, skia::SkRect::MakeXYWH(at + 1.0f, plate.fTop + 2.0f, side, side), *look, alpha);
           }
@@ -708,11 +728,6 @@ private:
   bool fNodeStyleActive = false;
   bool fSelectable = false;
   float fPressX = 0.0f, fPressY = 0.0f;
-  // Which text's selection is shown: the last pressed.
-  static std::uint64_t &selectionOwner() {
-    static std::uint64_t owner = 0;
-    return owner;
-  }
   bool fShrinks = false;
   bool fDragging = false;
   bool fPressed = false;
@@ -724,5 +739,7 @@ private:
   std::size_t fLastOffset = 0;
   skia::SkColor fSelectionColour = skia::colorSetARGB(110, 64, 167, 227);
 };
+
+using Text = BasicText<>;
 
 } // namespace skiff::nodes
