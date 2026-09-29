@@ -74,8 +74,22 @@ endif()
 # packaging beside it.
 set(SKIFF_SKIA_COMPONENTS "" CACHE STRING
     "Backend components to ask Skia for, for a copy built on its own")
+# The pictures skiff decodes, each an option that asks Skia for its codec:
+# a Skia without one -- a system's, say -- is taken as it is where the
+# option is off, and the code for it is left out by Skia's own defines.
+option(SKIFF_PNG "Decode and encode PNG, through Skia" ON)
+option(SKIFF_JPEG "Decode and encode JPEG, through Skia" ON)
+option(SKIFF_GIF "Decode GIF, animated too, through Skia (Wuffs)" OFF)
+option(SKIFF_WEBP "Decode WebP, animated too, through Skia (libwebp)" OFF)
+set(skiff_skia_components freetype)
+foreach(codec IN ITEMS png jpeg gif webp)
+  string(TOUPPER ${codec} option_name)
+  if(SKIFF_${option_name})
+    list(APPEND skiff_skia_components ${codec})
+  endif()
+endforeach()
 find_package(Skia REQUIRED
-             COMPONENTS png jpeg freetype ${SKIFF_SKIA_COMPONENTS})
+             COMPONENTS ${skiff_skia_components} ${SKIFF_SKIA_COMPONENTS})
 
 # Shaped text, if asked for: HarfBuzz for glyphs, alef for Unicode's rules
 # -- bidirectional runs, line breaks, characters. Off by default: alef is
