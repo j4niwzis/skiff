@@ -241,8 +241,11 @@ template <class N> struct Flowing {
         std::max(0.0f, (room - taken - gaps) / static_cast<float>(growers));
     skiff::scene::eachChild(fNode, [&](auto &child) {
       skiff::scene::State &state = skiff::scene::stateOf(child);
+      // Its margins are in its share: the room it takes, margins and all,
+      // is the share, so what comes after it still fits.
       if (state.fVisible && state.fGrowAxes.template has<Axis>()) {
-        state.arrangeAxisSize(horizontal, share);
+        const float margins = horizontal ? state.fMargin.totalX() : state.fMargin.totalY();
+        state.arrangeAxisSize(horizontal, std::max(0.0f, share - margins));
       }
     });
   }
