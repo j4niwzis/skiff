@@ -84,14 +84,16 @@ public:
       scene::NodeId id = 0;
       float top = 0.0f;
     };
-    std::optional<Anchor> anchor;
+    // Several, in case the first goes with the change: the first of them
+    // still there is kept in place.
+    std::vector<Anchor> anchors;
     // At the end, the view stays at the end, however much comes above: not
     // left where it was to be glided down again, a jerk each time.
     const bool following = fLaidOut && box == fLastBox && this->atEnd() && !fScroll.dragging();
     if (fLaidOut && box == fLastBox && !this->atEnd()) {
       this->eachItem([&](const scene::State &item) {
-        if (!anchor && item.fVisible && item.fBounds.fBottom > box.fTop) {
-          anchor = Anchor{item.fId, item.fBounds.fTop};
+        if (anchors.size() < 4 && item.fVisible && item.fBounds.fBottom > box.fTop) {
+          anchors.push_back(Anchor{item.fId, item.fBounds.fTop});
         }
       });
     }
@@ -130,11 +132,16 @@ public:
     // what is scrolled to next is ready: the frame's walks go no further.
     const skia::SkRect seen = box.makeOutset(0.0f, box.height());
     scene::eachChild(*this, [&](auto &child) { scene::stateOf(child).fInView = seen; });
-    if (anchor) {
+    if (!anchors.empty()) {
       float moved = 0.0f;
+      std::size_t best = anchors.size();
       this->eachItem([&](const scene::State &item) {
-        if (item.fId == anchor->id) {
-          moved = item.fBounds.fTop - anchor->top;
+        for (std::size_t i = 0; i < best; ++i) {
+          if (item.fId == anchors[i].id) {
+            moved = item.fBounds.fTop - anchors[i].top;
+            best = i;
+            break;
+          }
         }
       });
       // Shifted, not jumped: a drag or a glide under way -- a finger past
