@@ -3564,7 +3564,9 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
       canvas->clipRect(state.fBounds, true);
     }
   }
-  if (state.fRecorded) {
+  // Recordings off, where SKIFF_NO_RECORDING is set: to tell a stale one.
+  static const bool noRecording = std::getenv("SKIFF_NO_RECORDING") != nullptr;
+  if (state.fRecorded && !noRecording) {
     // Recorded again where it was let go -- something in it damaged -- or
     // drawn at another alpha; else played back, not walked.
     // Recorded whole, and faded as a whole as it is played back: a fade
