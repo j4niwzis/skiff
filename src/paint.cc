@@ -231,6 +231,49 @@ private:
 // The stack is filled once at startup from the fonts shipped beside the
 // binary; nothing is taken from the system. Lookups happen on the render
 // thread only, which is what lets the coverage cache go unlocked.
+// What text measures and shapes to, kept by its text, its size and its face.
+// Two generations: when the newer is full the older goes, and what is found
+// in the older moves to the newer -- the lines in use stay, rather than all
+// of them going at once, and every line on the screen being shaped again in
+// one frame. Each entry keeps its text, so that two texts whose keys meet
+// are told apart rather than drawn as each other.
+template <class Value> class TextCache {
+public:
+  [[nodiscard]] Value *find(std::uint64_t key, std::string_view text) {
+    if (auto it = fNew.find(key); it != fNew.end()) {
+      return it->second.text == text ? &it->second.value : nullptr;
+    }
+    if (auto it = fOld.find(key); it != fOld.end() && it->second.text == text) {
+      Entry moved = std::move(it->second);
+      fOld.erase(it);
+      return &this->insert(key, std::move(moved)).value;
+    }
+    return nullptr;
+  }
+  Value &put(std::uint64_t key, std::string_view text, Value value) {
+    return this->insert(key, Entry{std::string(text), std::move(value)}).value;
+  }
+  void clear() {
+    fNew.clear();
+    fOld.clear();
+  }
+
+private:
+  struct Entry {
+    std::string text;
+    Value value;
+  };
+  static constexpr std::size_t kGeneration = 8192;
+  Entry &insert(std::uint64_t key, Entry entry) {
+    if (fNew.size() >= kGeneration) {
+      fOld = std::exchange(fNew, {});
+    }
+    return fNew.insert_or_assign(key, std::move(entry)).first->second;
+  }
+  std::unordered_map<std::uint64_t, Entry> fNew;
+  std::unordered_map<std::uint64_t, Entry> fOld;
+};
+
 class FontStack {
 public:
   void setPrimary(skia::Sp<skia::SkTypeface> face) {
@@ -315,8 +358,8 @@ public:
     // measured every frame, at the same sizes, by every screen. The answer
     // only depends on the text, the size, the weight and the face.
     const std::uint64_t key = cacheKey(font, text);
-    if (const auto it = fWidths.find(key); it != fWidths.end()) {
-      return it->second;
+    if (const float *known = fWidths.find(key, text)) {
+      return *known;
     }
 #ifdef SKIFF_TEXT_SHAPING
     const float width = this->shaped(font, text).width;
@@ -328,10 +371,7 @@ public:
                            run.data(), run.size(), skia::SkTextEncoding::kUTF8);
                      });
 #endif
-    if (fWidths.size() > kMaxCachedWidths) {
-      fWidths.clear(); // a whole screen's worth of labels fits many times over
-    }
-    fWidths.emplace(key, width);
+    fWidths.put(key, text, width);
     return width;
   }
 
@@ -398,11 +438,8 @@ public:
   // face, as widths are: the same labels are drawn every frame.
   [[nodiscard]] const ShapedLine &shaped(const skia::SkFont &font, std::string_view text) const {
     const std::uint64_t key = cacheKey(font, text);
-    if (const auto it = fShaped.find(key); it != fShaped.end()) {
-      return it->second;
-    }
-    if (fShaped.size() > kMaxCachedWidths) {
-      fShaped.clear();
+    if (const ShapedLine *known = fShaped.find(key, text)) {
+      return *known;
     }
     ShapedLine line;
     const skia::SkTypeface *base = font.getTypeface();
@@ -464,7 +501,7 @@ public:
       }
     }
     line.width = x;
-    return fShaped.emplace(key, std::move(line)).first->second;
+    return fShaped.put(key, text, std::move(line));
   }
 
 private:
@@ -506,7 +543,7 @@ private:
     }
     return &fHarfBuzz.emplace(&face, std::move(made)).first->second;
   }
-  mutable std::unordered_map<std::uint64_t, ShapedLine> fShaped;
+  mutable TextCache<ShapedLine> fShaped;
   mutable std::unordered_map<const skia::SkTypeface *, HarfBuzzFont> fHarfBuzz;
 #else
 private:
@@ -703,7 +740,7 @@ private:
   mutable bool fEveryFaceListed = false;
   mutable std::vector<skia::Sp<skia::SkTypeface>> fEveryFace;
   mutable std::unordered_map<const skia::SkTypeface *, bool> fAsciiCovered;
-  mutable std::unordered_map<std::uint64_t, float> fWidths;
+  mutable TextCache<float> fWidths;
 };
 
 inline FontStack &fonts() {
