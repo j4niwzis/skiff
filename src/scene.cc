@@ -1,6 +1,7 @@
 export module skiff.scene;
 
 import std;
+import splice;
 import skia;
 import skiff.paint;
 import skiff.aggregate;
@@ -35,11 +36,6 @@ inline constexpr bool kErasedWalks = true;
 inline constexpr bool kErasedWalks = false;
 #endif
 
-// The overloaded pattern: a visitor made of several callables.
-template <class... Fs> struct overloaded : Fs... {
-  using Fs::operator()...;
-};
-template <class... Fs> overloaded(Fs...) -> overloaded<Fs...>;
 
 // What a widget does when it was not given anything to do.
 struct NoAction {
@@ -344,14 +340,14 @@ struct out {};
 struct out_quint {};
 struct out_elastic_half {};
 } // namespace easing
-using Easing = std::variant<easing::out_quint, easing::none, easing::out,
+using Easing = splice::variant<easing::out_quint, easing::none, easing::out,
                               easing::out_elastic_half>;
 
 // How far along an ease is at time t of 1.
 [[nodiscard]] inline float ease(const Easing &how, float t) {
   t = std::clamp(t, 0.0f, 1.0f);
-  return std::visit(
-      overloaded{
+  return splice::visit(
+      splice::overloaded{
           [t](easing::none) { return t; },
           [t](easing::out) { return 1.0f - (1.0f - t) * (1.0f - t); },
           [t](easing::out_quint) { return skiff::paint::outQuint(t); },
@@ -371,7 +367,7 @@ struct width {};
 struct height {};
 struct scale {};
 } // namespace property
-using Property = std::variant<property::alpha, property::x, property::y,
+using Property = splice::variant<property::alpha, property::x, property::y,
                                 property::width, property::height,
                                 property::scale>;
 
@@ -948,18 +944,18 @@ struct scroll {
   float dx = 0.0f, dy = 0.0f;
 };
 } // namespace pointer
-using PointerEvent = std::variant<pointer::move, pointer::down, pointer::up,
+using PointerEvent = splice::variant<pointer::move, pointer::down, pointer::up,
                                pointer::cancel, pointer::scroll>;
 
 // Where a pointer event is.
 [[nodiscard]] inline skia::SkPoint where(const PointerEvent &event) {
-  return std::visit(
+  return splice::visit(
       [](const auto &one) { return skia::SkPoint::Make(one.x, one.y); },
       event);
 }
 // Whether it ends a gesture.
 [[nodiscard]] inline bool ends(const PointerEvent &event) {
-  return std::visit(overloaded{[](const pointer::up &) { return true; },
+  return splice::visit(splice::overloaded{[](const pointer::up &) { return true; },
                                [](const pointer::cancel &) { return true; },
                                [](const auto &) { return false; }},
                     event);
@@ -1085,7 +1081,7 @@ struct up {
   Modifiers modifiers;
 };
 } // namespace key
-using KeyEvent = std::variant<key::down, key::up>;
+using KeyEvent = splice::variant<key::down, key::up>;
 
 // Text and composition are distinct: an IME can replace its provisional
 // range many times before committing it.
@@ -1099,7 +1095,7 @@ struct compose {
   int length = 0;
 };
 } // namespace text
-using TextEvent = std::variant<text::commit, text::compose>;
+using TextEvent = splice::variant<text::commit, text::compose>;
 
 // What assistive technology asks of a node.
 namespace semantic_action {
@@ -1113,7 +1109,7 @@ struct set_value {
 };
 } // namespace semantic_action
 using SemanticAction =
-    std::variant<semantic_action::focus, semantic_action::activate,
+    splice::variant<semantic_action::focus, semantic_action::activate,
                  semantic_action::increment, semantic_action::decrement,
                  semantic_action::set_value>;
 
@@ -1131,7 +1127,7 @@ struct list {};
 struct list_item {};
 } // namespace semantic_role
 using SemanticRole =
-    std::variant<semantic_role::none, semantic_role::group,
+    splice::variant<semantic_role::none, semantic_role::group,
                  semantic_role::button, semantic_role::text,
                  semantic_role::text_box, semantic_role::slider,
                  semantic_role::toggle, semantic_role::tab,
@@ -1173,7 +1169,7 @@ struct Semantics {
 };
 
 [[nodiscard]] inline bool isTextBox(const SemanticRole &role) {
-  return std::visit(overloaded{[](semantic_role::text_box) { return true; },
+  return splice::visit(splice::overloaded{[](semantic_role::text_box) { return true; },
                                [](auto) { return false; }},
                     role);
 }
@@ -1204,16 +1200,16 @@ struct resize_vertical {
   friend bool operator==(resize_vertical, resize_vertical) = default;
 };
 } // namespace cursor
-using Cursor = std::variant<cursor::arrow, cursor::text, cursor::hand,
+using Cursor = splice::variant<cursor::arrow, cursor::text, cursor::hand,
                             cursor::resize_horizontal, cursor::resize_vertical>;
 [[nodiscard]] inline bool isArrow(const Cursor &shape) {
-  return std::visit(overloaded{[](cursor::arrow) { return true; },
+  return splice::visit(splice::overloaded{[](cursor::arrow) { return true; },
                                [](auto) { return false; }},
                     shape);
 }
 
 [[nodiscard]] inline bool hasRole(const SemanticRole &role) {
-  return std::visit(overloaded{[](semantic_role::none) { return false; },
+  return splice::visit(splice::overloaded{[](semantic_role::none) { return false; },
                                [](auto) { return true; }},
                     role);
 }
@@ -2014,8 +2010,8 @@ private:
   }
 
   [[nodiscard]] float &propertyRef(const Property &property) {
-    return std::visit(
-        overloaded{[this](property::alpha) -> float & { return fAlpha; },
+    return splice::visit(
+        splice::overloaded{[this](property::alpha) -> float & { return fAlpha; },
                    [this](property::x) -> float & { return fX; },
                    [this](property::y) -> float & { return fY; },
                    [this](property::width) -> float & { return fWidth; },
@@ -2031,7 +2027,7 @@ private:
     }
     current = value;
     // Alpha only repaints; the rest move or resize.
-    std::visit(overloaded{[this](property::alpha) { this->markDamaged(); },
+    splice::visit(splice::overloaded{[this](property::alpha) { this->markDamaged(); },
                           [this](auto) { this->invalidateLayout(); }},
                property);
   }
@@ -2050,12 +2046,12 @@ struct Node;
 //   template <> inline constexpr bool skiff::scene::kTreatAsNode<MyList> = true;
 template <class T> inline constexpr bool kTreatAsNode = false;
 
-// What can be a child: a way of holding nodes -- a std::variant (its
+// What can be a child: a way of holding nodes -- a splice::variant (its
 // alternative, unless that is std::monostate), a std::optional, a pointer, a
 // reference_wrapper, a tuple, an AnyNode, a range -- or a node. One overload
 // per holder; anything else is a node.
 template <class F> void visitChild(std::monostate &, F &&);
-template <class... Ts, class F> void visitChild(std::variant<Ts...> &, F &&);
+template <class... Ts, class F> void visitChild(splice::variant<Ts...> &, F &&);
 template <class T, class F> void visitChild(std::optional<T> &, F &&);
 template <class T, class D, class F>
 void visitChild(std::unique_ptr<T, D> &, F &&);
@@ -2077,11 +2073,11 @@ void visitChild(N &, F &&);
 
 template <class F> void visitChild(std::monostate &, F &&) {}
 template <class... Ts, class F>
-void visitChild(std::variant<Ts...> &child, F &&f) {
-  std::visit([&](auto &alternative) { visitChild(alternative, f); }, child);
+void visitChild(splice::variant<Ts...> &child, F &&f) {
+  splice::visit([&](auto &alternative) { visitChild(alternative, f); }, child);
 }
 // Anything holding one of several and visiting it as C++26's variant does:
-// a program's own variant, walked as std::variant is.
+// a std::variant, or a program's own, walked as splice::variant is.
 template <class V>
 concept one_of_several = requires(V &v) {
   v.index();
@@ -3001,7 +2997,7 @@ void routePointer(N &child, const Path &path, std::size_t at,
     reply.fCapturePointer = false;
     reply.fReleasePointer = false;
     reply.fRequestFocus = false;
-    std::visit([&](const auto &event) { child.onPointer(when, event, reply); },
+    splice::visit([&](const auto &event) { child.onPointer(when, event, reply); },
                input);
     if (reply.fCapturePointer) {
       routed.fCaptureRequest = state.fId;
@@ -3061,7 +3057,7 @@ struct KeyDelivery {
   template <class N>
   void operator()(N &node, const auto &when, const KeyEvent &input,
                   Reply &reply) const {
-    std::visit([&](const auto &event) { node.onKey(when, event, reply); },
+    splice::visit([&](const auto &event) { node.onKey(when, event, reply); },
                input);
   }
   template <class C>
@@ -3072,7 +3068,7 @@ struct TextDelivery {
   template <class N>
   void operator()(N &node, const auto &when, const TextEvent &input,
                   Reply &reply) const {
-    std::visit([&](const auto &event) { node.onText(when, event, reply); },
+    splice::visit([&](const auto &event) { node.onText(when, event, reply); },
                input);
   }
   template <class C>
@@ -3083,7 +3079,7 @@ struct SemanticDelivery {
   template <class N>
   void operator()(N &node, const auto &when, const SemanticAction &input,
                   Reply &reply) const {
-    std::visit([&](const auto &event) { node.onSemantic(when, event, reply); },
+    splice::visit([&](const auto &event) { node.onSemantic(when, event, reply); },
                input);
   }
   template <class C>
@@ -3664,7 +3660,7 @@ public:
   // -- input
   bool dispatchPointer(const PointerEvent &input) {
     const skia::SkPoint at = where(input);
-    std::visit(overloaded{[&](const pointer::move &) {
+    splice::visit(splice::overloaded{[&](const pointer::move &) {
                             this->setHover(at.fX, at.fY);
                           },
                           [](const auto &) {}},
@@ -3689,8 +3685,8 @@ public:
       path.clear();
       found = walk::hitPath(fRoot, at.fX, at.fY, path);
     }
-    const bool press = std::visit(
-        overloaded{[](const pointer::down &) { return true; },
+    const bool press = splice::visit(
+        splice::overloaded{[](const pointer::down &) { return true; },
                    [](const auto &) { return false; }},
         input);
     if (!found) {
@@ -3766,8 +3762,8 @@ public:
 
   bool dispatchKey(const KeyEvent &input) {
     // Tab moves the focus; Shift+Tab back.
-    const std::optional<bool> tab = std::visit(
-        overloaded{[](const key::down &press) -> std::optional<bool> {
+    const std::optional<bool> tab = splice::visit(
+        splice::overloaded{[](const key::down &press) -> std::optional<bool> {
                      // Ctrl+Tab is not the focus's: a program's, as
                      // tdesktop's to the next chat.
                      if (press.key == keys::kTab && !press.modifiers.has<modifier::control>()) {
@@ -4148,8 +4144,8 @@ public:
       return handled;
     }
     fCaptured = {};
-    const bool press = std::visit(
-        overloaded{[](const pointer::down &) { return true; },
+    const bool press = splice::visit(
+        splice::overloaded{[](const pointer::down &) { return true; },
                    [](const auto &) { return false; }},
         input);
     for (auto it = fLayers.rbegin(); it != fLayers.rend(); ++it) {
@@ -4178,8 +4174,8 @@ public:
   }
 
   bool key(const KeyEvent &input) {
-    const std::optional<bool> tab = std::visit(
-        overloaded{[](const key::down &press) -> std::optional<bool> {
+    const std::optional<bool> tab = splice::visit(
+        splice::overloaded{[](const key::down &press) -> std::optional<bool> {
                      // Ctrl+Tab is not the focus's: a program's, as
                      // tdesktop's to the next chat.
                      if (press.key == keys::kTab && !press.modifiers.has<modifier::control>()) {
@@ -4225,8 +4221,8 @@ public:
   }
 
   bool semantic(NodeId id, const SemanticAction &action) {
-    const bool focusing = std::visit(
-        overloaded{[](const semantic_action::focus &) { return true; },
+    const bool focusing = splice::visit(
+        splice::overloaded{[](const semantic_action::focus &) { return true; },
                    [](const auto &) { return false; }},
         action);
     for (auto it = fLayers.rbegin(); it != fLayers.rend(); ++it) {

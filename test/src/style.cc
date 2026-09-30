@@ -1,4 +1,5 @@
 import std;
+import splice;
 import gtest;
 import skia;
 import skiff.nodes;
@@ -416,16 +417,16 @@ TEST(TextLayout, WrappedTextFollowsItsParentsWidth) {
 
 struct Switching : Node {
   struct parts_t {
-    std::variant<Box<>, Text> body{std::in_place_type<Box<>>, kCard};
+    splice::variant<Box<>, Text> body{std::in_place_type<Box<>>, kCard};
   } parts;
 };
 
 TEST(Children, AVariantAlternativeIsLaidOutAndOldIdsStopResolving) {
   Scene<Switching> scene{std::in_place};
-  std::get<Box<>>(scene.root().parts.body).apply({.width = 30.0f, .height = 10.0f});
+  splice::get<Box<>>(scene.root().parts.body).apply({.width = 30.0f, .height = 10.0f});
   scene.layoutIfNeeded(kViewport);
-  const NodeId before = std::get<Box<>>(scene.root().parts.body).id();
-  EXPECT_FLOAT_EQ(std::get<Box<>>(scene.root().parts.body).bounds().width(), 30.0f);
+  const NodeId before = splice::get<Box<>>(scene.root().parts.body).id();
+  EXPECT_FLOAT_EQ(splice::get<Box<>>(scene.root().parts.body).bounds().width(), 30.0f);
   (void)scene.finishFrame();
 
   scene.root().parts.body.emplace<Text>("now text", 12.0f, kOriginal);

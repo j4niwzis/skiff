@@ -11,6 +11,7 @@ module;
 export module skiff.paint;
 
 import std;
+import splice;
 import skia;
 #ifdef SKIFF_TEXT_SHAPING
 import alef.bidi;
@@ -75,7 +76,7 @@ struct none {};
 struct reduced {};
 struct full {};
 } // namespace motion
-using Motion = std::variant<motion::none, motion::reduced, motion::full>;
+using Motion = splice::variant<motion::none, motion::reduced, motion::full>;
 
 // What kind of movement an animation is: a subtle one stays where it is (a
 // knob, a fold), a sweeping one crosses the window.
@@ -83,7 +84,7 @@ namespace movement {
 struct subtle {};
 struct sweeping {};
 } // namespace movement
-using Movement = std::variant<movement::subtle, movement::sweeping>;
+using Movement = splice::variant<movement::subtle, movement::sweeping>;
 
 inline Motion &motionLevel() {
   static Motion level = motion::full{};
@@ -98,7 +99,7 @@ constexpr bool moves(motion::reduced, movement::sweeping) { return false; }
 constexpr bool moves(motion::full, movement::subtle) { return true; }
 constexpr bool moves(motion::full, movement::sweeping) { return true; }
 [[nodiscard]] inline bool moves(const Movement &kind) {
-  return std::visit([](auto level, auto of) { return moves(level, of); },
+  return splice::visit([](auto level, auto of) { return moves(level, of); },
                     motionLevel(), kind);
 }
 

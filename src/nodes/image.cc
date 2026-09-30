@@ -1,6 +1,7 @@
 export module skiff.nodes.image;
 
 import std;
+import splice;
 import skia;
 import skiff.paint;
 import skiff.scene;
@@ -13,7 +14,7 @@ namespace fit {
 struct cover {};
 struct contain {};
 } // namespace fit
-using Fit = std::variant<fit::cover, fit::contain>;
+using Fit = splice::variant<fit::cover, fit::contain>;
 
 // Where a picture comes from: a value called for each frame it is drawn,
 // so a picture that comes later -- fetched, decoded -- is drawn once it is
@@ -76,7 +77,7 @@ public:
     paint.setAntiAlias(true);
     paint.setAlphaf(alpha);
     const skia::SkSamplingOptions sampling(skia::SkFilterMode::kLinear);
-    std::visit(
+    splice::visit(
         [&](auto how) { drawFitted(canvas, *found, box, iw, ih, how, sampling, paint); },
         fFit);
     canvas->restoreToCount(saved);

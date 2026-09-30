@@ -1,6 +1,7 @@
 export module skiff.nodes.icon;
 
 import std;
+import splice;
 import skia;
 import skiff.paint;
 import skiff.scene;
@@ -23,7 +24,7 @@ struct cubic {
 };
 struct close {};
 } // namespace path_step
-using PathStep = std::variant<path_step::move, path_step::line, path_step::cubic, path_step::close>;
+using PathStep = splice::variant<path_step::move, path_step::line, path_step::cubic, path_step::close>;
 
 namespace mark {
 struct line {
@@ -42,7 +43,7 @@ struct path {
   std::vector<PathStep> steps;
 };
 } // namespace mark
-using MarkShape = std::variant<mark::line, mark::circle, mark::arc, mark::rect, mark::path>;
+using MarkShape = splice::variant<mark::line, mark::circle, mark::arc, mark::rect, mark::path>;
 
 struct Mark {
   MarkShape shape;
@@ -89,7 +90,7 @@ public:
         paint.setStrokeWidth(one.width);
         paint.setStrokeCap(skia::kRoundCap);
       }
-      std::visit([&](const auto &shape) { drawMark(canvas, shape, paint); }, one.shape);
+      splice::visit([&](const auto &shape) { drawMark(canvas, shape, paint); }, one.shape);
     }
     canvas->restoreToCount(saved);
   }
@@ -113,16 +114,13 @@ private:
   static void drawMark(skia::SkCanvas *canvas, const mark::path &one, const skia::SkPaint &paint) {
     skia::SkPathBuilder built;
     for (const PathStep &step : one.steps)
-      std::visit(overloaded{[&](const path_step::move &at) { built.moveTo(at.x, at.y); },
+      splice::visit(splice::overloaded{[&](const path_step::move &at) { built.moveTo(at.x, at.y); },
                             [&](const path_step::line &at) { built.lineTo(at.x, at.y); },
                             [&](const path_step::cubic &at) { built.cubicTo(at.x1, at.y1, at.x2, at.y2, at.x, at.y); },
                             [&](const path_step::close &) { built.close(); }},
                  step);
     canvas->drawPath(built.detach(), paint);
   }
-  template <class... Fs> struct overloaded : Fs... {
-    using Fs::operator()...;
-  };
 
   IconShape fShape;
   skia::SkColor fColour;

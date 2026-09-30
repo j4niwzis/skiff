@@ -210,8 +210,27 @@ if(SKIFF_EMSCRIPTEN)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions -pthread -msimd128")
 endif()
 
+# splice: the variant and the visiting skiff's nodes, events and styles are
+# made of. C++23 is all it needs; it takes this build's standard. Its step
+# count is alef's where alef is built beside it, so that they share one std.
+if(DEFINED ALEF_CONSTEXPR_STEPS)
+  set(SPLICE_CONSTEXPR_STEPS ${ALEF_CONSTEXPR_STEPS} CACHE STRING
+    "clang's -fconstexpr-steps for splice, as alef's")
+endif()
+cme_declare_port(NAME splice PROVIDES splice
+  GITHUB_REPOSITORY j4niwzis/splice
+  GIT_TAG bd60a0f5c1cdcca8fb7b4076a9354b090b572780
+  LICENSE GPL-3.0-only
+  SYSTEM NEVER
+  TARGETS splice)
+cme_options(splice "SPLICE_TESTS OFF")
+cme_find_package(splice REQUIRED)
+
 add_library(${PROJECT_NAME} STATIC ${skiff_sources})
 add_library(skiff::skiff ALIAS ${PROJECT_NAME})
+# In this build only, as Skia and Boost.PFR: an installed copy finds splice
+# again, in its config.
+target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:splice>)
 # Outside a release build, the walks over a tree see each child through an
 # AnyNode (scene.cc, kErasedWalks): made once, not per type of node. Off,
 # every build walks its tree statically, as a release build does.
