@@ -339,6 +339,7 @@ public:
     fWidths.clear();
 #ifdef SKIFF_TEXT_SHAPING
     fShaped.clear();
+    fWords.clear();
     fHarfBuzz.clear();
 #endif
   }
@@ -477,6 +478,29 @@ public:
         if (hb == nullptr) {
           continue;
         }
+        // Left to right: word by word, each word -- with the space after it
+        // -- shaped once for its face and kept, at every size alike. A new
+        // message is mostly words seen before: shaped whole, each of its
+        // lines was HarfBuzz's work again.
+        if (!run.right_to_left()) {
+          const float scale = out.font.getSize() / static_cast<float>(hb->unitsPerEm);
+          std::size_t at = part.first;
+          while (at < part.last) {
+            const std::size_t space = text.find(' ', at);
+            const std::size_t end = space == std::string_view::npos || space >= part.last ? part.last : space + 1;
+            const ShapedWord &word = this->shapedWord(*hb, face, text.substr(at, end - at));
+            for (std::size_t i = 0; i < word.glyphs.size(); ++i) {
+              out.glyphs.push_back(word.glyphs[i]);
+              out.xs.push_back(x + word.xs[i] * scale);
+            }
+            x += word.advance * scale;
+            at = end;
+          }
+          if (!out.glyphs.empty()) {
+            line.runs.push_back(std::move(out));
+          }
+          continue;
+        }
         hb_buffer_t *buffer = hb_buffer_create();
         hb_buffer_add_utf8(buffer, text.data(), static_cast<int>(text.size()), static_cast<unsigned>(part.first),
                            static_cast<int>(part.last - part.first));
@@ -505,6 +529,48 @@ public:
   }
 
 private:
+  // A word shaped alone, in its face's units: glyphs, where each starts,
+  // and how far it goes.
+  struct ShapedWord {
+    std::vector<skia::SkGlyphID> glyphs;
+    std::vector<float> xs;
+    float advance = 0.0f;
+  };
+  struct WordHash {
+    using is_transparent = void;
+    std::size_t operator()(std::string_view word) const noexcept { return std::hash<std::string_view>{}(word); }
+  };
+  using WordsOfFace = std::unordered_map<std::string, ShapedWord, WordHash, std::equal_to<>>;
+  struct HarfBuzzFont;
+  [[nodiscard]] const ShapedWord &shapedWord(const HarfBuzzFont &hb, const skia::SkTypeface *face,
+                                             std::string_view word) const {
+    WordsOfFace &words = fWords[face];
+    if (const auto found = words.find(word); found != words.end()) {
+      return found->second;
+    }
+    if (words.size() > 50000) {
+      words.clear();
+    }
+    ShapedWord made;
+    hb_buffer_t *buffer = hb_buffer_create();
+    hb_buffer_add_utf8(buffer, word.data(), static_cast<int>(word.size()), 0, static_cast<int>(word.size()));
+    hb_buffer_set_direction(buffer, HB_DIRECTION_LTR);
+    hb_buffer_guess_segment_properties(buffer);
+    hb_shape(hb.font.get(), buffer, nullptr, 0);
+    unsigned count = 0;
+    const hb_glyph_info_t *infos = hb_buffer_get_glyph_infos(buffer, &count);
+    const hb_glyph_position_t *positions = hb_buffer_get_glyph_positions(buffer, &count);
+    made.glyphs.reserve(count);
+    made.xs.reserve(count);
+    for (unsigned i = 0; i < count; ++i) {
+      made.glyphs.push_back(static_cast<skia::SkGlyphID>(infos[i].codepoint));
+      made.xs.push_back(made.advance + static_cast<float>(positions[i].x_offset));
+      made.advance += static_cast<float>(positions[i].x_advance);
+    }
+    hb_buffer_destroy(buffer);
+    return words.emplace(std::string(word), std::move(made)).first->second;
+  }
+  mutable std::unordered_map<const skia::SkTypeface *, WordsOfFace> fWords;
   // A face as HarfBuzz reads it: its file's bytes, at its own units, with
   // the variation the typeface is an instance of -- the weight of a clone.
   struct HarfBuzzFont {
