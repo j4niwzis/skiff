@@ -1575,6 +1575,14 @@ inline std::vector<std::uint32_t> &freeSlots() {
   Entry &found = all[slot];
   return found.id == id ? &found : nullptr;
 }
+// The nodes the last tick found still moving -- a flash, a fade, a glide:
+// marked again once the frame is done, so that the next tick comes to them
+// by their marks. The damage walk clears a mark as it passes; what moves
+// was otherwise found again only through the ticking set.
+inline std::vector<NodeId> &moving() {
+  static std::vector<NodeId> kept;
+  return kept;
+}
 // The nodes made since the last tick: where one is not come to by a tick
 // that goes only where things changed, it looks everywhere.
 inline std::vector<NodeId> &births() {
@@ -3711,12 +3719,10 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
   }
   if (!state.fTransforms.empty() || child.settling()) {
     context.fAnimating = true;
-    // Still moving: the way down to it marked for the next frame, as what
-    // changes marks it -- not only the ticking set to find it by, whose
-    // chain a node above could drop, leaving a flash standing still until
-    // something else was repainted there.
+    // Still moving: marked again for the next frame once this one is done
+    // (work::moving), not only left to the ticking set to be found by.
     if (context.fTick) {
-      work::mark(state.fId);
+      work::moving().push_back(state.fId);
     }
   }
   const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
@@ -5017,6 +5023,13 @@ public:
     }
     work::pending().erase(fRoot.fState.fId);
     work::settle();
+    // What the tick found still moving, marked for the next: after the
+    // damage walk, which would clear it.
+    for (const NodeId id : std::exchange(work::moving(), {})) {
+      if (work::entry(id) != nullptr) {  // not one gone since
+        work::mark(id);
+      }
+    }
     const skia::SkRect &bounds = fRoot.fState.fBounds;
     if (!bounds.isEmpty() && !damage.isEmpty() && !damage.intersect(bounds)) {
       damage = skia::SkRect::MakeEmpty();
