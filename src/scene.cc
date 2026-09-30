@@ -1346,16 +1346,114 @@ inline float &pixelScale() {
 // makes the next frame walk everything, as every frame did before; and
 // SKIFF_FULL_WALKS=1 makes every frame do that, to compare.
 namespace work {
-inline std::unordered_set<NodeId> &pending() {
-  static std::unordered_set<NodeId> kept;
+// A set of ids, or a map of an id to an id: open addressing over flat
+// vectors, probed linearly -- no allocation for each insert, as the standard
+// hash containers make. Ids start at 1: 0 is an empty slot, the largest id
+// one whose entry went.
+class IdTable {
+public:
+  // Put in, or its value set: whether it was not there.
+  bool insert(NodeId key, NodeId value = 0) {
+    if ((fUsed + 1) * 2 > fKeys.size()) {
+      this->grow();
+    }
+    std::size_t at = this->home(key);
+    std::size_t gone = fKeys.size();
+    for (;; at = (at + 1) & this->mask()) {
+      const NodeId held = fKeys[at];
+      if (held == key) {
+        fValues[at] = value;
+        return false;
+      }
+      if (held == kGone) {
+        if (gone == fKeys.size()) {
+          gone = at;
+        }
+        continue;
+      }
+      if (held == kEmpty) {
+        break;
+      }
+    }
+    const std::size_t put = gone != fKeys.size() ? gone : at;
+    if (fKeys[put] == kEmpty) {
+      ++fUsed;
+    }
+    fKeys[put] = key;
+    fValues[put] = value;
+    ++fCount;
+    return true;
+  }
+  [[nodiscard]] const NodeId *find(NodeId key) const {
+    if (fKeys.empty()) {
+      return nullptr;
+    }
+    for (std::size_t at = this->home(key);; at = (at + 1) & this->mask()) {
+      const NodeId held = fKeys[at];
+      if (held == key) {
+        return &fValues[at];
+      }
+      if (held == kEmpty) {
+        return nullptr;
+      }
+    }
+  }
+  [[nodiscard]] bool contains(NodeId key) const { return this->find(key) != nullptr; }
+  void erase(NodeId key) {
+    if (fKeys.empty()) {
+      return;
+    }
+    for (std::size_t at = this->home(key);; at = (at + 1) & this->mask()) {
+      const NodeId held = fKeys[at];
+      if (held == key) {
+        fKeys[at] = kGone;
+        --fCount;
+        return;
+      }
+      if (held == kEmpty) {
+        return;
+      }
+    }
+  }
+  [[nodiscard]] bool empty() const noexcept { return fCount == 0; }
+
+private:
+  static constexpr NodeId kEmpty = 0;
+  static constexpr NodeId kGone = ~NodeId{0};
+  [[nodiscard]] std::size_t mask() const noexcept { return fKeys.size() - 1; }
+  [[nodiscard]] std::size_t home(NodeId key) const noexcept {
+    return static_cast<std::size_t>((static_cast<std::uint64_t>(key) * 0x9E3779B97F4A7C15ull) >> 17) & this->mask();
+  }
+  // Twice the room where it is full of live entries; the same room, rid of
+  // the removed ones, where they are what fills it.
+  void grow() {
+    const std::size_t room = fKeys.empty() ? 64 : (fCount * 4 >= fKeys.size() ? fKeys.size() * 2 : fKeys.size());
+    std::vector<NodeId> keys = std::exchange(fKeys, std::vector<NodeId>(room, kEmpty));
+    std::vector<NodeId> values = std::exchange(fValues, std::vector<NodeId>(room, 0));
+    fCount = 0;
+    fUsed = 0;
+    for (std::size_t at = 0; at < keys.size(); ++at) {
+      if (keys[at] != kEmpty && keys[at] != kGone) {
+        this->insert(keys[at], values[at]);
+      }
+    }
+  }
+  std::vector<NodeId> fKeys;
+  std::vector<NodeId> fValues;
+  std::size_t fCount = 0;  // live entries
+  std::size_t fUsed = 0;   // live and removed ones: what probing passes
+};
+
+inline IdTable &pending() {
+  static IdTable kept;
   return kept;
 }
-inline std::unordered_map<NodeId, NodeId> &parents() {
-  static std::unordered_map<NodeId, NodeId> kept;
+inline IdTable &parents() {
+  static IdTable kept;
   return kept;
 }
-inline std::unordered_set<NodeId> &roots() {
-  static std::unordered_set<NodeId> kept;
+inline IdTable &roots() {
+  static IdTable kept;
   return kept;
 }
 // Bumped where a full walk is needed; a scene walks everything while its own
@@ -1379,25 +1477,44 @@ inline void mark(NodeId id) {
   const auto &up = parents();
   for (;;) {
     marked.insert(id);
-    const auto found = up.find(id);
-    if (found == up.end()) {
+    const NodeId *above = up.find(id);
+    if (above == nullptr) {
       if (!roots().contains(id)) {
         ++fullGeneration();  // not seen under anything yet: look everywhere
       }
       return;
     }
-    id = found->second;
+    id = *above;
   }
 }
 // Whether a walk goes into a child.
 [[nodiscard]] inline bool visit(NodeId id) { return walkingFull() || pending().contains(id); }
-inline void record(NodeId child, NodeId parent) { parents().insert_or_assign(child, parent); }
+inline void record(NodeId child, NodeId parent) { parents().insert(child, parent); }
+
+// Whether a State still is its node: a moved-from one handed its identity on,
+// and its end removes nothing.
+struct Alive {
+  bool on = true;
+  Alive() = default;
+  Alive(Alive &&other) noexcept : on(std::exchange(other.on, false)) {}
+  Alive &operator=(Alive &&other) noexcept {
+    on = std::exchange(other.on, false);
+    return *this;
+  }
+};
 }  // namespace work
 
 class State {
 public:
-  // Made: the walks have not seen it yet, so the next frame looks everywhere.
-  State() : fId(nextId()) { ++work::fullGeneration(); }
+  // Made: new until the frame's walk first sees it, which marks it there.
+  State() : fId(nextId()) {}
+  // Gone: its entries in the work tables with it -- not a moved-from one's.
+  ~State() {
+    if (fAlive.on) {
+      work::parents().erase(fId);
+      work::pending().erase(fId);
+    }
+  }
   // A node is one thing on the screen: copying it would make two with one
   // identity. Moving keeps the identity, so a node can be built and then
   // put where it lives.
@@ -2064,6 +2181,9 @@ public:
   std::vector<DrawnChild> fDrawnChildren;
   skia::SkRect fLastConstraint = skia::SkRect::MakeEmpty();
   bool fDamaged = true;
+  // Not yet seen by a frame's walk: the walk marks it, and where it is.
+  bool fNew = true;
+  work::Alive fAlive;
   bool fRelaid = false;  // damaged by a layout made again: for the trace
   skia::SkRect fMovedDamage = skia::SkRect::MakeEmpty();
   skia::SkRect fDrawnBounds = skia::SkRect::MakeEmpty();
@@ -2908,7 +3028,26 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
                                             : inherited;
   // Out of view, a child's time and styles wait: all are walked when all
   // are restyled.
-  const auto visit = [&](auto &each) { walk::update(each, context, own, passed, restyle); };
+  const auto visit = [&](auto &each) {
+    State &one = stateOf(each);
+    work::record(one.fId, state.fId);
+    if (one.fNew) {
+      one.fNew = false;
+      work::mark(one.fId);
+    }
+    walk::update(each, context, own, passed, restyle);
+  };
+  // A frame's tick sees every node in view: a child come or gone, its node
+  // marked, for the layout and the damage walks to go to.
+  if (context.fTick) {
+    std::size_t signature = 0;
+    eachChild(child, [&](auto &each) {
+      signature = signature * 1099511628211ull ^ static_cast<std::size_t>(stateOf(each).fId);
+    });
+    if (signature != state.fChildSignature) {
+      work::mark(state.fId);
+    }
+  }
   if (restyle) {
     eachChild(child, visit);
   } else if (context.fTick) {
