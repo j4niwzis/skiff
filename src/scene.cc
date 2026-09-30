@@ -416,6 +416,7 @@ struct WalkCounts {
   std::uint64_t damage = 0;     // collectDamage
   std::uint64_t hover = 0;      // hover
   std::uint64_t animating = 0;  // animating and wakeAt
+  std::uint64_t made = 0;       // nodes made
 };
 inline WalkCounts &walkCounts() {
   static WalkCounts kept;
@@ -1588,6 +1589,7 @@ inline std::vector<NodeId> &births() {
   made.id = (static_cast<NodeId>(generation) << 32) | slot;
   made.unseen = true;
   births().push_back(made.id);
+  ++walkCounts().made;
   return made.id;
 }
 // A set of nodes: a flag in their entries, and how many have it -- and,
