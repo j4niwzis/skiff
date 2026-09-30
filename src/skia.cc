@@ -177,6 +177,30 @@ inline ::sk_sp<::SkImage> decodeImage(const void *bytes, std::size_t size) {
   return result == ::SkCodec::kSuccess ? image : nullptr;
 }
 
+// A picture decoded no larger than it is shown: its longer side at most
+// `most` pixels, scaled down smoothly (with mipmaps) where it is larger --
+// an avatar of 1024 px, shown at 40, was kept and filtered down whole.
+inline ::sk_sp<::SkImage> decodeImageAtMost(const void *bytes, std::size_t size, int most) {
+  ::sk_sp<::SkImage> whole = decodeImage(bytes, size);
+  if (!whole || most <= 0) {
+    return whole;
+  }
+  const int longer = std::max(whole->width(), whole->height());
+  if (longer <= most) {
+    return whole;
+  }
+  const float scale = static_cast<float>(most) / static_cast<float>(longer);
+  const int width = std::max(1, static_cast<int>(std::lround(static_cast<float>(whole->width()) * scale)));
+  const int height = std::max(1, static_cast<int>(std::lround(static_cast<float>(whole->height()) * scale)));
+  ::sk_sp<::SkSurface> surface = ::SkSurfaces::Raster(::SkImageInfo::MakeN32Premul(width, height));
+  if (!surface) {
+    return whole;
+  }
+  surface->getCanvas()->drawImageRect(whole, ::SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height)),
+                                      ::SkSamplingOptions(::SkFilterMode::kLinear, ::SkMipmapMode::kLinear));
+  return surface->makeImageSnapshot();
+}
+
 // One frame of an animated picture: whole, as it is shown -- drawn over the
 // frame it is drawn on, where it is drawn on one -- and how long it stays.
 struct Frame {
