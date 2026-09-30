@@ -900,16 +900,18 @@ public:
   void setBounds(float lo, float hi) {
     fLo = lo;
     fHi = std::max(lo, hi);
-    if (!fDragging) {
-      fTarget = std::clamp(fTarget, fLo, fHi);
-    }
+    // The target kept as it was asked for, clamped where it is used: a
+    // layout in a provisional box -- a list in a panel whose card sizes
+    // itself, laid out first as wide as the window, so much shorter -- gave
+    // bounds for one pass only, and clamping to them took the reader back
+    // up the list once the real ones came.
   }
   [[nodiscard]] float offset() const noexcept { return fOffset; }
-  [[nodiscard]] float target() const noexcept { return fTarget; }
+  [[nodiscard]] float target() const noexcept { return this->aim(); }
   [[nodiscard]] bool dragging() const noexcept { return fDragging; }
   // Still moving on its own: a flick running out, or an end springing back.
   [[nodiscard]] bool moving() const noexcept {
-    return fFlinging || std::abs(fOffset - fTarget) > 0.05f;
+    return fFlinging || std::abs(fOffset - this->aim()) > 0.05f;
   }
 
   void jumpTo(float value) {
@@ -942,7 +944,7 @@ public:
     fFlinging = false;
     fWheeling = true;
     fVelocity = 0.0f;
-    fTarget = std::clamp(fTarget - ticks * step, fLo, fHi);
+    fTarget = std::clamp(this->aim() - ticks * step, fLo, fHi);
   }
 
   // Touching a list that is still flying stops it where it is, which is the
@@ -1026,6 +1028,12 @@ public:
     // the first step most of the way at once.
     const double dt = std::min(dtMs, fFromRest ? 1000.0 / 60.0 : 64.0);
     fFromRest = false;
+    // Between frames the bounds are the real ones: the target within them
+    // from here, so that what shrank for good -- a search's few results --
+    // does not take the view back down when it grows again.
+    if (!fDragging) {
+      fTarget = this->aim();
+    }
     if (fDragging) {
       return false; // the finger owns it
     }
@@ -1043,9 +1051,10 @@ public:
         fTarget = fOffset;
       }
     } else {
-      fOffset = paint::approach(fOffset, fTarget, fWheeling ? kWheelTauMs : tauMs, dt);
-      if (std::abs(fOffset - fTarget) < 0.05f) {
-        fOffset = fTarget;
+      const float aim = this->aim();
+      fOffset = paint::approach(fOffset, aim, fWheeling ? kWheelTauMs : tauMs, dt);
+      if (std::abs(fOffset - aim) < 0.05f) {
+        fOffset = aim;
         fWheeling = false;
       }
     }
@@ -1056,6 +1065,8 @@ public:
   static constexpr float kSlop = 6.0f;
 
 private:
+  // Where it is going, within its bounds as they are now.
+  [[nodiscard]] float aim() const noexcept { return std::clamp(fTarget, fLo, fHi); }
   static constexpr float kFriction = 0.994f;
   static constexpr float kMinVelocity = 0.05f;
   static constexpr float kVelocityMix = 0.35f;
