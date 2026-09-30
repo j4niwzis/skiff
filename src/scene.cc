@@ -1292,6 +1292,7 @@ struct Damager {
   const std::type_info *type = nullptr;
   skia::SkRect rect = skia::SkRect::MakeEmpty();
   bool relaid = false;  // its layout was made again, not only its look
+  bool moved = false;   // only moved: laid out elsewhere, or a child gone
 };
 inline std::vector<Damager> &damagers() {
   static std::vector<Damager> kept;
@@ -2579,6 +2580,11 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   }
   state.fPlacementDirty = false;
   state.fLastConstraint = parent;
+  // Where it was: taken before an auto-sized node is given a provisional box
+  // to lay its children out in, which is not where it was drawn. Compared
+  // with that box, every relayout of one -- a list's flow of rows -- was a
+  // move over the whole view, and repainted it all.
+  const skia::SkRect previous = state.fBounds;
   // A node that knows its own size says so first, given its box.
   node.measure(parent);
 
@@ -2628,7 +2634,6 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   width *= state.fScale;
   height *= state.fScale;
 
-  const skia::SkRect previous = state.fBounds;
   state.fBounds = anchoredBox(room, width, height, state.fAnchor,
                               state.fOrigin, state.fX, state.fY);
   if (state.fBounds != previous) {
@@ -2881,6 +2886,10 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   skia::SkRect damage = skia::SkRect::MakeEmpty();
   if (drawnAbove) {
     damage = state.fMovedDamage;
+    // Moved, laid out, or a child gone: said too, as from its node.
+    if (!state.fDamaged && !damage.isEmpty() && traceSettling() && damagers().size() < 64) {
+      damagers().push_back({&typeid(N), damage, true, true});
+    }
     if (state.fDamaged) {
       // Where it was drawn and where it will be: a shift moves it past both
       // its laid-out bounds and its last drawn ones.
