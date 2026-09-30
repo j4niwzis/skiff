@@ -40,6 +40,12 @@ public:
     this->markDamaged();
   }
 
+  // Its box the same whatever the picture -- a custom emoji in a grid of
+  // fixed cells: the picture coming repaints it, and lays nothing out
+  // again. Every one coming into a list -- and each let go by its cache and
+  // come back -- laid the list out again in the middle of a scroll.
+  void keepBox(bool kept = true) { fBoxKept = kept; }
+
   [[nodiscard]] const skia::Sp<skia::SkImage> *image() const {
     const skia::Sp<skia::SkImage> *found = fSource();
     return found && *found ? found : nullptr;
@@ -63,7 +69,11 @@ public:
     const bool has = this->image() != nullptr;
     if (has != fHad) {
       fHad = has;
-      this->invalidateLayout();
+      if (fBoxKept) {
+        this->markDamaged();
+      } else {
+        this->invalidateLayout();
+      }
     }
     fWaiting = !has && this->waitOn(fSource);
   }
@@ -178,6 +188,7 @@ private:
   Source fSource;
   Fit fFit;
   bool fHad = false;
+  bool fBoxKept = false;
   bool fWaiting = false;
   // The picture scaled to what it covers, and what it was made for.
   skia::Sp<skia::SkImage> fScaled;
