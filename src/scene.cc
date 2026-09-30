@@ -2326,31 +2326,27 @@ public:
     if (spec.cornerRadius) {
       fCornerRadius = *spec.cornerRadius;
     }
+    // What only paints -- not in the style fields, compared below --
+    // repaints where it changes: a background set each frame (a row's flash
+    // fading) changed nothing on the screen, and a recorded node played its
+    // first colour back for good.
+    const auto paint = [&](auto &live, const auto &given) {
+      if (given && given != live) {
+        live = given;
+        this->markDamaged();
+      }
+    };
     if (spec.corners && spec.corners != fCorners) {
       fCorners = spec.corners;
       this->markDamaged();
     }
-    if (spec.background) {
-      fBackground = spec.background;
-    }
-    if (spec.hoverBackground) {
-      fHoverBackground = spec.hoverBackground;
-    }
-    if (spec.selectedBackground) {
-      fSelectedBackground = spec.selectedBackground;
-    }
-    if (spec.focusBackground) {
-      fFocusBackground = spec.focusBackground;
-    }
-    if (spec.gradient) {
-      fGradient = spec.gradient;
-    }
-    if (spec.shadow) {
-      fShadow = spec.shadow;
-    }
-    if (spec.border) {
-      fBorder = spec.border;
-    }
+    paint(fBackground, spec.background);
+    paint(fHoverBackground, spec.hoverBackground);
+    paint(fSelectedBackground, spec.selectedBackground);
+    paint(fFocusBackground, spec.focusBackground);
+    paint(fGradient, spec.gradient);
+    paint(fShadow, spec.shadow);
+    paint(fBorder, spec.border);
     if (spec.masking) {
       fMasking = *spec.masking;
     }
