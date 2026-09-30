@@ -184,6 +184,20 @@ public:
   // Whether a point in it is on a quoted stretch: for the program to act on
   // a press there (a reply's quote, to what it quotes).
   [[nodiscard]] bool quotedAt(float x, float y) const { return this->styleAt(this->offsetAt(x, y)).quote; }
+  // The quote a point is on -- the outermost around it, where quotes are
+  // inside quotes -- as its bytes in the text: which of a text's quotes was
+  // pressed, not only that one was.
+  [[nodiscard]] std::optional<std::pair<std::size_t, std::size_t>> quoteAt(float x, float y) const {
+    const std::size_t offset = this->offsetAt(x, y);
+    std::optional<std::pair<std::size_t, std::size_t>> out;
+    for (const Styled &one : fStyles) {
+      if (one.quote && offset >= one.first && offset < one.last &&
+          (!out || one.last - one.first > out->second - out->first)) {
+        out = std::pair{one.first, one.last};
+      }
+    }
+    return out;
+  }
   [[nodiscard]] Styled styleAt(std::size_t offset) const {
     Styled out;
     for (const Styled &one : fStyles) {
