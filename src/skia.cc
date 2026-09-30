@@ -353,6 +353,7 @@ using ::SkSurfaces::WrapBackendRenderTarget;
 using ::skgpu::Budgeted;
 using ::skgpu::Budgeted::kNo;
 using ::SkSurfaces::Raster;
+using ::SkSurfaces::WrapPixels;
 // One name, both backends: the overload taking a Ganesh context and the one
 // taking a Graphite recorder are the same function to whoever asks for an
 // offscreen surface, and which of them exists is what the build decided.
