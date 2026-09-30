@@ -3797,8 +3797,8 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
     eachChild(child, [&](auto &each) {
       const State &one = stateOf(each);
       const bool seen = !view || one.fBounds.isEmpty() || skia::SkRect::Intersects(one.fBounds, *view);
-      if (one.fNew ||
-          (seen && (work::tickingFull() || work::ticking().contains(one.fId) || work::pending().contains(one.fId)))) {
+      if (one.fNew || work::pending().contains(one.fId) ||
+          (seen && (work::tickingFull() || work::ticking().contains(one.fId)))) {
         visit(each);
       }
     });
@@ -3882,7 +3882,11 @@ template <class N> bool markDirty(N &child) {
   // changed.
   const auto into = [&](auto &each) {
     const State &one = stateOf(each);
-    if ((view && !one.fBounds.isEmpty() && !skia::SkRect::Intersects(one.fBounds, *view)) ||
+    // Out of view and not marked, only whether it changed itself. A marked
+    // one is gone into wherever it is: the view a list says is what it
+    // shows, not what changed.
+    const bool marked = work::pending().contains(one.fId);
+    if ((!marked && view && !one.fBounds.isEmpty() && !skia::SkRect::Intersects(one.fBounds, *view)) ||
         !work::visit(one.fId)) {
       below = below || !one.fLayoutValid || one.fPlacementDirty;
     } else {
@@ -3982,7 +3986,8 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   skia::SkRect below = skia::SkRect::MakeEmpty();
   const std::optional<skia::SkRect> &view = state.fInView;
   const auto inView = [&](const State &one) {
-    return !view || one.fBounds.isEmpty() || skia::SkRect::Intersects(one.fBounds, *view);
+    return !view || one.fBounds.isEmpty() || skia::SkRect::Intersects(one.fBounds, *view) ||
+           work::pending().contains(one.fId);
   };
   const auto into = [&](auto &each) {
     const State &one = stateOf(each);
@@ -4527,8 +4532,11 @@ template <class N> bool animating(N &child) {
   }
   bool any = false;
   // Only what ticks can be moving: what the tick keeps, as it last found.
-  eachChildInView(child, [&](auto &each) {
-    if (work::disabled() || work::ticking().contains(stateOf(each).fId)) {
+  eachChild(child, [&](auto &each) {
+    const State &one = stateOf(each);
+    const std::optional<skia::SkRect> &view = child.fState.fInView;
+    const bool seen = !view || one.fBounds.isEmpty() || skia::SkRect::Intersects(one.fBounds, *view);
+    if (work::disabled() || work::pending().contains(one.fId) || (seen && work::ticking().contains(one.fId))) {
       any = any || walk::animating(each);
     }
   });
