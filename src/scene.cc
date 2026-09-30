@@ -3839,12 +3839,10 @@ template <class N> bool markDirty(N &child) {
   std::uint32_t place = 0;
   eachChild(child, [&](auto &each) {
     const State &one = stateOf(each);
-    const std::uint32_t at = place++;
-    // Placed where it is seen: one out of view that is marked has its parent
-    // walked whole instead, as it is found.
-    if (!view || one.fBounds.isEmpty() || skia::SkRect::Intersects(one.fBounds, *view)) {
-      work::record(one.fId, state.fId, at);
-    }
+    // Every child placed, in view or not: one out of view that marks itself
+    // -- a loader turning at the far end of a list -- with no parent known
+    // had every frame walk the whole tree. Only read where nothing changed.
+    work::record(one.fId, state.fId, place++);
     into(each);
     signature = signature * 1099511628211ull ^ static_cast<std::size_t>(one.fId);
   });
@@ -3956,11 +3954,10 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
     std::uint32_t place = 0;
     eachChild(child, [&](auto &each) {
       const State &one = stateOf(each);
-      const std::uint32_t at = place++;
+      work::record(one.fId, state.fId, place++);
       if (!inView(one)) {
         return;
       }
-      work::record(one.fId, state.fId, at);
       into(each);
       // Where it is, laid out and drawn: what is repainted if it goes.
       state.fDrawnChildren.push_back({one.fId, joined(one.fBounds, one.fDrawnBounds)});
