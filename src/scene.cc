@@ -1338,9 +1338,66 @@ inline float &pixelScale() {
 //
 // Changing a node goes through the setters here: they mark this State and
 // nothing else, and the next frame's walks find the mark.
+// What a frame has to look at, found without walking the whole tree: a node
+// that changes -- damaged, laid out again, restyled -- marks itself and every
+// node above it, by id, through the parents the walks saw; the frame's
+// layout, damage and restyle walks go down only what is marked. What the
+// table cannot answer -- a node no walk has seen, a node made since --
+// makes the next frame walk everything, as every frame did before; and
+// SKIFF_FULL_WALKS=1 makes every frame do that, to compare.
+namespace work {
+inline std::unordered_set<NodeId> &pending() {
+  static std::unordered_set<NodeId> kept;
+  return kept;
+}
+inline std::unordered_map<NodeId, NodeId> &parents() {
+  static std::unordered_map<NodeId, NodeId> kept;
+  return kept;
+}
+inline std::unordered_set<NodeId> &roots() {
+  static std::unordered_set<NodeId> kept;
+  return kept;
+}
+// Bumped where a full walk is needed; a scene walks everything while its own
+// count is behind.
+inline std::uint64_t &fullGeneration() {
+  static std::uint64_t at = 1;
+  return at;
+}
+// Whether the walks now under way go everywhere.
+inline bool &walkingFull() {
+  static bool on = true;
+  return on;
+}
+inline bool disabled() {
+  static const bool off = std::getenv("SKIFF_FULL_WALKS") != nullptr;
+  return off;
+}
+// A node changed: it and all above it, marked.
+inline void mark(NodeId id) {
+  auto &marked = pending();
+  const auto &up = parents();
+  for (;;) {
+    marked.insert(id);
+    const auto found = up.find(id);
+    if (found == up.end()) {
+      if (!roots().contains(id)) {
+        ++fullGeneration();  // not seen under anything yet: look everywhere
+      }
+      return;
+    }
+    id = found->second;
+  }
+}
+// Whether a walk goes into a child.
+[[nodiscard]] inline bool visit(NodeId id) { return walkingFull() || pending().contains(id); }
+inline void record(NodeId child, NodeId parent) { parents().insert_or_assign(child, parent); }
+}  // namespace work
+
 class State {
 public:
-  State() : fId(nextId()) {}
+  // Made: the walks have not seen it yet, so the next frame looks everywhere.
+  State() : fId(nextId()) { ++work::fullGeneration(); }
   // A node is one thing on the screen: copying it would make two with one
   // identity. Moving keeps the identity, so a node can be built and then
   // put where it lives.
@@ -1561,6 +1618,7 @@ public:
   template <class Theme> void setStyleSheet() {
     fStyleResolver = StyleResolver::of<Theme>();
     fStyleSheetChanged = true;
+    work::mark(fId);
   }
   void clearStyleSheet() {
     if (!fStyleResolver) {
@@ -1568,6 +1626,7 @@ public:
     }
     fStyleResolver = {};
     fStyleSheetChanged = true;
+    work::mark(fId);
   }
 
   // Writes a spec. What it does not mention is left as it was.
@@ -1765,9 +1824,13 @@ public:
     fLayoutValid = false;
     fDamaged = true;
     fRelaid = true;
+    work::mark(fId);
   }
   // Repaints where this node is and where it was drawn last.
-  void markDamaged() { fDamaged = true; }
+  void markDamaged() {
+    fDamaged = true;
+    work::mark(fId);
+  }
 
   // Placement by a container, during its layout: writes the position a flow
   // decided without counting as a change somebody made.
@@ -1880,6 +1943,7 @@ public:
   void restyle(bool animate) {
     fStyleDirty = true;
     fStyleAnimate = fStyleAnimate || animate;
+    work::mark(fId);
   }
 
   // A declaration set on the node: at once, or animated from where it was.
@@ -2574,6 +2638,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   if (state.fLayoutValid && !state.fSubtreeDirty &&
       parent == state.fLastConstraint) {
     if (state.fPlacementDirty) {
+      work::pending().insert(state.fId);
       // Moved, not changed: the subtree goes where it is placed as it is.
       state.fPlacementDirty = false;
       const skia::SkRect moved =
@@ -2591,6 +2656,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   }
   state.fPlacementDirty = false;
   state.fLastConstraint = parent;
+  work::pending().insert(state.fId);
   // Where it was: taken before an auto-sized node is given a provisional box
   // to lay its children out in, which is not where it was drawn. Compared
   // with that box, every relayout of one -- a list's flow of rows -- was a
@@ -2845,8 +2911,15 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
   const auto visit = [&](auto &each) { walk::update(each, context, own, passed, restyle); };
   if (restyle) {
     eachChild(child, visit);
-  } else {
+  } else if (context.fTick) {
     eachChildInView(child, visit);
+  } else {
+    // Between frames -- a hover's restyle -- only what is marked.
+    eachChildInView(child, [&](auto &each) {
+      if (work::visit(stateOf(each).fId)) {
+        visit(each);
+      }
+    });
   }
 }
 
@@ -2860,9 +2933,12 @@ template <class N> bool markDirty(N &child) {
   const std::optional<skia::SkRect> &view = state.fInView;
   eachChild(child, [&](auto &each) {
     const State &one = stateOf(each);
+    work::record(one.fId, state.fId);
     // Out of view, only whether it changed itself: what changed below it is
-    // found when it comes into view.
-    if (view && !one.fBounds.isEmpty() && !skia::SkRect::Intersects(one.fBounds, *view)) {
+    // found when it comes into view. Not marked, the same: nothing below it
+    // changed.
+    if ((view && !one.fBounds.isEmpty() && !skia::SkRect::Intersects(one.fBounds, *view)) ||
+        !work::visit(one.fId)) {
       below = below || !one.fLayoutValid || one.fPlacementDirty;
     } else {
       below = walk::markDirty(each) || below;
@@ -2924,8 +3000,12 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   skia::SkRect below = skia::SkRect::MakeEmpty();
   state.fDrawnChildren.clear();
   eachChildInView(child, [&](auto &each) {
-    below = joined(below, walk::collectDamage(each, drawn));
     const State &one = stateOf(each);
+    work::record(one.fId, state.fId);
+    if (work::visit(one.fId)) {
+      below = joined(below, walk::collectDamage(each, drawn));
+      work::pending().erase(one.fId);
+    }
     // Where it is, laid out and drawn: what is repainted if it goes.
     state.fDrawnChildren.push_back({one.fId, joined(one.fBounds, one.fDrawnBounds)});
   });
@@ -2953,6 +3033,7 @@ template <class N>
   }
 void damageForHover(N &child) {
   child.fState.fMovedDamage = joined(child.fState.fMovedDamage, child.hoverDamage());
+  work::mark(child.fState.fId);
 }
 template <class N> void damageForHover(N &child) { child.fState.markDamaged(); }
 
@@ -3688,8 +3769,10 @@ template <class Root> class Scene {
 public:
   template <class... Args>
   explicit Scene(std::in_place_t, Args &&...args)
-      : fRoot(std::forward<Args>(args)...) {}
-  explicit Scene(Root root) : fRoot(std::move(root)) {}
+      : fRoot(std::forward<Args>(args)...) {
+    work::roots().insert(fRoot.fState.fId);
+  }
+  explicit Scene(Root root) : fRoot(std::move(root)) { work::roots().insert(fRoot.fState.fId); }
   Scene(const Scene &) = delete;
   Scene &operator=(const Scene &) = delete;
 
@@ -3712,8 +3795,19 @@ public:
     walk::update(fRoot, context, {}, nullptr, false);
   }
 
+  // Whether this frame's walks go everywhere: where a full walk was asked
+  // for since this scene's last, or the work set is off.
+  void beginWalks() {
+    fWalkGeneration = work::fullGeneration();
+    work::walkingFull() = work::disabled() || fWalkedGeneration != fWalkGeneration;
+    work::pending().insert(fRoot.fState.fId);
+  }
   bool layoutIfNeeded(const skia::SkRect &viewport) {
+    this->beginWalks();
     const bool viewportChanged = viewport != fViewport;
+    if (viewportChanged) {
+      work::walkingFull() = true;
+    }
     fViewport = viewport;
     if (viewportChanged) {
       // Width-constrained selectors are media queries: resolved before
@@ -3733,6 +3827,11 @@ public:
 
   [[nodiscard]] FrameResult finishFrame() {
     skia::SkRect damage = walk::collectDamage(fRoot, true);
+    // Walked as this frame asked: what was marked is done.
+    if (work::walkingFull()) {
+      fWalkedGeneration = fWalkGeneration;
+    }
+    work::pending().erase(fRoot.fState.fId);
     const skia::SkRect &bounds = fRoot.fState.fBounds;
     if (!bounds.isEmpty() && !damage.isEmpty() && !damage.intersect(bounds)) {
       damage = skia::SkRect::MakeEmpty();
@@ -3740,6 +3839,10 @@ public:
     return {damage, walk::animating(fRoot), walk::wakeAt(fRoot)};
   }
   [[nodiscard]] bool hasFrameWork() {
+    if (!work::disabled() && fWalkedGeneration == work::fullGeneration() && work::pending().empty()) {
+      return walk::animating(fRoot);
+    }
+    work::walkingFull() = true;
     return walk::markDirty(fRoot) || walk::hasDamage(fRoot) ||
            walk::animating(fRoot);
   }
@@ -4053,6 +4156,7 @@ private:
   // Styles whose inputs changed, applied now, so what a handler sees next is
   // current.
   void restyleDirty() {
+    work::walkingFull() = work::disabled() || fWalkedGeneration != work::fullGeneration();
     UpdateContext context{fNowMs, fViewport.width(), false, false};
     walk::update(fRoot, context, {}, nullptr, false);
   }
@@ -4071,6 +4175,10 @@ private:
   }
 
   Root fRoot;
+  // The full walks' count this scene last walked everything at, and the one
+  // its current frame goes by.
+  std::uint64_t fWalkedGeneration = 0;
+  std::uint64_t fWalkGeneration = 0;
   NodeId fCapture = 0;
   NodeId fDown = 0;
   NodeId fFocus = 0;
