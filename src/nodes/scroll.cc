@@ -104,20 +104,19 @@ public:
     // is drawn follows it a whole pixel at a time -- every row, its text
     // and its fills together.
     const float offset = scene::snapToPixel(fScroll.offset());
-    const skia::SkRect scrolled = skia::SkRect::MakeXYWH(
-        box.fLeft, box.fTop - offset, box.width(), box.height());
-    // Only scrolled: the contents move as they are, not laid out again --
-    // with many rows, measuring them all at every step is what made a
-    // scroll stutter. What changed in them is laid out as ever.
+    // Only scrolled: the contents are neither moved nor laid out again --
+    // they stay laid out in the view's box and are drawn shifted up by the
+    // offset (their fShiftY, set below), so a step of a scroll costs the
+    // same with any number of rows. Every row's bounds were moved at each
+    // step, which grew with every page of history.
     if (fLaidOut && box == fLastBox && offset != fLastOffset) {
-      const float dy = fLastOffset - offset;
-      scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
-      this->moved(dy);
+      this->moved(fLastOffset - offset);
     }
     // What the reader is looking at stays where it is when what is above
     // it changes -- history coming in above, a row above growing: the first
     // item in view is remembered, and the view follows it. Not at the end,
-    // where the view follows the newest instead.
+    // where the view follows the newest instead. The rows' bounds are where
+    // they are laid out: in view, less the offset.
     struct Anchor {
       scene::NodeId id = 0;
       float top = 0.0f;
@@ -135,7 +134,7 @@ public:
     // it left, beside the message it went to.
     if (fLaidOut && box == fLastBox && !this->atEnd() && !fJumpTo && !fToEnd) {
       this->eachItem([&](const scene::State &item) {
-        if (anchors.size() < 4 && item.fVisible && item.fBounds.fBottom > box.fTop) {
+        if (anchors.size() < 4 && item.fVisible && item.fBounds.fBottom - offset > box.fTop) {
           anchors.push_back(Anchor{item.fId, item.fBounds.fTop});
         }
       });
@@ -143,22 +142,18 @@ public:
     fLaidOut = true;
     fLastBox = box;
     fLastOffset = offset;
-    scene::eachChild(*this, [&](auto &child) { scene::layout(child, scrolled); });
+    scene::eachChild(*this, [&](auto &child) { scene::layout(child, box); });
     const skia::SkRect content = scene::childBounds(*this);
     fExtent = std::max(0.0f, content.height() - box.height());
     fScroll.setBounds(0.0f, fExtent);
     if (fJumpTo) {
       const float to = std::clamp(*fJumpTo, 0.0f, fExtent);
       fJumpTo.reset();
-      const float dy = offset - scene::snapToPixel(to);
       fScroll.jumpTo(to);
-      scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
       fState.markDamaged();
       fLastOffset = scene::snapToPixel(to);
     } else if (following && !fToEnd && fScroll.offset() != fExtent) {
-      const float dy = offset - scene::snapToPixel(fExtent);
       fScroll.jumpTo(fExtent);
-      scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
       fState.markDamaged();
       fLastOffset = scene::snapToPixel(fExtent);
     }
@@ -168,18 +163,12 @@ public:
         fScroll.glideTo(fExtent);
       } else {
         fScroll.jumpTo(fExtent);
-        const float dy = fLastOffset - scene::snapToPixel(fExtent);
-        if (dy != 0.0f) {
-          scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
+        if (fLastOffset != scene::snapToPixel(fExtent)) {
           fState.markDamaged();
         }
         fLastOffset = scene::snapToPixel(fExtent);
       }
     }
-    // What of the contents is in view -- and a screen above and below, so
-    // what is scrolled to next is ready: the frame's walks go no further.
-    const skia::SkRect seen = box.makeOutset(0.0f, box.height());
-    scene::eachChild(*this, [&](auto &child) { scene::stateOf(child).fInView = seen; });
     if (!anchors.empty()) {
       float moved = 0.0f;
       std::size_t best = anchors.size();
@@ -197,13 +186,27 @@ public:
       // snapping back and forth.
       if (moved != 0.0f) {
         fScroll.shift(moved);
-        const float placed = scene::snapToPixel(moved);
-        scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, -placed); });
         fState.markDamaged();
-        fLastOffset = offset + placed;
+        fLastOffset = offset + scene::snapToPixel(moved);
       }
     }
+    // The contents drawn where the view is -- and what of them is in view,
+    // with a screen above and below, so what is scrolled to next is ready:
+    // in the space they are laid out in, the view moved down by the offset.
+    const skia::SkRect seen = box.makeOutset(0.0f, box.height()).makeOffset(0.0f, fLastOffset);
+    scene::eachChild(*this, [&](auto &child) {
+      scene::State &contents = scene::stateOf(child);
+      contents.setShift(0.0f, -fLastOffset);
+      contents.fInView = seen;
+    });
   }
+
+  // Where a rect of the contents -- a row's bounds -- is in the view, and
+  // back: the contents are laid out as if unscrolled.
+  [[nodiscard]] skia::SkRect toView(const skia::SkRect &inContents) const {
+    return inContents.makeOffset(0.0f, -fLastOffset);
+  }
+  [[nodiscard]] float contentsShift() const noexcept { return -fLastOffset; }
 
   // The items of the list: the children of what this scrolls.
   template <class F> void eachItem(F &&f) {

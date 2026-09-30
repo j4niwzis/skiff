@@ -1051,6 +1051,17 @@ inline bool &pointerHeld() {
 }
 using PointerEvent = splice::variant<pointer::move, pointer::down, pointer::up,
                                pointer::cancel, pointer::scroll>;
+// A pointer event as a node under a shifted one sees it: moved back by the
+// shift, into the space the nodes under it are laid out in.
+[[nodiscard]] inline PointerEvent shiftedBack(const PointerEvent &input, float dx, float dy) {
+  return splice::visit(
+      [&](auto event) -> PointerEvent {
+        event.x -= dx;
+        event.y -= dy;
+        return event;
+      },
+      input);
+}
 inline void notePointerHeld(const PointerEvent &input) {
   splice::visit(splice::overloaded{[](const pointer::down &) { pointerHeld() = true; },
                                    [](const pointer::up &) { pointerHeld() = false; },
@@ -1464,6 +1475,7 @@ struct Entry {
   NodeId parent = 0;
   NodeId place = 0;
   NodeId hintHead = 0;
+  float shiftX = 0.0f, shiftY = 0.0f;  // the node's fShiftX and fShiftY
   std::uint32_t generation = 0;
   bool pending = false, ticking = false, root = false, hinted = false, reshaped = false;
   bool hasParent = false, hasPlace = false, hasHintHead = false;
@@ -1739,6 +1751,32 @@ inline void reach(NodeId id) {
     at = *up;
   }
   return 0;
+}
+// How far a node is drawn from where it is laid out: its shift and all its
+// ancestors', as the walks last saw them -- a scrolled list's rows are laid
+// out where they were and drawn moved by the list's.
+struct Offset {
+  float x = 0.0f, y = 0.0f;
+};
+[[nodiscard]] inline Offset drawnOffset(NodeId id) {
+  Offset sum;
+  NodeId at = id;
+  for (int depth = 0; depth < 512 && at != 0; ++depth) {
+    const Entry *here = entry(at);
+    if (here == nullptr) {
+      break;
+    }
+    sum.x += here->shiftX;
+    sum.y += here->shiftY;
+    at = here->hasParent ? here->parent : 0;
+  }
+  return sum;
+}
+// The damage walk's way down: the shifts of the nodes above where it is, to
+// say what it finds where it is on the screen.
+inline Offset &damageOffset() {
+  static Offset at;
+  return at;
 }
 // Whether a walk goes into a child.
 [[nodiscard]] inline bool visit(NodeId id) { return walkingFull() || pending().contains(id); }
@@ -2105,11 +2143,11 @@ public:
       fOutOfFlow = true;
     }
     if (spec.shiftX && *spec.shiftX != fShiftX) {
-      fShiftX = *spec.shiftX;
+      this->setShift(*spec.shiftX, fShiftY);
       this->markDamaged();
     }
     if (spec.shiftY && *spec.shiftY != fShiftY) {
-      fShiftY = *spec.shiftY;
+      this->setShift(fShiftX, *spec.shiftY);
       this->markDamaged();
     }
     if (spec.anchor) {
@@ -2295,6 +2333,16 @@ public:
   }
   // Laid out again at the next frame, repainting nothing by itself: what
   // the layout moves repaints, as it finds it (a scroll view, copied).
+  // Drawn moved by this much, it and all under it, where it is laid out: a
+  // scroll view's contents by its offset. Repaints nothing by itself.
+  void setShift(float x, float y) {
+    fShiftX = x;
+    fShiftY = y;
+    if (work::Entry *here = work::entry(fId)) {
+      here->shiftX = x;
+      here->shiftY = y;
+    }
+  }
   void relayoutQuietly() {
     fLayoutValid = false;
     work::mark(fId);
@@ -3220,7 +3268,8 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   // control that opened it.
   const skia::SkRect parent =
       (state.fFollow != nullptr && !state.fFollow->fBounds.isEmpty())
-          ? state.fFollow->fBounds
+          ? state.fFollow->fBounds.makeOffset(work::drawnOffset(state.fFollow->fId).x,
+                                              work::drawnOffset(state.fFollow->fId).y)
           : parentBox;
   if (state.fLayoutValid && !state.fSubtreeDirty &&
       parent == state.fLastConstraint) {
@@ -3710,8 +3759,17 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   // drawn, all found again.
   const bool whole = state.fDamaged || state.fRelaid || !state.fLayoutMoved.isEmpty() ||
                      !state.fMovedDamage.isEmpty();
+  // A scroll view moved in this frame: its view, where it is on the screen.
+  const work::Offset above = work::damageOffset();
+  for (ScrollMove &move : scrollMoves()) {
+    if (move.node == state.fId) {
+      move.rect.offset(above.x, above.y);
+    }
+  }
   if (drawnAbove) {
-    damage = joined(state.fMovedDamage, state.fLayoutMoved);
+    // What is said in its own space -- its children's, a bar's -- is drawn
+    // moved by its shift.
+    damage = joined(state.fMovedDamage.makeOffset(state.fShiftX, state.fShiftY), state.fLayoutMoved);
     // Moved, laid out, or a child gone: said too, as from its node.
     if (!state.fDamaged && !damage.isEmpty() && traceSettling() && damagers().size() < 64) {
       damagers().push_back({&typeid(N), damage, true, true});
@@ -3727,8 +3785,9 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
     }
   }
   if (!damage.isEmpty()) {
-    damageFound().push_back(damage);
+    damageFound().push_back(damage.makeOffset(above.x, above.y));
   }
+  work::damageOffset() = {above.x + state.fShiftX, above.y + state.fShiftY};
   state.fMovedDamage = skia::SkRect::MakeEmpty();
   state.fLayoutMoved = skia::SkRect::MakeEmpty();
   state.fDamaged = false;
@@ -3777,7 +3836,11 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
       state.fDrawnChildren.push_back({one.fId, joined(one.fBounds, one.fDrawnBounds)});
     });
   }
-  if (!below.isEmpty() && state.fMasking && !below.intersect(state.fBounds)) {
+  work::damageOffset() = above;
+  // Its children's, in the space they are laid out in: moved by its shift.
+  below.offset(state.fShiftX, state.fShiftY);
+  if (!below.isEmpty() && state.fMasking &&
+      !below.intersect(state.fBounds.makeOffset(state.fShiftX, state.fShiftY))) {
     below = skia::SkRect::MakeEmpty();
   }
   return joined(damage, below);
@@ -3812,6 +3875,10 @@ void hover(N &child, float x, float y, bool visibleAbove,
            StyleResolver resolver, float viewportWidth) {
   State &state = child.fState;
   ++walkCounts().hover;
+  // The point where this is laid out: moved back by its shift, as all under
+  // it are drawn moved by it.
+  x -= state.fShiftX;
+  y -= state.fShiftY;
   state.fHoverX = x;
   state.fHoverY = y;
   const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
@@ -3857,6 +3924,10 @@ template <class N> bool hitPath(N &child, float x, float y, Path &path) {
   if (!state.fVisible || state.fAlpha <= 0.001f || state.fDisabled) {
     return false;
   }
+  // Where this and all under it are laid out: the point moved back by its
+  // shift.
+  x -= state.fShiftX;
+  y -= state.fShiftY;
   if (state.fMasking && !state.fBounds.contains(x, y)) {
     return false;
   }
@@ -3958,9 +4029,14 @@ template <class N> NodeId idAt(N &child, const Path &path, std::size_t at) {
 // way back up. `targetOnly` delivers to the end of the path alone.
 template <class N>
 void routePointer(N &child, const Path &path, std::size_t at,
-                  const PointerEvent &input, PointerReply &reply, Routed &routed,
+                  const PointerEvent &given, PointerReply &reply, Routed &routed,
                   bool targetOnly) {
   State &state = child.fState;
+  // In the space this is laid out in: moved back by its shift. Most nodes
+  // have none, and are given the event as it is.
+  const bool shifted = state.fShiftX != 0.0f || state.fShiftY != 0.0f;
+  const PointerEvent moved = shifted ? shiftedBack(given, state.fShiftX, state.fShiftY) : PointerEvent{};
+  const PointerEvent &input = shifted ? moved : given;
   const auto deliver = [&](const auto &when) {
     reply.fCurrent = state.fId;
     reply.fCapturePointer = false;
@@ -4212,7 +4288,14 @@ void damageOver(N &child, NodeId below, const skia::SkRect &rect, bool &passed, 
       damage = joined(damage, state.fDrawnBounds);
     }
   }
-  eachChildInDrawOrder(child, [&](auto &each, std::uint32_t) { walk::damageOver(each, below, rect, passed, damage); });
+  // Under it, in the space they are laid out in; what they find, back in
+  // this one's.
+  const skia::SkRect local = rect.makeOffset(-state.fShiftX, -state.fShiftY);
+  skia::SkRect inner = skia::SkRect::MakeEmpty();
+  eachChildInDrawOrder(child, [&](auto &each, std::uint32_t) { walk::damageOver(each, below, local, passed, inner); });
+  if (!inner.isEmpty()) {
+    damage = joined(damage, inner.makeOffset(state.fShiftX, state.fShiftY));
+  }
 }
 
 // When a node next wants a frame on its own: what it says with wakeAt(),
@@ -4265,6 +4348,8 @@ template <class N> bool animating(N &child) {
 // not take it, to each node above in turn.
 template <class N>
 bool clickPath(N &child, const Path &path, std::size_t at, float x, float y) {
+  x -= child.fState.fShiftX;
+  y -= child.fState.fShiftY;
   bool taken = false;
   if (at < path.size()) {
     childAt(child, path[at], [&](auto &each) {
@@ -4722,6 +4807,7 @@ public:
 
   [[nodiscard]] FrameResult finishFrame() {
     damageFound().clear();
+    work::damageOffset() = {};
     skia::SkRect damage = walk::collectDamage(fRoot, true);
     // Walked as this frame asked: what was marked is done.
     if (work::walkingFull()) {
