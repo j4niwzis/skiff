@@ -2482,6 +2482,15 @@ public:
     fRedrawn = true;
     work::mark(fId);
   }
+  // Frosted: what lies behind it (backdrop()) drawn in its box first, under
+  // its fill -- a pane of frosted glass where its fill lets it show.
+  void setBackdrop(bool on) {
+    if (on == fBackdrop) {
+      return;
+    }
+    fBackdrop = on;
+    this->markDamaged();
+  }
   // Repainted where it was and is, what it draws the same: moved by its
   // shift, or faded.
   void markMovedOnly() {
@@ -2725,6 +2734,7 @@ public:
   // Whether what it draws changed -- not only where it is drawn or how
   // faintly: a recording is kept through a fade or a slide.
   bool fRedrawn = true;
+  bool fBackdrop = false;
   // Not yet seen by a frame's walk: the walk marks it, and where it is.
   bool fNew = true;
   work::Alive fAlive;
@@ -3521,6 +3531,17 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   return out;
 }
 
+// What lies behind the nodes that are frosted: a blurred picture of it, and
+// where on the device it is -- as what is behind (a wallpaper) last drew it.
+struct Backdrop {
+  skia::Sp<skia::SkImage> image;
+  skia::SkRect device = skia::SkRect::MakeEmpty();
+};
+inline Backdrop &backdrop() {
+  static Backdrop kept;
+  return kept;
+}
+
 // is hovered -- and its border, in its corner radius.
 inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
   const std::optional<skia::SkColor> fill = state.fSelected && state.fSelectedBackground ? state.fSelectedBackground
@@ -3529,6 +3550,20 @@ inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
                                             : state.fHovered && !state.fDisabled && state.fHoverBackground
                                                 ? state.fHoverBackground
                                                                                             : state.fBackground;
+  // Frosted: its piece of the blurred backdrop, one image drawn, clipped to
+  // its box -- the blur made once, where the backdrop is drawn, never here.
+  if (state.fBackdrop && backdrop().image && !backdrop().device.isEmpty()) {
+    skia::SkMatrix inverse;
+    if (canvas->getTotalMatrix().invert(&inverse)) {
+      const int saved = canvas->save();
+      canvas->clipRRect(roundedBox(state, state.fBounds), true);
+      skia::SkPaint paint;
+      paint.setAlphaf(alpha);
+      canvas->drawImageRect(backdrop().image, inverse.mapRect(backdrop().device),
+                            skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &paint);
+      canvas->restoreToCount(saved);
+    }
+  }
   if (!fill && !state.fBorder && !state.fGradient && !state.fShadow)
     return;
   if (state.fShadow) {
