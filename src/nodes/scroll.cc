@@ -52,7 +52,10 @@ public:
   void scrollToEnd(bool glide = true) {
     fToEnd = true;
     fToEndGlide = glide;
-    this->invalidateLayout();
+    // Laid out again, painting nothing by itself: already at the end -- a
+    // list that follows what comes, asked at every change -- nothing moves,
+    // and the whole view was painted each time.
+    fState.relayoutQuietly();
   }
   // Eased: the view glides there rather than jumping.
   void scrollTo(float offset) {
@@ -166,8 +169,10 @@ public:
       } else {
         fScroll.jumpTo(fExtent);
         const float dy = fLastOffset - scene::snapToPixel(fExtent);
-        scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
-      fState.markDamaged();
+        if (dy != 0.0f) {
+          scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
+          fState.markDamaged();
+        }
         fLastOffset = scene::snapToPixel(fExtent);
       }
     }
