@@ -1455,6 +1455,21 @@ public:
     }
   }
   [[nodiscard]] bool empty() const noexcept { return fCount == 0; }
+  void clear() {
+    if (fUsed != 0) {
+      std::ranges::fill(fKeys, kEmpty);
+      fCount = 0;
+      fUsed = 0;
+    }
+  }
+  // Each live entry, its key and value.
+  template <class F> void each(F &&f) const {
+    for (std::size_t at = 0; at < fKeys.size(); ++at) {
+      if (fKeys[at] != kEmpty && fKeys[at] != kGone) {
+        f(fKeys[at], fValues[at]);
+      }
+    }
+  }
 
 private:
   static constexpr NodeId kEmpty = 0;
@@ -1533,7 +1548,58 @@ inline bool disabled() {
   static const bool off = std::getenv("SKIFF_FULL_WALKS") != nullptr;
   return off;
 }
-// A node changed: it and all above it, marked.
+// Where a node sits under its parent: its place in eachChild's order, as
+// the last walk through all of the parent's children saw it.
+inline IdTable &places() {
+  static IdTable kept;
+  return kept;
+}
+// Nodes whose children may not be those they were -- one went, was moved, or
+// changed places: walked child by child, their set of children checked.
+inline IdTable &reshaped() {
+  static IdTable kept;
+  return kept;
+}
+// The way down to what is marked: for each parent, the children marked
+// under it and their places -- lists threaded through one vector, headed
+// per parent. The walks go straight to them rather than past every child.
+struct Hint {
+  NodeId fParent;
+  NodeId fChild;
+  std::uint32_t fPlace;
+  std::uint32_t fNext;  // the next under the same parent, 1-based; 0 ends
+};
+inline std::vector<Hint> &hints() {
+  static std::vector<Hint> kept;
+  return kept;
+}
+inline IdTable &hintHeads() {
+  static IdTable kept;
+  return kept;
+}
+inline IdTable &hinted() {
+  static IdTable kept;
+  return kept;
+}
+// More marked children than this under one node: it is walked child by
+// child -- going to each by its place costs more than passing them all.
+inline constexpr std::size_t kFewHints = 8;
+inline void hint(NodeId parent, NodeId child) {
+  if (!hinted().insert(child)) {
+    return;
+  }
+  const NodeId *place = places().find(child);
+  if (place == nullptr) {
+    reshaped().insert(parent);  // its place unknown: the parent, walked whole
+    return;
+  }
+  auto &all = hints();
+  const NodeId *head = hintHeads().find(parent);
+  all.push_back({parent, child, static_cast<std::uint32_t>(*place),
+                 head != nullptr ? static_cast<std::uint32_t>(*head) : 0u});
+  hintHeads().insert(parent, all.size());
+}
+// A node changed: it and all above it, marked, and the way down to it.
 inline void mark(NodeId id) {
   auto &marked = pending();
   const auto &up = parents();
@@ -1546,21 +1612,95 @@ inline void mark(NodeId id) {
       }
       return;
     }
-    id = *above;
+    const NodeId parent = *above;
+    hint(parent, id);
+    id = parent;
+  }
+}
+// Laid out or moved by its parent's layout: for the damage walk to reach.
+// One whose parent no walk has seen yet: this frame's damage is looked for
+// everywhere.
+inline void reach(NodeId id) {
+  pending().insert(id);
+  if (const NodeId *above = parents().find(id)) {
+    hint(*above, id);
+  } else if (!roots().contains(id)) {
+    walkingFull() = true;
   }
 }
 // Whether a walk goes into a child.
 [[nodiscard]] inline bool visit(NodeId id) { return walkingFull() || pending().contains(id); }
 inline void record(NodeId child, NodeId parent) { parents().insert(child, parent); }
+inline void record(NodeId child, NodeId parent, std::uint32_t place) {
+  parents().insert(child, parent);
+  places().insert(child, place);
+}
+// Its parent's children changed: that parent, walked whole and marked.
+inline void reshape(NodeId id) {
+  if (const NodeId *above = parents().find(id)) {
+    const NodeId parent = *above;
+    reshaped().insert(parent);
+    mark(parent);
+  }
+}
+// A node gone: its parent reshaped, its entries with it.
+inline void gone(NodeId id) {
+  reshape(id);
+  parents().erase(id);
+  places().erase(id);
+  pending().erase(id);
+  ticking().erase(id);
+}
+// A frame done: the hints to what is still marked -- out of view, or in
+// another scene not walked yet -- kept, the rest dropped; so with what was
+// reshaped.
+inline void settle() {
+  std::vector<Hint> kept = std::exchange(hints(), {});
+  hintHeads().clear();
+  hinted().clear();
+  for (const Hint &each : kept) {
+    if (pending().contains(each.fChild)) {
+      hint(each.fParent, each.fChild);
+    }
+  }
+  IdTable &was = reshaped();
+  if (!was.empty()) {
+    std::vector<NodeId> still;
+    was.each([&](NodeId id, NodeId) {
+      if (pending().contains(id)) {
+        still.push_back(id);
+      }
+    });
+    was.clear();
+    for (const NodeId id : still) {
+      was.insert(id);
+    }
+  }
+}
 
 // Whether a State still is its node: a moved-from one handed its identity on,
-// and its end removes nothing.
+// and its end removes nothing. A move reshapes the parent -- a node moved in
+// its list changed places; one moved onto another ends that one.
 struct Alive {
   bool on = true;
+  NodeId id = 0;
   Alive() = default;
-  Alive(Alive &&other) noexcept : on(std::exchange(other.on, false)) {}
+  Alive(Alive &&other) noexcept : on(std::exchange(other.on, false)), id(other.id) {
+    if (on) {
+      reshape(id);
+    }
+  }
   Alive &operator=(Alive &&other) noexcept {
-    on = std::exchange(other.on, false);
+    if (this != &other) {
+      if (on && id != other.id) {
+        gone(id);
+      }
+      on = std::exchange(other.on, false);
+      id = other.id;
+      if (on) {
+        reshape(id);
+      }
+    }
     return *this;
   }
 };
@@ -1570,17 +1710,15 @@ class State {
 public:
   // Made: new until the frame's walk first sees it, which marks it there;
   // the next tick goes everywhere to find it.
-  State() : fId(nextId()) { ++work::bornGeneration(); }
+  State() : fId(nextId()) {
+    fAlive.id = fId;
+    ++work::bornGeneration();
+  }
   // Gone: its entries in the work tables with it -- not a moved-from one's --
   // and the node it was under marked, for where it was to be repainted.
   ~State() {
     if (fAlive.on) {
-      if (const NodeId *above = work::parents().find(fId)) {
-        work::mark(*above);
-      }
-      work::parents().erase(fId);
-      work::pending().erase(fId);
-      work::ticking().erase(fId);
+      work::gone(fId);
     }
   }
   // A node is one thing on the screen: copying it would make two with one
@@ -2038,6 +2176,7 @@ public:
     // layout, not laid out again. A list whose rows all move down when
     // something comes above them measured every row again.
     fPlacementDirty = true;
+    work::mark(fId);
   }
   void arrangeAxisSize(bool horizontal, float size) {
     float &axis = horizontal ? fWidth : fHeight;
@@ -2420,6 +2559,106 @@ template <class N, class F> void visitChild(N &child, F &&f) { f(child); }
 // seen through.
 template <class T, class F> void eachChild(T &node, F &&f) {
   node.forEachChild([&](auto &child) { visitChild(child, f); });
+}
+
+// The child at a place in eachChild's order, handed to `f` as eachChild
+// hands it: the parts passed by how many children each holds, a range of
+// nodes indexed straight into. Whether there was one. `left` counts down
+// the children still to pass.
+template <class R>
+concept indexed_nodes = std::ranges::random_access_range<R> && std::ranges::sized_range<R> &&
+                        std::derived_from<std::ranges::range_value_t<R>, Node>;
+template <class F> bool partAt(std::monostate &, std::uint32_t &, F &&);
+template <class... Ts, class F> bool partAt(splice::variant<Ts...> &, std::uint32_t &, F &&);
+template <class V, class F>
+  requires(one_of_several<V> && !std::derived_from<V, Node>)
+bool partAt(V &, std::uint32_t &, F &&);
+template <class T, class F> bool partAt(std::optional<T> &, std::uint32_t &, F &&);
+template <class T, class D, class F> bool partAt(std::unique_ptr<T, D> &, std::uint32_t &, F &&);
+template <class T, class F> bool partAt(std::shared_ptr<T> &, std::uint32_t &, F &&);
+template <class T, class F> bool partAt(std::reference_wrapper<T> &, std::uint32_t &, F &&);
+template <class... Ts, class F> bool partAt(std::tuple<Ts...> &, std::uint32_t &, F &&);
+template <class F> bool partAt(AnyNode &, std::uint32_t &, F &&);
+template <class R, class F>
+  requires(std::ranges::range<R> && !kTreatAsNode<R> && !indexed_nodes<R>)
+bool partAt(R &, std::uint32_t &, F &&);
+template <class R, class F>
+  requires(indexed_nodes<R> && !kTreatAsNode<R>)
+bool partAt(R &, std::uint32_t &, F &&);
+template <class N, class F> bool partAt(N &, std::uint32_t &, F &&);
+
+template <class F> bool partAt(std::monostate &, std::uint32_t &, F &&) { return false; }
+template <class... Ts, class F> bool partAt(splice::variant<Ts...> &child, std::uint32_t &left, F &&f) {
+  return splice::visit([&](auto &alternative) { return partAt(alternative, left, f); }, child);
+}
+template <class V, class F>
+  requires(one_of_several<V> && !std::derived_from<V, Node>)
+bool partAt(V &child, std::uint32_t &left, F &&f) {
+  bool found = false;
+  child.visit([&](auto &alternative) { found = partAt(alternative, left, f); });
+  return found;
+}
+template <class T, class F> bool partAt(std::optional<T> &child, std::uint32_t &left, F &&f) {
+  return child && partAt(*child, left, f);
+}
+template <class T, class D, class F> bool partAt(std::unique_ptr<T, D> &child, std::uint32_t &left, F &&f) {
+  return child && partAt(*child, left, f);
+}
+template <class T, class F> bool partAt(std::shared_ptr<T> &child, std::uint32_t &left, F &&f) {
+  return child && partAt(*child, left, f);
+}
+template <class T, class F> bool partAt(std::reference_wrapper<T> &child, std::uint32_t &left, F &&f) {
+  return partAt(child.get(), left, f);
+}
+template <class... Ts, class F> bool partAt(std::tuple<Ts...> &child, std::uint32_t &left, F &&f) {
+  return std::apply([&](auto &...each) { return (partAt(each, left, f) || ...); }, child);
+}
+template <class F> bool partAt(AnyNode &child, std::uint32_t &left, F &&f) {
+  bool held = false;
+  visitChild(child, [&](auto &) { held = true; });
+  if (!held) {
+    return false;
+  }
+  if (left != 0) {
+    --left;
+    return false;
+  }
+  visitChild(child, f);
+  return true;
+}
+template <class R, class F>
+  requires(std::ranges::range<R> && !kTreatAsNode<R> && !indexed_nodes<R>)
+bool partAt(R &child, std::uint32_t &left, F &&f) {
+  for (auto &each : child) {
+    if (partAt(each, left, f)) {
+      return true;
+    }
+  }
+  return false;
+}
+template <class R, class F>
+  requires(indexed_nodes<R> && !kTreatAsNode<R>)
+bool partAt(R &child, std::uint32_t &left, F &&f) {
+  const auto size = static_cast<std::uint32_t>(std::ranges::size(child));
+  if (left < size) {
+    visitChild(std::ranges::begin(child)[left], f);
+    return true;
+  }
+  left -= size;
+  return false;
+}
+template <class N, class F> bool partAt(N &child, std::uint32_t &left, F &&f) {
+  if (left != 0) {
+    --left;
+    return false;
+  }
+  visitChild(child, f);
+  return true;
+}
+template <class T, class F> bool childAt(T &node, std::uint32_t place, F &&f) {
+  bool found = false;
+  node.forEachChild([&](auto &part) { found = found || partAt(part, place, f); });
+  return found;
 }
 
 // The State of a child: a node's own, or the one inside an AnyNode.
@@ -2853,7 +3092,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   if (state.fLayoutValid && !state.fSubtreeDirty &&
       parent == state.fLastConstraint) {
     if (state.fPlacementDirty) {
-      work::pending().insert(state.fId);
+      work::reach(state.fId);
       // Moved, not changed: the subtree goes where it is placed as it is.
       state.fPlacementDirty = false;
       const skia::SkRect moved =
@@ -2871,7 +3110,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   }
   state.fPlacementDirty = false;
   state.fLastConstraint = parent;
-  work::pending().insert(state.fId);
+  work::reach(state.fId);
   ++walkCounts().laidOut;
   // Where it was: taken before an auto-sized node is given a provisional box
   // to lay its children out in, which is not where it was drawn. Compared
@@ -3065,6 +3304,7 @@ namespace walk {
 
 // Every walk, for an AnyNode: through its table.
 void update(AnyNodeRef &, UpdateContext &, StyleResolver, const Style *, bool);
+template <class N, class F> bool viaHints(N &node, F &&f);
 [[nodiscard]] bool markDirty(AnyNodeRef &);
 [[nodiscard]] skia::SkRect collectDamage(AnyNodeRef &, bool);
 [[nodiscard]] bool hasDamage(AnyNodeRef &);
@@ -3168,12 +3408,18 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
   };
   // A frame's tick sees every node in view: a child come or gone, its node
   // marked, for the layout and the damage walks to go to.
-  if (context.fTick) {
+  // Only where its children can have changed: one was made (a full tick),
+  // went, or moved.
+  if (context.fTick && (work::tickingFull() || work::disabled() || work::reshaped().contains(state.fId))) {
     std::size_t signature = 0;
+    std::uint32_t place = 0;
     eachChild(child, [&](auto &each) {
-      signature = signature * 1099511628211ull ^ static_cast<std::size_t>(stateOf(each).fId);
+      const NodeId id = stateOf(each).fId;
+      work::record(id, state.fId, place++);
+      signature = signature * 1099511628211ull ^ static_cast<std::size_t>(id);
     });
     if (signature != state.fChildSignature) {
+      work::reshaped().insert(state.fId);
       work::mark(state.fId);
     }
   }
@@ -3189,12 +3435,22 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
       }
     });
   } else {
-    // Between frames -- a hover's restyle -- only what is marked.
-    eachChildInView(child, [&](auto &each) {
-      if (work::visit(stateOf(each).fId)) {
+    // Between frames -- a hover's restyle -- only what is marked: straight
+    // to it where the way is known.
+    const std::optional<skia::SkRect> &view = state.fInView;
+    const bool hinted = walk::viaHints(child, [&](auto &each) {
+      const skia::SkRect &at = stateOf(each).fBounds;
+      if (!view || at.isEmpty() || skia::SkRect::Intersects(at, *view)) {
         visit(each);
       }
     });
+    if (!hinted) {
+      eachChildInView(child, [&](auto &each) {
+        if (work::visit(stateOf(each).fId)) {
+          visit(each);
+        }
+      });
+    }
   }
   // Ticking on: what polls, animates or settles, and what is above such.
   if (context.fTick) {
@@ -3209,25 +3465,73 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
 // What has to be laid out again, found bottom-up: nothing below can tell its
 // ancestors, so the frame asks. A node whose set of children changed is laid
 // out again and repainted where they were.
+// The marked children of a node, straight from the hints: each at its
+// place, its id checked there. Whether that was done -- not where the walk
+// goes everywhere, the node's children changed, or more than a few are
+// marked; nor where one is not at its place any more, which reshapes the
+// node. The walk then goes through all of them.
+template <class N, class F> bool viaHints(N &node, F &&f) {
+  const NodeId id = stateOf(node).fId;
+  if (work::walkingFull() || work::disabled() || work::reshaped().contains(id)) {
+    return false;
+  }
+  const NodeId *head = work::hintHeads().find(id);
+  if (head == nullptr) {
+    return true;  // nothing marked below it
+  }
+  const auto first = static_cast<std::uint32_t>(*head);
+  std::size_t count = 0;
+  for (std::uint32_t at = first; at != 0;) {
+    const work::Hint hint = work::hints()[at - 1];
+    at = hint.fNext;
+    if (++count > work::kFewHints) {
+      return false;
+    }
+    bool same = false;
+    if (!childAt(node, hint.fPlace, [&](auto &each) { same = stateOf(each).fId == hint.fChild; }) || !same) {
+      work::reshaped().insert(id);
+      return false;
+    }
+  }
+  for (std::uint32_t at = first; at != 0;) {
+    // Copied: what `f` marks may grow the hints.
+    const work::Hint hint = work::hints()[at - 1];
+    at = hint.fNext;
+    if (work::pending().contains(hint.fChild)) {
+      childAt(node, hint.fPlace, f);
+    }
+  }
+  return true;
+}
+
 template <class N> bool markDirty(N &child) {
   State &state = child.fState;
   ++walkCounts().dirty;
   bool below = false;
-  std::size_t signature = 0;
   const std::optional<skia::SkRect> &view = state.fInView;
-  eachChild(child, [&](auto &each) {
+  // Out of view, only whether it changed itself: what changed below it is
+  // found when it comes into view. Not marked, the same: nothing below it
+  // changed.
+  const auto into = [&](auto &each) {
     const State &one = stateOf(each);
-    work::record(one.fId, state.fId);
-    // Out of view, only whether it changed itself: what changed below it is
-    // found when it comes into view. Not marked, the same: nothing below it
-    // changed.
     if ((view && !one.fBounds.isEmpty() && !skia::SkRect::Intersects(one.fBounds, *view)) ||
         !work::visit(one.fId)) {
       below = below || !one.fLayoutValid || one.fPlacementDirty;
     } else {
       below = walk::markDirty(each) || below;
     }
-    signature = signature * 1099511628211ull ^ static_cast<std::size_t>(one.fId);
+  };
+  if (walk::viaHints(child, into)) {
+    state.fSubtreeDirty = below || !state.fLayoutValid;
+    return state.fSubtreeDirty || state.fPlacementDirty;
+  }
+  std::size_t signature = 0;
+  std::uint32_t place = 0;
+  eachChild(child, [&](auto &each) {
+    const NodeId id = stateOf(each).fId;
+    work::record(id, state.fId, place++);
+    into(each);
+    signature = signature * 1099511628211ull ^ static_cast<std::size_t>(id);
   });
   if (signature != state.fChildSignature) {
     state.fChildSignature = signature;
@@ -3262,6 +3566,10 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   State &state = child.fState;
   ++walkCounts().damage;
   skia::SkRect damage = skia::SkRect::MakeEmpty();
+  // Changed, moved or laid out itself, or children gone: where each child is
+  // drawn, all found again.
+  const bool whole = state.fDamaged || state.fRelaid || !state.fLayoutMoved.isEmpty() ||
+                     !state.fMovedDamage.isEmpty();
   if (drawnAbove) {
     damage = joined(state.fMovedDamage, state.fLayoutMoved);
     // Moved, laid out, or a child gone: said too, as from its node.
@@ -3284,17 +3592,47 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   state.fRelaid = false;
   const bool drawn = drawnAbove && state.fVisible && state.fAlpha > 0.001f;
   skia::SkRect below = skia::SkRect::MakeEmpty();
-  state.fDrawnChildren.clear();
-  eachChildInView(child, [&](auto &each) {
+  const std::optional<skia::SkRect> &view = state.fInView;
+  const auto inView = [&](const State &one) {
+    return !view || one.fBounds.isEmpty() || skia::SkRect::Intersects(one.fBounds, *view);
+  };
+  const auto into = [&](auto &each) {
     const State &one = stateOf(each);
-    work::record(one.fId, state.fId);
     if (work::visit(one.fId)) {
       below = joined(below, walk::collectDamage(each, drawn));
       work::pending().erase(one.fId);
     }
-    // Where it is, laid out and drawn: what is repainted if it goes.
-    state.fDrawnChildren.push_back({one.fId, joined(one.fBounds, one.fDrawnBounds)});
+  };
+  // Straight to the marked children, where the rest are as they were: only
+  // theirs of where each is drawn changes.
+  const bool hinted = !whole && walk::viaHints(child, [&](auto &each) {
+    const State &one = stateOf(each);
+    if (!inView(one)) {
+      return;
+    }
+    into(each);
+    const skia::SkRect area = joined(one.fBounds, one.fDrawnBounds);
+    auto was = std::ranges::find(state.fDrawnChildren, one.fId, &State::DrawnChild::fId);
+    if (was != state.fDrawnChildren.end()) {
+      was->fArea = area;
+    } else {
+      state.fDrawnChildren.push_back({one.fId, area});
+    }
   });
+  if (!hinted) {
+    state.fDrawnChildren.clear();
+    std::uint32_t place = 0;
+    eachChild(child, [&](auto &each) {
+      const State &one = stateOf(each);
+      work::record(one.fId, state.fId, place++);
+      if (!inView(one)) {
+        return;
+      }
+      into(each);
+      // Where it is, laid out and drawn: what is repainted if it goes.
+      state.fDrawnChildren.push_back({one.fId, joined(one.fBounds, one.fDrawnBounds)});
+    });
+  }
   if (!below.isEmpty() && state.fMasking && !below.intersect(state.fBounds)) {
     below = skia::SkRect::MakeEmpty();
   }
@@ -4181,6 +4519,7 @@ public:
       fWalkedGeneration = fWalkGeneration;
     }
     work::pending().erase(fRoot.fState.fId);
+    work::settle();
     const skia::SkRect &bounds = fRoot.fState.fBounds;
     if (!bounds.isEmpty() && !damage.isEmpty() && !damage.intersect(bounds)) {
       damage = skia::SkRect::MakeEmpty();
