@@ -1291,6 +1291,7 @@ inline std::vector<Settling> &settlers() {
 struct Damager {
   const std::type_info *type = nullptr;
   skia::SkRect rect = skia::SkRect::MakeEmpty();
+  bool relaid = false;  // its layout was made again, not only its look
 };
 inline std::vector<Damager> &damagers() {
   static std::vector<Damager> kept;
@@ -1751,6 +1752,7 @@ public:
   void invalidateLayout() {
     fLayoutValid = false;
     fDamaged = true;
+    fRelaid = true;
   }
   // Repaints where this node is and where it was drawn last.
   void markDamaged() { fDamaged = true; }
@@ -1986,6 +1988,7 @@ public:
   std::vector<DrawnChild> fDrawnChildren;
   skia::SkRect fLastConstraint = skia::SkRect::MakeEmpty();
   bool fDamaged = true;
+  bool fRelaid = false;  // damaged by a layout made again: for the trace
   skia::SkRect fMovedDamage = skia::SkRect::MakeEmpty();
   skia::SkRect fDrawnBounds = skia::SkRect::MakeEmpty();
   bool fHovered = false;
@@ -2884,12 +2887,13 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
       damage = joined(joined(joined(damage, state.fBounds), state.fDrawnBounds),
                       state.fBounds.makeOffset(state.fShiftX, state.fShiftY));
       if (traceSettling() && damagers().size() < 64) {
-        damagers().push_back({&typeid(N), damage});
+        damagers().push_back({&typeid(N), damage, state.fRelaid});
       }
     }
   }
   state.fMovedDamage = skia::SkRect::MakeEmpty();
   state.fDamaged = false;
+  state.fRelaid = false;
   const bool drawn = drawnAbove && state.fVisible && state.fAlpha > 0.001f;
   skia::SkRect below = skia::SkRect::MakeEmpty();
   state.fDrawnChildren.clear();
