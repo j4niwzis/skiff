@@ -1644,10 +1644,18 @@ inline void reach(NodeId id) {
 }
 // Whether a walk goes into a child.
 [[nodiscard]] inline bool visit(NodeId id) { return walkingFull() || pending().contains(id); }
-inline void record(NodeId child, NodeId parent) { parents().insert(child, parent); }
+// Written only where it changed: most walks pass the same children as the
+// frame before, and a write costs more than the look.
+inline void record(NodeId child, NodeId parent) {
+  if (const NodeId *was = parents().find(child); was == nullptr || *was != parent) {
+    parents().insert(child, parent);
+  }
+}
 inline void record(NodeId child, NodeId parent, std::uint32_t place) {
-  parents().insert(child, parent);
-  places().insert(child, place);
+  record(child, parent);
+  if (const NodeId *was = places().find(child); was == nullptr || *was != place) {
+    places().insert(child, place);
+  }
 }
 // Its parent's children changed: that parent, walked whole and marked.
 inline void reshape(NodeId id) {
@@ -3552,10 +3560,15 @@ template <class N> bool markDirty(N &child) {
   std::size_t signature = 0;
   std::uint32_t place = 0;
   eachChild(child, [&](auto &each) {
-    const NodeId id = stateOf(each).fId;
-    work::record(id, state.fId, place++);
+    const State &one = stateOf(each);
+    const std::uint32_t at = place++;
+    // Placed where it is seen: one out of view that is marked has its parent
+    // walked whole instead, as it is found.
+    if (!view || one.fBounds.isEmpty() || skia::SkRect::Intersects(one.fBounds, *view)) {
+      work::record(one.fId, state.fId, at);
+    }
     into(each);
-    signature = signature * 1099511628211ull ^ static_cast<std::size_t>(id);
+    signature = signature * 1099511628211ull ^ static_cast<std::size_t>(one.fId);
   });
   if (signature != state.fChildSignature) {
     state.fChildSignature = signature;
@@ -3648,10 +3661,11 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
     std::uint32_t place = 0;
     eachChild(child, [&](auto &each) {
       const State &one = stateOf(each);
-      work::record(one.fId, state.fId, place++);
+      const std::uint32_t at = place++;
       if (!inView(one)) {
         return;
       }
+      work::record(one.fId, state.fId, at);
       into(each);
       // Where it is, laid out and drawn: what is repainted if it goes.
       state.fDrawnChildren.push_back({one.fId, joined(one.fBounds, one.fDrawnBounds)});

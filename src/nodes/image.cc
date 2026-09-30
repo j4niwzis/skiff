@@ -92,6 +92,15 @@ public:
     skia::SkPaint paint;
     paint.setAntiAlias(true);
     paint.setAlphaf(alpha);
+    // Drawn smaller than it is: scaled once to the pixels it covers, and
+    // that copy put down as it is at every draw -- not filtered down again
+    // each time it is repainted, which was a scroll's frame's most costly
+    // part where avatars went by.
+    if (const skia::Sp<skia::SkImage> *scaled = this->scaledFor(canvas, *found, box, iw, ih)) {
+      canvas->drawImageRect(*scaled, box, skia::SkSamplingOptions(skia::SkFilterMode::kNearest), &paint);
+      canvas->restoreToCount(saved);
+      return;
+    }
     const skia::SkSamplingOptions sampling(skia::SkFilterMode::kLinear);
     splice::visit(
         [&](auto how) { drawFitted(canvas, *found, box, iw, ih, how, sampling, paint); },
@@ -100,6 +109,43 @@ public:
   }
 
 private:
+  // The picture as the box shows it, at the device's pixels, where that is
+  // smaller than the picture: made again for another picture or size.
+  const skia::Sp<skia::SkImage> *scaledFor(skia::SkCanvas *canvas, const skia::Sp<skia::SkImage> &image,
+                                           const skia::SkRect &box, float iw, float ih) {
+    const skia::SkMatrix matrix = canvas->getTotalMatrix();
+    if (matrix.getSkewX() != 0.0f || matrix.getSkewY() != 0.0f) {
+      return nullptr;
+    }
+    const float sx = matrix.getScaleX(), sy = matrix.getScaleY();
+    const int width = static_cast<int>(std::lround(box.width() * sx));
+    const int height = static_cast<int>(std::lround(box.height() * sy));
+    // Only smaller, and not huge: a picture shown at its size or larger is
+    // drawn as it is.
+    if (width <= 0 || height <= 0 || (static_cast<float>(width) >= iw && static_cast<float>(height) >= ih) ||
+        static_cast<std::int64_t>(width) * height > (1 << 21)) {
+      return nullptr;
+    }
+    if (!fScaled || fScaledOf != image->uniqueID() || fScaledWidth != width || fScaledHeight != height) {
+      fScaled = nullptr;
+      skia::Sp<skia::SkSurface> surface = skia::Raster(skia::SkImageInfo::MakeN32Premul(width, height));
+      if (!surface) {
+        return nullptr;
+      }
+      skia::SkCanvas *into = surface->getCanvas();
+      into->scale(static_cast<float>(width) / box.width(), static_cast<float>(height) / box.height());
+      into->translate(-box.fLeft, -box.fTop);
+      skia::SkPaint plain;
+      const skia::SkSamplingOptions smooth(skia::SkFilterMode::kLinear, skia::SkMipmapMode::kLinear);
+      splice::visit([&](auto how) { drawFitted(into, image, box, iw, ih, how, smooth, plain); }, fFit);
+      fScaled = surface->makeImageSnapshot();
+      fScaledOf = image->uniqueID();
+      fScaledWidth = width;
+      fScaledHeight = height;
+    }
+    return fScaled ? &fScaled : nullptr;
+  }
+
   static void drawFitted(skia::SkCanvas *canvas, const skia::Sp<skia::SkImage> &image, const skia::SkRect &box,
                          float iw, float ih, fit::cover, const skia::SkSamplingOptions &sampling,
                          const skia::SkPaint &paint) {
@@ -133,6 +179,10 @@ private:
   Fit fFit;
   bool fHad = false;
   bool fWaiting = false;
+  // The picture scaled to what it covers, and what it was made for.
+  skia::Sp<skia::SkImage> fScaled;
+  std::uint32_t fScaledOf = 0;
+  int fScaledWidth = 0, fScaledHeight = 0;
 };
 
 } // namespace skiff::nodes
