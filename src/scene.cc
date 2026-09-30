@@ -298,6 +298,58 @@ inline std::vector<ScrollMove> &scrollMoves() {
   static std::vector<ScrollMove> kept;
   return kept;
 }
+// Each node's own damage in this frame, as the damage walk finds it: the
+// frame is repainted as a few rects, not their union -- a strip coming into
+// view at the bottom and something moving at the top made the whole view.
+inline std::vector<skia::SkRect> &damageFound() {
+  static std::vector<skia::SkRect> kept;
+  return kept;
+}
+// Rects merged down to a few: those that overlap, or nearly, joined; then,
+// while too many, the two whose join adds the least. Past many, their union.
+[[nodiscard]] inline std::vector<skia::SkRect> fewRects(std::vector<skia::SkRect> rects, std::size_t most = 6) {
+  std::erase_if(rects, [](const skia::SkRect &one) { return one.isEmpty(); });
+  if (rects.size() > 64) {
+    skia::SkRect all = rects.front();
+    for (const skia::SkRect &one : rects) {
+      all.join(one);
+    }
+    return {all};
+  }
+  for (bool merged = true; merged;) {
+    merged = false;
+    for (std::size_t i = 0; i < rects.size() && !merged; ++i) {
+      for (std::size_t j = i + 1; j < rects.size(); ++j) {
+        if (skia::SkRect::Intersects(rects[i].makeOutset(8.0f, 8.0f), rects[j])) {
+          rects[i].join(rects[j]);
+          rects.erase(rects.begin() + static_cast<std::ptrdiff_t>(j));
+          merged = true;
+          break;
+        }
+      }
+    }
+  }
+  const auto area = [](const skia::SkRect &one) { return one.width() * one.height(); };
+  while (rects.size() > most) {
+    std::size_t bestI = 0, bestJ = 1;
+    float bestCost = std::numeric_limits<float>::infinity();
+    for (std::size_t i = 0; i < rects.size(); ++i) {
+      for (std::size_t j = i + 1; j < rects.size(); ++j) {
+        skia::SkRect both = rects[i];
+        both.join(rects[j]);
+        const float cost = area(both) - area(rects[i]) - area(rects[j]);
+        if (cost < bestCost) {
+          bestCost = cost;
+          bestI = i;
+          bestJ = j;
+        }
+      }
+    }
+    rects[bestI].join(rects[bestJ]);
+    rects.erase(rects.begin() + static_cast<std::ptrdiff_t>(bestJ));
+  }
+  return rects;
+}
 
 struct FrameResult {
   // Copied first, in order: the scroll views moved by this frame.
@@ -308,6 +360,9 @@ struct FrameResult {
   // caret's blink -- in the time update() is given: infinity for never. A
   // host sleeps until then, not a frame at a time.
   double fWakeAtMs = std::numeric_limits<double>::infinity();
+  // fDamage as a few rects, each repainted on its own: their union can be
+  // much more than they are.
+  std::vector<skia::SkRect> fDamageRects;
 };
 
 // The box a thing of that size occupies when its `origin` point is put on
@@ -3640,6 +3695,9 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
       }
     }
   }
+  if (!damage.isEmpty()) {
+    damageFound().push_back(damage);
+  }
   state.fMovedDamage = skia::SkRect::MakeEmpty();
   state.fLayoutMoved = skia::SkRect::MakeEmpty();
   state.fDamaged = false;
@@ -4632,6 +4690,7 @@ public:
   void draw(skia::SkCanvas *canvas) { scene::draw(fRoot, canvas, 1.0f); }
 
   [[nodiscard]] FrameResult finishFrame() {
+    damageFound().clear();
     skia::SkRect damage = walk::collectDamage(fRoot, true);
     // Walked as this frame asked: what was marked is done.
     if (work::walkingFull()) {
@@ -4651,9 +4710,18 @@ public:
       walk::damageOver(fRoot, move.node, move.rect, passed, over);
       if (!over.isEmpty() && over.intersect(move.rect)) {
         damage = joined(damage, over);
+        damageFound().push_back(over);
       }
     }
-    return {std::move(moves), damage, walk::animating(fRoot), walk::wakeAt(fRoot)};
+    std::vector<skia::SkRect> pieces = std::exchange(damageFound(), {});
+    if (!bounds.isEmpty()) {
+      for (skia::SkRect &one : pieces) {
+        if (!one.intersect(bounds)) {
+          one.setEmpty();
+        }
+      }
+    }
+    return {std::move(moves), damage, walk::animating(fRoot), walk::wakeAt(fRoot), fewRects(std::move(pieces))};
   }
   [[nodiscard]] bool hasFrameWork() {
     if (!work::disabled() && fWalkedGeneration == work::fullGeneration() && work::pending().empty()) {
