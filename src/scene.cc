@@ -1456,6 +1456,24 @@ inline IdTable &roots() {
   static IdTable kept;
   return kept;
 }
+// The nodes a frame's tick goes to, kept from frame to frame: those that do
+// something each frame -- poll in update(), animate, settle -- and every
+// node above them.
+inline IdTable &ticking() {
+  static IdTable kept;
+  return kept;
+}
+// Bumped as a node is made: where one was, the next tick goes everywhere
+// once -- where it was put, no one said.
+inline std::uint64_t &bornGeneration() {
+  static std::uint64_t at = 1;
+  return at;
+}
+// Whether the tick now under way goes everywhere.
+inline bool &tickingFull() {
+  static bool on = true;
+  return on;
+}
 // Bumped where a full walk is needed; a scene walks everything while its own
 // count is behind.
 inline std::uint64_t &fullGeneration() {
@@ -1506,13 +1524,19 @@ struct Alive {
 
 class State {
 public:
-  // Made: new until the frame's walk first sees it, which marks it there.
-  State() : fId(nextId()) {}
-  // Gone: its entries in the work tables with it -- not a moved-from one's.
+  // Made: new until the frame's walk first sees it, which marks it there;
+  // the next tick goes everywhere to find it.
+  State() : fId(nextId()) { ++work::bornGeneration(); }
+  // Gone: its entries in the work tables with it -- not a moved-from one's --
+  // and the node it was under marked, for where it was to be repainted.
   ~State() {
     if (fAlive.on) {
+      if (const NodeId *above = work::parents().find(fId)) {
+        work::mark(*above);
+      }
       work::parents().erase(fId);
       work::pending().erase(fId);
+      work::ticking().erase(fId);
     }
   }
   // A node is one thing on the screen: copying it would make two with one
@@ -2987,6 +3011,17 @@ void collectFocusable(AnyNodeRef &, std::vector<NodeId> &);
                              float);
 [[nodiscard]] double wakeAt(AnyNodeRef &);
 
+// A node that does something of its own each frame says update() itself:
+// Node's is a template taking itself, which no member pointer names.
+template <class N>
+concept polls = requires { static_cast<void (N::*)(double)>(&N::update); };
+template <class N>
+  requires polls<N>
+constexpr bool pollsEachFrame(const N &) {
+  return true;
+}
+template <class N> constexpr bool pollsEachFrame(const N &) { return false; }
+
 // Transforms, the node's own time, and styles.
 template <class N>
 void update(N &child, UpdateContext &context, StyleResolver resolver,
@@ -3028,6 +3063,8 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
                                             : inherited;
   // Out of view, a child's time and styles wait: all are walked when all
   // are restyled.
+  // Whether anything below still asks for ticks, as the children visited say.
+  bool ticksBelow = false;
   const auto visit = [&](auto &each) {
     State &one = stateOf(each);
     work::record(one.fId, state.fId);
@@ -3036,6 +3073,7 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
       work::mark(one.fId);
     }
     walk::update(each, context, own, passed, restyle);
+    ticksBelow = ticksBelow || work::ticking().contains(one.fId);
   };
   // A frame's tick sees every node in view: a child come or gone, its node
   // marked, for the layout and the damage walks to go to.
@@ -3051,7 +3089,14 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
   if (restyle) {
     eachChild(child, visit);
   } else if (context.fTick) {
-    eachChildInView(child, visit);
+    // Only where something ticks, changed, or is new -- everywhere, where the
+    // tick has to find what was made.
+    eachChildInView(child, [&](auto &each) {
+      const State &one = stateOf(each);
+      if (work::tickingFull() || one.fNew || work::ticking().contains(one.fId) || work::pending().contains(one.fId)) {
+        visit(each);
+      }
+    });
   } else {
     // Between frames -- a hover's restyle -- only what is marked.
     eachChildInView(child, [&](auto &each) {
@@ -3059,6 +3104,14 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
         visit(each);
       }
     });
+  }
+  // Ticking on: what polls, animates or settles, and what is above such.
+  if (context.fTick) {
+    if (pollsEachFrame(child) || !state.fTransforms.empty() || child.settling() || ticksBelow) {
+      work::ticking().insert(state.fId);
+    } else {
+      work::ticking().erase(state.fId);
+    }
   }
 }
 
@@ -3501,7 +3554,12 @@ template <class N> double wakeAt(N &child) {
     return std::numeric_limits<double>::infinity();
   }
   double at = ownWakeAt(child);
-  eachChildInView(child, [&](auto &each) { at = std::min(at, walk::wakeAt(each)); });
+  // Only what ticks can want a frame: what the tick keeps, as it last found.
+  eachChildInView(child, [&](auto &each) {
+    if (work::disabled() || work::ticking().contains(stateOf(each).fId)) {
+      at = std::min(at, walk::wakeAt(each));
+    }
+  });
   return at;
 }
 
@@ -3514,7 +3572,12 @@ template <class N> bool animating(N &child) {
     return true;
   }
   bool any = false;
-  eachChildInView(child, [&](auto &each) { any = any || walk::animating(each); });
+  // Only what ticks can be moving: what the tick keeps, as it last found.
+  eachChildInView(child, [&](auto &each) {
+    if (work::disabled() || work::ticking().contains(stateOf(each).fId)) {
+      any = any || walk::animating(each);
+    }
+  });
   return any;
 }
 
@@ -3930,8 +3993,12 @@ public:
 
   void update(double nowMs) {
     fNowMs = nowMs;
+    const std::uint64_t born = work::bornGeneration();
+    work::tickingFull() =
+        work::disabled() || fTickedBorn != born || fWalkedGeneration != work::fullGeneration();
     UpdateContext context{nowMs, fViewport.width(), false};
     walk::update(fRoot, context, {}, nullptr, false);
+    fTickedBorn = born;
   }
 
   // Whether this frame's walks go everywhere: where a full walk was asked
@@ -4318,6 +4385,8 @@ private:
   // its current frame goes by.
   std::uint64_t fWalkedGeneration = 0;
   std::uint64_t fWalkGeneration = 0;
+  // The births this scene's tick last went everywhere for.
+  std::uint64_t fTickedBorn = 0;
   NodeId fCapture = 0;
   NodeId fDown = 0;
   NodeId fFocus = 0;
