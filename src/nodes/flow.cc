@@ -545,6 +545,35 @@ template <class Row, std::ranges::input_range Items, class KeyOf, class RowKey,
 bool reconcile(std::vector<Row> &rows, Items &&items, KeyOf keyOf,
                RowKey rowKey, Make make, Shows shows) {
   using Key = std::remove_cvref_t<std::invoke_result_t<RowKey, const Row &>>;
+  // The same rows in the same order -- the usual change, one or two of them
+  // shown otherwise (someone's presence): those made again where they are,
+  // the rest not moved. Every row was moved into a new list, each move a
+  // node changing places, and the whole list walked again.
+  if constexpr (std::ranges::forward_range<Items> && std::ranges::sized_range<Items>) {
+    if (std::ranges::size(items) == rows.size()) {
+      bool same = true;
+      std::size_t i = 0;
+      for (auto &&item : items) {
+        if (!(std::invoke(rowKey, std::as_const(rows[i])) == std::invoke(keyOf, item))) {
+          same = false;
+          break;
+        }
+        ++i;
+      }
+      if (same) {
+        bool changed = false;
+        i = 0;
+        for (auto &&item : items) {
+          if (!std::invoke(shows, std::as_const(rows[i]), item)) {
+            rows[i] = std::invoke(make, item);
+            changed = true;
+          }
+          ++i;
+        }
+        return changed;
+      }
+    }
+  }
   std::multimap<Key, std::size_t> old;
   for (std::size_t i = 0; i < rows.size(); ++i) {
     old.emplace(std::invoke(rowKey, std::as_const(rows[i])), i);

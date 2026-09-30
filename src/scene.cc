@@ -1862,8 +1862,10 @@ inline void record(NodeId child, NodeId parent, std::uint32_t place) {
 inline void reshape(NodeId id) {
   if (const NodeId *above = parents().find(id)) {
     const NodeId parent = *above;
-    reshaped().insert(parent);
-    mark(parent);
+    // Marked once: a list whose rows all move said it once for each.
+    if (reshaped().insert(parent)) {
+      mark(parent);
+    }
   }
 }
 // A node gone: its parent reshaped, its entries with it.
