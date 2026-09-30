@@ -2942,10 +2942,14 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
   }
   ++drawnCount();
   const float alpha = inheritedAlpha * state.fAlpha;
-  const int saved = canvas->save();
+  // The canvas kept and given back only where this moves or cuts it: most
+  // nodes do neither, and a save and a restore for each was most of what
+  // walking a drawn list cost.
+  const bool shifted = state.fShiftX != 0.0f || state.fShiftY != 0.0f;
+  const int saved = shifted || state.fMasking ? canvas->save() : -1;
   // Moved first, then cut to its shape: the cut goes with it (a round
   // avatar swiped aside stays round, not cut where it stood).
-  if (state.fShiftX != 0.0f || state.fShiftY != 0.0f)
+  if (shifted)
     canvas->translate(state.fShiftX, state.fShiftY);
   if (state.fMasking) {
     if (state.fCornerRadius > 0.0f || state.fCorners) {
@@ -2959,7 +2963,9 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
   eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) {
     draw(child, canvas, alpha);
   });
-  canvas->restoreToCount(saved);
+  if (saved >= 0) {
+    canvas->restoreToCount(saved);
+  }
   state.fDrawnBounds = state.fBounds.makeOffset(state.fShiftX, state.fShiftY);
 }
 } // namespace detail

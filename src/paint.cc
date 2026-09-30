@@ -344,16 +344,17 @@ public:
     if (line.runs.empty()) {
       return;
     }
-    skia::SkTextBlobBuilder builder;
-    for (const ShapedRun &run : line.runs) {
-      const auto &buffer = builder.allocRunPosH(run.font, static_cast<int>(run.glyphs.size()), y);
-      std::ranges::copy(run.glyphs, buffer.glyphs);
-      for (std::size_t i = 0; i < run.xs.size(); ++i) {
-        buffer.pos[i] = x + run.xs[i];
+    if (!line.blob) {
+      skia::SkTextBlobBuilder builder;
+      for (const ShapedRun &run : line.runs) {
+        const auto &buffer = builder.allocRunPosH(run.font, static_cast<int>(run.glyphs.size()), 0.0f);
+        std::ranges::copy(run.glyphs, buffer.glyphs);
+        std::ranges::copy(run.xs, buffer.pos);
       }
+      line.blob = builder.make();
     }
-    if (auto blob = builder.make()) {
-      canvas->drawTextBlob(blob, 0.0f, 0.0f, paint);
+    if (line.blob) {
+      canvas->drawTextBlob(line.blob, x, y, paint);
     }
     return;
 #endif
@@ -385,6 +386,10 @@ public:
   struct ShapedLine {
     std::vector<ShapedRun> runs;
     float width = 0.0f;
+    // Its glyphs as one blob, placed from 0 on a baseline at 0: made at its
+    // first drawing, and drawn where it goes after -- not built again, runs
+    // copied and allocated, at every drawing of every line.
+    mutable skia::Sp<skia::SkTextBlob> blob;
   };
 
   // The line as glyphs: split into runs of one direction by UAX #9, each
