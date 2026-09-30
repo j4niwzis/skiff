@@ -316,12 +316,18 @@ inline std::vector<skia::SkRect> &damageFound() {
     }
     return {all};
   }
+  const auto area = [](const skia::SkRect &one) { return one.width() * one.height(); };
+  // Joined where the join is hardly bigger than the two: one inside the
+  // other, or side by side. Touching was not enough -- a list's thin bar
+  // strip and a row it touches joined into the whole list.
   for (bool merged = true; merged;) {
     merged = false;
     for (std::size_t i = 0; i < rects.size() && !merged; ++i) {
       for (std::size_t j = i + 1; j < rects.size(); ++j) {
-        if (skia::SkRect::Intersects(rects[i].makeOutset(8.0f, 8.0f), rects[j])) {
-          rects[i].join(rects[j]);
+        skia::SkRect both = rects[i];
+        both.join(rects[j]);
+        if (area(both) <= 1.25f * (area(rects[i]) + area(rects[j])) + 64.0f) {
+          rects[i] = both;
           rects.erase(rects.begin() + static_cast<std::ptrdiff_t>(j));
           merged = true;
           break;
@@ -329,7 +335,6 @@ inline std::vector<skia::SkRect> &damageFound() {
       }
     }
   }
-  const auto area = [](const skia::SkRect &one) { return one.width() * one.height(); };
   while (rects.size() > most) {
     std::size_t bestI = 0, bestJ = 1;
     float bestCost = std::numeric_limits<float>::infinity();
