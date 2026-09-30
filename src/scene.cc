@@ -1543,6 +1543,7 @@ struct Entry {
   float shiftX = 0.0f, shiftY = 0.0f;  // the node's fShiftX and fShiftY
   std::uint32_t generation = 0;
   bool pending = false, ticking = false, root = false, hinted = false, reshaped = false;
+  bool unseen = false;  // made, and no tick has come to it yet
   bool hasParent = false, hasPlace = false, hasHintHead = false;
 };
 inline std::vector<Entry> &entries() {
@@ -1562,6 +1563,12 @@ inline std::vector<std::uint32_t> &freeSlots() {
   Entry &found = all[slot];
   return found.id == id ? &found : nullptr;
 }
+// The nodes made since the last tick: where one is not come to by a tick
+// that goes only where things changed, it looks everywhere.
+inline std::vector<NodeId> &births() {
+  static std::vector<NodeId> kept;
+  return kept;
+}
 // A new node's id: a free slot, or a new one.
 [[nodiscard]] inline NodeId allocate() {
   auto &all = entries();
@@ -1579,6 +1586,8 @@ inline std::vector<std::uint32_t> &freeSlots() {
   made = Entry{};
   made.generation = generation;
   made.id = (static_cast<NodeId>(generation) << 32) | slot;
+  made.unseen = true;
+  births().push_back(made.id);
   return made.id;
 }
 // A set of nodes: a flag in their entries, and how many have it -- and,
@@ -3697,6 +3706,9 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
     work::record(one.fId, state.fId);
     if (one.fNew) {
       one.fNew = false;
+      if (work::Entry *here = work::entry(one.fId)) {
+        here->unseen = false;
+      }
       work::mark(one.fId);
     }
     walk::update(each, context, own, passed, restyle);
@@ -4884,12 +4896,26 @@ public:
 
   void update(double nowMs) {
     fNowMs = nowMs;
-    const std::uint64_t born = work::bornGeneration();
-    work::tickingFull() =
-        work::disabled() || fTickedBorn != born || fWalkedGeneration != work::fullGeneration();
+    // Only where something ticks or changed -- a node made under a list that
+    // changed is come to there -- and everywhere only where one made is still
+    // not found: a new row made the whole tree ticked.
+    const bool full = work::disabled() || fWalkedGeneration != work::fullGeneration();
+    work::tickingFull() = full;
     UpdateContext context{nowMs, fViewport.width(), false};
     walk::update(fRoot, context, {}, nullptr, false);
-    fTickedBorn = born;
+    auto &born = work::births();
+    const bool lost = std::ranges::any_of(born, [](NodeId id) {
+      const work::Entry *here = work::entry(id);
+      return here != nullptr && here->unseen;
+    });
+    born.clear();
+    if (!full && lost) {
+      work::tickingFull() = true;
+      UpdateContext again{nowMs, fViewport.width(), false};
+      walk::update(fRoot, again, {}, nullptr, false);
+      work::births().clear();
+    }
+    fTickedBorn = work::bornGeneration();
   }
 
   // Whether this frame's walks go everywhere: where a full walk was asked
