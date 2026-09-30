@@ -180,6 +180,8 @@ public:
     }
   }
   [[nodiscard]] bool settling() const { return fScroll.moving(); }
+  // Ticked while it moves, or a finger holds it: at rest, nothing to step.
+  [[nodiscard]] bool wantsTick() const { return fScroll.moving() || fScroll.dragging(); }
 
   // The contents, and over them a thin bar on the right saying how much
   // there is and where the view is in it: only where there is more than

@@ -3015,8 +3015,21 @@ void collectFocusable(AnyNodeRef &, std::vector<NodeId> &);
 // Node's is a template taking itself, which no member pointer names.
 template <class N>
 concept polls = requires { static_cast<void (N::*)(double)>(&N::update); };
+// A node that polls may say when it has something to do (wantsTick()): a
+// scroll view gliding, a picture still coming, a field with the caret. Then
+// it is ticked only while it says so -- what wakes it marks it, and the tick
+// goes to what is marked -- not every frame for as long as it lives.
 template <class N>
-  requires polls<N>
+concept saysWhenItTicks = requires(const N &n) {
+  { n.wantsTick() } -> std::convertible_to<bool>;
+};
+template <class N>
+  requires saysWhenItTicks<N>
+constexpr bool pollsEachFrame(const N &node) {
+  return node.wantsTick();
+}
+template <class N>
+  requires(polls<N> && !saysWhenItTicks<N>)
 constexpr bool pollsEachFrame(const N &) {
   return true;
 }
@@ -3482,6 +3495,7 @@ bool focusChanged(N &child, NodeId id, bool focused, StyleResolver resolver,
                                                  : resolver;
   if (state.fId == id) {
     state.fFocused = focused;
+    work::mark(state.fId);  // ticked at once: a caret starts, or stops
     child.onFocusChanged(focused);
     if (own && own.fUsesState(styleSubject(child, viewportWidth),
                               states::kFocus)) {

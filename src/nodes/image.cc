@@ -53,6 +53,8 @@ public:
 
   // The picture coming, or going: drawn again, and laid out again for a
   // box that follows its proportions.
+  // Ticked until its picture has come: then nothing is waited for.
+  [[nodiscard]] bool wantsTick() const { return !fHad; }
   void update(double) {
     const bool has = this->image() != nullptr;
     if (has != fHad) {
