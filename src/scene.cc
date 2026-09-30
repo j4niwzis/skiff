@@ -5071,7 +5071,11 @@ public:
     walk::routePointer(fRoot, path, 0, input, reply, routed, false);
     // A click the target did not take: to the nodes above it, in turn.
     if (reply.fClickAbove) {
-      (void)walk::clickPath(fRoot, path, 0, reply.fClickAbove->fX, reply.fClickAbove->fY);
+      // Said by the target where it is laid out; the walk down from the root
+      // takes the point where it is on the screen: the target's and its
+      // ancestors' shifts put back -- a click in a scrolled list moved twice.
+      const work::Offset shifted = work::drawnOffset(target);
+      (void)walk::clickPath(fRoot, path, 0, reply.fClickAbove->fX + shifted.x, reply.fClickAbove->fY + shifted.y);
     }
 
     if (routed.fReleaseRequest || ending) {
