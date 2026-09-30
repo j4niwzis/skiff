@@ -202,6 +202,11 @@ public:
                       paint);
   }
   [[nodiscard]] bool hoverChangesAppearance() const { return true; }
+  // Of it, the hover changes only the bar: repainted alone, not the list.
+  [[nodiscard]] skia::SkRect hoverDamage() const {
+    const skia::SkRect &box = fState.fBounds;
+    return skia::SkRect::MakeLTRB(box.fRight - kBarReach, box.fTop, box.fRight, box.fBottom);
+  }
   // Whether the view is at the end of the contents, as a chat's newest.
   [[nodiscard]] bool atEnd(float slack = 4.0f) const noexcept {
     return fScroll.offset() >= fExtent - slack;

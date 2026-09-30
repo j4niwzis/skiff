@@ -2928,6 +2928,17 @@ template <class N> bool hasDamage(N &child) {
   return any;
 }
 
+// What a hover change repaints: a node may say a part of itself -- a
+// scroll view, only its bar -- and otherwise it is all of it.
+template <class N>
+  requires requires(const N &n) {
+    { n.hoverDamage() } -> std::convertible_to<skia::SkRect>;
+  }
+void damageForHover(N &child) {
+  child.fState.fMovedDamage = joined(child.fState.fMovedDamage, child.hoverDamage());
+}
+template <class N> void damageForHover(N &child) { child.fState.markDamaged(); }
+
 // Every node remembers where the pointer is: a control with parts has to
 // know which of its parts is under it.
 template <class N>
@@ -2946,8 +2957,10 @@ void hover(N &child, float x, float y, bool visibleAbove,
                               states::kHover)) {
       state.restyle(true);
     }
-    if (child.hoverChangesAppearance() || state.fHoverBackground) {
+    if (state.fHoverBackground) {
       state.markDamaged();
+    } else if (child.hoverChangesAppearance()) {
+      damageForHover(child);
     }
   }
   const bool childrenVisible =
