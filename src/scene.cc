@@ -4619,12 +4619,15 @@ public:
       fCapture = 0;
     } else if (routed.fCaptureRequest != 0) {
       // A container claiming a drag cancels the control where the press
-      // began: it must not stay armed and activate after scrolling.
-      if (fDown != 0 && fDown != routed.fCaptureRequest) {
+      // began: it must not stay armed and activate after scrolling. So with
+      // one that held the pointer before it -- a text being selected: it
+      // would never hear the release, and go on selecting after it.
+      const NodeId before = fCapture != 0 ? fCapture : fDown;
+      if (before != 0 && before != routed.fCaptureRequest) {
         Path down;
-        if (walk::findPath(fRoot, fDown, down)) {
+        if (walk::findPath(fRoot, before, down)) {
           PointerReply cancelled;
-          cancelled.fTarget = fDown;
+          cancelled.fTarget = before;
           Routed ignored;
           walk::routePointer(fRoot, down, 0,
                              PointerEvent{pointer::cancel{at.fX, at.fY}},
