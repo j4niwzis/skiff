@@ -3706,6 +3706,13 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
   }
   if (!state.fTransforms.empty() || child.settling()) {
     context.fAnimating = true;
+    // Still moving: the way down to it marked for the next frame, as what
+    // changes marks it -- not only the ticking set to find it by, whose
+    // chain a node above could drop, leaving a flash standing still until
+    // something else was repainted there.
+    if (context.fTick) {
+      work::mark(state.fId);
+    }
   }
   const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
                                                  : resolver;
@@ -4940,6 +4947,7 @@ public:
     work::tickingFull() = full;
     UpdateContext context{nowMs, fViewport.width(), false};
     walk::update(fRoot, context, {}, nullptr, false);
+    fTickAnimating = context.fAnimating;
     auto &born = work::births();
     const bool lost = std::ranges::any_of(born, [](NodeId id) {
       const work::Entry *here = work::entry(id);
@@ -4950,6 +4958,7 @@ public:
       work::tickingFull() = true;
       UpdateContext again{nowMs, fViewport.width(), false};
       walk::update(fRoot, again, {}, nullptr, false);
+      fTickAnimating = fTickAnimating || again.fAnimating;
       work::births().clear();
     }
     fTickedBorn = work::bornGeneration();
@@ -5021,7 +5030,10 @@ public:
         }
       }
     }
-    return {std::move(moves), damage, walk::animating(fRoot), walk::wakeAt(fRoot), fewRects(std::move(pieces))};
+    // Another frame where anything the tick came to still moves, or the
+    // walk down the ticking set finds one.
+    return {std::move(moves), damage, fTickAnimating || walk::animating(fRoot), walk::wakeAt(fRoot),
+            fewRects(std::move(pieces))};
   }
   [[nodiscard]] bool hasFrameWork() {
     if (!work::disabled() && fWalkedGeneration == work::fullGeneration() && work::pending().empty()) {
@@ -5369,6 +5381,8 @@ private:
   // The births this scene's tick last went everywhere for.
   std::uint64_t fTickedBorn = 0;
   NodeId fCapture = 0;
+  // Whether the last tick came to something still moving.
+  bool fTickAnimating = false;
   NodeId fDown = 0;
   NodeId fFocus = 0;
   float fHoverX = 0.0f, fHoverY = 0.0f;
