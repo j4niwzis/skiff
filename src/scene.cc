@@ -1469,6 +1469,11 @@ inline std::uint64_t &bornGeneration() {
   static std::uint64_t at = 1;
   return at;
 }
+// The frame's layout pass: a node's move is measured over one.
+inline std::uint64_t &layoutPass() {
+  static std::uint64_t at = 1;
+  return at;
+}
 // Whether the tick now under way goes everywhere.
 inline bool &tickingFull() {
   static bool on = true;
@@ -2210,6 +2215,12 @@ public:
   work::Alive fAlive;
   bool fRelaid = false;  // damaged by a layout made again: for the trace
   skia::SkRect fMovedDamage = skia::SkRect::MakeEmpty();
+  // Where it was when the frame's layout began, and so what its layout moved
+  // over: once for the pass, however many times a flow lays it out in it --
+  // measured at the flow's top, then placed -- not each time.
+  std::uint64_t fPassSeen = 0;
+  skia::SkRect fBoundsAtPass = skia::SkRect::MakeEmpty();
+  skia::SkRect fLayoutMoved = skia::SkRect::MakeEmpty();
   skia::SkRect fDrawnBounds = skia::SkRect::MakeEmpty();
   bool fHovered = false;
   float fHoverX = 0.0f, fHoverY = 0.0f;
@@ -2771,8 +2782,22 @@ template <class T> void layoutChildrenInContentBox(T &node) {
 }
 
 namespace detail {
+// Where a node was as its pass began, noted at the pass's first look at it;
+// what the pass moved it over, from there to where it is now.
+inline void notePass(State &state) {
+  if (state.fPassSeen != work::layoutPass()) {
+    state.fPassSeen = work::layoutPass();
+    state.fBoundsAtPass = state.fBounds;
+  }
+}
+inline void noteMoved(State &state) {
+  state.fLayoutMoved = state.fBounds != state.fBoundsAtPass ? joined(state.fBoundsAtPass, state.fBounds)
+                                                            : skia::SkRect::MakeEmpty();
+}
+
 template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   State &state = node.fState;
+  notePass(state);
   // Placed against another node, when asked: a dropdown list belongs to the
   // control that opened it.
   const skia::SkRect parent =
@@ -2791,8 +2816,8 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
       const float dx = moved.fLeft - state.fBounds.fLeft;
       const float dy = moved.fTop - state.fBounds.fTop;
       if (dx != 0.0f || dy != 0.0f) {
-        state.fMovedDamage = joined(joined(state.fMovedDamage, state.fBounds), moved);
         state.fBounds = moved;
+        noteMoved(state);
         eachChild(node, [&](auto &child) { shiftSubtree(child, dx, dy); });
       }
     }
@@ -2857,11 +2882,9 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
 
   state.fBounds = anchoredBox(room, width, height, state.fAnchor,
                               state.fOrigin, state.fX, state.fY);
-  if (state.fBounds != previous) {
-    // Moved or resized: repaint where it was and where it is.
-    state.fMovedDamage =
-        joined(joined(state.fMovedDamage, previous), state.fBounds);
-  }
+  // Moved or resized, over the pass: repainted where it was and where it is.
+  (void)previous;
+  noteMoved(state);
   node.layoutChildren();
   state.fLayoutValid = true;
   state.fSubtreeDirty = false;
@@ -3189,7 +3212,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   State &state = child.fState;
   skia::SkRect damage = skia::SkRect::MakeEmpty();
   if (drawnAbove) {
-    damage = state.fMovedDamage;
+    damage = joined(state.fMovedDamage, state.fLayoutMoved);
     // Moved, laid out, or a child gone: said too, as from its node.
     if (!state.fDamaged && !damage.isEmpty() && traceSettling() && damagers().size() < 64) {
       damagers().push_back({&typeid(N), damage, true, true});
@@ -3205,6 +3228,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
     }
   }
   state.fMovedDamage = skia::SkRect::MakeEmpty();
+  state.fLayoutMoved = skia::SkRect::MakeEmpty();
   state.fDamaged = false;
   state.fRelaid = false;
   const bool drawn = drawnAbove && state.fVisible && state.fAlpha > 0.001f;
@@ -3228,7 +3252,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
 
 template <class N> bool hasDamage(N &child) {
   const State &state = child.fState;
-  if (state.fDamaged || !state.fMovedDamage.isEmpty()) {
+  if (state.fDamaged || !state.fMovedDamage.isEmpty() || !state.fLayoutMoved.isEmpty()) {
     return true;
   }
   bool any = false;
@@ -4052,6 +4076,7 @@ public:
     if (!dirty && !viewportChanged) {
       return false;
     }
+    ++work::layoutPass();
     scene::layout(fRoot, viewport);
     return true;
   }
