@@ -1642,6 +1642,23 @@ inline void reach(NodeId id) {
     walkingFull() = true;
   }
 }
+// The child of `from` on the way down to `to`, as the walks last saw the
+// tree: 0 where that is not known. A search for a node goes down this way,
+// not through every node of the tree.
+[[nodiscard]] inline NodeId childToward(NodeId from, NodeId to) {
+  NodeId at = to;
+  for (int depth = 0; depth < 512; ++depth) {
+    const NodeId *up = parents().find(at);
+    if (up == nullptr) {
+      return 0;
+    }
+    if (*up == from) {
+      return at;
+    }
+    at = *up;
+  }
+  return 0;
+}
 // Whether a walk goes into a child.
 [[nodiscard]] inline bool visit(NodeId id) { return walkingFull() || pending().contains(id); }
 // Written only where it changed: most walks pass the same children as the
@@ -3732,8 +3749,13 @@ void hover(N &child, float x, float y, bool visibleAbove,
   // not every node on the screen at every move of the mouse.
   eachChildInView(child, [&](auto &each) {
     const State &one = stateOf(each);
-    if (work::disabled() || one.fHovered || one.fOutOfFlow || one.fBounds.isEmpty() ||
-        one.fBounds.makeOffset(one.fShiftX, one.fShiftY).contains(x, y)) {
+    // Hidden, or under something hidden: only to let go of a hover it had.
+    // A hidden list's rows, never laid out, have empty bounds, and were all
+    // gone into at every move of the pointer.
+    if (work::disabled() || one.fHovered ||
+        (childrenVisible && one.fVisible &&
+         (one.fOutOfFlow || one.fBounds.isEmpty() ||
+          one.fBounds.makeOffset(one.fShiftX, one.fShiftY).contains(x, y)))) {
       walk::hover(each, x, y, childrenVisible, own, viewportWidth);
     }
   });
@@ -3751,7 +3773,17 @@ template <class N> bool hitPath(N &child, float x, float y, Path &path) {
   }
   bool found = false;
   Path best;
+  // In a list told what of it is in view, a row is gone into only where the
+  // point is in it: every message was searched at every move.
+  const bool listed = state.fInView.has_value();
   eachChildInDrawOrder(child, [&](auto &each, std::uint32_t index) {
+    if (listed) {
+      const State &one = stateOf(each);
+      if (!one.fOutOfFlow && !one.fBounds.isEmpty() &&
+          !one.fBounds.makeOffset(one.fShiftX, one.fShiftY).contains(x, y)) {
+        return;
+      }
+    }
     Path below;
     if (walk::hitPath(each, x, y, below)) {
       found = true;
@@ -3771,6 +3803,22 @@ template <class N> bool findPath(N &child, NodeId id, Path &path) {
   if (child.fState.fId == id) {
     return true;
   }
+  // Straight down, where the walks have seen the way: the child toward it,
+  // at its place.
+  if (const NodeId next = work::childToward(child.fState.fId, id); next != 0) {
+    if (const NodeId *place = work::places().find(next)) {
+      const std::size_t mark = path.size();
+      path.push_back(static_cast<std::uint32_t>(*place));
+      bool reached = false;
+      childAt(child, static_cast<std::uint32_t>(*place), [&](auto &each) {
+        reached = stateOf(each).fId == next && walk::findPath(each, id, path);
+      });
+      if (reached) {
+        return true;
+      }
+      path.resize(mark);
+    }
+  }
   bool found = false;
   std::uint32_t at = 0;
   eachChild(child, [&](auto &each) {
@@ -3787,6 +3835,24 @@ template <class N> bool findPath(N &child, NodeId id, Path &path) {
     ++at;
   });
   return found;
+}
+
+// The pointer's shape along a path: the deepest node on it with a shape of
+// its own. One walk down the path, not a search of the tree for each node
+// on it.
+template <class N> std::optional<Cursor> cursorOnPath(N &child, const Path &path, std::size_t at) {
+  std::optional<Cursor> below;
+  if (at < path.size()) {
+    childAt(child, path[at], [&](auto &each) { below = walk::cursorOnPath(each, path, at + 1); });
+  }
+  if (below) {
+    return below;
+  }
+  const Cursor &own = stateOf(child).fCursor;
+  if (!isArrow(own)) {
+    return own;
+  }
+  return std::nullopt;
 }
 
 template <class N> NodeId idAt(N &child, const Path &path, std::size_t at) {
@@ -3940,6 +4006,20 @@ template <class N> std::optional<NodeInfo> info(N &child, NodeId id) {
                     isTextBox(child.semantics().fRole), state.fCursor};
   }
   std::optional<NodeInfo> found;
+  if (const NodeId next = work::childToward(state.fId, id); next != 0) {
+    if (const NodeId *place = work::places().find(next)) {
+      childAt(child, static_cast<std::uint32_t>(*place), [&](auto &each) {
+        if (stateOf(each).fId == next) {
+          found = walk::info(each, id);
+        }
+      });
+      if (found) {
+        found->fVisible = found->fVisible && state.fVisible;
+        found->fDisabled = found->fDisabled || state.fDisabled;
+        return found;
+      }
+    }
+  }
   eachChild(child, [&](auto &each) {
     if (found) {
       return;
@@ -4771,14 +4851,8 @@ public:
     } else if (!fHoverSeen || !walk::hitPath(fRoot, fHoverX, fHoverY, path)) {
       return cursor::arrow{};
     }
-    for (std::size_t n = path.size() + 1; n-- > 0;) {
-      const Path above(path.begin(),
-                       path.begin() + static_cast<std::ptrdiff_t>(n));
-      const std::optional<NodeInfo> about =
-          walk::info(fRoot, walk::idAt(fRoot, above, 0));
-      if (about && !isArrow(about->fCursor)) {
-        return about->fCursor;
-      }
+    if (const std::optional<Cursor> shape = walk::cursorOnPath(fRoot, path, 0)) {
+      return *shape;
     }
     return cursor::arrow{};
   }
