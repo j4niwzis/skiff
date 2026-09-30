@@ -1454,136 +1454,162 @@ inline float &pixelScale() {
 // makes the next frame walk everything, as every frame did before; and
 // SKIFF_FULL_WALKS=1 makes every frame do that, to compare.
 namespace work {
-// A set of ids, or a map of an id to an id: open addressing over flat
-// vectors, probed linearly -- no allocation for each insert, as the standard
-// hash containers make. Ids start at 1: 0 is an empty slot, the largest id
-// one whose entry went.
-class IdTable {
+// Every node's entry in the work: a node's id is its slot here and the
+// slot's generation, (generation << 32) | slot -- so what the walks ask of a
+// node by its id is one index and one compare, not a hash and a probe. A
+// slot let go is used again under the next generation: a dead node's id,
+// kept somewhere, finds nothing. Slot 0 is never a node's.
+struct Entry {
+  NodeId id = 0;  // the node whose it is; 0 while free
+  NodeId parent = 0;
+  NodeId place = 0;
+  NodeId hintHead = 0;
+  std::uint32_t generation = 0;
+  bool pending = false, ticking = false, root = false, hinted = false, reshaped = false;
+  bool hasParent = false, hasPlace = false, hasHintHead = false;
+};
+inline std::vector<Entry> &entries() {
+  static std::vector<Entry> kept(1);
+  return kept;
+}
+inline std::vector<std::uint32_t> &freeSlots() {
+  static std::vector<std::uint32_t> kept;
+  return kept;
+}
+[[nodiscard]] inline Entry *entry(NodeId id) {
+  auto &all = entries();
+  const auto slot = static_cast<std::size_t>(id & 0xffffffffu);
+  if (slot == 0 || slot >= all.size()) {
+    return nullptr;
+  }
+  Entry &found = all[slot];
+  return found.id == id ? &found : nullptr;
+}
+// A new node's id: a free slot, or a new one.
+[[nodiscard]] inline NodeId allocate() {
+  auto &all = entries();
+  auto &free = freeSlots();
+  std::uint32_t slot = 0;
+  if (!free.empty()) {
+    slot = free.back();
+    free.pop_back();
+  } else {
+    slot = static_cast<std::uint32_t>(all.size());
+    all.emplace_back();
+  }
+  Entry &made = all[slot];
+  const std::uint32_t generation = made.generation + 1;
+  made = Entry{};
+  made.generation = generation;
+  made.id = (static_cast<NodeId>(generation) << 32) | slot;
+  return made.id;
+}
+// A set of nodes: a flag in their entries, and how many have it -- and,
+// where it is emptied or gone through at once, which were given it.
+class FlagSet {
 public:
-  // Put in, or its value set: whether it was not there.
-  bool insert(NodeId key, NodeId value = 0) {
-    if ((fUsed + 1) * 2 > fKeys.size()) {
-      this->grow();
+  FlagSet(bool Entry::*flag, bool listed) : fFlag(flag), fListed(listed) {}
+  bool insert(NodeId id, NodeId = 0) {
+    Entry *at = entry(id);
+    if (at == nullptr || at->*fFlag) {
+      return false;
     }
-    std::size_t at = this->home(key);
-    std::size_t gone = fKeys.size();
-    for (;; at = (at + 1) & this->mask()) {
-      const NodeId held = fKeys[at];
-      if (held == key) {
-        fValues[at] = value;
-        return false;
-      }
-      if (held == kGone) {
-        if (gone == fKeys.size()) {
-          gone = at;
-        }
-        continue;
-      }
-      if (held == kEmpty) {
-        break;
-      }
-    }
-    const std::size_t put = gone != fKeys.size() ? gone : at;
-    if (fKeys[put] == kEmpty) {
-      ++fUsed;
-    }
-    fKeys[put] = key;
-    fValues[put] = value;
+    at->*fFlag = true;
     ++fCount;
+    if (fListed) {
+      fMembers.push_back(id);
+    }
     return true;
   }
-  [[nodiscard]] const NodeId *find(NodeId key) const {
-    if (fKeys.empty()) {
-      return nullptr;
-    }
-    for (std::size_t at = this->home(key);; at = (at + 1) & this->mask()) {
-      const NodeId held = fKeys[at];
-      if (held == key) {
-        return &fValues[at];
-      }
-      if (held == kEmpty) {
-        return nullptr;
-      }
-    }
+  [[nodiscard]] bool contains(NodeId id) const {
+    const Entry *at = entry(id);
+    return at != nullptr && at->*fFlag;
   }
-  [[nodiscard]] bool contains(NodeId key) const { return this->find(key) != nullptr; }
-  void erase(NodeId key) {
-    if (fKeys.empty()) {
-      return;
-    }
-    for (std::size_t at = this->home(key);; at = (at + 1) & this->mask()) {
-      const NodeId held = fKeys[at];
-      if (held == key) {
-        fKeys[at] = kGone;
-        --fCount;
-        return;
-      }
-      if (held == kEmpty) {
-        return;
-      }
+  void erase(NodeId id) {
+    Entry *at = entry(id);
+    if (at != nullptr && at->*fFlag) {
+      at->*fFlag = false;
+      --fCount;
     }
   }
   [[nodiscard]] bool empty() const noexcept { return fCount == 0; }
   void clear() {
-    if (fUsed != 0) {
-      std::ranges::fill(fKeys, kEmpty);
-      fCount = 0;
-      fUsed = 0;
+    for (const NodeId id : std::exchange(fMembers, {})) {
+      this->erase(id);
     }
   }
-  // Each live entry, its key and value.
   template <class F> void each(F &&f) const {
-    for (std::size_t at = 0; at < fKeys.size(); ++at) {
-      if (fKeys[at] != kEmpty && fKeys[at] != kGone) {
-        f(fKeys[at], fValues[at]);
+    for (const NodeId id : fMembers) {
+      if (this->contains(id)) {
+        f(id, NodeId{0});
       }
     }
   }
 
 private:
-  static constexpr NodeId kEmpty = 0;
-  static constexpr NodeId kGone = ~NodeId{0};
-  [[nodiscard]] std::size_t mask() const noexcept { return fKeys.size() - 1; }
-  [[nodiscard]] std::size_t home(NodeId key) const noexcept {
-    return static_cast<std::size_t>((static_cast<std::uint64_t>(key) * 0x9E3779B97F4A7C15ull) >> 17) & this->mask();
+  bool Entry::*fFlag;
+  bool fListed;
+  std::size_t fCount = 0;
+  std::vector<NodeId> fMembers;
+};
+// A value for some nodes: a field of their entries, and whether they have it.
+class FieldMap {
+public:
+  FieldMap(NodeId Entry::*value, bool Entry::*present, bool listed)
+      : fValue(value), fPresent(present), fListed(listed) {}
+  bool insert(NodeId id, NodeId value) {
+    Entry *at = entry(id);
+    if (at == nullptr) {
+      return false;
+    }
+    const bool fresh = !(at->*fPresent);
+    at->*fValue = value;
+    at->*fPresent = true;
+    if (fresh && fListed) {
+      fMembers.push_back(id);
+    }
+    return fresh;
   }
-  // Twice the room where it is full of live entries; the same room, rid of
-  // the removed ones, where they are what fills it.
-  void grow() {
-    const std::size_t room = fKeys.empty() ? 64 : (fCount * 4 >= fKeys.size() ? fKeys.size() * 2 : fKeys.size());
-    std::vector<NodeId> keys = std::exchange(fKeys, std::vector<NodeId>(room, kEmpty));
-    std::vector<NodeId> values = std::exchange(fValues, std::vector<NodeId>(room, 0));
-    fCount = 0;
-    fUsed = 0;
-    for (std::size_t at = 0; at < keys.size(); ++at) {
-      if (keys[at] != kEmpty && keys[at] != kGone) {
-        this->insert(keys[at], values[at]);
-      }
+  [[nodiscard]] const NodeId *find(NodeId id) const {
+    const Entry *at = entry(id);
+    return at != nullptr && at->*fPresent ? &(at->*fValue) : nullptr;
+  }
+  [[nodiscard]] bool contains(NodeId id) const { return this->find(id) != nullptr; }
+  void erase(NodeId id) {
+    if (Entry *at = entry(id)) {
+      at->*fPresent = false;
     }
   }
-  std::vector<NodeId> fKeys;
-  std::vector<NodeId> fValues;
-  std::size_t fCount = 0;  // live entries
-  std::size_t fUsed = 0;   // live and removed ones: what probing passes
+  void clear() {
+    for (const NodeId id : std::exchange(fMembers, {})) {
+      this->erase(id);
+    }
+  }
+
+private:
+  NodeId Entry::*fValue;
+  bool Entry::*fPresent;
+  bool fListed;
+  std::vector<NodeId> fMembers;
 };
 
-inline IdTable &pending() {
-  static IdTable kept;
+inline FlagSet &pending() {
+  static FlagSet kept(&Entry::pending, false);
   return kept;
 }
-inline IdTable &parents() {
-  static IdTable kept;
+inline FieldMap &parents() {
+  static FieldMap kept(&Entry::parent, &Entry::hasParent, false);
   return kept;
 }
-inline IdTable &roots() {
-  static IdTable kept;
+inline FlagSet &roots() {
+  static FlagSet kept(&Entry::root, false);
   return kept;
 }
 // The nodes a frame's tick goes to, kept from frame to frame: those that do
 // something each frame -- poll in update(), animate, settle -- and every
 // node above them.
-inline IdTable &ticking() {
-  static IdTable kept;
+inline FlagSet &ticking() {
+  static FlagSet kept(&Entry::ticking, false);
   return kept;
 }
 // Bumped as a node is made: where one was, the next tick goes everywhere
@@ -1619,14 +1645,14 @@ inline bool disabled() {
 }
 // Where a node sits under its parent: its place in eachChild's order, as
 // the last walk through all of the parent's children saw it.
-inline IdTable &places() {
-  static IdTable kept;
+inline FieldMap &places() {
+  static FieldMap kept(&Entry::place, &Entry::hasPlace, false);
   return kept;
 }
 // Nodes whose children may not be those they were -- one went, was moved, or
 // changed places: walked child by child, their set of children checked.
-inline IdTable &reshaped() {
-  static IdTable kept;
+inline FlagSet &reshaped() {
+  static FlagSet kept(&Entry::reshaped, true);
   return kept;
 }
 // The way down to what is marked: for each parent, the children marked
@@ -1642,12 +1668,12 @@ inline std::vector<Hint> &hints() {
   static std::vector<Hint> kept;
   return kept;
 }
-inline IdTable &hintHeads() {
-  static IdTable kept;
+inline FieldMap &hintHeads() {
+  static FieldMap kept(&Entry::hintHead, &Entry::hasHintHead, true);
   return kept;
 }
-inline IdTable &hinted() {
-  static IdTable kept;
+inline FlagSet &hinted() {
+  static FlagSet kept(&Entry::hinted, true);
   return kept;
 }
 // More marked children than this under one node: it is walked child by
@@ -1740,10 +1766,15 @@ inline void reshape(NodeId id) {
 // A node gone: its parent reshaped, its entries with it.
 inline void gone(NodeId id) {
   reshape(id);
-  parents().erase(id);
-  places().erase(id);
   pending().erase(id);
   ticking().erase(id);
+  roots().erase(id);
+  hinted().erase(id);
+  reshaped().erase(id);
+  if (Entry *at = entry(id)) {
+    at->id = 0;
+    freeSlots().push_back(static_cast<std::uint32_t>(id & 0xffffffffu));
+  }
 }
 // A frame done: the hints to what is still marked -- out of view, or in
 // another scene not walked yet -- kept, the rest dropped; so with what was
@@ -1757,7 +1788,7 @@ inline void settle() {
       hint(each.fParent, each.fChild);
     }
   }
-  IdTable &was = reshaped();
+  auto &was = reshaped();
   if (!was.empty()) {
     std::vector<NodeId> still;
     was.each([&](NodeId id, NodeId) {
@@ -1823,7 +1854,7 @@ class State {
 public:
   // Made: new until the frame's walk first sees it, which marks it there;
   // the next tick goes everywhere to find it.
-  State() : fId(nextId()) {
+  State() : fId(work::allocate()) {
     fAlive.id = fId;
     ++work::bornGeneration();
   }
