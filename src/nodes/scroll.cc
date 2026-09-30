@@ -152,7 +152,7 @@ public:
     // Not where the view is put somewhere on purpose -- an offset set, the
     // end asked for: held to what was in view, a jump landed back near where
     // it left, beside the message it went to.
-    if (fLaidOut && box == fLastBox && !this->atEnd() && !fJumpTo && !fToEnd) {
+    if (fLaidOut && box == fLastBox && !this->atEnd() && !fJumpTo && !fToEnd && !fGlidingToEnd) {
       this->eachItem([&](const scene::State &item) {
         if (anchors.size() < 4 && item.fVisible && item.fBounds.fBottom - offset > box.fTop) {
           anchors.push_back(Anchor{item.fId, item.fBounds.fTop});
@@ -177,10 +177,27 @@ public:
       fState.markDamaged();
       fLastOffset = scene::snapToPixel(fExtent);
     }
+    // A glide to the end under way: the end it set out for is not where the
+    // end is once the rows it passes are laid out -- measured taller than
+    // guessed, more made as it nears the newest -- and it stopped short of
+    // the bottom. It goes on to the end as it moves, until it is there or
+    // the reader takes the view (a wheel, a drag, a jump elsewhere).
+    if (fGlidingToEnd) {
+      if (fScroll.dragging() || fScroll.target() != std::min(fEndTarget, fExtent)) {
+        fGlidingToEnd = false;
+      } else if (fScroll.target() != fExtent) {
+        fScroll.glideTo(fExtent);
+        fEndTarget = fScroll.target();
+      } else if (!fScroll.moving()) {
+        fGlidingToEnd = false;
+      }
+    }
     if (fToEnd) {
       fToEnd = false;
       if (fToEndGlide) {
         fScroll.glideTo(fExtent);
+        fGlidingToEnd = true;
+        fEndTarget = fScroll.target();
       } else {
         fScroll.jumpTo(fExtent);
         if (fLastOffset != scene::snapToPixel(fExtent)) {
@@ -495,6 +512,10 @@ private:
   bool fToEnd = false;
   std::optional<float> fJumpTo;
   bool fToEndGlide = true;
+  // Gliding to the end, and the end it was last aimed at: aimed again as the
+  // end moves on.
+  bool fGlidingToEnd = false;
+  float fEndTarget = 0.0f;
   // When the press was, and how long it may rest before a move is no
   // longer a scroll.
   std::chrono::steady_clock::time_point fPressedAt{};
