@@ -3215,7 +3215,9 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
 inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
   const std::optional<skia::SkColor> fill = state.fSelected && state.fSelectedBackground ? state.fSelectedBackground
                                             : state.fFocused && state.fFocusBackground     ? state.fFocusBackground
-                                            : state.fHovered && state.fHoverBackground     ? state.fHoverBackground
+                                            // A disabled node does not light up under the pointer.
+                                            : state.fHovered && !state.fDisabled && state.fHoverBackground
+                                                ? state.fHoverBackground
                                                                                             : state.fBackground;
   if (!fill && !state.fBorder && !state.fGradient && !state.fShadow)
     return;
@@ -3686,7 +3688,8 @@ void hover(N &child, float x, float y, bool visibleAbove,
   state.fHoverY = y;
   const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
                                                  : resolver;
-  const bool visible = visibleAbove && state.fVisible;
+  // Disabled: neither it nor anything in it lights up under the pointer.
+  const bool visible = visibleAbove && state.fVisible && !state.fDisabled;
   const bool hovered = visible && state.fBounds.contains(x, y);
   if (hovered != state.fHovered) {
     state.fHovered = hovered;
@@ -3694,9 +3697,9 @@ void hover(N &child, float x, float y, bool visibleAbove,
                               states::kHover)) {
       state.restyle(true);
     }
-    if (state.fHoverBackground) {
+    if (state.fHoverBackground && !state.fDisabled) {
       state.markDamaged();
-    } else if (child.hoverChangesAppearance()) {
+    } else if (child.hoverChangesAppearance() && !state.fDisabled) {
       damageForHover(child);
     }
   }
