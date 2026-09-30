@@ -35,6 +35,8 @@ struct TextStyled {
   bool struck = false;
   bool code = false;
   bool quote = false;
+  // How deep in quotes, as styleAt() sums it: a quote inside a quote is 2.
+  int depth = 0;
   // Marked: a stretch pointed at -- the part of a message a reply quoted
   // -- on a plate of the quote's colour, apart from what is selected.
   bool marked = false;
@@ -191,6 +193,7 @@ public:
         out.struck = out.struck || one.struck;
         out.code = out.code || one.code;
         out.quote = out.quote || one.quote;
+        out.depth += one.quote ? 1 : 0;  // quotes inside quotes overlap
         out.marked = out.marked || one.marked;
       }
     }
@@ -486,7 +489,14 @@ public:
       fWrappedRoom = room;
       // Where some of it is quoted, every line wraps as narrow as a quoted
       // one, which stands in by kQuoteIndent past its bar.
-      const float indent = std::ranges::any_of(fStyles, &Styled::quote) ? kQuoteIndent : 0.0f;
+      // As narrow as the deepest quote's lines: a bar for each level.
+      int deepest = 0;
+      for (const Styled &one : fStyles) {
+        if (one.quote) {
+          deepest = std::max(deepest, this->styleAt(one.first).depth);
+        }
+      }
+      const float indent = kQuoteIndent * static_cast<float>(deepest);
       fLines = p.wrap(fText, room - indent, fSize, fBold);
       state.fHeight =
           static_cast<float>(std::max<std::size_t>(1, fLines.size())) *
@@ -713,17 +723,23 @@ private:
     // A quoted line, as tdesktop's blockquote: a faint plate of the quote's
     // colour across the text's width, a bar in it at its start; the words
     // in the text's own colour over it -- readable on any bubble.
-    if (this->styleAt(start).quote) {
+    // A quote inside a quote: a bar for each level, each in a colour of its
+    // own, so that they are told apart.
+    if (const int depth = this->styleAt(start).depth; depth > 0) {
       skia::SkPaint plate;
       plate.setAntiAlias(true);
-      plate.setColor(fQuoteColour);
+      plate.setColor(quoteColourAt(fQuoteColour, depth));
       plate.setAlphaf(0.12f * alpha);
       canvas->drawRect(skia::SkRect::MakeXYWH(x, y - fSize, fState.fBounds.fRight - x, fSize * 1.25f), plate);
-      skia::SkPaint bar;
-      bar.setAntiAlias(true);
-      bar.setColor(fQuoteColour);
-      bar.setAlphaf(bar.getAlphaf() * alpha);
-      canvas->drawRoundRect(skia::SkRect::MakeXYWH(x, y - fSize, 2.5f, fSize * 1.25f), 1.25f, 1.25f, bar);
+      for (int level = 0; level < depth; ++level) {
+        skia::SkPaint bar;
+        bar.setAntiAlias(true);
+        bar.setColor(quoteColourAt(fQuoteColour, level + 1));
+        bar.setAlphaf(bar.getAlphaf() * alpha);
+        canvas->drawRoundRect(skia::SkRect::MakeXYWH(x + static_cast<float>(level) * kQuoteIndent, y - fSize, 2.5f,
+                                                     fSize * 1.25f),
+                              1.25f, 1.25f, bar);
+      }
     }
     std::ranges::sort(cuts);
     cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
@@ -804,7 +820,17 @@ private:
   // How far a line's text stands in: a quoted one's, past its bar.
   static constexpr float kQuoteIndent = 10.0f;
   [[nodiscard]] float indentOf(std::size_t start) const {
-    return this->styleAt(start).quote ? kQuoteIndent : 0.0f;
+    return kQuoteIndent * static_cast<float>(this->styleAt(start).depth);
+  }
+  // A quote's colour at a depth: its own at the first, then turned -- its
+  // channels taken round -- so that each level looks another.
+  [[nodiscard]] static skia::SkColor quoteColourAt(skia::SkColor colour, int depth) {
+    const unsigned a = (colour >> 24) & 0xFF, r = (colour >> 16) & 0xFF, g = (colour >> 8) & 0xFF, b = colour & 0xFF;
+    switch ((depth - 1) % 3) {
+      case 1: return (a << 24) | (g << 16) | (b << 8) | r;
+      case 2: return (a << 24) | (b << 16) | (r << 8) | g;
+      default: return colour;
+    }
   }
   // The width a wrapped line has to fit into, resolved as layout would.
   [[nodiscard]] float roomFor(const skia::SkRect &parent) const {
