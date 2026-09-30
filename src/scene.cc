@@ -350,6 +350,22 @@ anchoredBox(const skia::SkRect &parent, float width, float height, Anchor at,
 }
 
 // How many nodes a frame walked and how many it drew.
+// How many nodes each walk touched, since the host last read them: what a
+// frame costs, walk by walk -- read and reset by a host that traces frames.
+struct WalkCounts {
+  std::uint64_t tick = 0;       // update() at a frame's tick
+  std::uint64_t restyle = 0;    // the walk between frames (a hover's restyle)
+  std::uint64_t dirty = 0;      // markDirty
+  std::uint64_t layout = 0;     // layoutNode, all calls
+  std::uint64_t laidOut = 0;    // of those, laid out, not kept as it was
+  std::uint64_t damage = 0;     // collectDamage
+  std::uint64_t hover = 0;      // hover
+  std::uint64_t animating = 0;  // animating and wakeAt
+};
+inline WalkCounts &walkCounts() {
+  static WalkCounts kept;
+  return kept;
+}
 inline std::uint64_t &visitedCount() {
   static std::uint64_t count = 0;
   return count;
@@ -2826,6 +2842,7 @@ inline void noteMoved(State &state) {
 
 template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   State &state = node.fState;
+  ++walkCounts().layout;
   notePass(state);
   // Placed against another node, when asked: a dropdown list belongs to the
   // control that opened it.
@@ -2855,6 +2872,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   state.fPlacementDirty = false;
   state.fLastConstraint = parent;
   work::pending().insert(state.fId);
+  ++walkCounts().laidOut;
   // Where it was: taken before an auto-sized node is given a provisional box
   // to lay its children out in, which is not where it was drawn. Compared
   // with that box, every relayout of one -- a list's flow of rows -- was a
@@ -3099,6 +3117,7 @@ template <class N>
 void update(N &child, UpdateContext &context, StyleResolver resolver,
             const Style *inherited, bool restyleAll) {
   State &state = child.fState;
+  ++(context.fTick ? walkCounts().tick : walkCounts().restyle);
   if (context.fTick) {
     state.updateTransforms(context.fNowMs);
     child.update(context.fNowMs);
@@ -3192,6 +3211,7 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
 // out again and repainted where they were.
 template <class N> bool markDirty(N &child) {
   State &state = child.fState;
+  ++walkCounts().dirty;
   bool below = false;
   std::size_t signature = 0;
   const std::optional<skia::SkRect> &view = state.fInView;
@@ -3240,6 +3260,7 @@ template <class N> bool markDirty(N &child) {
 // subtree reports; a hidden one drops it, though its own change counts.
 template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   State &state = child.fState;
+  ++walkCounts().damage;
   skia::SkRect damage = skia::SkRect::MakeEmpty();
   if (drawnAbove) {
     damage = joined(state.fMovedDamage, state.fLayoutMoved);
@@ -3308,6 +3329,7 @@ template <class N>
 void hover(N &child, float x, float y, bool visibleAbove,
            StyleResolver resolver, float viewportWidth) {
   State &state = child.fState;
+  ++walkCounts().hover;
   state.fHoverX = x;
   state.fHoverY = y;
   const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
@@ -3675,6 +3697,7 @@ template <class N> double wakeAt(N &child) {
 }
 
 template <class N> bool animating(N &child) {
+  ++walkCounts().animating;
   const bool transform = !child.fState.fTransforms.empty();
   if (transform || child.settling()) {
     if (traceSettling() && settlers().size() < 64) {
