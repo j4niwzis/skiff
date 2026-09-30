@@ -67,6 +67,10 @@ public:
     this->invalidateLayout();
   }
   [[nodiscard]] bool moving() const noexcept { return fScroll.moving(); }
+  // Whether a scroll step copies what is in view, where the host copies:
+  // not over what does not scroll with it -- a gradient behind it, which a
+  // copy moved along, a little further off at every step.
+  void setCopiesOnScroll(bool copies) { fCopies = copies; }
   // On its way to the end, asked for and not yet there: what would move
   // the end meanwhile -- more made above, dropped below -- waits.
   [[nodiscard]] bool glidingToEnd() const noexcept { return fToEnd || fGlidingToEnd; }
@@ -90,7 +94,7 @@ public:
   // is found -- copied where the host copies, else repainted.
   void scrolled() {
     this->seeAt(fScroll.offset());
-    if (skiff::scene::blitScrolling()) {
+    if (skiff::scene::blitScrolling() && fCopies) {
       fState.relayoutQuietly();
     } else {
       this->invalidateLayout();
@@ -103,7 +107,7 @@ public:
   void moved(float dy) {
     namespace scene = skiff::scene;
     const skia::SkRect view = fState.fBounds;
-    if (!scene::blitScrolling()) {
+    if (!scene::blitScrolling() || !fCopies) {
       return;  // invalidateLayout damaged it all
     }
     if (std::abs(dy) >= view.height() * 0.75f || view.isEmpty()) {
@@ -520,6 +524,7 @@ private:
   bool fToEnd = false;
   std::optional<float> fJumpTo;
   bool fToEndGlide = true;
+  bool fCopies = true;
   // Gliding to the end, and the end it was last aimed at: aimed again as the
   // end moves on.
   bool fGlidingToEnd = false;
