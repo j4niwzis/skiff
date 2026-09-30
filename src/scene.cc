@@ -1108,6 +1108,12 @@ struct scroll {
   float dx = 0.0f, dy = 0.0f;
 };
 } // namespace pointer
+// What the text showing the selection has selected, as it is now: copied by
+// Ctrl+C wherever the focus is -- a text does not take the focus.
+inline std::string &selectedText() {
+  static std::string kept;
+  return kept;
+}
 // Whether a button is held now, as the last press and release said -- to
 // whatever scene they went: a release outside a text's own scene still ends
 // the press it began.

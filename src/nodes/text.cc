@@ -242,6 +242,7 @@ public:
     const auto now = std::chrono::steady_clock::now();
     if (now - fLastPress < std::chrono::milliseconds(400) && at_offset == fLastOffset) {
       this->selectWordAt(at_offset);
+      this->publishSelection();
       fLastPress = {};
       this->markDamaged();
       return;
@@ -253,6 +254,7 @@ public:
     fPressY = at.y;
     // The selection shown is this one's from now: one text's at a time.
     textSelectionOwner() = fState.fId;
+    skiff::scene::selectedText().clear();
     // Not taken yet: a scrolled list around this may take a press that
     // moves at once as a scroll. A move that reaches this selects, and the
     // pointer is taken then.
@@ -290,6 +292,7 @@ public:
     fDragY = at.y;
     fCaret = this->offsetAt(at.x, at.y);
     this->takePillsWhole();
+    this->publishSelection();
     this->markDamaged();
     reply.handle();
   }
@@ -303,6 +306,7 @@ public:
     if (now != fCaret) {
       fCaret = now;
       this->takePillsWhole();
+      this->publishSelection();
       this->markDamaged();
     }
   }
@@ -345,6 +349,7 @@ public:
     } else if (press.key == keys::kA) {
       fAnchor = 0;
       fCaret = fText.size();
+      this->publishSelection();
       this->markDamaged();
       reply.handle();
     }
@@ -648,6 +653,12 @@ private:
     }
   }
   // Behind the selected part of each line, a plate in the selection's colour.
+  // What is selected, said to the scene: this is the text showing it.
+  void publishSelection() const {
+    if (textSelectionOwner() == fState.fId) {
+      skiff::scene::selectedText() = this->selected();
+    }
+  }
   void drawSelection(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float alpha) const {
     // The last text pressed shows its selection -- whether or not it has the
     // keyboard's focus: a selectable text does not take it on a press, and
