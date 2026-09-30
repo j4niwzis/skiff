@@ -1706,6 +1706,11 @@ inline std::uint64_t &bornGeneration() {
   static std::uint64_t at = 1;
   return at;
 }
+// Frames finished: what a node did "the frame before" is told by it.
+inline std::uint64_t &frameNumber() {
+  static std::uint64_t at = 1;
+  return at;
+}
 // The frame's layout pass: a node's move is measured over one.
 inline std::uint64_t &layoutPass() {
   static std::uint64_t at = 1;
@@ -2426,6 +2431,11 @@ public:
   }
   bool fRecorded = false;
   skia::Sp<skia::SkPicture> fPicture;
+  // Recorded again frame after frame -- something in it moves at every
+  // frame, a loader turning -- a recording is only a cost: drawn straight
+  // until it rests.
+  std::uint64_t fRecordedAt = 0;
+  int fRecordedInARow = 0;
   // Drawn moved by this much, it and all under it, where it is laid out: a
   // scroll view's contents by its offset. Repaints nothing by itself.
   void setShift(float x, float y) {
@@ -3560,7 +3570,16 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
     // Recorded whole, and faded as a whole as it is played back: a fade
     // does not record it again -- nor does a slide, the shift being put on
     // the canvas before it. Its parts drawn at their own alpha within.
+    const std::uint64_t now = work::frameNumber();
     if (!state.fPicture) {
+      state.fRecordedInARow = state.fRecordedAt + 1 >= now ? state.fRecordedInARow + 1 : 0;
+      state.fRecordedAt = now;
+    }
+    if (!state.fPicture && state.fRecordedInARow >= 3) {
+      paintBox(state, canvas, alpha);
+      node.drawSelf(canvas, alpha);
+      eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, canvas, alpha); });
+    } else if (!state.fPicture) {
       skia::SkPictureRecorder recorder;
       skia::SkCanvas *into = recorder.beginRecording(state.fBounds.makeOutset(64.0f, 64.0f));
       paintBox(state, into, 1.0f);
@@ -3568,7 +3587,7 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
       eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, into, 1.0f); });
       state.fPicture = recorder.finishRecordingAsPicture();
     }
-    if (state.fPicture) {
+    if (state.fPicture && state.fRecordedInARow < 3) {
       if (alpha < 0.999f) {
         skia::SkPaint faded;
         faded.setAlphaf(alpha);
@@ -4957,6 +4976,7 @@ public:
   [[nodiscard]] FrameResult finishFrame() {
     damageFound().clear();
     work::damageOffset() = {};
+    ++work::frameNumber();
     skia::SkRect damage = walk::collectDamage(fRoot, true);
     // Walked as this frame asked: what was marked is done.
     if (work::walkingFull()) {
