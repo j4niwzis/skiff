@@ -817,6 +817,71 @@ struct StyleResolver {
   }
 };
 
+// Styles shared: what a resolver says of a subject -- its type, template,
+// roles, states and the viewport's width -- said once and kept, for every
+// node alike to take: the rows of a list, the parts of each message, all
+// resolved again one by one. A resolver reads its style sheet and nothing
+// else; a program whose styles read more (a theme's colours set at run
+// time) forgets them when that changes.
+namespace detail {
+struct SharedStyleKey {
+  std::uintptr_t resolve = 0;
+  const StyleKey *type = nullptr, *templated = nullptr;
+  std::array<std::uintptr_t, 4> roles{};
+  std::size_t roleCount = 0;
+  std::array<bool, 4> states{};
+  float viewportWidth = 0.0f;
+  bool operator==(const SharedStyleKey &) const = default;
+};
+struct SharedStyleHash {
+  std::size_t operator()(const SharedStyleKey &key) const noexcept {
+    std::size_t h = std::hash<std::uintptr_t>{}(key.resolve);
+    const auto mix = [&](std::size_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
+    mix(std::hash<const void *>{}(key.type));
+    mix(std::hash<const void *>{}(key.templated));
+    for (std::size_t i = 0; i < key.roleCount; ++i) {
+      mix(key.roles[i]);
+    }
+    for (const bool on : key.states) {
+      mix(on ? 1u : 0u);
+    }
+    mix(std::hash<float>{}(key.viewportWidth));
+    return h;
+  }
+};
+inline std::unordered_map<SharedStyleKey, Style, SharedStyleHash> &sharedStyles() {
+  static std::unordered_map<SharedStyleKey, Style, SharedStyleHash> kept;
+  return kept;
+}
+} // namespace detail
+inline void forgetStyles() { detail::sharedStyles().clear(); }
+[[nodiscard]] inline Style resolveShared(const StyleResolver &resolver, const StyleSubject &subject) {
+  if (subject.fRoles.size() > 4) {
+    return resolver.fResolve(subject);
+  }
+  detail::SharedStyleKey key;
+  key.resolve = std::bit_cast<std::uintptr_t>(resolver.fResolve);
+  key.type = subject.fType;
+  key.templated = subject.fTemplate;
+  key.roleCount = subject.fRoles.size();
+  for (std::size_t i = 0; i < key.roleCount; ++i) {
+    key.roles[i] = std::bit_cast<std::uintptr_t>(subject.fRoles[i]);
+  }
+  key.states = {subject.fStates.has<state::hover>(), subject.fStates.has<state::selected>(),
+                subject.fStates.has<state::disabled>(), subject.fStates.has<state::focus>()};
+  key.viewportWidth = subject.fViewportWidth;
+  auto &kept = detail::sharedStyles();
+  if (const auto found = kept.find(key); found != kept.end()) {
+    return found->second;
+  }
+  if (kept.size() > 4096) {
+    kept.clear();
+  }
+  Style resolved = resolver.fResolve(subject);
+  kept.emplace(key, resolved);
+  return resolved;
+}
+
 // ---- input and accessibility --------------------------------------------
 
 // One axis of scrolling, as a gesture: the press, the slop before it counts
@@ -3601,7 +3666,7 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
   if (restyle) {
     const bool active = static_cast<bool>(own);
     Style resolved =
-        active ? own.fResolve(styleSubject(child, context.fViewportWidth))
+        active ? resolveShared(own, styleSubject(child, context.fViewportWidth))
                : Style{};
     if (inherited != nullptr) {
       if (!resolved.colour)
