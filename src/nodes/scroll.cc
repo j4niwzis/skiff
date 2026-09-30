@@ -201,6 +201,11 @@ public:
         fScroll.glideTo(fExtent);
         fGlidingToEnd = true;
         fEndTarget = fScroll.target();
+        // Begun here, in the layout -- after this frame's tick, which went by
+        // it at rest: ticked from the next frame on, and that frame asked
+        // for. Nothing else marked it, and the glide waited for some other
+        // change to walk it -- the arrow to the newest pressed twice.
+        scene::work::moving().push_back(fState.fId);
       } else {
         fScroll.jumpTo(fExtent);
         if (fLastOffset != scene::snapToPixel(fExtent)) {
