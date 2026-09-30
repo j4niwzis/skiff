@@ -2718,6 +2718,9 @@ public:
   skia::SkRect fLayoutMoved = skia::SkRect::MakeEmpty();
   skia::SkRect fDrawnBounds = skia::SkRect::MakeEmpty();
   bool fHovered = false;
+  // Whether something under it is hovered: gone into again as the pointer
+  // moves, even where it has left this -- a submenu out of its row.
+  bool fHoverWithin = false;
   float fHoverX = 0.0f, fHoverY = 0.0f;
   bool fFocused = false;
   bool fDeferredClick = false;
@@ -4065,18 +4068,21 @@ void hover(N &child, float x, float y, bool visibleAbove,
   // Only where hover can change: a child the point is in, one that was
   // hovered, and one placed by its anchor, which can stick out of this --
   // not every node on the screen at every move of the mouse.
+  bool within = false;
   eachChildInView(child, [&](auto &each) {
     const State &one = stateOf(each);
     // Hidden, or under something hidden: only to let go of a hover it had.
     // A hidden list's rows, never laid out, have empty bounds, and were all
     // gone into at every move of the pointer.
-    if (work::disabled() || one.fHovered ||
+    if (work::disabled() || one.fHovered || one.fHoverWithin ||
         (childrenVisible && one.fVisible &&
          (one.fOutOfFlow || one.fBounds.isEmpty() ||
           one.fBounds.makeOffset(one.fShiftX, one.fShiftY).contains(x, y)))) {
       walk::hover(each, x, y, childrenVisible, own, viewportWidth);
     }
+    within = within || one.fHovered || one.fHoverWithin;
   });
+  state.fHoverWithin = within;
 }
 
 // The front-most node under a point that takes input: what is drawn last is
