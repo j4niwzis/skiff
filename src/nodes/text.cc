@@ -216,8 +216,12 @@ public:
   void setLinks(std::vector<Link> links, skia::SkColor colour) {
     fLinks = std::move(links);
     fLinkColour = colour;
+    fHoveredLink.reset();
     this->markDamaged();
   }
+  // A link under the pointer lights up, as a browser's does: repainted as the
+  // pointer comes onto the text and leaves it, where it has links.
+  [[nodiscard]] bool hoverChangesAppearance() const { return !fLinks.empty(); }
   [[nodiscard]] const std::vector<Link> &links() const noexcept { return fLinks; }
   // The link at an offset, if one is there.
   [[nodiscard]] const Link *linkAt(std::size_t offset) const {
@@ -280,6 +284,18 @@ public:
   }
   void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::move &at,
                  skiff::scene::PointerReply &reply) {
+    // Which link the pointer is on: repainted where that changes.
+    if (!fLinks.empty()) {
+      const Link *link = this->linkAt(this->offsetAt(at.x, at.y));
+      const std::optional<std::size_t> hovered =
+          link != nullptr && !link->pill && !link->picture
+              ? std::optional<std::size_t>(static_cast<std::size_t>(link - fLinks.data()))
+              : std::nullopt;
+      if (hovered != fHoveredLink) {
+        fHoveredLink = hovered;
+        this->markDamaged();
+      }
+    }
     // A selection is begun by a press held still a moment first, where the
     // pointer moves up or down at once -- that is a scroll, which what holds
     // this takes. Across, it is a selection at once, as a mouse drags over
@@ -816,6 +832,15 @@ private:
         at += width;
         continue;
       }
+      // The link under the pointer: on a faint plate of its colour.
+      if (linked && fState.fHovered && fHoveredLink && link == &fLinks[*fHoveredLink]) {
+        skia::SkPaint plate;
+        plate.setAntiAlias(true);
+        plate.setColor(fLinkColour);
+        plate.setAlphaf(0.16f * alpha);
+        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, fSize * 1.3f), 3.0f, 3.0f,
+                              plate);
+      }
       if (style.emphasis && skiff::paint::defaultFont())
         skiff::paint::defaultFont()->setSkewX(-0.2f);
       p.text(piece, at, y, fSize, colour, alpha, bold);
@@ -892,6 +917,8 @@ private:
   bool fDragging = false;
   bool fPressed = false;
   std::vector<Link> fLinks;
+  // The link the pointer was last on, of fLinks: lit while it is over this.
+  std::optional<std::size_t> fHoveredLink;
   skia::SkColor fLinkColour = skia::colorSetARGB(255, 82, 160, 230);
   std::size_t fAnchor = 0;
   std::size_t fCaret = 0;
