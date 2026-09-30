@@ -36,6 +36,7 @@ public:
   // Another picture: drawn from where it comes from now.
   void setSource(Source source) {
     fSource = std::move(source);
+    fWaiting = false;
     this->markDamaged();
   }
 
@@ -53,20 +54,33 @@ public:
 
   // The picture coming, or going: drawn again, and laid out again for a
   // box that follows its proportions.
-  // Ticked until its picture has come: then nothing is waited for.
-  [[nodiscard]] bool wantsTick() const { return !fHad; }
+  // Ticked until its picture has come -- or, where its source wakes those
+  // waiting on it (waiters()), not ticked at all: woken when it comes. A
+  // person without a picture was otherwise asked for it at every frame,
+  // for as long as they were shown.
+  [[nodiscard]] bool wantsTick() const { return !fHad && !fWaiting; }
   void update(double) {
     const bool has = this->image() != nullptr;
     if (has != fHad) {
       fHad = has;
       this->invalidateLayout();
     }
+    fWaiting = !has && this->waitOn(fSource);
   }
 
   void drawSelf(skia::SkCanvas *canvas, float alpha) {
     const skia::Sp<skia::SkImage> *found = this->image();
-    if (!found)
+    if (!found) {
+      // Let go by its cache: waited for again, till it is back.
+      if (fHad) {
+        fHad = false;
+        fWaiting = this->waitOn(fSource);
+        if (!fWaiting) {
+          skiff::scene::work::mark(fState.fId);
+        }
+      }
       return;
+    }
     const skia::SkRect &box = fState.fBounds;
     const float iw = static_cast<float>((*found)->width());
     const float ih = static_cast<float>((*found)->height());
@@ -104,9 +118,21 @@ private:
     canvas->drawImageRect(image, to, sampling, &paint);
   }
 
+  // Waiting on the source, where it says who waits: whether it does.
+  template <class S>
+    requires requires(const S &source) {
+      { source.waiters() } -> std::same_as<skiff::scene::Waiters &>;
+    }
+  bool waitOn(const S &source) {
+    source.waiters().wait(fState.fId);
+    return true;
+  }
+  bool waitOn(const auto &) { return false; }  // asked at every frame instead
+
   Source fSource;
   Fit fFit;
   bool fHad = false;
+  bool fWaiting = false;
 };
 
 } // namespace skiff::nodes

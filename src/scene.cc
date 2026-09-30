@@ -1720,6 +1720,25 @@ struct Alive {
 };
 }  // namespace work
 
+// Nodes waiting on something from outside the scene -- a picture to be
+// fetched: woken together when it comes, rather than each asking at every
+// frame. A node waits by its id; one gone meanwhile is passed over.
+class Waiters {
+public:
+  void wait(NodeId id) { fIds.push_back(id); }
+  void wake() {
+    for (const NodeId id : std::exchange(fIds, {})) {
+      if (work::parents().contains(id)) {
+        work::mark(id);
+      }
+    }
+  }
+  [[nodiscard]] bool empty() const noexcept { return fIds.empty(); }
+
+private:
+  std::vector<NodeId> fIds;
+};
+
 class State {
 public:
   // Made: new until the frame's walk first sees it, which marks it there;
