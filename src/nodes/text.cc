@@ -586,17 +586,33 @@ private:
         std::clamp((y - bounds.fTop) / lineHeight, 0.0f, static_cast<float>(lines.size() - 1)));
     const auto [start, line] = lines[index];
     const float into = x - bounds.fLeft - this->indentOf(start);
-    std::size_t best = 0;
-    float bestDistance = std::abs(into);
+    // The character boundaries, and among them the one nearest: found by
+    // halving, the width up to a boundary growing with it -- measuring up to
+    // every boundary made a long line's every move of a selecting drag cost
+    // its length squared.
+    std::vector<std::size_t> cuts{0};
     for (std::size_t i = 1; i <= line.size(); ++i) {
-      if (i < line.size() && (static_cast<unsigned char>(line[i]) & 0xC0) == 0x80) {
-        continue;  // inside a character
+      if (i == line.size() || (static_cast<unsigned char>(line[i]) & 0xC0) != 0x80) {
+        cuts.push_back(i);
       }
-      const float distance = std::abs(p.measure(std::string(line.substr(0, i)), fSize, fBold) - into);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        best = i;
+    }
+    const auto widthTo = [&](std::size_t cut) {
+      return cut == 0 ? 0.0f : p.measure(std::string(line.substr(0, cut)), fSize, fBold);
+    };
+    std::size_t low = 0, high = cuts.size() - 1;
+    while (low < high) {
+      const std::size_t middle = (low + high) / 2;
+      if (widthTo(cuts[middle]) < into) {
+        low = middle + 1;
+      } else {
+        high = middle;
       }
+    }
+    // The first boundary at or past the point, or the one before it: the
+    // nearer.
+    std::size_t best = cuts[low];
+    if (low > 0 && std::abs(widthTo(cuts[low - 1]) - into) <= std::abs(widthTo(cuts[low]) - into)) {
+      best = cuts[low - 1];
     }
     return start + best;
   }
