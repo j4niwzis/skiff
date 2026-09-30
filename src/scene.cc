@@ -1790,8 +1790,13 @@ inline void mark(NodeId id) {
     marked.insert(id);
     const NodeId *above = up.find(id);
     if (above == nullptr) {
-      if (!roots().contains(id)) {
-        ++fullGeneration();  // not seen under anything yet: look everywhere
+      // Not seen under anything yet: looked for everywhere -- unless it is
+      // new, which the next tick finds (where it was put, or everywhere).
+      // A node marks itself as it is made, filling itself in: a list's new
+      // rows had every walk of the frame go over the whole tree.
+      const Entry *here = entry(id);
+      if (!roots().contains(id) && (here == nullptr || !here->unseen)) {
+        ++fullGeneration();
       }
       return;
     }
