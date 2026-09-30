@@ -49,6 +49,8 @@ module;
 #include <skia/core/SkImage.h>
 #include <skia/core/SkMatrix.h>
 #include <skia/core/SkPaint.h>
+#include <skia/core/SkPicture.h>
+#include <skia/core/SkPictureRecorder.h>
 #include <skia/core/SkPath.h>
 #include <skia/core/SkPathBuilder.h>
 #include <skia/core/SkPixmap.h>
@@ -298,6 +300,8 @@ using ::SkISize;
 using ::SkMatrix;
 using ::SkMipmapMode;
 using ::SkPaint;
+using ::SkPicture;
+using ::SkPictureRecorder;
 using ::SkPath;
 using ::SkPathBuilder;
 using ::SkPixmap;

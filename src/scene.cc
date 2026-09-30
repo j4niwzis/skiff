@@ -2333,6 +2333,16 @@ public:
   }
   // Laid out again at the next frame, repainting nothing by itself: what
   // the layout moves repaints, as it finds it (a scroll view, copied).
+  // Its drawing, and all under it, recorded once and played back until
+  // something in it is damaged: a message's bubble, drawn at every repaint
+  // of a strip it is in, walked again through all its parts each time.
+  void setRecorded(bool on) {
+    fRecorded = on;
+    fPicture = nullptr;
+  }
+  bool fRecorded = false;
+  skia::Sp<skia::SkPicture> fPicture;
+  float fPictureAlpha = -1.0f;  // the alpha it was recorded at
   // Drawn moved by this much, it and all under it, where it is laid out: a
   // scroll view's contents by its offset. Repaints nothing by itself.
   void setShift(float x, float y) {
@@ -3451,11 +3461,28 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
       canvas->clipRect(state.fBounds, true);
     }
   }
-  paintBox(state, canvas, alpha);
-  node.drawSelf(canvas, alpha);
-  eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) {
-    draw(child, canvas, alpha);
-  });
+  if (state.fRecorded) {
+    // Recorded again where it was let go -- something in it damaged -- or
+    // drawn at another alpha; else played back, not walked.
+    if (!state.fPicture || state.fPictureAlpha != alpha) {
+      skia::SkPictureRecorder recorder;
+      skia::SkCanvas *into = recorder.beginRecording(state.fBounds.makeOutset(64.0f, 64.0f));
+      paintBox(state, into, alpha);
+      node.drawSelf(into, alpha);
+      eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, into, alpha); });
+      state.fPicture = recorder.finishRecordingAsPicture();
+      state.fPictureAlpha = alpha;
+    }
+    if (state.fPicture) {
+      canvas->drawPicture(state.fPicture);
+    }
+  } else {
+    paintBox(state, canvas, alpha);
+    node.drawSelf(canvas, alpha);
+    eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) {
+      draw(child, canvas, alpha);
+    });
+  }
   if (saved >= 0) {
     canvas->restoreToCount(saved);
   }
@@ -3837,6 +3864,10 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
     });
   }
   work::damageOffset() = above;
+  // Something in it changed: its recording, if it keeps one, let go.
+  if (!damage.isEmpty() || !below.isEmpty()) {
+    state.fPicture = nullptr;
+  }
   // Its children's, in the space they are laid out in: moved by its shift.
   below.offset(state.fShiftX, state.fShiftY);
   if (!below.isEmpty() && state.fMasking &&
