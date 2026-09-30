@@ -100,6 +100,65 @@ public:
       this->invalidateLayout();
     }
   }
+  // The view put where it follows what it showed -- the end, or the row it
+  // was on -- once the contents were laid out again, `before` the offset it
+  // was drawn at: each row repainted where it was and where it is on the
+  // screen, only where those differ. Something far above growing moves
+  // every row down in the contents and the view down with them: nothing on
+  // the screen changes, and nothing is repainted -- not the whole view,
+  // every bubble in it drawn again. The recordings of rows moved in the
+  // contents are let go (they are in its space), not repainted.
+  void followed(float before) {
+    namespace scene = skiff::scene;
+    const skia::SkRect view = fState.fBounds;
+    bool whole = false;
+    scene::eachChild(*this, [&](auto &contents) {
+      scene::State &list = scene::stateOf(contents);
+      // A row gone: where it was is said in the contents' space, not the
+      // screen's -- all of it repainted, as before.
+      if (!list.fMovedDamage.isEmpty()) {
+        whole = true;
+        return;
+      }
+      list.fLayoutMoved = skia::SkRect::MakeEmpty();
+      scene::eachChild(contents, [&](auto &item) {
+        scene::State &one = scene::stateOf(item);
+        const bool laid = !one.fLayoutMoved.isEmpty();
+        // New: its own damage says where it is.
+        if (laid && one.fBoundsAtPass.isEmpty()) {
+          return;
+        }
+        const skia::SkRect was = (laid ? one.fBoundsAtPass : one.fBounds).makeOffset(0.0f, -before);
+        const skia::SkRect now = one.fBounds.makeOffset(0.0f, -fLastOffset);
+        if (laid) {
+          one.fDrawnBounds.offset(0.0f, one.fBounds.fTop - one.fBoundsAtPass.fTop);
+          one.fLayoutMoved = skia::SkRect::MakeEmpty();
+          forgetRecordings(item);
+        }
+        if (was == now || !one.fVisible) {
+          return;
+        }
+        for (skia::SkRect area : {was, now}) {
+          if (area.intersect(view)) {
+            fState.fMovedDamage = scene::joined(fState.fMovedDamage, area);
+          }
+        }
+      });
+    });
+    if (whole) {
+      fState.markDamaged();
+      return;
+    }
+    // The bar: its thumb is another length now.
+    const skia::SkRect bar = skia::SkRect::MakeLTRB(view.fRight - kBarReach, view.fTop, view.fRight, view.fBottom);
+    fState.fMovedDamage = scene::joined(fState.fMovedDamage, bar);
+    scene::work::mark(fState.fId);
+  }
+  // A subtree's recordings let go: made in the space it was laid out in.
+  template <class N> static void forgetRecordings(N &node) {
+    skiff::scene::stateOf(node).fPicture = nullptr;
+    skiff::scene::eachChild(node, [](auto &child) { forgetRecordings(child); });
+  }
   // Its contents moved by dy as a whole: the view copied there by the host,
   // and repainted only the strip that came into view and the bar, which
   // moved over it. Too far to be worth it, or with nothing to copy onto, all
@@ -181,8 +240,8 @@ public:
       fLastOffset = scene::snapToPixel(to);
     } else if (following && !fToEnd && fScroll.offset() != fExtent) {
       fScroll.jumpTo(fExtent);
-      fState.markDamaged();
       fLastOffset = scene::snapToPixel(fExtent);
+      this->followed(offset);
     }
     // A glide to the end under way: the end it set out for is not where the
     // end is once the rows it passes are laid out -- measured taller than
@@ -235,8 +294,8 @@ public:
       // snapping back and forth.
       if (moved != 0.0f) {
         fScroll.shift(moved);
-        fState.markDamaged();
         fLastOffset = offset + scene::snapToPixel(moved);
+        this->followed(offset);
       }
     }
     // The contents drawn where the view is -- and what of them is in view,
