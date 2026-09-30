@@ -3779,10 +3779,15 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
     eachChild(child, visit);
   } else if (context.fTick) {
     // Only where something ticks, changed, or is new -- everywhere, where the
-    // tick has to find what was made.
-    eachChildInView(child, [&](auto &each) {
+    // tick has to find what was made. A new child wherever it is, in view or
+    // not: once, to be found. Passed over out of view, it was never found,
+    // and every frame went over the whole tree looking for it.
+    const std::optional<skia::SkRect> &view = state.fInView;
+    eachChild(child, [&](auto &each) {
       const State &one = stateOf(each);
-      if (work::tickingFull() || one.fNew || work::ticking().contains(one.fId) || work::pending().contains(one.fId)) {
+      const bool seen = !view || one.fBounds.isEmpty() || skia::SkRect::Intersects(one.fBounds, *view);
+      if (one.fNew ||
+          (seen && (work::tickingFull() || work::ticking().contains(one.fId) || work::pending().contains(one.fId)))) {
         visit(each);
       }
     });

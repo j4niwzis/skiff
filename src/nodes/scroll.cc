@@ -44,6 +44,7 @@ public:
   // then was glided on from.
   void setCurrent(float offset) {
     fJumpTo = offset;
+    this->seeAt(offset);
     this->invalidateLayout();
   }
   // To the end, however long the contents turn out to be: where they are
@@ -52,6 +53,9 @@ public:
   void scrollToEnd(bool glide = true) {
     fToEnd = true;
     fToEndGlide = glide;
+    if (!glide) {
+      this->seeAt(fExtent);
+    }
     // Laid out again, painting nothing by itself: already at the end -- a
     // list that follows what comes, asked at every change -- nothing moves,
     // and the whole view was painted each time.
@@ -64,9 +68,25 @@ public:
   }
   [[nodiscard]] bool moving() const noexcept { return fScroll.moving(); }
 
+  // What of the contents is in view at an offset -- and a screen above and
+  // below -- said to them as soon as the offset changes: a jump, a glide's
+  // step, the wheel. The frame's tick comes before its layout; told only
+  // there, the tick went by the view before the move, passed over what the
+  // move brought into view -- a message flashed after a jump, a row made as
+  // it came -- and the damage walk, by the view after, cleared its mark: it
+  // stood still until something else there was repainted.
+  void seeAt(float offset) {
+    if (!fLaidOut) {
+      return;
+    }
+    const skia::SkRect seen =
+        fLastBox.makeOutset(0.0f, fLastBox.height()).makeOffset(0.0f, skiff::scene::snapToPixel(offset));
+    skiff::scene::eachChild(*this, [&](auto &child) { skiff::scene::stateOf(child).fInView = seen; });
+  }
   // Only its offset changed: laid out again at the next frame, where the move
   // is found -- copied where the host copies, else repainted.
   void scrolled() {
+    this->seeAt(fScroll.offset());
     if (skiff::scene::blitScrolling()) {
       fState.relayoutQuietly();
     } else {
