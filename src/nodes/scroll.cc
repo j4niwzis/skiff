@@ -60,6 +60,37 @@ public:
     this->invalidateLayout();
   }
   [[nodiscard]] bool moving() const noexcept { return fScroll.moving(); }
+
+  // Only its offset changed: laid out again at the next frame, where the move
+  // is found -- copied where the host copies, else repainted.
+  void scrolled() {
+    if (skiff::scene::blitScrolling()) {
+      fState.relayoutQuietly();
+    } else {
+      this->invalidateLayout();
+    }
+  }
+  // Its contents moved by dy as a whole: the view copied there by the host,
+  // and repainted only the strip that came into view and the bar, which
+  // moved over it. Too far to be worth it, or with nothing to copy onto, all
+  // of it.
+  void moved(float dy) {
+    namespace scene = skiff::scene;
+    const skia::SkRect view = fState.fBounds;
+    if (!scene::blitScrolling()) {
+      return;  // invalidateLayout damaged it all
+    }
+    if (std::abs(dy) >= view.height() * 0.75f || view.isEmpty()) {
+      fState.markDamaged();
+      return;
+    }
+    scene::scrollMoves().push_back({view, dy, fState.fId});
+    const skia::SkRect strip = dy < 0.0f ? skia::SkRect::MakeLTRB(view.fLeft, view.fBottom + dy - 1.0f, view.fRight, view.fBottom)
+                                         : skia::SkRect::MakeLTRB(view.fLeft, view.fTop, view.fRight, view.fTop + dy + 1.0f);
+    const skia::SkRect bar = skia::SkRect::MakeLTRB(view.fRight - kBarReach, view.fTop, view.fRight, view.fBottom);
+    fState.fMovedDamage = scene::joined(scene::joined(fState.fMovedDamage, strip), bar);
+    scene::work::mark(fState.fId);
+  }
   [[nodiscard]] float current() const noexcept { return fScroll.offset(); }
   [[nodiscard]] float extent() const noexcept { return fExtent; }
 
@@ -78,6 +109,7 @@ public:
     if (fLaidOut && box == fLastBox && offset != fLastOffset) {
       const float dy = fLastOffset - offset;
       scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
+      this->moved(dy);
     }
     // What the reader is looking at stays where it is when what is above
     // it changes -- history coming in above, a row above growing: the first
@@ -118,11 +150,13 @@ public:
       const float dy = offset - scene::snapToPixel(to);
       fScroll.jumpTo(to);
       scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
+      fState.markDamaged();
       fLastOffset = scene::snapToPixel(to);
     } else if (following && !fToEnd && fScroll.offset() != fExtent) {
       const float dy = offset - scene::snapToPixel(fExtent);
       fScroll.jumpTo(fExtent);
       scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
+      fState.markDamaged();
       fLastOffset = scene::snapToPixel(fExtent);
     }
     if (fToEnd) {
@@ -133,6 +167,7 @@ public:
         fScroll.jumpTo(fExtent);
         const float dy = fLastOffset - scene::snapToPixel(fExtent);
         scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, dy); });
+      fState.markDamaged();
         fLastOffset = scene::snapToPixel(fExtent);
       }
     }
@@ -159,6 +194,7 @@ public:
         fScroll.shift(moved);
         const float placed = scene::snapToPixel(moved);
         scene::eachChild(*this, [&](auto &child) { scene::shiftSubtree(child, -placed); });
+        fState.markDamaged();
         fLastOffset = offset + placed;
       }
     }
@@ -176,7 +212,7 @@ public:
     fLastMs = nowMs;
     fNowMs = nowMs;
     if (fScroll.advance(dt)) {
-      this->invalidateLayout();
+      this->scrolled();
     }
   }
   [[nodiscard]] bool settling() const { return fScroll.moving(); }
@@ -216,7 +252,7 @@ public:
 
   [[nodiscard]] bool onScroll(float ticks) {
     fScroll.wheel(ticks, 60.0f);
-    this->invalidateLayout();
+    this->scrolled();
     return true;
   }
   // A wheel over something inside that did not use it -- a message's text,
@@ -248,7 +284,7 @@ public:
     const float room = std::max(1.0f, fState.fBounds.height() - this->thumbLength());
     const float at = std::clamp((y - fBarGrab - fState.fBounds.fTop) / room, 0.0f, 1.0f);
     fScroll.jumpTo(at * fExtent);
-    this->invalidateLayout();
+    this->scrolled();
   }
   static constexpr float kBarReach = 12.0f;
 
@@ -337,7 +373,7 @@ public:
       }
       reply.capturePointer();
     }
-    this->invalidateLayout();
+    this->scrolled();
     reply.handle();
   }
   template <class Phase>

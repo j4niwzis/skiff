@@ -278,7 +278,30 @@ struct Margin {
   constexpr bool operator==(const Margin &) const = default;
 };
 
+// A scroll view's contents moved by `dy` as a whole: what was drawn in
+// `rect` last frame is where it goes now, `dy` lower. A host that keeps its
+// last frame copies it there, and repaints only the damage -- the strip that
+// came into view, the bar, and what is drawn over it. `node` is the view.
+struct ScrollMove {
+  skia::SkRect rect = skia::SkRect::MakeEmpty();
+  float dy = 0.0f;
+  std::uint64_t node = 0;  // its NodeId
+};
+// Whether this program's host copies moved scroll views (ScrollMove) rather
+// than repainting them: off, a scroll view repaints whole as it moves.
+inline bool &blitScrolling() {
+  static bool on = false;
+  return on;
+}
+// The moves of the frame under way.
+inline std::vector<ScrollMove> &scrollMoves() {
+  static std::vector<ScrollMove> kept;
+  return kept;
+}
+
 struct FrameResult {
+  // Copied first, in order: the scroll views moved by this frame.
+  std::vector<ScrollMove> fMoves;
   skia::SkRect fDamage = skia::SkRect::MakeEmpty();
   bool fWantsAnotherFrame = false;
   // When a node next wants a frame on its own, where none animates -- a
@@ -1972,6 +1995,12 @@ public:
     fRelaid = true;
     work::mark(fId);
   }
+  // Laid out again at the next frame, repainting nothing by itself: what
+  // the layout moves repaints, as it finds it (a scroll view, copied).
+  void relayoutQuietly() {
+    fLayoutValid = false;
+    work::mark(fId);
+  }
   // Repaints where this node is and where it was drawn last.
   void markDamaged() {
     fDamaged = true;
@@ -3039,6 +3068,7 @@ void collectFocusable(AnyNodeRef &, std::vector<NodeId> &);
 [[nodiscard]] bool clickPath(AnyNodeRef &, const Path &, std::size_t, float,
                              float);
 [[nodiscard]] double wakeAt(AnyNodeRef &);
+void damageOver(AnyNodeRef &, NodeId, const skia::SkRect &, bool &, skia::SkRect &);
 
 // A node that does something of its own each frame says update() itself:
 // Node's is a template taking itself, which no member pointer names.
@@ -3587,6 +3617,36 @@ template <class N> void collectFocusable(N &child, std::vector<NodeId> &out) {
   });
 }
 
+// What is drawn over a moved scroll view: after it, where it is. Copied with
+// the view's pixels, it would move with them; repainted instead. A node that
+// paints nothing of its own (no fill, no border, children) is only gone
+// through -- a layer of the window over everything would repaint it all.
+template <class N>
+void damageOver(N &child, NodeId below, const skia::SkRect &rect, bool &passed, skia::SkRect &damage) {
+  State &state = child.fState;
+  if (state.fId == below) {
+    passed = true;
+    return;
+  }
+  if (!state.fVisible || state.fAlpha <= 0.001f) {
+    return;
+  }
+  bool hasChildren = false;
+  eachChild(child, [&](auto &) { hasChildren = true; });
+  const bool paints = !hasChildren || state.fBackground || state.fBorder || state.fShadow ||
+                     state.fHoverBackground || state.fSelectedBackground || state.fFocusBackground;
+  if (passed && paints) {
+    const skia::SkRect at = state.fBounds.makeOffset(state.fShiftX, state.fShiftY);
+    if (!at.isEmpty() && skia::SkRect::Intersects(at, rect)) {
+      damage = joined(damage, at);
+    }
+    if (!state.fDrawnBounds.isEmpty() && skia::SkRect::Intersects(state.fDrawnBounds, rect)) {
+      damage = joined(damage, state.fDrawnBounds);
+    }
+  }
+  eachChildInDrawOrder(child, [&](auto &each, std::uint32_t) { walk::damageOver(each, below, rect, passed, damage); });
+}
+
 // When a node next wants a frame on its own: what it says with wakeAt(),
 // infinity where it says nothing -- the earliest of it and all in view
 // under it.
@@ -3725,6 +3785,7 @@ public:
     const std::type_info &(*fType)();
     void (*fEachChild)(void *, void *context, AnyChildVisit visit);
     double (*fWakeAt)(void *);
+    void (*fDamageOver)(void *, NodeId, const skia::SkRect &, bool &, skia::SkRect &);
   };
   [[nodiscard]] const Ops &ops() const noexcept { return *fOps; }
   [[nodiscard]] void *node() const noexcept { return fNode; }
@@ -3789,6 +3850,9 @@ private:
         eachChild(as<T>(n), [&](auto &child) { visitAsAny(child, context, visit); });
       },
       +[](void *n) { return walk::wakeAt(as<T>(n)); },
+      +[](void *n, NodeId below, const skia::SkRect &rect, bool &passed, skia::SkRect &damage) {
+        walk::damageOver(as<T>(n), below, rect, passed, damage);
+      },
   };
 
   void *fNode = nullptr;
@@ -3977,6 +4041,9 @@ inline void collectFocusable(AnyNodeRef &c, std::vector<NodeId> &out) {
 }
 inline bool animating(AnyNodeRef &c) { return c.ops().fAnimating(c.node()); }
 inline double wakeAt(AnyNodeRef &c) { return c.ops().fWakeAt(c.node()); }
+inline void damageOver(AnyNodeRef &c, NodeId below, const skia::SkRect &rect, bool &passed, skia::SkRect &damage) {
+  c.ops().fDamageOver(c.node(), below, rect, passed, damage);
+}
 inline bool clickPath(AnyNodeRef &c, const Path &path, std::size_t at, float x,
                       float y) {
   return c.ops().fClickPath(c.node(), path, at, x, y);
@@ -4060,6 +4127,7 @@ public:
     work::pending().insert(fRoot.fState.fId);
   }
   bool layoutIfNeeded(const skia::SkRect &viewport) {
+    scrollMoves().clear();
     this->beginWalks();
     const bool viewportChanged = viewport != fViewport;
     if (viewportChanged) {
@@ -4094,7 +4162,17 @@ public:
     if (!bounds.isEmpty() && !damage.isEmpty() && !damage.intersect(bounds)) {
       damage = skia::SkRect::MakeEmpty();
     }
-    return {damage, walk::animating(fRoot), walk::wakeAt(fRoot)};
+    // What is drawn over each moved view, repainted: its pixels would move.
+    std::vector<ScrollMove> moves = std::exchange(scrollMoves(), {});
+    for (const ScrollMove &move : moves) {
+      bool passed = false;
+      skia::SkRect over = skia::SkRect::MakeEmpty();
+      walk::damageOver(fRoot, move.node, move.rect, passed, over);
+      if (!over.isEmpty() && over.intersect(move.rect)) {
+        damage = joined(damage, over);
+      }
+    }
+    return {std::move(moves), damage, walk::animating(fRoot), walk::wakeAt(fRoot)};
   }
   [[nodiscard]] bool hasFrameWork() {
     if (!work::disabled() && fWalkedGeneration == work::fullGeneration() && work::pending().empty()) {
