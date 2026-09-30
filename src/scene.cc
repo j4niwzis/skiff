@@ -2034,7 +2034,7 @@ public:
       return;
     }
     fAlpha = alpha;
-    this->markDamaged();
+    this->markMovedOnly();
   }
   void setVisible(bool visible) {
     if (visible == fVisible) {
@@ -2144,11 +2144,11 @@ public:
     }
     if (spec.shiftX && *spec.shiftX != fShiftX) {
       this->setShift(*spec.shiftX, fShiftY);
-      this->markDamaged();
+      this->markMovedOnly();
     }
     if (spec.shiftY && *spec.shiftY != fShiftY) {
       this->setShift(fShiftX, *spec.shiftY);
-      this->markDamaged();
+      this->markMovedOnly();
     }
     if (spec.anchor) {
       fAnchor = *spec.anchor;
@@ -2328,6 +2328,7 @@ public:
   void invalidateLayout() {
     fLayoutValid = false;
     fDamaged = true;
+    fRedrawn = true;
     fRelaid = true;
     work::mark(fId);
   }
@@ -2342,7 +2343,6 @@ public:
   }
   bool fRecorded = false;
   skia::Sp<skia::SkPicture> fPicture;
-  float fPictureAlpha = -1.0f;  // the alpha it was recorded at
   // Drawn moved by this much, it and all under it, where it is laid out: a
   // scroll view's contents by its offset. Repaints nothing by itself.
   void setShift(float x, float y) {
@@ -2359,6 +2359,13 @@ public:
   }
   // Repaints where this node is and where it was drawn last.
   void markDamaged() {
+    fDamaged = true;
+    fRedrawn = true;
+    work::mark(fId);
+  }
+  // Repainted where it was and is, what it draws the same: moved by its
+  // shift, or faded.
+  void markMovedOnly() {
     fDamaged = true;
     work::mark(fId);
   }
@@ -2596,6 +2603,9 @@ public:
   std::vector<DrawnChild> fDrawnChildren;
   skia::SkRect fLastConstraint = skia::SkRect::MakeEmpty();
   bool fDamaged = true;
+  // Whether what it draws changed -- not only where it is drawn or how
+  // faintly: a recording is kept through a fade or a slide.
+  bool fRedrawn = true;
   // Not yet seen by a frame's walk: the walk marks it, and where it is.
   bool fNew = true;
   work::Alive fAlive;
@@ -3464,17 +3474,25 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
   if (state.fRecorded) {
     // Recorded again where it was let go -- something in it damaged -- or
     // drawn at another alpha; else played back, not walked.
-    if (!state.fPicture || state.fPictureAlpha != alpha) {
+    // Recorded whole, and faded as a whole as it is played back: a fade
+    // does not record it again -- nor does a slide, the shift being put on
+    // the canvas before it. Its parts drawn at their own alpha within.
+    if (!state.fPicture) {
       skia::SkPictureRecorder recorder;
       skia::SkCanvas *into = recorder.beginRecording(state.fBounds.makeOutset(64.0f, 64.0f));
-      paintBox(state, into, alpha);
-      node.drawSelf(into, alpha);
-      eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, into, alpha); });
+      paintBox(state, into, 1.0f);
+      node.drawSelf(into, 1.0f);
+      eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, into, 1.0f); });
       state.fPicture = recorder.finishRecordingAsPicture();
-      state.fPictureAlpha = alpha;
     }
     if (state.fPicture) {
-      canvas->drawPicture(state.fPicture);
+      if (alpha < 0.999f) {
+        skia::SkPaint faded;
+        faded.setAlphaf(alpha);
+        canvas->drawPicture(state.fPicture, nullptr, &faded);
+      } else {
+        canvas->drawPicture(state.fPicture);
+      }
     }
   } else {
     paintBox(state, canvas, alpha);
@@ -3786,6 +3804,10 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   // drawn, all found again.
   const bool whole = state.fDamaged || state.fRelaid || !state.fLayoutMoved.isEmpty() ||
                      !state.fMovedDamage.isEmpty();
+  // What it draws changed -- not only moved or faded -- or it was laid out
+  // elsewhere, or children went: its recording, if it keeps one, let go.
+  const bool redrawn = state.fRedrawn || !state.fLayoutMoved.isEmpty() || !state.fMovedDamage.isEmpty();
+  state.fRedrawn = false;
   // A scroll view moved in this frame: its view, where it is on the screen.
   const work::Offset above = work::damageOffset();
   for (ScrollMove &move : scrollMoves()) {
@@ -3864,8 +3886,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
     });
   }
   work::damageOffset() = above;
-  // Something in it changed: its recording, if it keeps one, let go.
-  if (!damage.isEmpty() || !below.isEmpty()) {
+  if (redrawn || !below.isEmpty()) {
     state.fPicture = nullptr;
   }
   // Its children's, in the space they are laid out in: moved by its shift.
