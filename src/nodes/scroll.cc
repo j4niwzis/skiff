@@ -67,6 +67,9 @@ public:
     this->invalidateLayout();
   }
   [[nodiscard]] bool moving() const noexcept { return fScroll.moving(); }
+  // On its way to the end, asked for and not yet there: what would move
+  // the end meanwhile -- more made above, dropped below -- waits.
+  [[nodiscard]] bool glidingToEnd() const noexcept { return fToEnd || fGlidingToEnd; }
 
   // What of the contents is in view at an offset -- and a screen above and
   // below -- said to them as soon as the offset changes: a jump, a glide's
