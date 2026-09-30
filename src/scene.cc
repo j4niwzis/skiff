@@ -3268,8 +3268,15 @@ void hover(N &child, float x, float y, bool visibleAbove,
   }
   const bool childrenVisible =
       visible && (!state.fMasking || state.fBounds.contains(x, y));
+  // Only where hover can change: a child the point is in, one that was
+  // hovered, and one placed by its anchor, which can stick out of this --
+  // not every node on the screen at every move of the mouse.
   eachChildInView(child, [&](auto &each) {
-    walk::hover(each, x, y, childrenVisible, own, viewportWidth);
+    const State &one = stateOf(each);
+    if (work::disabled() || one.fHovered || one.fOutOfFlow || one.fBounds.isEmpty() ||
+        one.fBounds.makeOffset(one.fShiftX, one.fShiftY).contains(x, y)) {
+      walk::hover(each, x, y, childrenVisible, own, viewportWidth);
+    }
   });
 }
 
