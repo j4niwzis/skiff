@@ -275,11 +275,16 @@ public:
                           skia::SkRect::MakeXYWH(box.fRight - 5.0f, at + 2.0f, 4.0f, thumb - 4.0f), 2.0f, 2.0f),
                       paint);
   }
-  [[nodiscard]] bool hoverChangesAppearance() const { return true; }
-  // Of it, the hover changes only the bar: repainted alone, not the list.
+  // Hovered or not, only its bar shows or goes -- and only where there is
+  // one: a list that does not scroll has none, and the pointer going in and
+  // out of it changed nothing on the screen yet repainted a strip of it.
+  [[nodiscard]] bool hoverChangesAppearance() const { return fExtent > 0.0f; }
+  // What the hover changes: the thumb, where it is drawn -- not the bar's
+  // whole height.
   [[nodiscard]] skia::SkRect hoverDamage() const {
     const skia::SkRect &box = fState.fBounds;
-    return skia::SkRect::MakeLTRB(box.fRight - kBarReach, box.fTop, box.fRight, box.fBottom);
+    const float top = this->thumbTop();
+    return skia::SkRect::MakeLTRB(box.fRight - 6.0f, top, box.fRight, top + this->thumbLength() + 1.0f);
   }
   // Whether the view is at the end of the contents, as a chat's newest.
   [[nodiscard]] bool atEnd(float slack = 4.0f) const noexcept {
