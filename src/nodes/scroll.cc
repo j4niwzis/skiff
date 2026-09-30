@@ -214,10 +214,18 @@ public:
     if (fScroll.advance(dt)) {
       this->scrolled();
     }
+    // A drag held past an edge: the view goes on that way, frame by frame.
+    if (fEdgeSpeed != 0.0f) {
+      const float was = fScroll.offset();
+      fScroll.jumpTo(was + fEdgeSpeed * static_cast<float>(dt));
+      if (fScroll.offset() != was) {
+        this->scrolled();
+      }
+    }
   }
   [[nodiscard]] bool settling() const { return fScroll.moving(); }
   // Ticked while it moves, or a finger holds it: at rest, nothing to step.
-  [[nodiscard]] bool wantsTick() const { return fScroll.moving() || fScroll.dragging(); }
+  [[nodiscard]] bool wantsTick() const { return fScroll.moving() || fScroll.dragging() || fEdgeSpeed != 0.0f; }
 
   // The contents, and over them a thin bar on the right saying how much
   // there is and where the view is in it: only where there is more than
@@ -341,6 +349,18 @@ public:
       reply.handle();
       return;
     }
+    // Something in it holds the pointer -- a text being selected -- and is
+    // dragged past its top or bottom: it scrolls that way, faster the
+    // further out, until the drag comes back or ends.
+    if (reply.fCaptured && reply.fTarget != fState.fId) {
+      const skia::SkRect &box = fState.fBounds;
+      const float out = move.y < box.fTop ? move.y - box.fTop : (move.y > box.fBottom ? move.y - box.fBottom : 0.0f);
+      const float speed = std::clamp(out, -150.0f, 150.0f) * kEdgeSpeed;
+      if (speed != fEdgeSpeed) {
+        fEdgeSpeed = speed;
+        skiff::scene::work::mark(fState.fId);  // ticked from now, or no longer
+      }
+    }
     if (!fArmed) {
       return;
     }
@@ -399,6 +419,7 @@ public:
 
   // What the gesture does at its end, released or cancelled.
   void finish(skiff::scene::PointerReply &reply) {
+    fEdgeSpeed = 0.0f;
     if (fBarDragging) {
       fBarDragging = false;
       reply.releasePointer();
@@ -434,6 +455,10 @@ private:
   float fPressX = 0.0f;
   float fPressY = 0.0f;
   bool fArmed = false;
+  // How fast a drag past an edge scrolls: pixels a millisecond, for each
+  // pixel it is past; and how fast it does now.
+  static constexpr float kEdgeSpeed = 0.01f;
+  float fEdgeSpeed = 0.0f;
   bool fToEnd = false;
   std::optional<float> fJumpTo;
   bool fToEndGlide = true;

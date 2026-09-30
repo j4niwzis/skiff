@@ -987,8 +987,22 @@ struct scroll {
   float dx = 0.0f, dy = 0.0f;
 };
 } // namespace pointer
+// Whether a button is held now, as the last press and release said -- to
+// whatever scene they went: a release outside a text's own scene still ends
+// the press it began.
+inline bool &pointerHeld() {
+  static bool held = false;
+  return held;
+}
 using PointerEvent = splice::variant<pointer::move, pointer::down, pointer::up,
                                pointer::cancel, pointer::scroll>;
+inline void notePointerHeld(const PointerEvent &input) {
+  splice::visit(splice::overloaded{[](const pointer::down &) { pointerHeld() = true; },
+                                   [](const pointer::up &) { pointerHeld() = false; },
+                                   [](const pointer::cancel &) { pointerHeld() = false; },
+                                   [](const auto &) {}},
+                input);
+}
 
 // Where a pointer event is.
 [[nodiscard]] inline skia::SkPoint where(const PointerEvent &event) {
@@ -4547,6 +4561,7 @@ public:
 
   // -- input
   bool dispatchPointer(const PointerEvent &input) {
+    notePointerHeld(input);
     const skia::SkPoint at = where(input);
     splice::visit(splice::overloaded{[&](const pointer::move &) {
                             this->setHover(at.fX, at.fY);
@@ -5031,6 +5046,7 @@ public:
   }
 
   bool pointer(const PointerEvent &input) {
+    notePointerHeld(input);
     if (fCaptured.alive()) {
       const bool handled = fCaptured.pointer(input);
       if (fCaptured.captured() == 0) {

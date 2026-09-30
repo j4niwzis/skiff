@@ -265,6 +265,16 @@ public:
     // pointer moves up or down at once -- that is a scroll, which what holds
     // this takes. Across, it is a selection at once, as a mouse drags over
     // words: made to wait, a drag over a message's text selected nothing.
+    // The release went elsewhere -- another scene, past the window: the
+    // press is over, not a drag to follow the pointer on.
+    if (!skiff::scene::pointerHeld()) {
+      fPressed = false;
+      if (fDragging) {
+        fDragging = false;
+        reply.releasePointer();
+      }
+      return;
+    }
     if (fPressed && !fDragging) {
       const bool across = std::abs(at.x - fPressX) >= std::abs(at.y - fPressY);
       if (!across && std::chrono::steady_clock::now() - fLastPress < std::chrono::milliseconds(250)) {
@@ -276,11 +286,27 @@ public:
     if (!fDragging) {
       return;
     }
+    fDragX = at.x;
+    fDragY = at.y;
     fCaret = this->offsetAt(at.x, at.y);
     this->takePillsWhole();
     this->markDamaged();
     reply.handle();
   }
+  // Dragged past a scrolling view's edge, the text moves under a pointer
+  // held still: the selection follows it, as a move would.
+  void update(double) {
+    if (!fDragging) {
+      return;
+    }
+    const std::size_t now = this->offsetAt(fDragX, fDragY);
+    if (now != fCaret) {
+      fCaret = now;
+      this->takePillsWhole();
+      this->markDamaged();
+    }
+  }
+  [[nodiscard]] bool wantsTick() const { return fDragging; }
   void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::up &,
                  skiff::scene::PointerReply &reply) {
     // Pressed and let go without selecting: a link there is opened.
@@ -787,6 +813,7 @@ private:
   bool fBaseBold = false;
   bool fNodeStyleActive = false;
   bool fSelectable = false;
+  float fDragX = 0.0f, fDragY = 0.0f;  // where a selecting drag is now
   float fPressX = 0.0f, fPressY = 0.0f;
   bool fShrinks = false;
   bool fDragging = false;
