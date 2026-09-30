@@ -7,6 +7,31 @@ import skiff.scene;
 
 export namespace skiff::nodes {
 
+// Quotes inside quotes, coloured as Telegram colours its peers (tdesktop's
+// historyPeerNNameFg, in the order of Telegram's colour indices: red,
+// orange, violet, green, sea, blue, pink): the first level in the quote's
+// own colour, each deeper one in the next of these -- one the same as the
+// level's own passed over.
+inline constexpr std::array<skia::SkColor, 7> kQuoteColours{
+    0xFFC03D33u, 0xFFCE671Bu, 0xFF8544D6u, 0xFF4FAD2Du, 0xFF2996ADu, 0xFF168ACDu, 0xFFCD4073u,
+};
+[[nodiscard]] inline skia::SkColor quoteLevelColour(skia::SkColor own, int depth) {
+  if (depth <= 1) {
+    return own;
+  }
+  std::size_t index = 0;
+  for (int level = 2;; ++index) {
+    const skia::SkColor next = kQuoteColours[index % kQuoteColours.size()];
+    if ((next & 0x00FFFFFFu) == (own & 0x00FFFFFFu)) {
+      continue;
+    }
+    if (level == depth) {
+      return next;
+    }
+    ++level;
+  }
+}
+
 // Links in the text: a range of it, and where it goes. Drawn in their own
 // colour, underlined, where they stand; a press on one that does not
 // become a selection opens it through skiff::scene::openLink.
@@ -526,7 +551,7 @@ public:
           deepest = std::max(deepest, this->styleAt(one.first).depth);
         }
       }
-      const float indent = kQuoteIndent * static_cast<float>(deepest);
+      const float indent = kQuoteIndent * static_cast<float>(deepest) + (deepest > 0 ? kQuoteRight : 0.0f);
       fLines = p.wrap(fText, room - indent, fSize, fBold);
       state.fHeight =
           static_cast<float>(std::max<std::size_t>(1, fLines.size())) *
@@ -572,6 +597,9 @@ public:
     const skiff::paint::Painter p(canvas, *font);
     const int saved = canvas->save();
     const skia::SkRect &bounds = state.fBounds;
+    if (fWrapped && !fStyles.empty()) {
+      this->drawQuotes(canvas, p, alpha);
+    }
     this->drawSelection(canvas, p, alpha);
     if (fWrapped) {
       float y = bounds.fTop + fSize;
@@ -750,27 +778,6 @@ private:
         cuts.push_back(std::min(one.last, end));
       }
     }
-    // A quoted line, as tdesktop's blockquote: a faint plate of the quote's
-    // colour across the text's width, a bar in it at its start; the words
-    // in the text's own colour over it -- readable on any bubble.
-    // A quote inside a quote: a bar for each level, each in a colour of its
-    // own, so that they are told apart.
-    if (const int depth = this->styleAt(start).depth; depth > 0) {
-      skia::SkPaint plate;
-      plate.setAntiAlias(true);
-      plate.setColor(quoteColourAt(fQuoteColour, depth));
-      plate.setAlphaf(0.12f * alpha);
-      canvas->drawRect(skia::SkRect::MakeXYWH(x, y - fSize, fState.fBounds.fRight - x, fSize * 1.25f), plate);
-      for (int level = 0; level < depth; ++level) {
-        skia::SkPaint bar;
-        bar.setAntiAlias(true);
-        bar.setColor(quoteColourAt(fQuoteColour, level + 1));
-        bar.setAlphaf(bar.getAlphaf() * alpha);
-        canvas->drawRoundRect(skia::SkRect::MakeXYWH(x + static_cast<float>(level) * kQuoteIndent, y - fSize, 2.5f,
-                                                     fSize * 1.25f),
-                              1.25f, 1.25f, bar);
-      }
-    }
     std::ranges::sort(cuts);
     cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
     float at = x + this->indentOf(start);
@@ -856,20 +863,62 @@ private:
     }
   }
 
-  // How far a line's text stands in: a quoted one's, past its bar.
-  static constexpr float kQuoteIndent = 10.0f;
+  // How far a line's text stands in: a quoted one's, past its bar -- for
+  // each level. And the room a quote keeps at its right, for its mark.
+  static constexpr float kQuoteIndent = 12.0f;
+  static constexpr float kQuoteRight = 16.0f;
+  static constexpr float kQuoteRadius = 5.0f;
+  // The quotes, as Telegram draws a blockquote: each run of lines in a
+  // level of quote on a rounded plate of its own, faint in the level's
+  // colour, from its indent to the text's right edge, a bar at its left and
+  // a quote mark at its top right. A quote inside a quote lies on the outer
+  // one's plate: its words on both tints. The words themselves in the
+  // text's colour, readable on any bubble.
+  void drawQuotes(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float alpha) const {
+    const skia::SkRect &bounds = fState.fBounds;
+    const float lineHeight = fSize * 1.25f;
+    std::vector<int> depths;
+    int deepest = 0;
+    for (const auto &[start, line] : this->shownLines()) {
+      depths.push_back(this->styleAt(start).depth);
+      deepest = std::max(deepest, depths.back());
+    }
+    for (int level = 0; level < deepest; ++level) {
+      const skia::SkColor tint = quoteColourAt(fQuoteColour, level + 1);
+      for (std::size_t i = 0; i < depths.size();) {
+        if (depths[i] <= level) {
+          ++i;
+          continue;
+        }
+        std::size_t j = i;
+        while (j < depths.size() && depths[j] > level) {
+          ++j;
+        }
+        const float left = bounds.fLeft + static_cast<float>(level) * kQuoteIndent;
+        const skia::SkRect plate = skia::SkRect::MakeLTRB(left, bounds.fTop + static_cast<float>(i) * lineHeight,
+                                                          bounds.fRight, bounds.fTop + static_cast<float>(j) * lineHeight);
+        const int saved = canvas->save();
+        canvas->clipRRect(skia::SkRRect::MakeRectXY(plate, kQuoteRadius, kQuoteRadius), true);
+        skia::SkPaint fill;
+        fill.setAntiAlias(true);
+        fill.setColor(tint);
+        fill.setAlphaf(0.12f * alpha);
+        canvas->drawRect(plate, fill);
+        fill.setColor(tint);
+        fill.setAlphaf(fill.getAlphaf() * alpha);
+        canvas->drawRect(skia::SkRect::MakeXYWH(left, plate.fTop, 3.0f, plate.height()), fill);
+        canvas->restoreToCount(saved);
+        p.text("\u201D", bounds.fRight - kQuoteRight + 4.0f, plate.fTop + fSize, fSize, tint, alpha);
+        i = j;
+      }
+    }
+  }
   [[nodiscard]] float indentOf(std::size_t start) const {
     return kQuoteIndent * static_cast<float>(this->styleAt(start).depth);
   }
-  // A quote's colour at a depth: its own at the first, then turned -- its
-  // channels taken round -- so that each level looks another.
+  // A quote's colour at a depth: its own at the first, then Telegram's.
   [[nodiscard]] static skia::SkColor quoteColourAt(skia::SkColor colour, int depth) {
-    const unsigned a = (colour >> 24) & 0xFF, r = (colour >> 16) & 0xFF, g = (colour >> 8) & 0xFF, b = colour & 0xFF;
-    switch ((depth - 1) % 3) {
-      case 1: return (a << 24) | (g << 16) | (b << 8) | r;
-      case 2: return (a << 24) | (b << 16) | (r << 8) | g;
-      default: return colour;
-    }
+    return quoteLevelColour(colour, depth);
   }
   // The width a wrapped line has to fit into, resolved as layout would.
   [[nodiscard]] float roomFor(const skia::SkRect &parent) const {
