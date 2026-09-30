@@ -3542,17 +3542,65 @@ inline Backdrop &backdrop() {
   return kept;
 }
 
+// Panels -- a window's columns and bars -- over what is behind the whole
+// window: their fill at an opacity, frosted, or with a light edge, one look
+// for all of them, read as they are painted: set again (a chat opened may
+// change it) and the window repainted, nothing made again. A panel's fill
+// is known by its colour, one of `panels`; a fill of the same colour inside
+// a panel's is the same fill again, not drawn -- two at an opacity were
+// darker. `tints` -- a row hovered, the one chosen -- only at the opacity.
+struct PanelLook {
+  bool active = false;
+  float opacity = 1.0f;
+  bool frosted = false;
+  bool edge = false;
+  std::vector<skia::SkColor> panels;
+  std::vector<skia::SkColor> tints;
+  friend bool operator==(const PanelLook &, const PanelLook &) = default;
+};
+inline PanelLook &panelLook() {
+  static PanelLook look;
+  return look;
+}
+// Being drawn inside a panel's fill: for the walk, set by the fill, put
+// back as the node that has it is done.
+inline bool &insidePanel() {
+  static bool inside = false;
+  return inside;
+}
+[[nodiscard]] inline skia::SkColor atOpacity(skia::SkColor colour, float opacity) {
+  const auto alpha = static_cast<skia::SkColor>(std::lround(static_cast<float>((colour >> 24) & 0xFFu) * opacity));
+  return (colour & 0x00FFFFFFu) | (std::min<skia::SkColor>(alpha, 255u) << 24);
+}
+
 // is hovered -- and its border, in its corner radius.
 inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
-  const std::optional<skia::SkColor> fill = state.fSelected && state.fSelectedBackground ? state.fSelectedBackground
+  std::optional<skia::SkColor> fill = state.fSelected && state.fSelectedBackground ? state.fSelectedBackground
                                             : state.fFocused && state.fFocusBackground     ? state.fFocusBackground
                                             // A disabled node does not light up under the pointer.
                                             : state.fHovered && !state.fDisabled && state.fHoverBackground
                                                 ? state.fHoverBackground
                                                                                             : state.fBackground;
+  // A panel's fill, where panels have a look: at its opacity, and what is
+  // under it knows it is in one.
+  const PanelLook &look = panelLook();
+  bool panel = false;
+  if (fill && look.active) {
+    if (std::ranges::contains(look.panels, *fill)) {
+      if (insidePanel()) {
+        fill.reset();
+      } else {
+        panel = true;
+        insidePanel() = true;
+        fill = atOpacity(*fill, look.opacity);
+      }
+    } else if (std::ranges::contains(look.tints, *fill)) {
+      fill = atOpacity(*fill, look.opacity);
+    }
+  }
   // Frosted: its piece of the blurred backdrop, one image drawn, clipped to
   // its box -- the blur made once, where the backdrop is drawn, never here.
-  if (state.fBackdrop && backdrop().image && !backdrop().device.isEmpty()) {
+  if ((state.fBackdrop || (panel && look.frosted)) && backdrop().image && !backdrop().device.isEmpty()) {
     skia::SkMatrix inverse;
     if (canvas->getTotalMatrix().invert(&inverse)) {
       const int saved = canvas->save();
@@ -3564,7 +3612,7 @@ inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
       canvas->restoreToCount(saved);
     }
   }
-  if (!fill && !state.fBorder && !state.fGradient && !state.fShadow)
+  if (!fill && !state.fBorder && !state.fGradient && !state.fShadow && !panel)
     return;
   if (state.fShadow) {
     skia::SkPaint paint;
@@ -3585,6 +3633,16 @@ inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
     paint.setColor(*fill);
     paint.setAlphaf(paint.getAlphaf() * alpha);
     canvas->drawRRect(roundedBox(state, state.fBounds), paint);
+  }
+  // Glass: a light edge round the panel.
+  if (panel && look.edge) {
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setStyle(skia::kStrokeStyle);
+    paint.setStrokeWidth(1.0f);
+    paint.setColor(atOpacity(0xFFFFFFFFu, 0.22f));
+    paint.setAlphaf(paint.getAlphaf() * alpha);
+    canvas->drawRRect(roundedBox(state, state.fBounds, 0.5f), paint);
   }
   if (state.fBorder && state.fBorder->width > 0.0f) {
     skia::SkPaint paint;
@@ -3611,6 +3669,11 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
     return;
   }
   ++drawnCount();
+  // A panel's fill found in it holds for what is under it, and no further.
+  struct PanelScope {
+    bool was;
+    ~PanelScope() { insidePanel() = was; }
+  } panelScope{insidePanel()};
   const float alpha = inheritedAlpha * state.fAlpha;
   // The canvas kept and given back only where this moves or cuts it: most
   // nodes do neither, and a save and a restore for each was most of what
