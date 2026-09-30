@@ -281,6 +281,10 @@ struct Margin {
 struct FrameResult {
   skia::SkRect fDamage = skia::SkRect::MakeEmpty();
   bool fWantsAnotherFrame = false;
+  // When a node next wants a frame on its own, where none animates -- a
+  // caret's blink -- in the time update() is given: infinity for never. A
+  // host sleeps until then, not a frame at a time.
+  double fWakeAtMs = std::numeric_limits<double>::infinity();
 };
 
 // The box a thing of that size occupies when its `origin` point is put on
@@ -1279,6 +1283,17 @@ inline bool &traceSettling() {
 }
 inline std::vector<Settling> &settlers() {
   static std::vector<Settling> kept;
+  return kept;
+}
+// Which nodes marked damage this frame, by type, and where: what a frame
+// repaints, and why. Kept only while a program asks (traceSettling), as
+// the settlers are.
+struct Damager {
+  const std::type_info *type = nullptr;
+  skia::SkRect rect = skia::SkRect::MakeEmpty();
+};
+inline std::vector<Damager> &damagers() {
+  static std::vector<Damager> kept;
   return kept;
 }
 inline void tellOverflow(Overflow one) {
@@ -2765,6 +2780,7 @@ void collectFocusable(AnyNodeRef &, std::vector<NodeId> &);
 [[nodiscard]] bool animating(AnyNodeRef &);
 [[nodiscard]] bool clickPath(AnyNodeRef &, const Path &, std::size_t, float,
                              float);
+[[nodiscard]] double wakeAt(AnyNodeRef &);
 
 // Transforms, the node's own time, and styles.
 template <class N>
@@ -2867,6 +2883,9 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
       // its laid-out bounds and its last drawn ones.
       damage = joined(joined(joined(damage, state.fBounds), state.fDrawnBounds),
                       state.fBounds.makeOffset(state.fShiftX, state.fShiftY));
+      if (traceSettling() && damagers().size() < 64) {
+        damagers().push_back({&typeid(N), damage});
+      }
     }
   }
   state.fMovedDamage = skia::SkRect::MakeEmpty();
@@ -3201,6 +3220,28 @@ template <class N> void collectFocusable(N &child, std::vector<NodeId> &out) {
   });
 }
 
+// When a node next wants a frame on its own: what it says with wakeAt(),
+// infinity where it says nothing -- the earliest of it and all in view
+// under it.
+template <class N>
+  requires requires(const N &n) {
+    { n.wakeAt() } -> std::convertible_to<double>;
+  }
+double ownWakeAt(const N &child) {
+  return child.wakeAt();
+}
+template <class N> double ownWakeAt(const N &) {
+  return std::numeric_limits<double>::infinity();
+}
+template <class N> double wakeAt(N &child) {
+  if (!child.fState.fVisible) {
+    return std::numeric_limits<double>::infinity();
+  }
+  double at = ownWakeAt(child);
+  eachChildInView(child, [&](auto &each) { at = std::min(at, walk::wakeAt(each)); });
+  return at;
+}
+
 template <class N> bool animating(N &child) {
   const bool transform = !child.fState.fTransforms.empty();
   if (transform || child.settling()) {
@@ -3306,6 +3347,7 @@ public:
     bool (*fClickPath)(void *, const Path &, std::size_t, float, float);
     const std::type_info &(*fType)();
     void (*fEachChild)(void *, void *context, AnyChildVisit visit);
+    double (*fWakeAt)(void *);
   };
   [[nodiscard]] const Ops &ops() const noexcept { return *fOps; }
   [[nodiscard]] void *node() const noexcept { return fNode; }
@@ -3369,6 +3411,7 @@ private:
       +[](void *n, void *context, AnyChildVisit visit) {
         eachChild(as<T>(n), [&](auto &child) { visitAsAny(child, context, visit); });
       },
+      +[](void *n) { return walk::wakeAt(as<T>(n)); },
   };
 
   void *fNode = nullptr;
@@ -3556,6 +3599,7 @@ inline void collectFocusable(AnyNodeRef &c, std::vector<NodeId> &out) {
   c.ops().fCollectFocusable(c.node(), out);
 }
 inline bool animating(AnyNodeRef &c) { return c.ops().fAnimating(c.node()); }
+inline double wakeAt(AnyNodeRef &c) { return c.ops().fWakeAt(c.node()); }
 inline bool clickPath(AnyNodeRef &c, const Path &path, std::size_t at, float x,
                       float y) {
   return c.ops().fClickPath(c.node(), path, at, x, y);
@@ -3650,7 +3694,7 @@ public:
     if (!bounds.isEmpty() && !damage.isEmpty() && !damage.intersect(bounds)) {
       damage = skia::SkRect::MakeEmpty();
     }
-    return {damage, walk::animating(fRoot)};
+    return {damage, walk::animating(fRoot), walk::wakeAt(fRoot)};
   }
   [[nodiscard]] bool hasFrameWork() {
     return walk::markDirty(fRoot) || walk::hasDamage(fRoot) ||
