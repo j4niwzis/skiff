@@ -3026,17 +3026,6 @@ template <class T, class F> void eachChildInDrawOrder(T &node, F &&f) {
   }
 }
 
-// The child at a position in eachChild order.
-template <class T, class F>
-void childAt(T &node, std::uint32_t index, F &&f) {
-  std::uint32_t seen = 0;
-  eachChild(node, [&](auto &child) {
-    if (seen++ == index) {
-      f(child);
-    }
-  });
-}
-
 // The union of the visible children's boxes.
 template <class T> [[nodiscard]] skia::SkRect childBounds(T &node) {
   skia::SkRect content = skia::SkRect::MakeEmpty();
