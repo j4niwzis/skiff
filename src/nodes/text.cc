@@ -311,15 +311,21 @@ public:
     }
   }
   [[nodiscard]] bool wantsTick() const { return fDragging; }
-  void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::up &,
+  void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::up &release,
                  skiff::scene::PointerReply &reply) {
-    // Pressed and let go without selecting: a link there is opened.
+    // Pressed and let go without selecting: a link there is opened; else a
+    // click, for what holds the text -- a quoted stretch in a message goes
+    // to what it quotes. A selectable text took every press, and a click on
+    // it reached nothing above.
     if (fPressed && !fDragging) {
       if (const Link *link = this->linkAt(fLastOffset)) {
         fPressed = false;
         skiff::scene::openLink(link->target);
         reply.handle();
         return;
+      }
+      if (fState.fBounds.contains(release.x, release.y)) {
+        reply.fClickAbove = skia::SkPoint::Make(release.x, release.y);
       }
     }
     fPressed = false;
