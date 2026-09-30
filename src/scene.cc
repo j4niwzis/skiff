@@ -1298,6 +1298,17 @@ inline std::vector<Damager> &damagers() {
   static std::vector<Damager> kept;
   return kept;
 }
+// What made a frame lay out: the nodes found not laid out, and why -- their
+// own layout undone, or their set of children changed. Kept while traced.
+struct Dirtier {
+  const std::type_info *type = nullptr;
+  bool children = false;  // its children changed; else its own layout was undone
+  skia::SkRect bounds = skia::SkRect::MakeEmpty();
+};
+inline std::vector<Dirtier> &dirtiers() {
+  static std::vector<Dirtier> kept;
+  return kept;
+}
 inline void tellOverflow(Overflow one) {
   if (overflows().size() < 256) {
     overflows().push_back(std::move(one));
@@ -2860,6 +2871,9 @@ template <class N> bool markDirty(N &child) {
   });
   if (signature != state.fChildSignature) {
     state.fChildSignature = signature;
+    if (traceSettling() && dirtiers().size() < 64) {
+      dirtiers().push_back({&typeid(N), true, state.fBounds});
+    }
     state.fLayoutValid = false;
     // Repainted where a child that went was drawn -- not the whole: one that
     // came is new and repaints itself, one that stayed and moved repaints
@@ -2872,6 +2886,9 @@ template <class N> bool markDirty(N &child) {
         state.fMovedDamage = joined(state.fMovedDamage, was.fArea);
       }
     }
+  }
+  if (!state.fLayoutValid && !below && traceSettling() && dirtiers().size() < 64) {
+    dirtiers().push_back({&typeid(N), false, state.fBounds});
   }
   state.fSubtreeDirty = below || !state.fLayoutValid;
   // A pending move is the parent's to carry out: it lays out again, and this
