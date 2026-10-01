@@ -65,6 +65,10 @@ struct TextStyled {
   // Marked: a stretch pointed at -- the part of a message a reply quoted
   // -- on a plate of the quote's colour, apart from what is selected.
   bool marked = false;
+  // A block of code (HTML's <pre>), and the language it says it is in: what
+  // holds the text may draw it as a block of its own.
+  bool block = false;
+  std::string language;
 };
 
 // What a text draws of the program's, by what it stands for: a pill's
