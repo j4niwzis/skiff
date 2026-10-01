@@ -116,6 +116,13 @@ inline void drawPill(skia::SkCanvas *canvas, const skiff::paint::Painter &p, flo
 }
 
 // Which text's selection is shown, of all of them: the last pressed.
+// A selectable text pressed with the right button: what it asks a menu for
+// -- its selection, all of it where the press was not on what was selected
+// -- for the program to read; it drains them.
+inline std::vector<std::string> &textMenusAsked() {
+  static std::vector<std::string> asked;
+  return asked;
+}
 inline std::uint64_t &textSelectionOwner() {
   static std::uint64_t owner = 0;
   return owner;
@@ -280,7 +287,25 @@ public:
   using Node::onPointer;
   void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::down &at,
                  skiff::scene::PointerReply &reply) {
-    if (!fSelectable || at.button != 1) {
+    if (!fSelectable) {
+      return;
+    }
+    if (at.button == 3) {
+      const std::size_t on = this->offsetAt(at.x, at.y);
+      const std::size_t low = std::min(fAnchor, fCaret), high = std::max(fAnchor, fCaret);
+      const bool in_selection = textSelectionOwner() == fState.fId && low != high && on >= low && on <= high;
+      if (!in_selection) {
+        fAnchor = 0;
+        fCaret = fText.size();
+        textSelectionOwner() = fState.fId;
+        this->publishSelection();
+        this->markDamaged();
+      }
+      textMenusAsked().push_back(this->selected());
+      reply.handle();
+      return;
+    }
+    if (at.button != 1) {
       return;
     }
     const std::size_t at_offset = this->offsetAt(at.x, at.y);
