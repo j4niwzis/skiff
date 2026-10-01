@@ -44,19 +44,51 @@ public:
   }
 
   void drawSelf(skia::SkCanvas *canvas, float alpha) {
+    namespace detail = skiff::scene::detail;
     const skiff::scene::State &state = fState;
+    const skia::SkRRect shape = skia::SkRRect::MakeRectXY(state.fBounds, state.fCornerRadius, state.fCornerRadius);
+    // A panel's colour -- a dialog's sheet, a drawer's -- painted as the
+    // panels' look says, as a fill is: at its opacity, frosted or edged; the
+    // same colour inside a panel not painted again.
+    skia::SkColor colour = fColour;
+    const detail::PanelLook &look = detail::panelLook();
+    bool panel = false;
+    if (look.active && std::ranges::contains(look.panels, colour)) {
+      if (detail::insidePanel()) {
+        return;
+      }
+      panel = true;
+      detail::insidePanel() = true;
+      colour = detail::atOpacity(colour, look.opacity);
+    } else if (look.active && std::ranges::contains(look.tints, colour)) {
+      colour = detail::atOpacity(colour, look.opacity);
+    }
+    if (panel && look.frosted && detail::backdrop().image && !detail::backdrop().device.isEmpty()) {
+      skia::SkMatrix inverse;
+      if (canvas->getTotalMatrix().invert(&inverse)) {
+        const int saved = canvas->save();
+        canvas->clipRRect(shape, true);
+        skia::SkPaint frost;
+        frost.setAlphaf(alpha);
+        canvas->drawImageRect(detail::backdrop().image, inverse.mapRect(detail::backdrop().device),
+                              skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &frost);
+        canvas->restoreToCount(saved);
+      }
+    }
     skia::SkPaint paint;
     paint.setAntiAlias(true);
-    paint.setColor(fColour);
+    paint.setColor(colour);
     // The colour's own alpha, and the node's on top of it.
-    paint.setAlphaf(alpha * static_cast<float>((fColour >> 24) & 0xffu) / 255.0f);
-    if (state.fCornerRadius > 0.0f) {
-      canvas->drawRRect(skia::SkRRect::MakeRectXY(state.fBounds,
-                                                  state.fCornerRadius,
-                                                  state.fCornerRadius),
-                        paint);
-    } else {
-      canvas->drawRect(state.fBounds, paint);
+    paint.setAlphaf(alpha * static_cast<float>((colour >> 24) & 0xffu) / 255.0f);
+    canvas->drawRRect(shape, paint);
+    if (panel && look.edge) {
+      skia::SkPaint edge;
+      edge.setAntiAlias(true);
+      edge.setStyle(skia::kStrokeStyle);
+      edge.setStrokeWidth(1.0f);
+      edge.setColor(detail::atOpacity(0xFFFFFFFFu, 0.22f));
+      edge.setAlphaf(edge.getAlphaf() * alpha);
+      canvas->drawRRect(shape, edge);
     }
   }
 
