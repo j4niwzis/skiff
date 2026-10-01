@@ -112,6 +112,12 @@ public:
       return;
     }
     const skia::SkSamplingOptions sampling(skia::SkFilterMode::kLinear);
+    // At its own size: put down as it is, nothing filtered.
+    if (box.width() * canvas->getTotalMatrix().getScaleX() == iw && box.height() * canvas->getTotalMatrix().getScaleY() == ih) {
+      splice::visit([&](auto how) { drawFitted(canvas, *found, box, iw, ih, how, skia::SkSamplingOptions(), paint); }, fFit);
+      canvas->restoreToCount(saved);
+      return;
+    }
     splice::visit(
         [&](auto how) { drawFitted(canvas, *found, box, iw, ih, how, sampling, paint); },
         fFit);
@@ -130,9 +136,11 @@ private:
     const float sx = matrix.getScaleX(), sy = matrix.getScaleY();
     const int width = static_cast<int>(std::lround(box.width() * sx));
     const int height = static_cast<int>(std::lround(box.height() * sy));
-    // Only smaller, and not huge: a picture shown at its size or larger is
-    // drawn as it is.
-    if (width <= 0 || height <= 0 || (static_cast<float>(width) >= iw && static_cast<float>(height) >= ih) ||
+    // Shown at another size than its own -- smaller, or larger: a thumbnail
+    // shown wider than it came -- scaled to it once, not filtered at every
+    // repaint, which was most of a frame on a software canvas. Not huge, and
+    // not where it is its own size already.
+    if (width <= 0 || height <= 0 || (static_cast<float>(width) == iw && static_cast<float>(height) == ih) ||
         static_cast<std::int64_t>(width) * height > (1 << 21)) {
       return nullptr;
     }
@@ -159,13 +167,15 @@ private:
       const skia::SkSamplingOptions smooth(skia::SkFilterMode::kLinear, skia::SkMipmapMode::kLinear);
       splice::visit([&](auto how) { drawFitted(into, image, box, iw, ih, how, smooth, plain); }, fFit);
       fScaled = surface->makeImageSnapshot();
-      // Kept for the others, a few hundred at most: the oldest half let go.
-      if (scaledCache().size() >= kScaledKept) {
-        auto at = scaledCache().begin();
-        for (std::size_t i = 0; i < kScaledKept / 2 && at != scaledCache().end(); ++i)
-          at = scaledCache().erase(at);
+      // Kept for the others, within a number and a size: past them, the
+      // cache let go of -- the nodes keep what they draw.
+      const std::size_t bytes = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
+      if (scaledCache().size() >= kScaledKept || scaledBytes() + bytes > kScaledBytes) {
+        scaledCache().clear();
+        scaledBytes() = 0;
       }
       scaledCache().insert_or_assign(key, fScaled);
+      scaledBytes() += bytes;
       fScaledOf = image->uniqueID();
       fScaledWidth = width;
       fScaledHeight = height;
@@ -199,6 +209,11 @@ private:
     friend auto operator<=>(const ScaledKey &, const ScaledKey &) = default;
   };
   static constexpr std::size_t kScaledKept = 512;
+  static constexpr std::size_t kScaledBytes = std::size_t{64} << 20;
+  static std::size_t &scaledBytes() {
+    static std::size_t kept = 0;
+    return kept;
+  }
   static std::map<ScaledKey, skia::Sp<skia::SkImage>> &scaledCache() {
     static std::map<ScaledKey, skia::Sp<skia::SkImage>> kept;
     return kept;
