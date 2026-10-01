@@ -4196,20 +4196,55 @@ void hover(N &child, float x, float y, bool visibleAbove,
   }
   const bool childrenVisible =
       visible && (!state.fMasking || state.fBounds.contains(x, y));
+  // Under something in front: not hovered. Where the point is in more than
+  // one child -- a panel slid over the chats, a dialog over the window --
+  // the front-most that takes input there covers those drawn before it, as
+  // it does for a press. Hover was only where things are: the chats behind
+  // an account's settings lit up under the pointer through the panel.
+  std::vector<NodeId> covered;
+  if (childrenVisible) {
+    std::vector<std::pair<NodeId, std::uint32_t>> under;
+    eachChildInDrawOrder(child, [&](auto &each, std::uint32_t index) {
+      const State &one = stateOf(each);
+      if (one.fVisible && !one.fBounds.isEmpty() &&
+          one.fBounds.makeOffset(one.fShiftX, one.fShiftY).contains(x, y)) {
+        under.emplace_back(one.fId, index);
+      }
+    });
+    if (under.size() > 1) {
+      std::optional<std::uint32_t> front;
+      eachChildInDrawOrder(child, [&](auto &each, std::uint32_t index) {
+        if (std::ranges::contains(under, index, &std::pair<NodeId, std::uint32_t>::second)) {
+          Path ignored;
+          if (walk::hitPath(each, x, y, ignored)) {
+            front = index;
+          }
+        }
+      });
+      if (front) {
+        for (const auto &[id, index] : under) {
+          if (index < *front) {
+            covered.push_back(id);
+          }
+        }
+      }
+    }
+  }
   // Only where hover can change: a child the point is in, one that was
   // hovered, and one placed by its anchor, which can stick out of this --
   // not every node on the screen at every move of the mouse.
   bool within = false;
   eachChildInView(child, [&](auto &each) {
     const State &one = stateOf(each);
+    const bool shown = childrenVisible && !std::ranges::contains(covered, one.fId);
     // Hidden, or under something hidden: only to let go of a hover it had.
     // A hidden list's rows, never laid out, have empty bounds, and were all
     // gone into at every move of the pointer.
     if (work::disabled() || one.fHovered || one.fHoverWithin ||
-        (childrenVisible && one.fVisible &&
+        (shown && one.fVisible &&
          (one.fOutOfFlow || one.fBounds.isEmpty() ||
           one.fBounds.makeOffset(one.fShiftX, one.fShiftY).contains(x, y)))) {
-      walk::hover(each, x, y, childrenVisible, own, viewportWidth);
+      walk::hover(each, x, y, shown, own, viewportWidth);
     }
     within = within || one.fHovered || one.fHoverWithin;
   });
