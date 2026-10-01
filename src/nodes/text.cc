@@ -318,16 +318,11 @@ public:
       }
       const std::size_t low = std::min(fAnchor, fCaret), high = std::max(fAnchor, fCaret);
       const bool in_selection = textSelectionOwner() == fState.fId && low != high && on >= low && on <= high;
-      if (!in_selection) {
-        fAnchor = 0;
-        fCaret = fText.size();
-        textSelectionOwner() = fState.fId;
-        this->publishSelection();
-        this->markDamaged();
-      }
+      // What its menu copies: the selection pressed in, else all of it --
+      // all of it not selected for that, lit up blue at every right-click.
       // Not taken: what holds the text may have a menu of its own -- a
       // message's -- which the program puts first.
-      textMenusAsked().push_back({this->selected(), std::move(link)});
+      textMenusAsked().push_back({in_selection ? this->selected() : fText, std::move(link)});
       return;
     }
     if (at.button != 1) {
