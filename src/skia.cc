@@ -169,9 +169,18 @@ inline std::vector<::SkCodecs::Decoder> decoders() {
 // An image from the bytes of a file of it -- as the build decodes them; the
 // first frame of an animated one -- or nothing where it is none of them, or
 // broken.
+// The most pixels a picture is decoded at: 64 Mi, 256 MB as RGBA. A file
+// of a few kilobytes can say it is 20000 pixels square, and decoding it
+// whole asked for gigabytes before anything scaled it down.
+inline constexpr std::int64_t kMostPixels = std::int64_t{64} << 20;
+
 inline ::sk_sp<::SkImage> decodeImage(const void *bytes, std::size_t size) {
   auto codec = ::SkCodec::MakeFromData(::SkData::MakeWithCopy(bytes, size), decoders());
   if (!codec) {
+    return nullptr;
+  }
+  const ::SkISize dimensions = codec->dimensions();
+  if (dimensions.isEmpty() || std::int64_t{dimensions.width()} * dimensions.height() > kMostPixels) {
     return nullptr;
   }
   auto [image, result] = codec->getImage();
@@ -219,6 +228,9 @@ inline std::vector<Frame> decodeFrames(const void *bytes, std::size_t size,
     return out;
   }
   const ::SkImageInfo info = codec->getInfo().makeColorType(::kN32_SkColorType).makeAlphaType(::kPremul_SkAlphaType);
+  if (info.isEmpty() || std::int64_t{info.width()} * info.height() > kMostPixels) {
+    return out;
+  }
   const int count = std::max(1, codec->getFrameCount());
   std::size_t used = 0;
   for (int i = 0; i < count; ++i) {
