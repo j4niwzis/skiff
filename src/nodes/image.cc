@@ -137,6 +137,16 @@ private:
       return nullptr;
     }
     if (!fScaled || fScaledOf != image->uniqueID() || fScaledWidth != width || fScaledHeight != height) {
+      // Scaled already for another node -- the same avatar in another row,
+      // a row made again: that copy, not another made.
+      const ScaledKey key{image->uniqueID(), width, height, fFit.index()};
+      if (const auto known = scaledCache().find(key); known != scaledCache().end()) {
+        fScaled = known->second;
+        fScaledOf = image->uniqueID();
+        fScaledWidth = width;
+        fScaledHeight = height;
+        return &fScaled;
+      }
       fScaled = nullptr;
       skia::Sp<skia::SkSurface> surface = skia::Raster(skia::SkImageInfo::MakeN32Premul(width, height));
       if (!surface) {
@@ -149,6 +159,13 @@ private:
       const skia::SkSamplingOptions smooth(skia::SkFilterMode::kLinear, skia::SkMipmapMode::kLinear);
       splice::visit([&](auto how) { drawFitted(into, image, box, iw, ih, how, smooth, plain); }, fFit);
       fScaled = surface->makeImageSnapshot();
+      // Kept for the others, a few hundred at most: the oldest half let go.
+      if (scaledCache().size() >= kScaledKept) {
+        auto at = scaledCache().begin();
+        for (std::size_t i = 0; i < kScaledKept / 2 && at != scaledCache().end(); ++i)
+          at = scaledCache().erase(at);
+      }
+      scaledCache().insert_or_assign(key, fScaled);
       fScaledOf = image->uniqueID();
       fScaledWidth = width;
       fScaledHeight = height;
@@ -174,6 +191,18 @@ private:
     canvas->drawImageRect(image, to, sampling, &paint);
   }
 
+  // The scaled copies, by picture, size and fit: shared by every Image.
+  struct ScaledKey {
+    std::uint32_t image = 0;
+    int width = 0, height = 0;
+    std::size_t fit = 0;
+    friend auto operator<=>(const ScaledKey &, const ScaledKey &) = default;
+  };
+  static constexpr std::size_t kScaledKept = 512;
+  static std::map<ScaledKey, skia::Sp<skia::SkImage>> &scaledCache() {
+    static std::map<ScaledKey, skia::Sp<skia::SkImage>> kept;
+    return kept;
+  }
   // Waiting on the source, where it says who waits: whether it does.
   template <class S>
     requires requires(const S &source) {
