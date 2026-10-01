@@ -119,8 +119,13 @@ inline void drawPill(skia::SkCanvas *canvas, const skiff::paint::Painter &p, flo
 // A selectable text pressed with the right button: what it asks a menu for
 // -- its selection, all of it where the press was not on what was selected
 // -- for the program to read; it drains them.
-inline std::vector<std::string> &textMenusAsked() {
-  static std::vector<std::string> asked;
+// And the link the press was on, where it was on one: the menu offers it.
+struct TextMenuAsk {
+  std::string text;
+  std::optional<std::string> link;
+};
+inline std::vector<TextMenuAsk> &textMenusAsked() {
+  static std::vector<TextMenuAsk> asked;
   return asked;
 }
 inline std::uint64_t &textSelectionOwner() {
@@ -292,6 +297,11 @@ public:
     }
     if (at.button == 3) {
       const std::size_t on = this->offsetAt(at.x, at.y);
+      const Link *pressed_link = this->linkAt(on);
+      std::optional<std::string> link;
+      if (pressed_link && !pressed_link->target.empty()) {
+        link = pressed_link->target;
+      }
       const std::size_t low = std::min(fAnchor, fCaret), high = std::max(fAnchor, fCaret);
       const bool in_selection = textSelectionOwner() == fState.fId && low != high && on >= low && on <= high;
       if (!in_selection) {
@@ -303,7 +313,7 @@ public:
       }
       // Not taken: what holds the text may have a menu of its own -- a
       // message's -- which the program puts first.
-      textMenusAsked().push_back(this->selected());
+      textMenusAsked().push_back({this->selected(), std::move(link)});
       return;
     }
     if (at.button != 1) {
