@@ -114,11 +114,15 @@ public:
     bool whole = false;
     scene::eachChild(*this, [&](auto &contents) {
       scene::State &list = scene::stateOf(contents);
-      // A row gone: where it was is said in the contents' space, not the
-      // screen's -- all of it repainted, as before.
+      // A row gone -- or made again in its place: where it was, said in the
+      // contents' space, put where it was drawn on the screen -- that, not
+      // all of the view, repainted.
       if (!list.fMovedDamage.isEmpty()) {
-        whole = true;
-        return;
+        skia::SkRect gone = list.fMovedDamage.makeOffset(0.0f, -before);
+        if (gone.intersect(view)) {
+          fState.fMovedDamage = scene::joined(fState.fMovedDamage, gone);
+        }
+        list.fMovedDamage = skia::SkRect::MakeEmpty();
       }
       list.fLayoutMoved = skia::SkRect::MakeEmpty();
       scene::eachChild(contents, [&](auto &item) {
