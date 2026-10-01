@@ -3483,7 +3483,11 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   if (state.fShrunkTo > 0.0f) {
     width = std::min(width, state.fShrunkTo);
   }
-  width = std::max(width, state.fMinWidth);
+  // At least its least width -- but, sized by what it holds, never past the
+  // room its parent has: a message's bubble widened to hold its time beside
+  // its last line, in a chat narrower than that, stood out of its row by as
+  // much, over the edge and past what was repainted of it.
+  width = std::max(width, autoX && parentW > 0.0f ? std::min(state.fMinWidth, parentW) : state.fMinWidth);
   height = std::max(height, state.fMinHeight);
   if (state.fMaxWidth > 0.0f) {
     width = std::min(width, state.fMaxWidth);
