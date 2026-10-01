@@ -181,6 +181,16 @@ public:
     fMeasuredSize = -1.0f;
     this->invalidateLayout();
   }
+  // Drawn in the monospace face, as code: each character as wide as the next.
+  void setMonospace(bool monospace) {
+    if (monospace == fMonospace) {
+      return;
+    }
+    fMonospace = monospace;
+    fMeasuredSize = -1.0f;
+    fWrappedRoom = -1.0f;
+    this->invalidateLayout();
+  }
   [[nodiscard]] const std::string &text() const noexcept { return fText; }
 
   // Selectable, as a message's text is: a drag across it selects, a double
@@ -276,7 +286,7 @@ public:
     if (font == nullptr) {
       return 0.0f;
     }
-    const skiff::paint::Painter p(nullptr, *font);
+    const skiff::paint::Painter p(nullptr, *font, fMonospace);
     if (!fWrapped || fLines.empty()) {
       return p.measure(fText, fSize, fBold);
     }
@@ -547,7 +557,7 @@ public:
     if (font == nullptr) {
       return;
     }
-    const skiff::paint::Painter p(nullptr, *font);
+    const skiff::paint::Painter p(nullptr, *font, fMonospace);
     // Its width on one line: measured again only as the text or size change.
     if (fMeasuredSize != fSize) {
       fNatural = p.measure(fText, fSize, fBold);
@@ -630,7 +640,7 @@ public:
     if (font == nullptr || fText.empty()) {
       return;
     }
-    const skiff::paint::Painter p(canvas, *font);
+    const skiff::paint::Painter p(canvas, *font, fMonospace);
     const int saved = canvas->save();
     const skia::SkRect &bounds = state.fBounds;
     if (fWrapped && !fStyles.empty()) {
@@ -694,7 +704,7 @@ private:
     if (font == nullptr || lines.empty()) {
       return 0;
     }
-    const skiff::paint::Painter p(nullptr, *font);
+    const skiff::paint::Painter p(nullptr, *font, fMonospace);
     const skia::SkRect &bounds = fState.fBounds;
     const float lineHeight = fSize * 1.25f;
     const auto index = static_cast<std::size_t>(
@@ -977,6 +987,7 @@ private:
   float fSize;
   skia::SkColor fColour;
   bool fBold;
+  bool fMonospace = false;
   bool fWrapped = false;
   // Wrapped or not as chosen; none chosen, as it fits.
   std::optional<bool> fWrapChoice;

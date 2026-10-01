@@ -322,6 +322,22 @@ public:
     }
     font.setEmbolden(bold);
   }
+  // The face code is drawn in -- each character as wide as the next -- for
+  // a text that asks for it; none set, code is drawn in the primary face.
+  void setMonospace(skia::Sp<skia::SkTypeface> face) {
+    fMonospace = std::move(face);
+    this->invalidateCaches();
+  }
+  [[nodiscard]] const skia::Sp<skia::SkTypeface> &monospace() const noexcept { return fMonospace; }
+  // The face for code, where there is one: set on the font for its run.
+  [[nodiscard]] bool applyMonospace(skia::SkFont &font, bool bold) const {
+    if (!fMonospace) {
+      return false;
+    }
+    font.setTypeface(fMonospace);
+    font.setEmbolden(bold);
+    return true;
+  }
   // Where faces for characters none of the fallbacks has are looked for.
   void setFontManager(skia::Sp<skia::SkFontMgr> manager) {
     fManager = std::move(manager);
@@ -798,6 +814,7 @@ private:
 
   skia::Sp<skia::SkTypeface> fPrimary;
   skia::Sp<skia::SkTypeface> fPrimaryBold;
+  skia::Sp<skia::SkTypeface> fMonospace;
   // Mutable: a face found on demand while drawing is added to them.
   mutable std::vector<skia::Sp<skia::SkTypeface>> fFallbacks;
   mutable std::unordered_map<std::int32_t, int> fCoverage;
@@ -955,8 +972,10 @@ inline void horizontalGradient(skia::SkCanvas *canvas, const skia::SkRect &rect,
 // repeat paint setup. Holds no state of its own.
 class Painter {
 public:
-  Painter(skia::SkCanvas *canvas, skia::SkFont &font)
-      : fCanvas(canvas), fFont(&font) {}
+  // Drawing in the monospace face, where `monospace` is asked and the stack
+  // has one: code.
+  Painter(skia::SkCanvas *canvas, skia::SkFont &font, bool monospace = false)
+      : fCanvas(canvas), fFont(&font), fMonospace(monospace) {}
 
   [[nodiscard]] skia::SkCanvas *canvas() const noexcept { return fCanvas; }
 
@@ -1008,7 +1027,7 @@ public:
   [[nodiscard]] float measure(const std::string &text, float size,
                               bool bold = false) const {
     fFont->setSize(size);
-    fonts().applyWeight(*fFont, bold);
+    this->face(bold);
     const float width = fonts().measure(*fFont, text);
     fonts().applyWeight(*fFont, false);
     return width;
@@ -1017,7 +1036,7 @@ public:
   void text(const std::string &str, float x, float y, float size,
             skia::SkColor color, float alpha = 1.0f, bool bold = false) const {
     fFont->setSize(size);
-    fonts().applyWeight(*fFont, bold);
+    this->face(bold);
     skia::SkPaint p;
     p.setAntiAlias(true);
     p.setColor(color);
@@ -1306,6 +1325,16 @@ public:
 private:
   skia::SkCanvas *fCanvas;
   skia::SkFont *fFont;
+  // Code: drawn in the stack's monospace face.
+  bool fMonospace = false;
+  // The face for a run: the monospace one for code, where there is one; the
+  // weight's own face for the rest.
+  void face(bool bold) const {
+    if (fMonospace && fonts().applyMonospace(*fFont, bold)) {
+      return;
+    }
+    fonts().applyWeight(*fFont, bold);
+  }
 };
 
 } // namespace skiff::paint
