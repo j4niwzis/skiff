@@ -550,7 +550,12 @@ public:
     const bool automatic = !fWrapChoice && !fElided && !state.fGrowAxes.has<skiff::scene::axis::x>() &&
                            !state.fRelativeSizeAxes.has<skiff::scene::axis::x>();
     if (fMeasuredSize == fSize && !fWrapped && !automatic) {
-      return; // measured at this size, and the text has not changed
+      // Measured at this size, and the text has not changed -- but cut at
+      // the room it has now, where that is what it is cut at.
+      if (fElided) {
+        this->sizeOnOneLine(parent);
+      }
+      return;
     }
     skia::SkFont *font = skiff::paint::defaultFont();
     if (font == nullptr) {
@@ -621,16 +626,25 @@ public:
       fMeasuredSize = fSize;
       return;
     }
-    const float measured = fNatural;
-    // Sized by its flow or parent, it clips to the width it was given rather
-    // than replacing that width with the glyphs'.
-    if (!state.fGrowAxes.has<skiff::scene::axis::x>() && !state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
-      state.fWidth = state.fMaxWidth > 0.0f
-                         ? std::min(state.fMaxWidth, measured)
-                         : measured;
-    }
+    this->sizeOnOneLine(parent);
     state.fHeight = fSize * 1.25f;
     fMeasuredSize = fSize;
+  }
+  // On one line: as wide as its glyphs, within its largest width. Sized by
+  // its flow or parent, it clips to the width it was given rather than
+  // replacing that width with the glyphs'. Elided, it is cut at the room
+  // its parent has too: a sender's name cut at the bubble's widest stood
+  // out of a bubble in a chat narrower than that, by as much.
+  void sizeOnOneLine(const skia::SkRect &parent) {
+    skiff::scene::State &state = fState;
+    if (state.fGrowAxes.has<skiff::scene::axis::x>() || state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
+      return;
+    }
+    float width = state.fMaxWidth > 0.0f ? std::min(state.fMaxWidth, fNatural) : fNatural;
+    if (fElided && parent.width() > 0.0f) {
+      width = std::min(width, std::max(0.0f, parent.width() - state.fMargin.totalX()));
+    }
+    state.fWidth = width;
   }
 
   void drawSelf(skia::SkCanvas *canvas, float alpha) {
