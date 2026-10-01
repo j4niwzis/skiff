@@ -251,7 +251,7 @@ template <class N> struct Flowing {
       grow<skiff::scene::axis::x>(box, fOptions.spacingX);
       // Measured as they would be with room, then given way where there is
       // not: what a row of the last layout asked of them asks nothing now.
-      skiff::scene::eachChild(fNode, [](auto &child) { skiff::scene::stateOf(child).fShrunkTo = 0.0f; });
+      skiff::scene::eachChild(fNode, [](auto &child) { shrink_to(skiff::scene::stateOf(child), 0.0f); });
     }
     const auto shown = measured(box);
     if (!fOptions.wrap && !skiff::scene::stateOf(fNode).fAutoSizeAxes.template has<skiff::scene::axis::x>()) {
@@ -369,6 +369,17 @@ template <class N> struct Flowing {
   // those that give way do, each by its share of the excess in proportion
   // to its width, down to what they can -- a few passes, as one that stops
   // at its least leaves the rest to the others.
+  // A child told how far to give way: laid out again where that changed. Its
+  // layout was kept by its box alone, and the box is the same -- a row of
+  // tabs too wide for its panel was told to give way and laid out as it was,
+  // and stood out past its edge.
+  static void shrink_to(skiff::scene::State &state, float to) {
+    if (state.fShrunkTo == to)
+      return;
+    state.fShrunkTo = to;
+    state.fLayoutValid = false;
+  }
+
   void shrink_to_fit(const skia::SkRect &box) {
     for (int pass = 0; pass < 3; ++pass) {
       float used = 0.0f;
@@ -398,7 +409,7 @@ template <class N> struct Flowing {
         }
         const float width = state.fBounds.width();
         const float to = std::max(0.0f, width - excess * width / giving);
-        state.fShrunkTo = std::max(to, 0.01f);
+        shrink_to(state, std::max(to, 0.01f));
         skiff::scene::layout(child, boxFor(state, box));
         gave = gave || state.fBounds.width() < width - 0.25f;
       });
