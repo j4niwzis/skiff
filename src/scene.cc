@@ -3506,6 +3506,25 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   (void)previous;
   noteMoved(state);
   node.layoutChildren();
+  // Auto-sized in height, and its children laid out again in the box it
+  // ended in: one that wraps -- a block of code's text, filling a width the
+  // provisional box did not give it -- may have come out taller there than
+  // in the provisional box, and the node kept the provisional height: what
+  // it holds was drawn past its bottom, over what follows. Sized again to
+  // what they came to, and placed in that.
+  if (autoY) {
+    float settled = flowBounds<axis::y>(node).height() + state.fPadding.totalY();
+    settled = std::max(settled, state.fMinHeight);
+    if (state.fMaxHeight > 0.0f) {
+      settled = std::min(settled, state.fMaxHeight);
+    }
+    settled *= state.fScale;
+    if (std::abs(settled - state.fBounds.height()) > 0.5f) {
+      state.fBounds = anchoredBox(room, state.fBounds.width(), settled, state.fAnchor, state.fOrigin, state.fX, state.fY);
+      noteMoved(state);
+      node.layoutChildren();
+    }
+  }
   state.fLayoutValid = true;
   state.fSubtreeDirty = false;
 }
