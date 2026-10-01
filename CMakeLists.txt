@@ -138,9 +138,8 @@ find_package(Skia REQUIRED
 if(SKIFF_TEXT_SHAPING)
   cme_declare_port(NAME alef PROVIDES alef
     GITHUB_REPOSITORY j4niwzis/alef
-    GIT_TAG 583c3a85adfecf60e68dccd2742e7ad97e667645
+    GIT_TAG 6dc139f9590dc0d3ac1cc0e9748e67d7a1485480
     LICENSE AGPL-3.0-only
-    SYSTEM NEVER
     TARGETS alef)
   cme_options(alef "ALEF_TESTS OFF")
   cme_find_package(alef COMPONENTS grapheme line bidi REQUIRED)
@@ -219,9 +218,8 @@ if(DEFINED ALEF_CONSTEXPR_STEPS)
 endif()
 cme_declare_port(NAME splice PROVIDES splice
   GITHUB_REPOSITORY j4niwzis/splice
-  GIT_TAG bd60a0f5c1cdcca8fb7b4076a9354b090b572780
+  GIT_TAG f2c25443061ba5353720eccd0a9438793c2ea053
   LICENSE GPL-3.0-only
-  SYSTEM NEVER
   TARGETS splice)
 cme_options(splice "SPLICE_TESTS OFF")
 cme_find_package(splice REQUIRED)
