@@ -3541,6 +3541,14 @@ inline Backdrop &backdrop() {
   static Backdrop kept;
   return kept;
 }
+// How the backdrop is put down: as it is, where it is at the device's
+// pixels; smoothed, where it is smaller (scaled up).
+inline skia::SkFilterMode backdropSampling() {
+  const Backdrop &one = backdrop();
+  return one.image && std::abs(static_cast<float>(one.image->width()) - one.device.width()) <= 1.0f
+             ? skia::SkFilterMode::kNearest
+             : skia::SkFilterMode::kLinear;
+}
 
 // Panels -- a window's columns and bars -- over what is behind the whole
 // window: their fill at an opacity, frosted, or with a light edge, one look
@@ -3607,8 +3615,10 @@ inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
       canvas->clipRRect(roundedBox(state, state.fBounds), true);
       skia::SkPaint paint;
       paint.setAlphaf(alpha);
+      // At the device's pixels already, where its wallpaper made it so: put
+      // down as it is, not filtered at every repaint.
       canvas->drawImageRect(backdrop().image, inverse.mapRect(backdrop().device),
-                            skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &paint);
+                            skia::SkSamplingOptions(backdropSampling()), &paint);
       canvas->restoreToCount(saved);
     }
   }

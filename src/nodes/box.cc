@@ -71,7 +71,7 @@ public:
         skia::SkPaint frost;
         frost.setAlphaf(alpha);
         canvas->drawImageRect(detail::backdrop().image, inverse.mapRect(detail::backdrop().device),
-                              skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &frost);
+                              skia::SkSamplingOptions(detail::backdropSampling()), &frost);
         canvas->restoreToCount(saved);
       }
     }
