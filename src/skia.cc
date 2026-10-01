@@ -68,6 +68,7 @@ module;
 #include <skia/core/SkVertices.h>
 #include <skia/effects/SkGradient.h>
 #include <skia/effects/SkRuntimeEffect.h>
+#include <skia/effects/SkImageFilters.h>
 #include <skia/encode/SkPngEncoder.h>
 // Budgeted is a question about a surface, not about a backend: it is asked
 // wherever an offscreen one is made, and this header is where it lives
@@ -309,6 +310,8 @@ using ::SkGlyphID;
 using ::SkTextBlob;
 using ::SkTextBlobBuilder;
 using ::SkFilterMode;
+using ::SkImageFilter;
+using ::SkImageFilters;
 using ::SkFont;
 using ::SkFontArguments;
 using ::SkFontHinting;

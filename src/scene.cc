@@ -2457,6 +2457,9 @@ public:
   }
   bool fRecorded = false;
   skia::Sp<skia::SkPicture> fPicture;
+  // Drawn over other things -- a popup's plate, a sheet sliding in: what a
+  // program's paint may treat apart (blurring what is under it, live).
+  bool fFloats = false;
   // Recorded again frame after frame -- something in it moves at every
   // frame, a loader turning -- a recording is only a cost: drawn straight
   // until it rests.
@@ -2482,6 +2485,7 @@ public:
     fRedrawn = true;
     work::mark(fId);
   }
+  void setFloats(bool floats) { fFloats = floats; }
   // Repainted where it was and is, what it draws the same: moved by its
   // shift, or faded.
   void markMovedOnly() {
@@ -3564,6 +3568,16 @@ template <class = void> struct ProgramPaint {
 // The program's, where a node of type T is drawn: dependent on T, so that
 // what is found is the program's specialization, not this primary.
 template <class T> using PaintOf = typename ProgramPaint<std::conditional_t<sizeof(T) != 0, void, T>>::type;
+
+// What blurs what is drawn under it as it is drawn (a backdrop filter): each
+// such node's rect on the device, as it was last drawn, by its id. Whatever
+// of a frame is repainted under one, all of it is repainted -- else it
+// would blur its own last pixels -- and while any is shown, a frame is not
+// played back in bands: the host reads this. Those gone, let go of.
+inline std::map<NodeId, skia::SkRect> &liveBackdrops() {
+  static std::map<NodeId, skia::SkRect> kept;
+  return kept;
+}
 
 [[nodiscard]] inline skia::SkColor atOpacity(skia::SkColor colour, float opacity) {
   const auto alpha = static_cast<skia::SkColor>(std::lround(static_cast<float>((colour >> 24) & 0xFFu) * opacity));
@@ -5233,6 +5247,7 @@ public:
   void draw(skia::SkCanvas *canvas) { scene::draw(fRoot, canvas, 1.0f); }
 
   [[nodiscard]] FrameResult finishFrame() {
+    std::erase_if(detail::liveBackdrops(), [](const auto &one) { return work::entry(one.first) == nullptr; });
     damageFound().clear();
     work::damageOffset() = {};
     ++work::frameNumber();
