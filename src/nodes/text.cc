@@ -301,8 +301,9 @@ public:
         this->publishSelection();
         this->markDamaged();
       }
+      // Not taken: what holds the text may have a menu of its own -- a
+      // message's -- which the program puts first.
       textMenusAsked().push_back(this->selected());
-      reply.handle();
       return;
     }
     if (at.button != 1) {
