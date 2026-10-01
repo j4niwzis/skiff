@@ -4164,6 +4164,10 @@ void damageForHover(N &child) {
 }
 template <class N> void damageForHover(N &child) { child.fState.markDamaged(); }
 
+// The front-most node under a point that takes input, defined below: hover
+// asks it what covers what.
+template <class N> bool hitPath(N &child, float x, float y, Path &path);
+
 // Every node remembers where the pointer is: a control with parts has to
 // know which of its parts is under it.
 template <class N>
