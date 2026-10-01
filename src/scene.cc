@@ -2483,12 +2483,15 @@ public:
     work::mark(fId);
   }
   // Frosted: what lies behind it (backdrop()) drawn in its box first, under
-  // its fill -- a pane of frosted glass where its fill lets it show.
-  void setBackdrop(bool on) {
-    if (on == fBackdrop) {
+  // its fill -- a pane of frosted glass where its fill lets it show. Blurred
+  // as much as `blur` says (0 to 1), where the backdrop has that blur made;
+  // below 0, as the backdrop's own.
+  void setBackdrop(bool on, float blur = -1.0f) {
+    if (on == fBackdrop && blur == fBackdropBlur) {
       return;
     }
     fBackdrop = on;
+    fBackdropBlur = blur;
     this->markDamaged();
   }
   // Repainted where it was and is, what it draws the same: moved by its
@@ -2735,6 +2738,7 @@ public:
   // faintly: a recording is kept through a fade or a slide.
   bool fRedrawn = true;
   bool fBackdrop = false;
+  float fBackdropBlur = -1.0f;
   // Not yet seen by a frame's walk: the walk marks it, and where it is.
   bool fNew = true;
   work::Alive fAlive;
@@ -3555,19 +3559,35 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
 struct Backdrop {
   skia::Sp<skia::SkImage> image;
   skia::SkRect device = skia::SkRect::MakeEmpty();
+  // The same, blurred as much as each of the amounts asked (0 to 1) -- for
+  // what frosts as much as it says, not as the backdrop's own.
+  std::vector<std::pair<float, skia::Sp<skia::SkImage>>> blurred;
 };
 inline Backdrop &backdrop() {
   static Backdrop kept;
   return kept;
 }
-// How the backdrop is put down: as it is, where it is at the device's
-// pixels; smoothed, where it is smaller (scaled up).
-inline skia::SkFilterMode backdropSampling() {
+// The backdrop blurred as much as `blur` says, where that is made; below 0,
+// or not made, its own.
+[[nodiscard]] inline const skia::Sp<skia::SkImage> &backdropImage(float blur) {
   const Backdrop &one = backdrop();
-  return one.image && std::abs(static_cast<float>(one.image->width()) - one.device.width()) <= 1.0f
+  if (blur >= 0.0f) {
+    for (const auto &[amount, image] : one.blurred) {
+      if (std::abs(amount - blur) < 1e-4f && image) {
+        return image;
+      }
+    }
+  }
+  return one.image;
+}
+// How a backdrop image is put down: as it is, where it is at the device's
+// pixels; smoothed, where it is smaller (scaled up).
+inline skia::SkFilterMode backdropSampling(const skia::Sp<skia::SkImage> &image) {
+  return image && std::abs(static_cast<float>(image->width()) - backdrop().device.width()) <= 1.0f
              ? skia::SkFilterMode::kNearest
              : skia::SkFilterMode::kLinear;
 }
+inline skia::SkFilterMode backdropSampling() { return backdropSampling(backdrop().image); }
 
 // Panels -- a window's columns and bars -- over what is behind the whole
 // window: their fill at an opacity, frosted, or with a light edge, one look
@@ -3580,6 +3600,7 @@ struct PanelLook {
   bool active = false;
   float opacity = 1.0f;
   bool frosted = false;
+  float blur = -1.0f;  // how much the frost blurs, 0 to 1; below 0, the backdrop's own
   bool edge = false;
   std::vector<skia::SkColor> panels;
   std::vector<skia::SkColor> tints;
@@ -3634,10 +3655,12 @@ inline void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
       canvas->clipRRect(roundedBox(state, state.fBounds), true);
       skia::SkPaint paint;
       paint.setAlphaf(alpha);
+      // As blurred as it says -- a panel's, as the panels' look says.
+      const skia::Sp<skia::SkImage> &image = backdropImage(state.fBackdrop ? state.fBackdropBlur : look.blur);
       // At the device's pixels already, where its wallpaper made it so: put
       // down as it is, not filtered at every repaint.
-      canvas->drawImageRect(backdrop().image, inverse.mapRect(backdrop().device),
-                            skia::SkSamplingOptions(backdropSampling()), &paint);
+      canvas->drawImageRect(image, inverse.mapRect(backdrop().device),
+                            skia::SkSamplingOptions(backdropSampling(image)), &paint);
       canvas->restoreToCount(saved);
     }
   }

@@ -70,8 +70,10 @@ public:
         canvas->clipRRect(shape, true);
         skia::SkPaint frost;
         frost.setAlphaf(alpha);
-        canvas->drawImageRect(detail::backdrop().image, inverse.mapRect(detail::backdrop().device),
-                              skia::SkSamplingOptions(detail::backdropSampling()), &frost);
+        // As blurred as the panels' look says.
+        const skia::Sp<skia::SkImage> &image = detail::backdropImage(look.blur);
+        canvas->drawImageRect(image, inverse.mapRect(detail::backdrop().device),
+                              skia::SkSamplingOptions(detail::backdropSampling(image)), &frost);
         canvas->restoreToCount(saved);
       }
     }
