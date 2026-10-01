@@ -329,9 +329,10 @@ template <class N> struct Flowing {
         return;
       }
       const skia::SkRect &at = state.fBounds;
-      // Half a pixel of slack, as rows are broken with.
-      const float x = freeX ? std::max({0.0f, at.fRight - box.fRight - 0.5f, box.fLeft - at.fLeft - 0.5f}) : 0.0f;
-      const float y = freeY ? std::max({0.0f, at.fBottom - box.fBottom - 0.5f, box.fTop - at.fTop - 0.5f}) : 0.0f;
+      // A pixel of slack: below it, rounding -- a row of fixed icons in a
+      // window squeezed past what they hold came out 0.1 over, and was told.
+      const float x = freeX ? std::max({0.0f, at.fRight - box.fRight - 1.0f, box.fLeft - at.fLeft - 1.0f}) : 0.0f;
+      const float y = freeY ? std::max({0.0f, at.fBottom - box.fBottom - 1.0f, box.fTop - at.fTop - 1.0f}) : 0.0f;
       if (x <= 0.0f && y <= 0.0f) {
         state.fOverflowTold = false;
         return;
