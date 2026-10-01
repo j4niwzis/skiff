@@ -3770,7 +3770,33 @@ template <class T> void drawDefault(T &node, skia::SkCanvas *canvas, float alpha
   detail::drawNode(node, canvas, alpha);
 }
 
+// ---- the walks made once ----------------------------------------------------
+//
+// Outside a release build (kErasedWalks) the walks are not made for each type
+// of node, but once: for ErasedNode -- any node seen through its table, its
+// State, its children and its hooks. A type's table then holds only those,
+// each a call on the node; every walk's code is the same for all types, and a
+// program's thousands of node types no longer make thousands of copies of it.
+using AnyPhase = splice::variant<phase::capture, phase::target, phase::bubble>;
+class ErasedNode;
+[[nodiscard]] inline StyleSubject styleSubject(ErasedNode &node, float viewportWidth);
+template <class N> [[nodiscard]] const std::type_info &typeOf(N &);
+[[nodiscard]] inline const std::type_info &typeOf(ErasedNode &node);
+template <class F> bool childAt(ErasedNode &node, std::uint32_t place, F &&f);
+
 namespace walk {
+
+[[nodiscard]] inline bool pollsEachFrame(const ErasedNode &node);
+[[nodiscard]] inline double ownWakeAt(const ErasedNode &node);
+inline void damageForHover(ErasedNode &node);
+// A pointer event to a node, in a phase: its own handler for the event's
+// kind -- or, for an ErasedNode, its table's.
+template <class N, class When>
+void pointerTo(N &node, const When &when, const PointerEvent &input, PointerReply &reply) {
+  splice::visit([&](const auto &event) { node.onPointer(when, event, reply); }, input);
+}
+template <class When>
+void pointerTo(ErasedNode &node, const When &when, const PointerEvent &input, PointerReply &reply);
 
 // Every walk, for an AnyNode: through its table.
 void update(AnyNodeRef &, UpdateContext &, StyleResolver, const Style *, bool);
@@ -4026,7 +4052,7 @@ template <class N> bool markDirty(N &child) {
   if (signature != state.fChildSignature) {
     state.fChildSignature = signature;
     if (traceSettling() && dirtiers().size() < 64) {
-      dirtiers().push_back({&typeid(N), true, state.fBounds});
+      dirtiers().push_back({&typeOf(child), true, state.fBounds});
     }
     state.fLayoutValid = false;
     // Repainted where a child that went was drawn -- not the whole: one that
@@ -4042,7 +4068,7 @@ template <class N> bool markDirty(N &child) {
     }
   }
   if (!state.fLayoutValid && !below && traceSettling() && dirtiers().size() < 64) {
-    dirtiers().push_back({&typeid(N), false, state.fBounds});
+    dirtiers().push_back({&typeOf(child), false, state.fBounds});
   }
   state.fSubtreeDirty = below || !state.fLayoutValid;
   // A pending move is the parent's to carry out: it lays out again, and this
@@ -4077,7 +4103,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
     damage = joined(state.fMovedDamage.makeOffset(state.fShiftX, state.fShiftY), state.fLayoutMoved);
     // Moved, laid out, or a child gone: said too, as from its node.
     if (!state.fDamaged && !damage.isEmpty() && traceSettling() && damagers().size() < 64) {
-      damagers().push_back({&typeid(N), damage, true, true});
+      damagers().push_back({&typeOf(child), damage, true, true});
     }
     if (state.fDamaged) {
       // Where it was drawn and where it will be: a shift moves it past both
@@ -4085,7 +4111,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
       damage = joined(joined(joined(damage, state.fBounds), state.fDrawnBounds),
                       state.fBounds.makeOffset(state.fShiftX, state.fShiftY));
       if (traceSettling() && damagers().size() < 64) {
-        damagers().push_back({&typeid(N), damage, state.fRelaid});
+        damagers().push_back({&typeOf(child), damage, state.fRelaid});
       }
     }
   }
@@ -4353,8 +4379,7 @@ void routePointer(N &child, const Path &path, std::size_t at,
     reply.fCapturePointer = false;
     reply.fReleasePointer = false;
     reply.fRequestFocus = false;
-    splice::visit([&](const auto &event) { child.onPointer(when, event, reply); },
-               input);
+    pointerTo(child, when, input, reply);
     if (reply.fCapturePointer) {
       routed.fCaptureRequest = state.fId;
     }
@@ -4410,6 +4435,8 @@ void route(N &child, const Path &path, std::size_t at, const Input &input,
 }
 
 struct KeyDelivery {
+  template <class When>
+  void operator()(ErasedNode &node, const When &when, const KeyEvent &input, Reply &reply) const;
   template <class N>
   void operator()(N &node, const auto &when, const KeyEvent &input,
                   Reply &reply) const {
@@ -4421,6 +4448,8 @@ struct KeyDelivery {
             Reply &reply) const;
 };
 struct TextDelivery {
+  template <class When>
+  void operator()(ErasedNode &node, const When &when, const TextEvent &input, Reply &reply) const;
   template <class N>
   void operator()(N &node, const auto &when, const TextEvent &input,
                   Reply &reply) const {
@@ -4432,6 +4461,8 @@ struct TextDelivery {
             Reply &reply) const;
 };
 struct SemanticDelivery {
+  template <class When>
+  void operator()(ErasedNode &node, const When &when, const SemanticAction &input, Reply &reply) const;
   template <class N>
   void operator()(N &node, const auto &when, const SemanticAction &input,
                   Reply &reply) const {
@@ -4641,7 +4672,7 @@ template <class N> bool animating(N &child) {
   const bool transform = !child.fState.fTransforms.empty();
   if (transform || child.settling()) {
     if (traceSettling() && settlers().size() < 64) {
-      settlers().push_back({&typeid(N), transform});
+      settlers().push_back({&typeOf(child), transform});
     }
     return true;
   }
@@ -4677,6 +4708,10 @@ bool clickPath(N &child, const Path &path, std::size_t at, float x, float y) {
 } // namespace walk
 
 // ---- AnyNode ----------------------------------------------------------------
+
+// A walk on a node of type T held as a void*: on the node itself in a release
+// build; outside one, on it seen as an ErasedNode -- the walk made once.
+template <class T, class F> decltype(auto) walkOn(void *node, F &&f);
 
 // Any node, held by value, erased the way std::function erases a callable:
 // one allocation, and a table of the walks for the node's own type.
@@ -4754,6 +4789,27 @@ public:
     void (*fEachChild)(void *, void *context, AnyChildVisit visit);
     double (*fWakeAt)(void *);
     void (*fDamageOver)(void *, NodeId, const skia::SkRect &, bool &, skia::SkRect &);
+    // The node's own hooks, which the walks made once (ErasedNode) call.
+    void (*fTick)(void *, double);
+    bool (*fSettling)(void *);
+    bool (*fPolls)(void *);
+    void (*fApplyNodeStyle)(void *, const Style &, bool);
+    StyleSubject (*fStyleSubject)(void *, float);
+    void (*fHoverDamage)(void *);
+    bool (*fHoverChangesAppearance)(void *);
+    bool (*fAcceptsInput)(void *);
+    bool (*fFocusable)(void *);
+    bool (*fTakesFocusOnPress)(void *);
+    bool (*fFocusChangesAppearance)(void *);
+    Semantics (*fSemantics)(void *);
+    void (*fOnFocusChanged)(void *, bool);
+    bool (*fOnClick)(void *, float, float);
+    double (*fOwnWakeAt)(void *);
+    void (*fPointer)(void *, const AnyPhase &, const PointerEvent &, PointerReply &);
+    void (*fKey)(void *, const AnyPhase &, const KeyEvent &, Reply &);
+    void (*fText)(void *, const AnyPhase &, const TextEvent &, Reply &);
+    void (*fSemantic)(void *, const AnyPhase &, const SemanticAction &, Reply &);
+    bool (*fChildAt)(void *, std::uint32_t, void *context, AnyChildVisit visit);
   };
   [[nodiscard]] const Ops &ops() const noexcept { return *fOps; }
   [[nodiscard]] void *node() const noexcept { return fNode; }
@@ -4770,56 +4826,86 @@ private:
       +[](void *n, const skia::SkRect &box) { detail::layoutNode(as<T>(n), box); },
       +[](void *n, skia::SkCanvas *canvas, float alpha) { as<T>(n).draw(canvas, alpha); },
       +[](void *n, UpdateContext &c, StyleResolver r, const Style *s,
-          bool all) { walk::update(as<T>(n), c, r, s, all); },
-      +[](void *n) { return walk::markDirty(as<T>(n)); },
+          bool all) { walkOn<T>(n, [&](auto &node) { return walk::update(node, c, r, s, all); }); },
+      +[](void *n) { return walkOn<T>(n, [&](auto &node) { return walk::markDirty(node); }); },
       +[](void *n, bool drawn) {
-        return walk::collectDamage(as<T>(n), drawn);
+        return walkOn<T>(n, [&](auto &node) { return walk::collectDamage(node, drawn); });
       },
-      +[](void *n) { return walk::hasDamage(as<T>(n)); },
+      +[](void *n) { return walkOn<T>(n, [&](auto &node) { return walk::hasDamage(node); }); },
       +[](void *n, float x, float y, bool visible, StyleResolver r,
-          float width) { walk::hover(as<T>(n), x, y, visible, r, width); },
+          float width) { walkOn<T>(n, [&](auto &node) { return walk::hover(node, x, y, visible, r, width); }); },
       +[](void *n, float x, float y, Path &path) {
-        return walk::hitPath(as<T>(n), x, y, path);
+        return walkOn<T>(n, [&](auto &node) { return walk::hitPath(node, x, y, path); });
       },
       +[](void *n, NodeId id, Path &path) {
-        return walk::findPath(as<T>(n), id, path);
+        return walkOn<T>(n, [&](auto &node) { return walk::findPath(node, id, path); });
       },
       +[](void *n, const Path &path, std::size_t at) {
-        return walk::idAt(as<T>(n), path, at);
+        return walkOn<T>(n, [&](auto &node) { return walk::idAt(node, path, at); });
       },
       +[](void *n, const Path &path, std::size_t at, const PointerEvent &e,
           PointerReply &reply, Routed &routed, bool targetOnly) {
-        walk::routePointer(as<T>(n), path, at, e, reply, routed, targetOnly);
+        walkOn<T>(n, [&](auto &node) { return walk::routePointer(node, path, at, e, reply, routed, targetOnly); });
       },
       +[](void *n, const Path &path, std::size_t at, const KeyEvent &e,
-          Reply &reply) { walk::routeKey(as<T>(n), path, at, e, reply); },
+          Reply &reply) { walkOn<T>(n, [&](auto &node) { return walk::routeKey(node, path, at, e, reply); }); },
       +[](void *n, const Path &path, std::size_t at, const TextEvent &e,
-          Reply &reply) { walk::routeText(as<T>(n), path, at, e, reply); },
+          Reply &reply) { walkOn<T>(n, [&](auto &node) { return walk::routeText(node, path, at, e, reply); }); },
       +[](void *n, const Path &path, std::size_t at,
           const SemanticAction &e, Reply &reply) {
-        walk::routeSemantic(as<T>(n), path, at, e, reply);
+        walkOn<T>(n, [&](auto &node) { return walk::routeSemantic(node, path, at, e, reply); });
       },
-      +[](void *n, NodeId id) { return walk::info(as<T>(n), id); },
+      +[](void *n, NodeId id) { return walkOn<T>(n, [&](auto &node) { return walk::info(node, id); }); },
       +[](void *n, NodeId id, bool focused, StyleResolver r, float width) {
-        return walk::focusChanged(as<T>(n), id, focused, r, width);
+        return walkOn<T>(n, [&](auto &node) { return walk::focusChanged(node, id, focused, r, width); });
       },
       +[](void *n, std::vector<Semantics> &out, int parent, NodeId focused) {
-        walk::collectSemantics(as<T>(n), out, parent, focused);
+        walkOn<T>(n, [&](auto &node) { return walk::collectSemantics(node, out, parent, focused); });
       },
       +[](void *n, std::vector<NodeId> &out) {
-        walk::collectFocusable(as<T>(n), out);
+        walkOn<T>(n, [&](auto &node) { return walk::collectFocusable(node, out); });
       },
-      +[](void *n) { return walk::animating(as<T>(n)); },
+      +[](void *n) { return walkOn<T>(n, [&](auto &node) { return walk::animating(node); }); },
       +[](void *n, const Path &path, std::size_t at, float x, float y) {
-        return walk::clickPath(as<T>(n), path, at, x, y);
+        return walkOn<T>(n, [&](auto &node) { return walk::clickPath(node, path, at, x, y); });
       },
       +[]() -> const std::type_info & { return typeid(T); },
       +[](void *n, void *context, AnyChildVisit visit) {
         eachChild(as<T>(n), [&](auto &child) { visitAsAny(child, context, visit); });
       },
-      +[](void *n) { return walk::wakeAt(as<T>(n)); },
+      +[](void *n) { return walkOn<T>(n, [&](auto &node) { return walk::wakeAt(node); }); },
       +[](void *n, NodeId below, const skia::SkRect &rect, bool &passed, skia::SkRect &damage) {
-        walk::damageOver(as<T>(n), below, rect, passed, damage);
+        walkOn<T>(n, [&](auto &node) { return walk::damageOver(node, below, rect, passed, damage); });
+      },
+      +[](void *n, double now) { as<T>(n).update(now); },
+      +[](void *n) -> bool { return as<T>(n).settling(); },
+      +[](void *n) -> bool { return walk::pollsEachFrame(as<T>(n)); },
+      +[](void *n, const Style &style, bool active) { as<T>(n).applyNodeStyle(style, active); },
+      +[](void *n, float width) -> StyleSubject { return styleSubject(as<T>(n), width); },
+      +[](void *n) { walk::damageForHover(as<T>(n)); },
+      +[](void *n) -> bool { return as<T>(n).hoverChangesAppearance(); },
+      +[](void *n) -> bool { return as<T>(n).acceptsInput(); },
+      +[](void *n) -> bool { return as<T>(n).focusable(); },
+      +[](void *n) -> bool { return as<T>(n).takesFocusOnPress(); },
+      +[](void *n) -> bool { return as<T>(n).focusChangesAppearance(); },
+      +[](void *n) -> Semantics { return as<T>(n).semantics(); },
+      +[](void *n, bool focused) { as<T>(n).onFocusChanged(focused); },
+      +[](void *n, float x, float y) -> bool { return as<T>(n).onClick(x, y); },
+      +[](void *n) -> double { return walk::ownWakeAt(as<T>(n)); },
+      +[](void *n, const AnyPhase &when, const PointerEvent &input, PointerReply &reply) {
+        splice::visit([&](const auto &phase) { walk::pointerTo(as<T>(n), phase, input, reply); }, when);
+      },
+      +[](void *n, const AnyPhase &when, const KeyEvent &input, Reply &reply) {
+        splice::visit([&](const auto &phase) { walk::KeyDelivery{}(as<T>(n), phase, input, reply); }, when);
+      },
+      +[](void *n, const AnyPhase &when, const TextEvent &input, Reply &reply) {
+        splice::visit([&](const auto &phase) { walk::TextDelivery{}(as<T>(n), phase, input, reply); }, when);
+      },
+      +[](void *n, const AnyPhase &when, const SemanticAction &input, Reply &reply) {
+        splice::visit([&](const auto &phase) { walk::SemanticDelivery{}(as<T>(n), phase, input, reply); }, when);
+      },
+      +[](void *n, std::uint32_t place, void *context, AnyChildVisit visit) -> bool {
+        return childAt(as<T>(n), place, [&](auto &child) { visitAsAny(child, context, visit); });
       },
   };
 
@@ -4891,6 +4977,73 @@ private:
 };
 
 inline AnyNodeRef AnyNode::ref() const noexcept { return AnyNodeRef(fNode, fOps); }
+
+// Any node, as the walks made once see it: its State, its children, and its
+// hooks through its table -- what a walk asks of a typed node, asked here.
+class ErasedNode {
+public:
+  ErasedNode(void *node, const AnyNode::Ops *ops) : fState(ops->fState(node)), fNode(node), fOps(ops) {}
+  explicit ErasedNode(AnyNodeRef &ref) : ErasedNode(ref.node(), &ref.ops()) {}
+
+  State &fState;
+
+  template <class F> void forEachChild(F &&f) { AnyNodeRef(fNode, fOps).forEachChild(f); }
+  void update(double now) { fOps->fTick(fNode, now); }
+  [[nodiscard]] bool settling() const { return fOps->fSettling(fNode); }
+  void applyNodeStyle(const Style &style, bool active) { fOps->fApplyNodeStyle(fNode, style, active); }
+  [[nodiscard]] bool hoverChangesAppearance() const { return fOps->fHoverChangesAppearance(fNode); }
+  [[nodiscard]] bool acceptsInput() const { return fOps->fAcceptsInput(fNode); }
+  [[nodiscard]] bool focusable() const { return fOps->fFocusable(fNode); }
+  [[nodiscard]] bool takesFocusOnPress() const { return fOps->fTakesFocusOnPress(fNode); }
+  [[nodiscard]] bool focusChangesAppearance() const { return fOps->fFocusChangesAppearance(fNode); }
+  [[nodiscard]] Semantics semantics() const { return fOps->fSemantics(fNode); }
+  void onFocusChanged(bool focused) { fOps->fOnFocusChanged(fNode, focused); }
+  [[nodiscard]] bool onClick(float x, float y) { return fOps->fOnClick(fNode, x, y); }
+
+  void *fNode;
+  const AnyNode::Ops *fOps;
+};
+
+inline StyleSubject styleSubject(ErasedNode &node, float viewportWidth) {
+  return node.fOps->fStyleSubject(node.fNode, viewportWidth);
+}
+inline const std::type_info &typeOf(ErasedNode &node) { return node.fOps->fType(); }
+template <class F> bool childAt(ErasedNode &node, std::uint32_t place, F &&f) {
+  return node.fOps->fChildAt(node.fNode, place, const_cast<void *>(static_cast<const void *>(std::addressof(f))), +[](void *context, AnyNodeRef &child) {
+    (*static_cast<std::remove_reference_t<F> *>(context))(child);
+  });
+}
+namespace walk {
+inline bool pollsEachFrame(const ErasedNode &node) { return node.fOps->fPolls(node.fNode); }
+inline double ownWakeAt(const ErasedNode &node) { return node.fOps->fOwnWakeAt(node.fNode); }
+inline void damageForHover(ErasedNode &node) { node.fOps->fHoverDamage(node.fNode); }
+template <class When>
+void pointerTo(ErasedNode &node, const When &when, const PointerEvent &input, PointerReply &reply) {
+  node.fOps->fPointer(node.fNode, AnyPhase(when), input, reply);
+}
+template <class When>
+void KeyDelivery::operator()(ErasedNode &node, const When &when, const KeyEvent &input, Reply &reply) const {
+  node.fOps->fKey(node.fNode, AnyPhase(when), input, reply);
+}
+template <class When>
+void TextDelivery::operator()(ErasedNode &node, const When &when, const TextEvent &input, Reply &reply) const {
+  node.fOps->fText(node.fNode, AnyPhase(when), input, reply);
+}
+template <class When>
+void SemanticDelivery::operator()(ErasedNode &node, const When &when, const SemanticAction &input,
+                                  Reply &reply) const {
+  node.fOps->fSemantic(node.fNode, AnyPhase(when), input, reply);
+}
+} // namespace walk
+
+template <class T, class F> decltype(auto) walkOn(void *node, F &&f) {
+  if constexpr (kErasedWalks) {
+    ErasedNode erased(node, &AnyNode::opsOf<T>());
+    return f(erased);
+  } else {
+    return f(*static_cast<T *>(node));
+  }
+}
 
 template <class F> void visitChild(AnyNode &child, F &&f) {
   if (child) {
