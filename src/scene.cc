@@ -3583,10 +3583,22 @@ template <class T> using PaintOf = typename ProgramPaint<std::conditional_t<size
 // gone (a dialog's sheet, shut), it was repainted as a piece of its own
 // over what was there now, and blurred what was under it in that piece
 // alone: another dialog's frost cut to its rect, by another degree.
+// And whether it was last drawn from an image it keeps -- moving, the window
+// under it taken once -- reading nothing under it: a frame may be played back
+// in bands over it.
 struct LiveBackdrop {
   skia::SkRect rect = skia::SkRect::MakeEmpty();
   std::uint64_t frame = 0;
+  bool kept = false;
 };
+// Set where one was drawn into a recording -- played back in bands -- that
+// had to read what is under it: drawn from what it keeps, or cut at the
+// bands' edges. The host repaints all of the window at the next frame, not
+// in bands, and clears it.
+inline bool &liveBackdropsStale() {
+  static bool stale = false;
+  return stale;
+}
 inline std::map<NodeId, LiveBackdrop> &liveBackdrops() {
   static std::map<NodeId, LiveBackdrop> kept;
   return kept;
