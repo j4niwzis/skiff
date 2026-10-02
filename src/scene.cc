@@ -2769,6 +2769,15 @@ public:
   skia::SkRect fBoundsAtPass = skia::SkRect::MakeEmpty();
   skia::SkRect fLayoutMoved = skia::SkRect::MakeEmpty();
   skia::SkRect fDrawnBounds = skia::SkRect::MakeEmpty();
+  // How far it and what it holds are drawn, in the space it is laid out in:
+  // its bounds and each child's area -- the child's bounds, where it was
+  // drawn and its own reach, moved by its shift. A child drawn past its
+  // parent's edge -- shifted, or placed by its anchor outside it -- is in it:
+  // a node is skipped as it is drawn only where its reach is not repainted,
+  // as a browser goes by a box's overflow. Its bounds alone skipped a bar of
+  // spaces placed under the field beside its head whenever only that was
+  // repainted. Worked out by the damage walk on its way back up.
+  skia::SkRect fReach = skia::SkRect::MakeEmpty();
   bool fHovered = false;
   // Whether something under it is hovered: gone into again as the pointer
   // moves, even where it has left this -- a submenu out of its row.
@@ -3695,7 +3704,8 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
   // Where it is drawn: its bounds moved by its shift -- what is skipped,
   // clipped and repainted goes by that, not by where layout put it.
   ++visitedCount();
-  if (!state.fBounds.isEmpty() && canvas->quickReject(state.fBounds.makeOffset(state.fShiftX, state.fShiftY))) {
+  if (!state.fBounds.isEmpty() &&
+      canvas->quickReject(joined(state.fBounds, state.fReach).makeOffset(state.fShiftX, state.fShiftY))) {
     return;
   }
   ++drawnCount();
@@ -4165,7 +4175,8 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
       return;
     }
     into(each);
-    const skia::SkRect area = joined(one.fBounds, one.fDrawnBounds);
+    const skia::SkRect area =
+        joined(joined(one.fBounds, one.fDrawnBounds), one.fReach.makeOffset(one.fShiftX, one.fShiftY));
     auto was = std::ranges::find(state.fDrawnChildren, one.fId, &State::DrawnChild::fId);
     if (was != state.fDrawnChildren.end()) {
       was->fArea = area;
@@ -4184,10 +4195,19 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
       }
       into(each);
       // Where it is, laid out and drawn: what is repainted if it goes.
-      state.fDrawnChildren.push_back({one.fId, joined(one.fBounds, one.fDrawnBounds)});
+      state.fDrawnChildren.push_back(
+          {one.fId, joined(joined(one.fBounds, one.fDrawnBounds), one.fReach.makeOffset(one.fShiftX, one.fShiftY))});
     });
   }
   work::damageOffset() = above;
+  // Its reach: its bounds and every child's area, as they are now.
+  // One that clips what it holds reaches no further than itself.
+  state.fReach = state.fBounds;
+  if (!state.fMasking) {
+    for (const State::DrawnChild &one : state.fDrawnChildren) {
+      state.fReach = joined(state.fReach, one.fArea);
+    }
+  }
   if (redrawn || !below.isEmpty()) {
     state.fPicture = nullptr;
   }
