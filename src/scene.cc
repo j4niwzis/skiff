@@ -3577,9 +3577,18 @@ template <class T> using PaintOf = typename ProgramPaint<std::conditional_t<size
 // such node's rect on the device, as it was last drawn, by its id. Whatever
 // of a frame is repainted under one, all of it is repainted -- else it
 // would blur its own last pixels -- and while any is shown, a frame is not
-// played back in bands: the host reads this. Those gone, let go of.
-inline std::map<NodeId, skia::SkRect> &liveBackdrops() {
-  static std::map<NodeId, skia::SkRect> kept;
+// played back in bands: the host reads this. Those gone, let go of; and the
+// frame each was last drawn in, for the host to let go of one no longer
+// shown: all of its rect repainted, and it not drawn there -- hidden, not
+// gone (a dialog's sheet, shut), it was repainted as a piece of its own
+// over what was there now, and blurred what was under it in that piece
+// alone: another dialog's frost cut to its rect, by another degree.
+struct LiveBackdrop {
+  skia::SkRect rect = skia::SkRect::MakeEmpty();
+  std::uint64_t frame = 0;
+};
+inline std::map<NodeId, LiveBackdrop> &liveBackdrops() {
+  static std::map<NodeId, LiveBackdrop> kept;
   return kept;
 }
 
