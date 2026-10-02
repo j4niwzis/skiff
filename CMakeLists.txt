@@ -193,6 +193,12 @@ if(SKIFF_TEXT_SHAPING OR (DEFINED CMAKE_CXX_STANDARD AND CMAKE_CXX_STANDARD GREA
 else()
   set(skiff_cxx_standard 23)
   set(skiff_aggregate ${CMAKE_CURRENT_SOURCE_DIR}/src/aggregate/pfr.cc)
+  # The module of Boost.PFR imports std, and CMake gives a target the std
+  # module only at C++23 or later: its own target asks for C++20, so the
+  # standard it is built at is said here, before it is made.
+  if(NOT DEFINED CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 23)
+  endif()
   cme_find_package(Boost COMPONENTS pfr[modules] REQUIRED)
 endif()
 
