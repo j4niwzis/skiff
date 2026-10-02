@@ -3586,10 +3586,14 @@ template <class T> using PaintOf = typename ProgramPaint<std::conditional_t<size
 // And whether it was last drawn from an image it keeps -- moving, the window
 // under it taken once -- reading nothing under it: a frame may be played back
 // in bands over it.
+// And how far what is under it reaches into what it shows, on the device:
+// a change under it changes what it shows that far round it, no further --
+// the host repaints that much of it, not all of it.
 struct LiveBackdrop {
   skia::SkRect rect = skia::SkRect::MakeEmpty();
   std::uint64_t frame = 0;
   bool kept = false;
+  float reach = 0.0f;
 };
 // Set where one was drawn into a recording -- played back in bands -- that
 // had to read what is under it: drawn from what it keeps, or cut at the
