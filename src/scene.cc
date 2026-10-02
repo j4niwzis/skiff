@@ -606,6 +606,10 @@ struct Spec {
   std::optional<float> shiftX{};
   std::optional<float> shiftY{};
   std::optional<bool> visible{};
+  // Shown only while what holds it is under the pointer -- CSS's
+  // `.holder:hover .it` -- the hover walk showing and hiding it: a message's
+  // time beside a sticker, its buttons on a row.
+  std::optional<bool> revealOnHover{};
 
   std::vector<StyleRole> roles{};
   std::optional<bool> selected{};
@@ -2080,6 +2084,7 @@ public:
   float fShiftX = 0.0f, fShiftY = 0.0f;
   std::optional<Border> fBorder;
   bool fVisible = true;
+  bool fRevealOnHover = false;  // shown while what holds it is hovered
 
   // -- the result of layout
   skia::SkRect fBounds = skia::SkRect::MakeEmpty();
@@ -2373,6 +2378,9 @@ public:
     }
     if (spec.visible) {
       fVisible = *spec.visible;
+    }
+    if (spec.revealOnHover) {
+      fRevealOnHover = *spec.revealOnHover;
     }
     bool identityChanged = false;
     for (StyleRole role : spec.roles) {
@@ -3834,7 +3842,7 @@ template <class N, class F> bool viaHints(N &node, F &&f);
 [[nodiscard]] bool markDirty(AnyNodeRef &);
 [[nodiscard]] skia::SkRect collectDamage(AnyNodeRef &, bool);
 [[nodiscard]] bool hasDamage(AnyNodeRef &);
-void hover(AnyNodeRef &, float, float, bool, StyleResolver, float);
+void hover(AnyNodeRef &, float, float, bool, StyleResolver, float, bool);
 [[nodiscard]] bool hitPath(AnyNodeRef &, float, float, Path &);
 [[nodiscard]] bool findPath(AnyNodeRef &, NodeId, Path &);
 [[nodiscard]] NodeId idAt(AnyNodeRef &, const Path &, std::size_t);
@@ -4250,9 +4258,15 @@ template <class N> bool hitPath(N &child, float x, float y, Path &path);
 // know which of its parts is under it.
 template <class N>
 void hover(N &child, float x, float y, bool visibleAbove,
-           StyleResolver resolver, float viewportWidth) {
+           StyleResolver resolver, float viewportWidth, bool hoveredAbove) {
   State &state = child.fState;
   ++walkCounts().hover;
+  // Shown only while what holds it is hovered: shown or hidden here, as the
+  // pointer comes and goes over its holder.
+  if (state.fRevealOnHover && state.fVisible != (hoveredAbove && visibleAbove)) {
+    state.setVisible(hoveredAbove && visibleAbove);
+    state.markDamaged();
+  }
   // The point where this is laid out: moved back by its shift, as all under
   // it are drawn moved by it.
   x -= state.fShiftX;
@@ -4322,11 +4336,11 @@ void hover(N &child, float x, float y, bool visibleAbove,
     // Hidden, or under something hidden: only to let go of a hover it had.
     // A hidden list's rows, never laid out, have empty bounds, and were all
     // gone into at every move of the pointer.
-    if (work::disabled() || one.fHovered || one.fHoverWithin ||
+    if (work::disabled() || one.fHovered || one.fHoverWithin || one.fRevealOnHover ||
         (shown && one.fVisible &&
          (one.fOutOfFlow || one.fBounds.isEmpty() ||
           one.fBounds.makeOffset(one.fShiftX, one.fShiftY).contains(x, y)))) {
-      walk::hover(each, x, y, shown, own, viewportWidth);
+      walk::hover(each, x, y, shown, own, viewportWidth, hoveredAbove || state.fHovered);
     }
     within = within || one.fHovered || one.fHoverWithin;
   });
@@ -4846,7 +4860,7 @@ public:
     bool (*fMarkDirty)(void *);
     skia::SkRect (*fCollectDamage)(void *, bool);
     bool (*fHasDamage)(void *);
-    void (*fHover)(void *, float, float, bool, StyleResolver, float);
+    void (*fHover)(void *, float, float, bool, StyleResolver, float, bool);
     bool (*fHitPath)(void *, float, float, Path &);
     bool (*fFindPath)(void *, NodeId, Path &);
     NodeId (*fIdAt)(void *, const Path &, std::size_t);
@@ -4911,8 +4925,8 @@ private:
         return walkOn<T>(n, [&](auto &node) { return walk::collectDamage(node, drawn); });
       },
       +[](void *n) { return walkOn<T>(n, [&](auto &node) { return walk::hasDamage(node); }); },
-      +[](void *n, float x, float y, bool visible, StyleResolver r,
-          float width) { walkOn<T>(n, [&](auto &node) { return walk::hover(node, x, y, visible, r, width); }); },
+      +[](void *n, float x, float y, bool visible, StyleResolver r, float width,
+          bool above) { walkOn<T>(n, [&](auto &node) { return walk::hover(node, x, y, visible, r, width, above); }); },
       +[](void *n, float x, float y, Path &path) {
         return walkOn<T>(n, [&](auto &node) { return walk::hitPath(node, x, y, path); });
       },
@@ -5197,8 +5211,8 @@ inline skia::SkRect collectDamage(AnyNodeRef &c, bool drawn) {
 }
 inline bool hasDamage(AnyNodeRef &c) { return c.ops().fHasDamage(c.node()); }
 inline void hover(AnyNodeRef &c, float x, float y, bool visible, StyleResolver r,
-                  float width) {
-  c.ops().fHover(c.node(), x, y, visible, r, width);
+                  float width, bool hoveredAbove) {
+  c.ops().fHover(c.node(), x, y, visible, r, width, hoveredAbove);
 }
 inline bool hitPath(AnyNodeRef &c, float x, float y, Path &path) {
   return c.ops().fHitPath(c.node(), x, y, path);
@@ -5734,7 +5748,7 @@ public:
     fHoverX = x;
     fHoverY = y;
     fHoverSeen = true;
-    walk::hover(fRoot, x, y, true, {}, fViewport.width());
+    walk::hover(fRoot, x, y, true, {}, fViewport.width(), false);
     this->restyleDirty();
   }
 
