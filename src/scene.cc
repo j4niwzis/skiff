@@ -5604,7 +5604,9 @@ public:
     for (const NodeId id : this->focusableIds()) {
       Path path;
       if (id != scope && walk::findPath(fRoot, id, path) &&
-          std::ranges::starts_with(path, inside)) {
+          // path begins with inside (std::ranges::starts_with, which the
+          // libstdc++ C++23 builds use does not have yet)
+          std::ranges::mismatch(inside, path).in1 == inside.end()) {
         nodes.push_back(id);
       }
     }
