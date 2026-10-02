@@ -71,6 +71,13 @@ public:
   // not over what does not scroll with it -- a gradient behind it, which a
   // copy moved along, a little further off at every step.
   void setCopiesOnScroll(bool copies) { fCopies = copies; }
+  // Whether what is in view is held there as what is above it changes -- a
+  // history paging in above, a row above growing -- the view following the
+  // first row in view (the default); or the view kept at its offset. A list
+  // whose rows change places -- chats by their newest -- keeps its offset:
+  // held, it followed the row it showed first down as one from below went
+  // to the top, even with the view at the top.
+  void setHoldsInView(bool holds) { fHolds = holds; }
   // On its way to the end, asked for and not yet there: what would move
   // the end meanwhile -- more made above, dropped below -- waits.
   [[nodiscard]] bool glidingToEnd() const noexcept { return fToEnd || fGlidingToEnd; }
@@ -222,7 +229,7 @@ public:
     // Not where the view is put somewhere on purpose -- an offset set, the
     // end asked for: held to what was in view, a jump landed back near where
     // it left, beside the message it went to.
-    if (fLaidOut && box == fLastBox && !this->atEnd() && !fJumpTo && !fToEnd && !fGlidingToEnd) {
+    if (fHolds && fLaidOut && box == fLastBox && !this->atEnd() && !fJumpTo && !fToEnd && !fGlidingToEnd) {
       this->eachItem([&](const scene::State &item) {
         if (anchors.size() < 4 && item.fVisible && item.fBounds.fBottom - offset > box.fTop) {
           anchors.push_back(Anchor{item.fId, item.fBounds.fTop});
@@ -588,6 +595,7 @@ private:
   std::optional<float> fJumpTo;
   bool fToEndGlide = true;
   bool fCopies = true;
+  bool fHolds = true;
   // Gliding to the end, and the end it was last aimed at: aimed again as the
   // end moves on.
   bool fGlidingToEnd = false;
