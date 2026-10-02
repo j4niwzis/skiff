@@ -2479,6 +2479,27 @@ public:
       here->shiftY = y;
     }
   }
+  // Moved by a shift as setShift does, and repainted where it was and where
+  // it is now -- what moves a node apart from its layout (beside a sticker,
+  // under a field). setShift itself repaints nothing: a scroll's contents
+  // are shifted at every step and copied, not repainted.
+  void shiftTo(float x, float y) {
+    if (x == fShiftX && y == fShiftY) {
+      return;
+    }
+    this->setShift(x, y);
+    this->markMovedOnly();
+  }
+  // Out of its parent's flow, placed by its anchor, or back in it: the
+  // parent laid out again either way -- written to fOutOfFlow alone, the
+  // parent kept its layout.
+  void setOutOfFlow(bool out) {
+    if (out == fOutOfFlow) {
+      return;
+    }
+    fOutOfFlow = out;
+    this->invalidateLayout();
+  }
   void relayoutQuietly() {
     fLayoutValid = false;
     work::mark(fId);

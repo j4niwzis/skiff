@@ -209,6 +209,12 @@ public:
     if (fLaidOut && box == fLastBox && offset != fLastOffset) {
       this->moved(fLastOffset - offset);
     }
+    // The view itself moved or another size -- a bar opened over it, what is
+    // above it grown: all of it repainted where it is. Its rows, the same in
+    // its contents, were otherwise left where they were drawn.
+    if (fLaidOut && box != fLastBox) {
+      fState.markDamaged();
+    }
     // What the reader is looking at stays where it is when what is above
     // it changes -- history coming in above, a row above growing: the first
     // item in view is remembered, and the view follows it. Not at the end,
