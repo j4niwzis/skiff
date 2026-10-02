@@ -3775,6 +3775,9 @@ template <class N> void shiftSubtree(N &node, float dx, float dy) {
   State &state = stateOf(node);
   state.fBounds.offset(dx, dy);
   state.fLastConstraint.offset(dx, dy);
+  // A recording made where it was: let go, drawn again where it is -- kept,
+  // it played the subtree back where it had been (a list pushed down).
+  state.fPicture = nullptr;
   eachChild(node, [&](auto &child) { shiftSubtree(child, dx, dy); });
 }
 template <class N> void shiftSubtree(N &node, float dy) { shiftSubtree(node, 0.0f, dy); }
@@ -5128,6 +5131,7 @@ inline void shiftSubtree(AnyNodeRef &node, float dx, float dy) {
   State &state = node.state();
   state.fBounds.offset(dx, dy);
   state.fLastConstraint.offset(dx, dy);
+  state.fPicture = nullptr;  // as above: made where it was
   node.forEachChild([&](AnyNodeRef &child) { shiftSubtree(child, dx, dy); });
 }
 // Outside a release build, a node laid out by what holds it -- a dialog its
