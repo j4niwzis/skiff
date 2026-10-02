@@ -321,7 +321,7 @@ public:
     const skia::SkRect seen = box.makeOutset(0.0f, box.height()).makeOffset(0.0f, fLastOffset);
     scene::eachChild(*this, [&](auto &child) {
       scene::State &contents = scene::stateOf(child);
-      contents.setShift(0.0f, -fLastOffset);
+      contents.setShiftQuietly(0.0f, -fLastOffset);
       contents.fInView = seen;
     });
   }

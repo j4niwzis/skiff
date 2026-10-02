@@ -2471,7 +2471,19 @@ public:
   int fRecordedInARow = 0;
   // Drawn moved by this much, it and all under it, where it is laid out: a
   // scroll view's contents by its offset. Repaints nothing by itself.
+  // Moved by a shift, apart from its layout -- as a CSS transform -- and
+  // repainted where it was drawn and where it is now: what moves a node is
+  // tracked here, not left to whoever moved it to say.
   void setShift(float x, float y) {
+    if (x == fShiftX && y == fShiftY) {
+      return;
+    }
+    this->setShiftQuietly(x, y);
+    this->markMovedOnly();
+  }
+  // The same, repainting nothing: a scroll's contents, shifted at every step
+  // and copied by the host, the strip that came into view repainted alone.
+  void setShiftQuietly(float x, float y) {
     fShiftX = x;
     fShiftY = y;
     if (work::Entry *here = work::entry(fId)) {
@@ -2479,17 +2491,8 @@ public:
       here->shiftY = y;
     }
   }
-  // Moved by a shift as setShift does, and repainted where it was and where
-  // it is now -- what moves a node apart from its layout (beside a sticker,
-  // under a field). setShift itself repaints nothing: a scroll's contents
-  // are shifted at every step and copied, not repainted.
-  void shiftTo(float x, float y) {
-    if (x == fShiftX && y == fShiftY) {
-      return;
-    }
-    this->setShift(x, y);
-    this->markMovedOnly();
-  }
+  // setShift's other name, kept for what says it so.
+  void shiftTo(float x, float y) { this->setShift(x, y); }
   // Out of its parent's flow, placed by its anchor, or back in it: the
   // parent laid out again either way -- written to fOutOfFlow alone, the
   // parent kept its layout.
