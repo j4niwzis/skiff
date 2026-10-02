@@ -1431,6 +1431,10 @@ using Cursor = splice::variant<cursor::arrow, cursor::text, cursor::hand,
 // on the system's clipboard, and the links pressed in texts, to follow.
 struct HostWork {
   bool typing = false;
+  // Where what is typed into is, in the window's points, as last drawn: for
+  // the host to tell the system, whose keyboard on a screen -- and whose
+  // suggestions -- go beside it, not over it.
+  std::optional<skia::SkRect> typingAt;
   std::optional<std::string> copied;
   std::vector<std::string> links;
 };
@@ -3299,6 +3303,8 @@ struct NodeInfo {
   bool fVisible = true;
   bool fTakesText = false;
   Cursor fCursor = cursor::arrow{};
+  // Where it was last drawn, in the window.
+  skia::SkRect fDrawn = skia::SkRect::MakeEmpty();
 };
 
 // The children a frame's walks visit: all of them -- or, below a node told
@@ -4536,7 +4542,7 @@ template <class N> std::optional<NodeInfo> info(N &child, NodeId id) {
   const State &state = child.fState;
   if (state.fId == id) {
     return NodeInfo{child.focusable(), state.fDisabled, state.fVisible,
-                    isTextBox(child.semantics().fRole), state.fCursor};
+                    isTextBox(child.semantics().fRole), state.fCursor, state.fDrawnBounds};
   }
   std::optional<NodeInfo> found;
   if (const NodeId next = work::childToward(state.fId, id); next != 0) {
@@ -5315,6 +5321,13 @@ public:
   void draw(skia::SkCanvas *canvas) { scene::draw(fRoot, canvas, 1.0f); }
 
   [[nodiscard]] FrameResult finishFrame() {
+    // Where the field typed into is, for the host to tell the system.
+    hostWork().typingAt.reset();
+    if (hostWork().typing && fFocus != 0) {
+      if (const std::optional<NodeInfo> about = walk::info(fRoot, fFocus)) {
+        hostWork().typingAt = about->fDrawn;
+      }
+    }
     std::erase_if(detail::liveBackdrops(), [](const auto &one) { return work::entry(one.first) == nullptr; });
     damageFound().clear();
     work::damageOffset() = {};
