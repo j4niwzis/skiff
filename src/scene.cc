@@ -4358,7 +4358,7 @@ void hover(N &child, float x, float y, bool visibleAbove,
     if (work::disabled() || one.fHovered || one.fHoverWithin || one.fRevealOnHover ||
         (shown && one.fVisible &&
          (one.fOutOfFlow || one.fBounds.isEmpty() ||
-          one.fBounds.makeOffset(one.fShiftX, one.fShiftY).contains(x, y)))) {
+          joined(one.fBounds, one.fReach).makeOffset(one.fShiftX, one.fShiftY).contains(x, y)))) {
       walk::hover(each, x, y, shown, own, viewportWidth, hoveredAbove || state.fHovered);
     }
     within = within || one.fHovered || one.fHoverWithin;
