@@ -398,13 +398,22 @@ if(SKIFF_INSTALL)
     "             INTERFACE_INCLUDE_DIRECTORIES \${SKIA_INCLUDE_DIRS})\n"
     "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
     "             INTERFACE_LINK_LIBRARIES \${SKIA_LDFLAGS} \${SKIA_LIBRARIES})\n")
+  # Twice each: the installed interfaces are compiled by the consumer as a
+  # target of their own, and that target takes what it imports from
+  # IMPORTED_CXX_MODULES_LINK_LIBRARIES, not from the link interface. Named
+  # only in the second, splice was built and linked and its module was still
+  # missing from the module map the interfaces were compiled with.
   string(APPEND skiff_config
     "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
-    "             INTERFACE_LINK_LIBRARIES splice)\n")
+    "             INTERFACE_LINK_LIBRARIES splice)\n"
+    "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
+    "             IMPORTED_CXX_MODULES_LINK_LIBRARIES splice)\n")
   if(skiff_cxx_standard LESS 26)
     string(APPEND skiff_config
       "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
-      "             INTERFACE_LINK_LIBRARIES Boost::pfr)\n")
+      "             INTERFACE_LINK_LIBRARIES Boost::pfr)\n"
+      "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
+      "             IMPORTED_CXX_MODULES_LINK_LIBRARIES Boost::pfr)\n")
   endif()
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake" "${skiff_config}")
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake"
