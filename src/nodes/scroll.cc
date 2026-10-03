@@ -377,8 +377,8 @@ public:
   // The contents, and over them a thin bar on the right saying how much
   // there is and where the view is in it: only where there is more than
   // shows, and only while the pointer is over it or it moves.
-  void draw(skia::SkCanvas *canvas, float alpha) {
-    skiff::scene::drawDefault(*this, canvas, alpha);
+  void draw(skiff::scene::Painting &painting, skia::SkCanvas *canvas, float alpha) {
+    skiff::scene::drawDefault(*this, painting, canvas, alpha);
     if (fExtent <= 0.0f || !(fState.fHovered || fScroll.moving() || fScroll.dragging() || fBarDragging)) {
       return;
     }

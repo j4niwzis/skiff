@@ -115,7 +115,7 @@ public:
     fCache.fValid = false;
   }
 
-  void draw(skia::SkCanvas *canvas, float inheritedAlpha) {
+  void draw(skiff::scene::Painting &painting, skia::SkCanvas *canvas, float inheritedAlpha) {
     namespace scene = skiff::scene;
     scene::State &state = fState;
     if (!state.fVisible || state.fAlpha <= 0.001f) {
@@ -137,7 +137,7 @@ public:
     const int height = static_cast<int>(std::ceil(bounds.height() * sy));
     if (!surfaces.fMake || width <= 0 || height <= 0 ||
         scene::walk::animating(*this)) {
-      scene::drawDefault(*this, canvas, inheritedAlpha);
+      scene::drawDefault(*this, painting, canvas, inheritedAlpha);
       return;
     }
     if (!fCache.fSurface || fCache.fWidth != width ||
@@ -149,7 +149,7 @@ public:
       fCache.fValid = false;
     }
     if (!fCache.fSurface) {
-      scene::drawDefault(*this, canvas, inheritedAlpha);
+      scene::drawDefault(*this, painting, canvas, inheritedAlpha);
       return;
     }
     if (!fCache.fValid || fCache.fOrigin != bounds.fLeft + bounds.fTop) {
@@ -162,7 +162,7 @@ public:
       // when the picture is drawn.
       const float alpha = state.fAlpha;
       state.fAlpha = 1.0f;
-      scene::drawDefault(*this, cacheCanvas, 1.0f);
+      scene::drawDefault(*this, painting, cacheCanvas, 1.0f);
       state.fAlpha = alpha;
       cacheCanvas->restoreToCount(saved);
       if (surfaces.fDone) {

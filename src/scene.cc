@@ -3166,7 +3166,12 @@ void defaultSemantic(T &node, const phase::target &,
 }
 
 template <class T> void layoutChildrenInContentBox(T &node);
-template <class T> void drawDefault(T &node, skia::SkCanvas *canvas, float alpha);
+// What a program paints with, handed down the tree as it is drawn: the
+// program's paint (ProgramPaint) derives from it, and the host hands its own
+// to the scene's draw. Empty: drawing passes it on, and paintBox takes the
+// program's back from it.
+struct Painting {};
+template <class T> void drawDefault(T &node, Painting &painting, skia::SkCanvas *canvas, float alpha);
 
 // ---- the node ----------------------------------------------------------------
 
@@ -3202,8 +3207,8 @@ struct Node {
   // -- drawing
   void drawSelf(this auto &, skia::SkCanvas *, float) {}
   // The whole subtree, overridden by a node that draws it another way.
-  void draw(this auto &self, skia::SkCanvas *canvas, float alpha) {
-    drawDefault(self, canvas, alpha);
+  void draw(this auto &self, Painting &painting, skia::SkCanvas *canvas, float alpha) {
+    drawDefault(self, painting, canvas, alpha);
   }
 
   // -- time
@@ -3462,8 +3467,8 @@ template <class Axis, class T> [[nodiscard]] skia::SkRect flowBounds(T &node) {
 
 template <class N> void layout(N &child, const skia::SkRect &parentBox);
 void layout(AnyNodeRef &child, const skia::SkRect &parentBox);
-template <class N> void draw(N &child, skia::SkCanvas *canvas, float alpha);
-void draw(AnyNodeRef &child, skia::SkCanvas *canvas, float alpha);
+template <class N> void draw(N &child, Painting &painting, skia::SkCanvas *canvas, float alpha);
+void draw(AnyNodeRef &child, Painting &painting, skia::SkCanvas *canvas, float alpha);
 
 // Lays every child out in the content box: what a node without its own
 // layoutChildren does.
@@ -3628,22 +3633,23 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   return out;
 }
 
-// What a program paints of every box's fill, besides the fill itself: as a
-// type with static members -- a callback by its type, never a pointer.
-// skiff's own does nothing; a program says its own by specializing
-// ProgramPaint<> once, where every unit that draws its tree sees it.
+// What a program paints of every box's fill, besides the fill itself: a
+// type -- a callback by its type, never a pointer -- whose object the host
+// hands to the scene's draw, and drawing hands down (Painting). skiff's own
+// does nothing; a program says its own by specializing ProgramPaint<> once,
+// where every unit that draws its tree sees it.
 //   under(state, fill, canvas, alpha): painted under the fill, the fill to
 //     paint returned -- the same, another (at an opacity, say), or none;
 //   over(state, canvas, alpha): painted over the fill, under the border;
 //   scope: made from a node's State and held while its subtree is drawn --
 //     what the program knows of the boxes above (inside a panel, say).
-struct PlainPaint {
-  static std::optional<skia::SkColor> under(const State &, std::optional<skia::SkColor> fill, skia::SkCanvas *, float) {
+struct PlainPaint : Painting {
+  std::optional<skia::SkColor> under(const State &, std::optional<skia::SkColor> fill, skia::SkCanvas *, float) {
     return fill;
   }
-  static void over(const State &, skia::SkCanvas *, float) {}
+  void over(const State &, skia::SkCanvas *, float) {}
   struct scope {
-    explicit scope(const State &) {}
+    scope(PlainPaint &, const State &) {}
   };
 };
 template <class = void> struct ProgramPaint {
@@ -3695,14 +3701,14 @@ inline std::map<NodeId, LiveBackdrop> &liveBackdrops() {
 
 // is hovered -- and its border, in its corner radius; what the program
 // paints with a fill (Hooks: ProgramPaint's) under it and over it.
-template <class Hooks> void paintBox(const State &state, skia::SkCanvas *canvas, float alpha) {
+template <class Hooks> void paintBox(Hooks &hooks, const State &state, skia::SkCanvas *canvas, float alpha) {
   std::optional<skia::SkColor> fill = state.fSelected && state.fSelectedBackground ? state.fSelectedBackground
                                             : state.fFocused && state.fFocusBackground     ? state.fFocusBackground
                                             // A disabled node does not light up under the pointer.
                                             : state.fHovered && !state.fDisabled && state.fHoverBackground
                                                 ? state.fHoverBackground
                                                                                             : state.fBackground;
-  fill = Hooks::under(state, fill, canvas, alpha);
+  fill = hooks.under(state, fill, canvas, alpha);
   if (state.fShadow) {
     skia::SkPaint paint;
     paint.setAntiAlias(true);
@@ -3723,7 +3729,7 @@ template <class Hooks> void paintBox(const State &state, skia::SkCanvas *canvas,
     paint.setAlphaf(paint.getAlphaf() * alpha);
     canvas->drawRRect(roundedBox(state, state.fBounds), paint);
   }
-  Hooks::over(state, canvas, alpha);
+  hooks.over(state, canvas, alpha);
   if (state.fBorder && state.fBorder->width > 0.0f) {
     skia::SkPaint paint;
     paint.setAntiAlias(true);
@@ -3735,8 +3741,19 @@ template <class Hooks> void paintBox(const State &state, skia::SkCanvas *canvas,
   }
 }
 
+// A node's own drawing: with the program's paint where it asks for it (a
+// Box's fill), else as it is.
+template <class T, class Hooks> void drawSelfOf(T &node, Hooks &, skia::SkCanvas *canvas, float alpha) {
+  node.drawSelf(canvas, alpha);
+}
+template <class T, class Hooks>
+  requires requires(T &node, Hooks &hooks, skia::SkCanvas *canvas) { node.drawSelf(hooks, canvas, 1.0f); }
+void drawSelfOf(T &node, Hooks &hooks, skia::SkCanvas *canvas, float alpha) {
+  node.drawSelf(hooks, canvas, alpha);
+}
+
 template <class T>
-void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
+void drawNode(T &node, Painting &painting, skia::SkCanvas *canvas, float inheritedAlpha) {
   State &state = node.fState;
   if (!state.fVisible || state.fAlpha <= 0.001f) {
     return;
@@ -3751,7 +3768,9 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
   }
   ++drawnCount();
   // What the program keeps while its subtree is drawn.
-  [[maybe_unused]] const typename PaintOf<T>::scope programScope{state};
+  // The program's paint, as the host handed it to the scene.
+  auto &hooks = static_cast<PaintOf<T> &>(painting);
+  [[maybe_unused]] const typename PaintOf<T>::scope programScope{hooks, state};
   const float alpha = inheritedAlpha * state.fAlpha;
   // The canvas kept and given back only where this moves or cuts it: most
   // nodes do neither, and a save and a restore for each was most of what
@@ -3783,18 +3802,18 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
       state.fRecordedAt = now;
     }
     if (!state.fPicture && state.fRecordedInARow >= 3) {
-      paintBox<PaintOf<T>>(state, canvas, alpha);
-      node.drawSelf(canvas, alpha);
-      eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, canvas, alpha); });
+      paintBox(hooks, state, canvas, alpha);
+      drawSelfOf(node, hooks, canvas, alpha);
+      eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, painting, canvas, alpha); });
     } else if (!state.fPicture) {
       skia::SkPictureRecorder recorder;
       // Its reach, not its bounds alone, as the picture's cull: a part drawn
       // past it -- placed or shifted out of it -- was culled with the picture
       // wherever only that part was repainted.
       skia::SkCanvas *into = recorder.beginRecording(joined(state.fBounds, state.fReach).makeOutset(64.0f, 64.0f));
-      paintBox<PaintOf<T>>(state, into, 1.0f);
-      node.drawSelf(into, 1.0f);
-      eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, into, 1.0f); });
+      paintBox(hooks, state, into, 1.0f);
+      drawSelfOf(node, hooks, into, 1.0f);
+      eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, painting, into, 1.0f); });
       state.fPicture = recorder.finishRecordingAsPicture();
     }
     if (state.fPicture && state.fRecordedInARow < 3) {
@@ -3807,10 +3826,10 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
       }
     }
   } else {
-    paintBox<PaintOf<T>>(state, canvas, alpha);
-    node.drawSelf(canvas, alpha);
+    paintBox(hooks, state, canvas, alpha);
+    drawSelfOf(node, hooks, canvas, alpha);
     eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) {
-      draw(child, canvas, alpha);
+      draw(child, painting, canvas, alpha);
     });
   }
   if (saved >= 0) {
@@ -3840,8 +3859,8 @@ template <class N> void shiftSubtree(N &node, float dy) { shiftSubtree(node, 0.0
 // of its children, after placing it.
 // Draws a node and its subtree the way the scene does; a node that draws its
 // subtree another way calls this for what it does not do itself.
-template <class T> void drawDefault(T &node, skia::SkCanvas *canvas, float alpha) {
-  detail::drawNode(node, canvas, alpha);
+template <class T> void drawDefault(T &node, Painting &painting, skia::SkCanvas *canvas, float alpha) {
+  detail::drawNode(node, painting, canvas, alpha);
 }
 
 // ---- the walks made once ----------------------------------------------------
@@ -4985,7 +5004,7 @@ public:
     void (*fDestroy)(void *);
     State &(*fState)(void *);
     void (*fLayout)(void *, const skia::SkRect &);
-    void (*fDraw)(void *, skia::SkCanvas *, float);
+    void (*fDraw)(void *, Painting &, skia::SkCanvas *, float);
     // The walks: the type's own in a release build, one table for every
     // node outside it (Walks).
     const Walks *fWalks;
@@ -5138,7 +5157,7 @@ private:
   static constexpr Ops kOps{      +[](void *n) { delete static_cast<T *>(n); },
       +[](void *n) -> State & { return as<T>(n).fState; },
       +[](void *n, const skia::SkRect &box) { detail::layoutNode(as<T>(n), box); },
-      +[](void *n, skia::SkCanvas *canvas, float alpha) { as<T>(n).draw(canvas, alpha); },
+      +[](void *n, Painting &painting, skia::SkCanvas *canvas, float alpha) { as<T>(n).draw(painting, canvas, alpha); },
       walksOf<T>(),
       +[]() -> const std::type_info & { return typeid(T); },
       +[](void *n, void *context, AnyChildVisit visit) {
@@ -5351,12 +5370,12 @@ template <class N> void layout(N &child, const skia::SkRect &parentBox) {
     detail::layoutNode(child, parentBox);
   }
 }
-template <class N> void draw(N &child, skia::SkCanvas *canvas, float alpha) {
+template <class N> void draw(N &child, Painting &painting, skia::SkCanvas *canvas, float alpha) {
   if constexpr (kErasedWalks && std::derived_from<N, Node>) {
     AnyNodeRef seen = AnyNodeRef::of(child);
-    draw(seen, canvas, alpha);
+    draw(seen, painting, canvas, alpha);
   } else {
-    child.draw(canvas, alpha);
+    child.draw(painting, canvas, alpha);
   }
 }
 
@@ -5367,8 +5386,8 @@ inline State &stateOf(AnyNodeRef &child) { return child.state(); }
 inline void layout(AnyNodeRef &child, const skia::SkRect &box) {
   child.ops().fLayout(child.node(), box);
 }
-inline void draw(AnyNodeRef &child, skia::SkCanvas *canvas, float alpha) {
-  child.ops().fDraw(child.node(), canvas, alpha);
+inline void draw(AnyNodeRef &child, Painting &painting, skia::SkCanvas *canvas, float alpha) {
+  child.ops().fDraw(child.node(), painting, canvas, alpha);
 }
 
 namespace walk {
@@ -5551,7 +5570,8 @@ public:
     return true;
   }
 
-  void draw(skia::SkCanvas *canvas) { scene::draw(fRoot, canvas, 1.0f); }
+  // Drawn with the program's paint: the host's, kept as long as it draws.
+  void draw(detail::PaintOf<Root> &paint, skia::SkCanvas *canvas) { scene::draw(fRoot, paint, canvas, 1.0f); }
 
   [[nodiscard]] FrameResult finishFrame() {
     // Where the field typed into is, for the host to tell the system.

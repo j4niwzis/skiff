@@ -132,7 +132,8 @@ TEST(Tracking, AChildMovedPastItsParentIsDrawnWhereItIs) {
   // Only where it is now repainted: its parent's own box is not.
   canvas.clipRect(skia::SkRect::MakeXYWH(100.0f, 60.0f, 10.0f, 10.0f));
   const int before = probe.fDraws;
-  scene.draw(&canvas);
+  skiff::scene::detail::PlainPaint plain;
+  scene.draw(plain, &canvas);
   EXPECT_EQ(probe.fDraws, before + 1);
 }
 
