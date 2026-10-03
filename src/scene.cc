@@ -2104,6 +2104,10 @@ public:
   [[nodiscard]] const Margin &margin() const noexcept { return fMargin; }
   [[nodiscard]] const Margin &padding() const noexcept { return fPadding; }
   [[nodiscard]] const skia::SkRect &bounds() const noexcept { return fBounds; }
+  // Where it is shown and pressed, in the space its parent lays it out in:
+  // its bounds moved by its own shift. A part moved apart from its layout --
+  // beside a sticker -- is pressed there, not where it was laid out.
+  [[nodiscard]] skia::SkRect shownBounds() const noexcept { return fBounds.makeOffset(fShiftX, fShiftY); }
   // The box children are laid out in: this node, less its padding.
   [[nodiscard]] skia::SkRect contentBox() const {
     return inset(fBounds, fPadding);
@@ -3226,6 +3230,7 @@ struct Node {
   [[nodiscard]] const skia::SkRect &bounds() const noexcept {
     return fState.bounds();
   }
+  [[nodiscard]] skia::SkRect shownBounds() const noexcept { return fState.shownBounds(); }
   [[nodiscard]] bool visible() const noexcept { return fState.visible(); }
   [[nodiscard]] bool hovered() const noexcept { return fState.hovered(); }
   [[nodiscard]] bool focused() const noexcept { return fState.focused(); }
