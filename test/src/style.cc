@@ -501,6 +501,9 @@ TEST(Input, PropagatesCaptureTargetAndBubbleInOrder) {
   EXPECT_FALSE(scene.dispatchPointer(down));
   EXPECT_EQ(events, (std::vector<std::string>{"root:0", "child:1", "root:2"}));
 
+  // A press does not move the focus to a node that does not take it on a
+  // press (takesFocusOnPress): the keys go where the focus is, given here.
+  scene.focus(std::get<0>(scene.root().fChildren).id());
   events.clear();
   EXPECT_FALSE(scene.dispatchKey(key::down{}));
   EXPECT_EQ(events, (std::vector<std::string>{"root:key:0", "child:key:1",
@@ -813,8 +816,9 @@ TEST(Layout, FlowRearrangesOnlyChildrenWhosePositionChanged) {
   EXPECT_FLOAT_EQ(second.bounds().fTop, 20.0f);
   EXPECT_FLOAT_EQ(third.bounds().fTop, 30.0f);
   EXPECT_EQ(first.fLayouts, firstLayouts + 1);
-  EXPECT_EQ(second.fLayouts, secondLayouts + 1);
-  EXPECT_EQ(third.fLayouts, thirdLayouts + 1);
+  // Only moved: carried where it goes as it was laid out, not laid out again.
+  EXPECT_EQ(second.fLayouts, secondLayouts);
+  EXPECT_EQ(third.fLayouts, thirdLayouts);
 
   const int movedSecondLayouts = second.fLayouts;
   const int movedThirdLayouts = third.fLayouts;
@@ -835,7 +839,10 @@ TEST(Layout, ProgrammaticScrollInvalidatesItsSubtree) {
 
   scene.root().setCurrent(20.0f);
   EXPECT_TRUE(scene.layoutIfNeeded(kViewport));
-  EXPECT_FLOAT_EQ(content.bounds().fTop, -20.0f);
+  // Shifted, not moved: shown 20 up, laid out where it was -- a scroll costs
+  // the same however long the list.
+  EXPECT_FLOAT_EQ(content.shownBounds().fTop, -20.0f);
+  EXPECT_FLOAT_EQ(content.bounds().fTop, 0.0f);
 }
 
 TEST(Input, ScrollDragCancelsDeferredChildClick) {
@@ -1004,9 +1011,21 @@ TEST(Cursor, ThePointersShapeIsTheNodesUnderIt) {
   EXPECT_EQ(scene.cursor(), Cursor{cursor::text{}});
 }
 
-// A press focuses without showing it; the keyboard shows it.
+// A node that takes the focus on a press, as a text field does.
+struct FocusOnPress : ClickProbe {
+  [[nodiscard]] bool takesFocusOnPress() const { return true; }
+};
+struct ShapedFocus : Node {
+  struct parts_t {
+    ClickProbe edge = make<ClickProbe>({.width = 10.0f, .height = 100.0f});
+    FocusOnPress plain = make<FocusOnPress>({.x = 50.0f, .width = 10.0f, .height = 100.0f});
+  } parts;
+};
+
+// A press focuses -- a node that takes the focus on a press -- without
+// showing it; the keyboard shows it.
 TEST(Focus, APressFocusesWithoutShowingIt) {
-  Scene<Shaped> scene{std::in_place};
+  Scene<ShapedFocus> scene{std::in_place};
   scene.state().apply({.fill = true});
   scene.layoutIfNeeded(skia::SkRect::MakeWH(100.0f, 100.0f));
   const std::array layers{InputRouter::Layer{scene.handle(), false}};
@@ -1093,7 +1112,7 @@ TEST(Layout, WhatSticksOutOfAFlowIsTold) {
   scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
   const auto told = std::exchange(skiff::scene::overflows(), {});
   ASSERT_EQ(told.size(), 1u);  // the fixed row's second box, once; the sized row, never
-  EXPECT_NEAR(told.front().x, 60.0f, 0.6f);
+  EXPECT_NEAR(told.front().x, 59.0f, 0.6f);  // 60 out, less the pixel of slack for rounding
   EXPECT_FLOAT_EQ(told.front().y, 0.0f);
 }
 
