@@ -1060,6 +1060,14 @@ template <class Pictures> class ErasedBasicText : public internal::BasicText<Any
   using Base = internal::BasicText<AnyPictures>;
 
 public:
+  // Its own handlers, as the wrapper's own: brought in here, so that they
+  // are taken for it. Else Node's defaults -- deducing `this`, an exact
+  // match for the wrapper -- beat the widget's own, which reach it through
+  // the base, and the widget took no key, text or press.
+  using Base::onPointer;
+  using Base::onKey;
+  using Base::onText;
+  using Base::onSemantic;
   template <class... Args>
     requires std::constructible_from<Base, Args...>
   ErasedBasicText(Args &&...args) : Base(std::forward<Args>(args)...) {

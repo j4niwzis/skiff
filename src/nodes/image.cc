@@ -281,6 +281,14 @@ template <ImageSource Source> class ErasedImage : public internal::Image<AnyImag
   using Base = internal::Image<AnyImageSource>;
 
 public:
+  // Its own handlers, as the wrapper's own: brought in here, so that they
+  // are taken for it. Else Node's defaults -- deducing `this`, an exact
+  // match for the wrapper -- beat the widget's own, which reach it through
+  // the base, and the widget took no key, text or press.
+  using Base::onPointer;
+  using Base::onKey;
+  using Base::onText;
+  using Base::onSemantic;
   explicit ErasedImage(Source source, Fit how = fit::cover{}) : Base(AnyImageSource(std::move(source)), how) {}
   void setSource(Source source) { Base::setSource(AnyImageSource(std::move(source))); }
 };
