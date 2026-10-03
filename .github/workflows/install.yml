@@ -59,9 +59,12 @@ jobs:
       # a build that has to make one needs it.
       - name: what a machine with development packages has
         run: |
+          # Boost too: a skiff built at C++23 walks its aggregates with
+          # Boost.PFR, and its installed package finds it again on the
+          # machine -- the consumer below, given only the prefix, found none.
           sudo apt-get install -y libskia-dev libgl-dev generate-ninja \
             zlib1g-dev libpng-dev libjpeg-dev libfreetype-dev \
-            libharfbuzz-dev libexpat1-dev
+            libharfbuzz-dev libexpat1-dev libboost-dev
 
       # A Skia built here is built once. The store keeps what came out, keyed
       # by what it was built from, and the sources keep what was fetched, so
