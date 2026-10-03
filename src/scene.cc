@@ -4183,6 +4183,12 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   state.fLayoutMoved = skia::SkRect::MakeEmpty();
   state.fDamaged = false;
   state.fRelaid = false;
+  // A transform under way -- begun between frames, not ticked yet: carried
+  // to the next frame as the tick carries what it finds moving. This walk
+  // takes it out of what is marked, and the frame then said nothing moved.
+  if (!state.fTransforms.empty()) {
+    work::moving().push_back(state.fId);
+  }
   const bool drawn = drawnAbove && state.fVisible && state.fAlpha > 0.001f;
   skia::SkRect below = skia::SkRect::MakeEmpty();
   const std::optional<skia::SkRect> &view = state.fInView;
