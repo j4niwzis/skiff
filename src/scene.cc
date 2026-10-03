@@ -278,6 +278,19 @@ struct Margin {
   constexpr bool operator==(const Margin &) const = default;
 };
 
+// A margin a spec may leave out. Braces of four give one -- `{2, 6, 2, 6}`,
+// as a Margin's -- and four zeros give zero; nothing leaves the node's as it
+// is. Not a std::optional<Margin>: braces of four are its constructor's
+// arguments there, and every spec would need a second pair.
+struct SpecMargin {
+  std::optional<Margin> given;
+  constexpr SpecMargin() = default;
+  constexpr SpecMargin(float top, float right, float bottom, float left)
+      : given(Margin{top, right, bottom, left}) {}
+  constexpr SpecMargin(Margin margin) : given(margin) {}
+  friend constexpr bool operator==(const SpecMargin &, const SpecMargin &) = default;
+};
+
 // A scroll view's contents moved by `dy` as a whole: what was drawn in
 // `rect` last frame is where it goes now, `dy` lower. A host that keeps its
 // last frame copies it there, and repaints only the damage -- the strip that
@@ -579,10 +592,11 @@ struct Spec {
   std::optional<Align> alignSelf{};
   std::optional<float> depth{};
 
-  // Plain, so that `.padding = {2, 6, 2, 6}` compiles. All zero reads as
-  // "not mentioned".
-  Margin margin{};
-  Margin padding{};
+  // Given or not, like the rest, and still `.padding = {2, 6, 2, 6}`. Given
+  // as all zeros it is zero -- once a plain Margin, all zeros read as "not
+  // mentioned", and a padding could be set by apply() but never taken off.
+  SpecMargin margin{};
+  SpecMargin padding{};
 
   std::optional<float> cornerRadius{};
   // Or each corner its own; given, it is drawn and clipped by, not the one.
@@ -2347,11 +2361,11 @@ public:
     if (spec.depth) {
       fDepth = *spec.depth;
     }
-    if (spec.margin.totalX() != 0.0f || spec.margin.totalY() != 0.0f) {
-      fMargin = spec.margin;
+    if (spec.margin.given) {
+      fMargin = *spec.margin.given;
     }
-    if (spec.padding.totalX() != 0.0f || spec.padding.totalY() != 0.0f) {
-      fPadding = spec.padding;
+    if (spec.padding.given) {
+      fPadding = *spec.padding.given;
     }
     if (spec.cornerRadius) {
       fCornerRadius = *spec.cornerRadius;

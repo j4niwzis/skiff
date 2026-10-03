@@ -181,4 +181,28 @@ TEST(Tracking, RevealOnHoverShowsWhileTheHolderIsHovered) {
   EXPECT_FALSE(tip.visible());
 }
 
+struct PaddedScreen : Node {
+  struct parts_t {
+    Box<> box = make<Box>({.width = 40.0f, .height = 20.0f, .margin = {3.0f, 0.0f, 0.0f, 0.0f}, .padding = {0.0f, 0.0f, 12.0f, 0.0f}}, kFill);
+  } parts;
+};
+
+// Given as all zeros, a padding or a margin is zero: it once read as "not
+// mentioned", and a bottom padding applied for a docked panel stayed when
+// the panel went.
+TEST(Tracking, ZeroPaddingAndMarginApplied) {
+  Scene<PaddedScreen> scene{std::in_place};
+  scene.layoutIfNeeded(kView);
+  (void)scene.finishFrame();
+  auto &box = scene.root().parts.box;
+  EXPECT_EQ(box.fState.padding().fBottom, 12.0f);
+  box.apply({.margin = {0.0f, 0.0f, 0.0f, 0.0f}, .padding = {0.0f, 0.0f, 0.0f, 0.0f}});
+  EXPECT_EQ(box.fState.padding().fBottom, 0.0f);
+  EXPECT_EQ(box.fState.margin().fTop, 0.0f);
+  // And one not mentioned is left as it is.
+  box.apply({.padding = {1.0f, 0.0f, 0.0f, 0.0f}});
+  box.apply({.width = 41.0f});
+  EXPECT_EQ(box.fState.padding().fTop, 1.0f);
+}
+
 } // namespace
