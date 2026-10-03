@@ -223,14 +223,15 @@ if(DEFINED ALEF_CONSTEXPR_STEPS)
     "clang's -fconstexpr-steps for splice, as alef's")
 endif()
 # The one splice, here and in the installed copy's config.
-set(skiff_splice_tag f2c25443061ba5353720eccd0a9438793c2ea053)
+set(skiff_splice_tag 3ebe0635251a5ffd9ed2ad0a027eeff957d340a7)
 cme_declare_port(NAME splice PROVIDES splice
   GITHUB_REPOSITORY j4niwzis/splice
   GIT_TAG ${skiff_splice_tag}
+  VERSION 0.3
   LICENSE GPL-3.0-only
   TARGETS splice)
 cme_options(splice "SPLICE_TESTS OFF")
-cme_find_package(splice REQUIRED)
+cme_find_package(splice 0.3 REQUIRED)
 
 add_library(${PROJECT_NAME} STATIC ${skiff_sources})
 add_library(skiff::skiff ALIAS ${PROJECT_NAME})
