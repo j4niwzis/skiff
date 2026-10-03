@@ -2719,6 +2719,10 @@ public:
     }
     fTransforms.push_back({property, from, to, fPendingStartMs + fDelayMs,
                            fPendingStartMs + fDelayMs + durationMs, e});
+    // Marked: begun between frames, it was in neither the ticking set nor
+    // what was marked, the frame said nothing moved, and the host slept --
+    // the animation began only when something else woke the window.
+    work::mark(fId);
   }
 
   void updateTransforms(double nowMs) {
