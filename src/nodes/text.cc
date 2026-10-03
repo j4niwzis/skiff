@@ -146,6 +146,17 @@ inline std::uint64_t &textSelectionOwner() {
 // setWrapped(false) never does, setElided(true) keeps one line cut with an
 // ellipsis; a text sized by its row (grow, or a share of the width) keeps
 // one line, clipped, as that width is its row's to give.
+// A text's pictures, whatever they are: asked as they would be, through the
+// two functions they have. Erasure, outside a release build only.
+struct AnyPictures {
+  std::optional<skiff::scene::PillPicture> (*fPill)(std::string_view) = &NoPictures::pill;
+  const skia::Sp<skia::SkImage> *(*fPicture)(std::string_view) = &NoPictures::picture;
+  template <class Pictures> [[nodiscard]] static AnyPictures of() { return {&Pictures::pill, &Pictures::picture}; }
+  [[nodiscard]] std::optional<skiff::scene::PillPicture> pill(std::string_view target) const { return fPill(target); }
+  [[nodiscard]] const skia::Sp<skia::SkImage> *picture(std::string_view target) const { return fPicture(target); }
+};
+
+namespace internal {
 template <class Pictures = NoPictures> class BasicText : public skiff::scene::Node {
 public:
   using Link = TextLink;
@@ -877,7 +888,7 @@ private:
         // The picture, square, a little over the text's size, standing on
         // its baseline; nothing where the program has none (yet).
         if (cuts[i] == link->first)
-          if (const skia::Sp<skia::SkImage> *picture = Pictures::picture(link->target);
+          if (const skia::Sp<skia::SkImage> *picture = fPictures.picture(link->target);
               picture && *picture) {
             const float side = fSize * 1.2f;
             skia::SkPaint paint;
@@ -893,7 +904,7 @@ private:
         // The plate, the picture at its start where the pill begins, the
         // text over it -- not underlined.
         drawPill(canvas, p, at, y, width, fSize, colour,
-                 cuts[i] == link->first ? Pictures::pill(link->target) : std::nullopt, alpha);
+                 cuts[i] == link->first ? fPictures.pill(link->target) : std::nullopt, alpha);
         p.text(piece, at, y, fSize, colour, alpha, fBold);
         at += width;
         continue;
@@ -996,6 +1007,12 @@ private:
                : parent.width() - state.fMargin.totalX();
   }
 
+public:
+  // Where its pictures come from: Pictures' own, or erased.
+  void setPictures(Pictures pictures) { fPictures = std::move(pictures); }
+
+private:
+  [[no_unique_address]] Pictures fPictures{};
   std::string fText;
   float fSize;
   skia::SkColor fColour;
@@ -1035,6 +1052,25 @@ private:
   std::size_t fLastOffset = 0;
   skia::SkColor fSelectionColour = skia::colorSetARGB(110, 64, 167, 227);
 };
+} // namespace internal
+
+// The text over erased pictures, taking the pictures' own type: all of its
+// code but this is internal::BasicText<AnyPictures>'s, made once.
+template <class Pictures> class ErasedBasicText : public internal::BasicText<AnyPictures> {
+  using Base = internal::BasicText<AnyPictures>;
+
+public:
+  template <class... Args>
+    requires std::constructible_from<Base, Args...>
+  ErasedBasicText(Args &&...args) : Base(std::forward<Args>(args)...) {
+    this->setPictures(AnyPictures::of<Pictures>());
+  }
+};
+
+// A text: made for its pictures in a release build, over erased ones
+// otherwise -- as the walks are.
+template <class Pictures = NoPictures>
+using BasicText = std::conditional_t<skiff::scene::kErasedWalks, ErasedBasicText<Pictures>, internal::BasicText<Pictures>>;
 
 using Text = BasicText<>;
 

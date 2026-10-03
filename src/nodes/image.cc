@@ -25,6 +25,39 @@ concept ImageSource = std::copy_constructible<Source> && requires(const Source &
   { source() } -> std::convertible_to<const skia::Sp<skia::SkImage> *>;
 };
 
+// A source, whatever it is: asked as it would be, and waited on where it
+// says who waits. Erasure, outside a release build only.
+class AnyImageSource {
+public:
+  // Itself ruled out first: asking whether it is a source asks how it is
+  // copied, which is this.
+  template <class Source>
+    requires(!std::same_as<std::remove_cvref_t<Source>, AnyImageSource> && ImageSource<Source>)
+  explicit AnyImageSource(Source source) : fGet([source] { return source(); }), fWait(waiting_on(source)) {}
+  [[nodiscard]] const skia::Sp<skia::SkImage> *operator()() const { return fGet(); }
+  // Waited on by `id`, where the source says who waits: whether it does.
+  [[nodiscard]] bool wait(skiff::scene::NodeId id) const {
+    if (!fWait)
+      return false;
+    fWait(id);
+    return true;
+  }
+
+private:
+  template <class Source>
+    requires requires(const Source &source) {
+      { source.waiters() } -> std::same_as<skiff::scene::Waiters &>;
+    }
+  static std::function<void(skiff::scene::NodeId)> waiting_on(const Source &source) {
+    return [source](skiff::scene::NodeId id) { source.waiters().wait(id); };
+  }
+  static std::function<void(skiff::scene::NodeId)> waiting_on(const auto &) { return {}; }
+
+  std::function<const skia::Sp<skia::SkImage> *()> fGet;
+  std::function<void(skiff::scene::NodeId)> fWait;
+};
+
+namespace internal {
 // A picture in a box, in the box's corner radius; nothing where it has not
 // come -- the box's background shows, as a placeholder. Its proportions,
 // for a box that follows them, are what it says.
@@ -227,6 +260,7 @@ private:
     source.waiters().wait(fState.fId);
     return true;
   }
+  bool waitOn(const AnyImageSource &source) { return source.wait(fState.fId); }
   bool waitOn(const auto &) { return false; }  // asked at every frame instead
 
   Source fSource;
@@ -239,5 +273,21 @@ private:
   std::uint32_t fScaledOf = 0;
   int fScaledWidth = 0, fScaledHeight = 0;
 };
+} // namespace internal
+
+// The picture over an erased source, taking a source of its own type: all
+// of its code but this is internal::Image<AnyImageSource>'s, made once.
+template <ImageSource Source> class ErasedImage : public internal::Image<AnyImageSource> {
+  using Base = internal::Image<AnyImageSource>;
+
+public:
+  explicit ErasedImage(Source source, Fit how = fit::cover{}) : Base(AnyImageSource(std::move(source)), how) {}
+  void setSource(Source source) { Base::setSource(AnyImageSource(std::move(source))); }
+};
+
+// A picture: made for its source in a release build, over an erased one
+// otherwise -- as the walks are.
+template <ImageSource Source>
+using Image = std::conditional_t<skiff::scene::kErasedWalks, ErasedImage<Source>, internal::Image<Source>>;
 
 } // namespace skiff::nodes
