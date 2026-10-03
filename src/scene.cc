@@ -3370,8 +3370,12 @@ template <class T, class F> void eachChildInView(T &node, F &&f) {
     return;
   }
   eachChild(node, [&](auto &child) {
-    const skia::SkRect &at = stateOf(child).fBounds;
-    if (at.isEmpty() || skia::SkRect::Intersects(at, *view)) {
+    const State &one = stateOf(child);
+    // By where it and what it holds are drawn -- its reach, moved by its
+    // shift -- not its bounds alone: a row whose part stands out of it was
+    // passed over where only that part was in view.
+    if (one.fBounds.isEmpty() ||
+        skia::SkRect::Intersects(joined(one.fBounds, one.fReach).makeOffset(one.fShiftX, one.fShiftY), *view)) {
       f(child);
     }
   });
@@ -4179,7 +4183,8 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   skia::SkRect below = skia::SkRect::MakeEmpty();
   const std::optional<skia::SkRect> &view = state.fInView;
   const auto inView = [&](const State &one) {
-    return !view || one.fBounds.isEmpty() || skia::SkRect::Intersects(one.fBounds, *view) ||
+    return !view || one.fBounds.isEmpty() ||
+           skia::SkRect::Intersects(joined(one.fBounds, one.fReach).makeOffset(one.fShiftX, one.fShiftY), *view) ||
            work::pending().contains(one.fId);
   };
   const auto into = [&](auto &each) {
@@ -4383,8 +4388,9 @@ template <class N> bool hitPath(N &child, float x, float y, Path &path) {
   eachChildInDrawOrder(child, [&](auto &each, std::uint32_t index) {
     if (listed) {
       const State &one = stateOf(each);
+      // Its reach, as drawn: a part of a row standing out of it is pressed.
       if (!one.fOutOfFlow && !one.fBounds.isEmpty() &&
-          !one.fBounds.makeOffset(one.fShiftX, one.fShiftY).contains(x, y)) {
+          !joined(one.fBounds, one.fReach).makeOffset(one.fShiftX, one.fShiftY).contains(x, y)) {
         return;
       }
     }
