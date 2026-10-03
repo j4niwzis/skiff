@@ -3851,7 +3851,6 @@ template <class T> void drawDefault(T &node, skia::SkCanvas *canvas, float alpha
 // State, its children and its hooks. A type's table then holds only those,
 // each a call on the node; every walk's code is the same for all types, and a
 // program's thousands of node types no longer make thousands of copies of it.
-using AnyPhase = splice::variant<phase::capture, phase::target, phase::bubble>;
 class ErasedNode;
 [[nodiscard]] inline StyleSubject styleSubject(ErasedNode &node, float viewportWidth);
 template <class N> [[nodiscard]] const std::type_info &typeOf(N &);
@@ -4852,6 +4851,61 @@ template <class T, class F> decltype(auto) walkOn(void *node, F &&f);
 
 // Any node, held by value, erased the way std::function erases a callable:
 // one allocation, and a table of the walks for the node's own type.
+// A family of events as a node seen through its table is given them: for
+// each phase, one entry per alternative of the event -- a call of the node's
+// own handler for that phase and that event, nothing else. The event is
+// visited once, in deliver, where the code is the same for every node; a
+// type's table is only its entries, each one call -- not a visit of the
+// phase and then of the event for every type, which made most of a
+// program's build outside a release build.
+template <class Handler, class Event, class R> struct EventEntries;
+template <class Handler, class... Es, class R> struct EventEntries<Handler, splice::variant<Es...>, R> {
+  using Row = std::tuple<void (*)(void *, const Es &, R &)...>;
+  std::array<Row, 3> fRows;
+
+  template <class T> [[nodiscard]] static constexpr EventEntries of() {
+    return {{rowOf<T, phase::capture>(), rowOf<T, phase::target>(), rowOf<T, phase::bubble>()}};
+  }
+  template <class P>
+  void deliver(void *node, P when, const splice::variant<Es...> &input, R &reply) const {
+    const Row &row = fRows[indexOf(when)];
+    splice::visit(
+        [&](const auto &event) {
+          using Entry = void (*)(void *, const std::remove_cvref_t<decltype(event)> &, R &);
+          std::get<Entry>(row)(node, event, reply);
+        },
+        input);
+  }
+
+private:
+  template <class T, class P> [[nodiscard]] static constexpr Row rowOf() {
+    return Row{+[](void *node, const Es &event, R &reply) { Handler{}(*static_cast<T *>(node), P{}, event, reply); }...};
+  }
+  [[nodiscard]] static constexpr std::size_t indexOf(phase::capture) { return 0; }
+  [[nodiscard]] static constexpr std::size_t indexOf(phase::target) { return 1; }
+  [[nodiscard]] static constexpr std::size_t indexOf(phase::bubble) { return 2; }
+};
+// Each family's handler, called on a node of its own type.
+struct PointerHandler {
+  template <class N, class P, class E> void operator()(N &node, P when, const E &event, PointerReply &reply) const {
+    node.onPointer(when, event, reply);
+  }
+};
+struct KeyHandler {
+  template <class N, class P, class E> void operator()(N &node, P when, const E &event, Reply &reply) const {
+    node.onKey(when, event, reply);
+  }
+};
+struct TextHandler {
+  template <class N, class P, class E> void operator()(N &node, P when, const E &event, Reply &reply) const {
+    node.onText(when, event, reply);
+  }
+};
+struct SemanticHandler {
+  template <class N, class P, class E> void operator()(N &node, P when, const E &event, Reply &reply) const {
+    node.onSemantic(when, event, reply);
+  }
+};
 class AnyNode {
 public:
   AnyNode() = default;
@@ -4942,10 +4996,10 @@ public:
     void (*fOnFocusChanged)(void *, bool);
     bool (*fOnClick)(void *, float, float);
     double (*fOwnWakeAt)(void *);
-    void (*fPointer)(void *, const AnyPhase &, const PointerEvent &, PointerReply &);
-    void (*fKey)(void *, const AnyPhase &, const KeyEvent &, Reply &);
-    void (*fText)(void *, const AnyPhase &, const TextEvent &, Reply &);
-    void (*fSemantic)(void *, const AnyPhase &, const SemanticAction &, Reply &);
+    EventEntries<PointerHandler, PointerEvent, PointerReply> fPointer;
+    EventEntries<KeyHandler, KeyEvent, Reply> fKey;
+    EventEntries<TextHandler, TextEvent, Reply> fText;
+    EventEntries<SemanticHandler, SemanticAction, Reply> fSemantic;
     bool (*fChildAt)(void *, std::uint32_t, void *context, AnyChildVisit visit);
   };
   [[nodiscard]] const Ops &ops() const noexcept { return *fOps; }
@@ -5029,18 +5083,10 @@ private:
       +[](void *n, bool focused) { as<T>(n).onFocusChanged(focused); },
       +[](void *n, float x, float y) -> bool { return as<T>(n).onClick(x, y); },
       +[](void *n) -> double { return walk::ownWakeAt(as<T>(n)); },
-      +[](void *n, const AnyPhase &when, const PointerEvent &input, PointerReply &reply) {
-        splice::visit([&](const auto &phase) { walk::pointerTo(as<T>(n), phase, input, reply); }, when);
-      },
-      +[](void *n, const AnyPhase &when, const KeyEvent &input, Reply &reply) {
-        splice::visit([&](const auto &phase) { walk::KeyDelivery{}(as<T>(n), phase, input, reply); }, when);
-      },
-      +[](void *n, const AnyPhase &when, const TextEvent &input, Reply &reply) {
-        splice::visit([&](const auto &phase) { walk::TextDelivery{}(as<T>(n), phase, input, reply); }, when);
-      },
-      +[](void *n, const AnyPhase &when, const SemanticAction &input, Reply &reply) {
-        splice::visit([&](const auto &phase) { walk::SemanticDelivery{}(as<T>(n), phase, input, reply); }, when);
-      },
+      EventEntries<PointerHandler, PointerEvent, PointerReply>::of<T>(),
+      EventEntries<KeyHandler, KeyEvent, Reply>::of<T>(),
+      EventEntries<TextHandler, TextEvent, Reply>::of<T>(),
+      EventEntries<SemanticHandler, SemanticAction, Reply>::of<T>(),
       +[](void *n, std::uint32_t place, void *context, AnyChildVisit visit) -> bool {
         return childAt(as<T>(n), place, [&](auto &child) { visitAsAny(child, context, visit); });
       },
@@ -5156,20 +5202,20 @@ inline double ownWakeAt(const ErasedNode &node) { return node.fOps->fOwnWakeAt(n
 inline void damageForHover(ErasedNode &node) { node.fOps->fHoverDamage(node.fNode); }
 template <class When>
 void pointerTo(ErasedNode &node, const When &when, const PointerEvent &input, PointerReply &reply) {
-  node.fOps->fPointer(node.fNode, AnyPhase(when), input, reply);
+  node.fOps->fPointer.deliver(node.fNode, when, input, reply);
 }
 template <class When>
 void KeyDelivery::operator()(ErasedNode &node, const When &when, const KeyEvent &input, Reply &reply) const {
-  node.fOps->fKey(node.fNode, AnyPhase(when), input, reply);
+  node.fOps->fKey.deliver(node.fNode, when, input, reply);
 }
 template <class When>
 void TextDelivery::operator()(ErasedNode &node, const When &when, const TextEvent &input, Reply &reply) const {
-  node.fOps->fText(node.fNode, AnyPhase(when), input, reply);
+  node.fOps->fText.deliver(node.fNode, when, input, reply);
 }
 template <class When>
 void SemanticDelivery::operator()(ErasedNode &node, const When &when, const SemanticAction &input,
                                   Reply &reply) const {
-  node.fOps->fSemantic(node.fNode, AnyPhase(when), input, reply);
+  node.fOps->fSemantic.deliver(node.fNode, when, input, reply);
 }
 } // namespace walk
 
