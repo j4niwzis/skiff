@@ -3766,7 +3766,10 @@ void drawNode(T &node, skia::SkCanvas *canvas, float inheritedAlpha) {
       eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, canvas, alpha); });
     } else if (!state.fPicture) {
       skia::SkPictureRecorder recorder;
-      skia::SkCanvas *into = recorder.beginRecording(state.fBounds.makeOutset(64.0f, 64.0f));
+      // Its reach, not its bounds alone, as the picture's cull: a part drawn
+      // past it -- placed or shifted out of it -- was culled with the picture
+      // wherever only that part was repainted.
+      skia::SkCanvas *into = recorder.beginRecording(joined(state.fBounds, state.fReach).makeOutset(64.0f, 64.0f));
       paintBox<PaintOf<T>>(state, into, 1.0f);
       node.drawSelf(into, 1.0f);
       eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, into, 1.0f); });
