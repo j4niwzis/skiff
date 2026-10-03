@@ -222,9 +222,11 @@ if(DEFINED ALEF_CONSTEXPR_STEPS)
   set(SPLICE_CONSTEXPR_STEPS ${ALEF_CONSTEXPR_STEPS} CACHE STRING
     "clang's -fconstexpr-steps for splice, as alef's")
 endif()
+# The one splice, here and in the installed copy's config.
+set(skiff_splice_tag f2c25443061ba5353720eccd0a9438793c2ea053)
 cme_declare_port(NAME splice PROVIDES splice
   GITHUB_REPOSITORY j4niwzis/splice
-  GIT_TAG f2c25443061ba5353720eccd0a9438793c2ea053
+  GIT_TAG ${skiff_splice_tag}
   LICENSE GPL-3.0-only
   TARGETS splice)
 cme_options(splice "SPLICE_TESTS OFF")
@@ -351,10 +353,31 @@ if(SKIFF_INSTALL)
   if(NOT ANDROID AND NOT SKIFF_EMSCRIPTEN)
     string(APPEND skiff_config "find_dependency(OpenGL)\n")
   endif()
-  # Built on C++23, its aggregates are walked by Boost.PFR, found again.
+  # What its module interfaces import and this build made in-tree, found
+  # again: splice, and -- built on C++23, its aggregates walked by
+  # Boost.PFR -- Boost.PFR as a module. Where cmake-everywhere answers, as
+  # this build was answered: splice's port declared as here, and Boost's
+  # pfr[modules], which a machine's Boost does not ship, built from its
+  # sources, downloaded. Else what the machine has. Never found, a consumer
+  # compiling the installed interfaces stopped at "module 'splice' not
+  # found" (and, on C++23, at find_dependency(Boost COMPONENTS pfr)).
+  string(APPEND skiff_config
+    "if(COMMAND cme_find_package)\n"
+    "  cme_declare_port(NAME splice PROVIDES splice\n"
+    "    GITHUB_REPOSITORY j4niwzis/splice\n"
+    "    GIT_TAG ${skiff_splice_tag}\n"
+    "    LICENSE GPL-3.0-only\n"
+    "    TARGETS splice)\n"
+    "  cme_options(splice \"SPLICE_TESTS OFF\")\n"
+    "  cme_find_package(splice REQUIRED)\n")
   if(skiff_cxx_standard LESS 26)
-    string(APPEND skiff_config "find_dependency(Boost COMPONENTS pfr)\n")
+    string(APPEND skiff_config "  cme_find_package(Boost COMPONENTS pfr[modules] REQUIRED)\n")
   endif()
+  string(APPEND skiff_config "else()\n  find_dependency(splice)\n")
+  if(skiff_cxx_standard LESS 26)
+    string(APPEND skiff_config "  find_dependency(Boost COMPONENTS pfr)\n")
+  endif()
+  string(APPEND skiff_config "endif()\n")
   string(APPEND skiff_config
     "include(\"\${CMAKE_CURRENT_LIST_DIR}/skiffTargets.cmake\")\n")
   # And Skia put back on the target, since the exported one carries it only
@@ -375,6 +398,9 @@ if(SKIFF_INSTALL)
     "             INTERFACE_INCLUDE_DIRECTORIES \${SKIA_INCLUDE_DIRS})\n"
     "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
     "             INTERFACE_LINK_LIBRARIES \${SKIA_LDFLAGS} \${SKIA_LIBRARIES})\n")
+  string(APPEND skiff_config
+    "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
+    "             INTERFACE_LINK_LIBRARIES splice)\n")
   if(skiff_cxx_standard LESS 26)
     string(APPEND skiff_config
       "set_property(TARGET skiff::skiff APPEND PROPERTY\n"

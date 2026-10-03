@@ -98,16 +98,8 @@ jobs:
 
       - name: build and install
         run: |
-          # C++26: what is installed is then consumed from the prefix alone.
-          # At C++23 skiff.aggregate imports boost.pfr, a module a machine's
-          # Boost does not ship -- only one built with pfr[modules] does --
-          # so an installed C++23 skiff needs that Boost beside it, and a
-          # consumer given only the prefix stopped at find_dependency(Boost).
-          # C++23 stays tested by the tests below, Boost brought by the
-          # provider.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_STANDARD=26 \
             -DCMAKE_C_COMPILER=clang-22 \
             -DCMAKE_CXX_COMPILER=clang++-22 \
             -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
@@ -144,8 +136,8 @@ jobs:
           test -f prefix/lib/cmake/skiff/skiffConfig.cmake
           test -f prefix/lib/cmake/skiff/skiffTargets.cmake
 
-      # And a consumer, with nothing but find_package: no cmake-everywhere,
-      # no sources of this library, only the prefix.
+      # And a consumer, with find_package and cmake-everywhere -- which brings
+      # back what the installed interfaces import -- and no sources of this.
       #
       # It has to say two things of its own before project(), and both are
       # about `import std` rather than about this library: the experimental
@@ -163,7 +155,7 @@ jobs:
               "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
           set(CMAKE_CXX_MODULE_STD 1)
           project(skiff_consumer LANGUAGES CXX)
-          set(CMAKE_CXX_STANDARD 26)
+          set(CMAKE_CXX_STANDARD 23)
           set(CMAKE_CXX_EXTENSIONS OFF)
           find_package(skiff REQUIRED)
           add_executable(consumer main.cc)
@@ -193,6 +185,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++-22 \
             -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
             -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
-            -DCMAKE_PREFIX_PATH="$PWD/prefix"
+            -DCMAKE_PREFIX_PATH="$PWD/prefix" \
+            -DCMAKE_PROJECT_TOP_LEVEL_INCLUDES="$PWD/cmake/get_cme.cmake"
           cmake --build /tmp/consumer/build
           /tmp/consumer/build/consumer
