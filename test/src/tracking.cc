@@ -96,6 +96,18 @@ TEST(Tracking, SetOutOfFlowLaysTheParentOutAgain) {
   EXPECT_FLOAT_EQ(scene.root().parts.second.bounds().fTop, before);
 }
 
+TEST(Tracking, PlacedAtTheAnchorItHadLeavesTheFlowAtOnce) {
+  Scene<Column> scene{std::in_place};
+  scene.layoutIfNeeded(kView);
+  (void)scene.finishFrame();
+  const float before = scene.root().parts.second.bounds().fTop;
+
+  // The top left: the anchor every node has to begin with.
+  scene.root().parts.first.apply({.place = anchor::kTopLeft});
+  EXPECT_TRUE(scene.layoutIfNeeded(kView));
+  EXPECT_LT(scene.root().parts.second.bounds().fTop, before);
+}
+
 struct Small : Node {
   struct parts_t {
     DrawProbe probe = make<DrawProbe>({.width = 10.0f, .height = 10.0f});

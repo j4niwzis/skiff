@@ -2268,9 +2268,15 @@ public:
   // Writes a spec. What it does not mention is left as it was.
   void apply(const Spec &spec) {
     const auto before = this->commonValues();
+    // Out of its parent's flow by a place: not one of the style fields
+    // compared below -- placed at the anchor it had already (the top left,
+    // as every node starts), it stayed in the flow until something else laid
+    // the parent out again.
+    bool flowChanged = false;
     if (spec.place) {
       fAnchor = *spec.place;
       fOrigin = *spec.place;
+      flowChanged = !fOutOfFlow;
       fOutOfFlow = true;
     }
     if (spec.shiftX && *spec.shiftX != fShiftX) {
@@ -2419,7 +2425,7 @@ public:
       fGrowAxes = axes::kNone;
     }
     const auto after = this->commonValues();
-    if (!sameLayout(before, after)) {
+    if (!sameLayout(before, after) || flowChanged) {
       this->invalidateLayout();
     } else if (before != after) {
       this->markDamaged();
