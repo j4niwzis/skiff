@@ -205,4 +205,20 @@ TEST(Tracking, ZeroPaddingAndMarginApplied) {
   EXPECT_EQ(box.fState.padding().fTop, 1.0f);
 }
 
+// Its height taken by a phone's keyboard come up under it: what was at its
+// bottom stays at its bottom.
+TEST(Tracking, ShrunkScrollViewKeepsItsBottom) {
+  Scene<ScrollContainer<Box<>>> scene{std::in_place, make<Box>({.width = 100.0f, .height = 1000.0f}, kFill)};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(100.0f, 300.0f));
+  scene.root().setCurrent(200.0f);
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(100.0f, 300.0f));
+  ASSERT_FLOAT_EQ(scene.root().current(), 200.0f);
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(100.0f, 200.0f));
+  EXPECT_FLOAT_EQ(scene.root().current(), 300.0f);
+  // And back as it goes down.
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(100.0f, 300.0f));
+  EXPECT_FLOAT_EQ(scene.root().current(), 200.0f);
+}
+
 } // namespace

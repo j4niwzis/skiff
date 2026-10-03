@@ -242,6 +242,8 @@ public:
         }
       });
     }
+    const bool laidOutBefore = fLaidOut;
+    const skia::SkRect boxBefore = fLastBox;
     fLaidOut = true;
     fLastBox = box;
     fLastOffset = offset;
@@ -259,6 +261,18 @@ public:
       fScroll.jumpTo(fExtent);
       fLastOffset = scene::snapToPixel(fExtent);
       this->followed(offset);
+    } else if (laidOutBefore && !following && !fToEnd && !fGlidingToEnd && !fScroll.dragging() &&
+               box.width() == boxBefore.width() && box.height() != boxBefore.height()) {
+      // Only its height changed -- a phone's keyboard come up under it, a
+      // bar opened below: what was at its bottom stays at its bottom, as a
+      // phone's apps keep it, not hidden under what came. Left alone, the
+      // view kept its top, and the lines read last went under the keyboard.
+      const float to = std::clamp(fScroll.offset() + boxBefore.height() - box.height(), 0.0f, fExtent);
+      if (to != fScroll.offset()) {
+        fScroll.jumpTo(to);
+        fState.markDamaged();
+        fLastOffset = scene::snapToPixel(to);
+      }
     }
     // A glide to the end under way: the end it set out for is not where the
     // end is once the rows it passes are laid out -- measured taller than
