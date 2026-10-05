@@ -517,6 +517,7 @@ using ::kBottomLeft_GrSurfaceOrigin;
 using ::kTopLeft_GrSurfaceOrigin;
 #endif
 
+using ::kBGRA_8888_SkColorType;
 using ::kN32_SkColorType;
 using ::kOpaque_SkAlphaType;
 using ::kPremul_SkAlphaType;
