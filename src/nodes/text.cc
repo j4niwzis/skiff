@@ -120,18 +120,8 @@ inline void drawPill(skia::SkCanvas *canvas, const skiff::paint::Painter &p, flo
 }
 
 // Which text's selection is shown, of all of them: the last pressed.
-// A selectable text pressed with the right button: what it asks a menu for
-// -- its selection, all of it where the press was not on what was selected
-// -- for the program to read; it drains them.
-// And the link the press was on, where it was on one: the menu offers it.
-struct TextMenuAsk {
-  std::string text;
-  std::optional<std::string> link;
-};
-inline std::vector<TextMenuAsk> &textMenusAsked() {
-  static std::vector<TextMenuAsk> asked;
-  return asked;
-}
+// A selectable text pressed with the right button asks a menu for itself:
+// skiff::scene::textMenusAsked.
 inline std::uint64_t &textSelectionOwner() {
   static std::uint64_t owner = 0;
   return owner;
@@ -333,7 +323,7 @@ public:
       // all of it not selected for that, lit up blue at every right-click.
       // Not taken: what holds the text may have a menu of its own -- a
       // message's -- which the program puts first.
-      textMenusAsked().push_back({in_selection ? this->selected() : fText, std::move(link)});
+      scene::textMenusAsked().push_back(scene::text_menu::of_text{in_selection ? this->selected() : fText, std::move(link)});
       return;
     }
     if (at.button != 1) {

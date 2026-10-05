@@ -1447,7 +1447,41 @@ using Cursor = splice::variant<cursor::arrow, cursor::text, cursor::hand,
 // -- nothing is called: whether whatever holds focus takes text (the host
 // starts and stops its text input as that changes), what was copied, to go
 // on the system's clipboard, and the links pressed in texts, to follow.
+// A text menu asked for -- by a right press, which a long press on a phone
+// is made into -- for the program to read, the last of them its; it drains
+// them. A selectable text's: what it offers to copy -- its selection, all of
+// it where the press was not on what was selected -- and the link the press
+// was on, where it was on one. A field's: what it can do -- Cut and Copy
+// where something is selected and it is no password's, Paste, Select All --
+// each done by the key the field takes for it, given back (giveKey).
+namespace text_menu {
+struct of_text {
+  std::string text;
+  std::optional<std::string> link;
+};
+struct of_field {
+  bool selection = false;
+  bool masked = false;
+};
+}  // namespace text_menu
+using TextMenuAsk = splice::variant<text_menu::of_text, text_menu::of_field>;
+inline std::vector<TextMenuAsk> &textMenusAsked() {
+  static std::vector<TextMenuAsk> asked;
+  return asked;
+}
+// The link the last right press was on, where its text asked with one.
+[[nodiscard]] inline std::optional<std::string> pressedLink() {
+  if (textMenusAsked().empty()) {
+    return std::nullopt;
+  }
+  return splice::visit(splice::overloaded{[](const text_menu::of_text &text) { return text.link; },
+                                          [](const text_menu::of_field &) { return std::optional<std::string>(); }},
+                       textMenusAsked().back());
+}
 struct HostWork {
+  // Keys for the node with the focus, as if pressed: what the host's own
+  // controls stand for. Given, down and up, before the next frame.
+  std::vector<key::down> keys;
   bool typing = false;
   // Where what is typed into is, in the window's points, as last drawn: for
   // the host to tell the system, whose keyboard on a screen -- and whose
@@ -1470,6 +1504,7 @@ inline std::string &clipboardContents() {
 }
 inline void setClipboardText(const std::string &text) { hostWork().copied = text; }
 inline void openLink(std::string_view target) { hostWork().links.emplace_back(target); }
+inline void giveKey(key::down press) { hostWork().keys.push_back(press); }
 
 
 // What a pill's picture is -- a mention's avatar, in a text -- given what
