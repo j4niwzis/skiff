@@ -568,6 +568,26 @@ struct Corners {
   friend bool operator==(const Corners &, const Corners &) = default;
 };
 
+// A chat bubble's tail: out of its box at the bottom, on one side, curving
+// from the box's edge down to its tip -- painted in the box's fill as one
+// shape with it, so a fill that is see-through is so once, with no seam
+// where the two meet. `shown` false takes it off again.
+namespace tail_side {
+struct left {
+  friend bool operator==(left, left) = default;
+};
+struct right {
+  friend bool operator==(right, right) = default;
+};
+} // namespace tail_side
+using TailSide = splice::variant<tail_side::left, tail_side::right>;
+struct Tail {
+  TailSide side = tail_side::right{};
+  float width = 10.0f, height = 12.0f;
+  bool shown = true;
+  friend bool operator==(const Tail &, const Tail &) = default;
+};
+
 struct Spec {
   std::optional<Anchor> place{};
   std::optional<Anchor> anchor{};
@@ -601,6 +621,8 @@ struct Spec {
   std::optional<float> cornerRadius{};
   // Or each corner its own; given, it is drawn and clipped by, not the one.
   std::optional<Corners> corners{};
+  // A tail out of its box, painted with its fill (Tail).
+  std::optional<Tail> tail{};
   // What is painted under the node's own drawing and its children, in its
   // box and its corner radius: a background -- another while hovered,
   // another while selected, another while it has the keyboard's focus --
@@ -2122,6 +2144,7 @@ public:
   Cursor fCursor = cursor::arrow{};
   float fCornerRadius = 0.0f;
   std::optional<Corners> fCorners;
+  std::optional<Tail> fTail;
   // Painted in the box, under the rest: see Spec.
   std::optional<skia::SkColor> fBackground, fHoverBackground, fSelectedBackground, fFocusBackground;
   std::optional<Gradient> fGradient;
@@ -2418,6 +2441,13 @@ public:
     if (spec.corners && spec.corners != fCorners) {
       fCorners = spec.corners;
       this->markDamaged();
+    }
+    if (spec.tail) {
+      const std::optional<Tail> now = spec.tail->shown ? spec.tail : std::nullopt;
+      if (now != fTail) {
+        fTail = now;
+        this->markDamaged();
+      }
     }
     paint(fBackground, spec.background);
     paint(fHoverBackground, spec.hoverBackground);
@@ -3668,6 +3698,38 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   return out;
 }
 
+// Where a box's tail is: beside its bottom corner on its side, outside it.
+[[nodiscard]] inline skia::SkRect tailBox(const State &state) {
+  if (!state.fTail)
+    return skia::SkRect::MakeEmpty();
+  const Tail &tail = *state.fTail;
+  const skia::SkRect &box = state.fBounds;
+  const float left = splice::visit(splice::overloaded{[&](tail_side::left) { return box.fLeft - tail.width; },
+                                                      [&](tail_side::right) { return box.fRight; }},
+                                   tail.side);
+  return skia::SkRect::MakeLTRB(left, box.fBottom - tail.height, left + tail.width, box.fBottom);
+}
+// A box and its tail as one shape: the rounded box, and the tail from a
+// pixel inside its edge -- one path, filled once where the two overlap.
+[[nodiscard]] inline skia::SkPath boxWithTail(const State &state, const skia::SkRect &box) {
+  skia::SkPathBuilder built;
+  built.addRRect(roundedBox(state, box));
+  if (state.fTail) {
+    const Tail &tail = *state.fTail;
+    const float out = splice::visit(splice::overloaded{[](tail_side::left) { return -1.0f; }, [](tail_side::right) { return 1.0f; }},
+                                    tail.side);
+    const float edge = out > 0.0f ? box.fRight : box.fLeft;
+    const float bottom = box.fBottom;
+    const float w = tail.width, h = tail.height;
+    built.moveTo(edge - out, bottom - h);
+    built.lineTo(edge, bottom - h);
+    built.cubicTo(edge, bottom - h * 5.0f / 12.0f, edge + out * w * 0.4f, bottom - h / 12.0f, edge + out * w, bottom);
+    built.lineTo(edge - out, bottom);
+    built.close();
+  }
+  return built.detach();
+}
+
 // What a program paints of every box's fill, besides the fill itself: a
 // type -- a callback by its type, never a pointer -- whose object the host
 // hands to the scene's draw, and drawing hands down (Painting). skiff's own
@@ -3762,7 +3824,10 @@ template <class Hooks> void paintBox(Hooks &hooks, const State &state, skia::SkC
     paint.setAntiAlias(true);
     paint.setColor(*fill);
     paint.setAlphaf(paint.getAlphaf() * alpha);
-    canvas->drawRRect(roundedBox(state, state.fBounds), paint);
+    if (state.fTail)
+      canvas->drawPath(boxWithTail(state, state.fBounds), paint);
+    else
+      canvas->drawRRect(roundedBox(state, state.fBounds), paint);
   }
   hooks.over(state, canvas, alpha);
   if (state.fBorder && state.fBorder->width > 0.0f) {
@@ -4307,6 +4372,9 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   // Its reach: its bounds and every child's area, as they are now.
   // One that clips what it holds reaches no further than itself.
   state.fReach = state.fBounds;
+  // A tail is drawn out of the box: repainted with it, not cut at its edge.
+  if (state.fTail)
+    state.fReach = joined(state.fReach, detail::tailBox(state));
   if (!state.fMasking) {
     for (const State::DrawnChild &one : state.fDrawnChildren) {
       state.fReach = joined(state.fReach, one.fArea);
