@@ -30,10 +30,13 @@ public:
     std::apply([&](auto &...each) { (f(each), ...); }, fChildren);
   }
 
+  // At the top, once what it holds now is laid out. Said as a jump the
+  // layout takes, not only an offset of 0: contents that fitted before were
+  // at their end at 0, and the layout followed the end of the taller ones
+  // put in their place -- an account's Chats page opened at its bottom.
   void scrollToStart() {
-    if (fScroll.offset() == 0.0f && fScroll.target() == 0.0f) {
-      return;
-    }
+    fJumpTo = 0.0f;
+    fToEnd = false;
     fScroll.jumpTo(0.0f);
     this->invalidateLayout();
   }
