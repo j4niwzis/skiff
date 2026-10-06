@@ -1302,6 +1302,8 @@ inline constexpr Key k6{136};
 inline constexpr Key k7{137};
 inline constexpr Key k8{138};
 inline constexpr Key k9{139};
+// Punctuation that shortcuts take: Ctrl+Shift+. a quote, as tdesktop's.
+inline constexpr Key kPeriod{140};
 } // namespace keys
 
 namespace modifier {
