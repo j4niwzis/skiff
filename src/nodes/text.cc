@@ -60,6 +60,10 @@ struct TextStyled {
   bool struck = false;
   bool code = false;
   bool quote = false;
+  bool underline = false;
+  // A spoiler: hidden under a plate of dots until the text is pressed,
+  // which shows all of its spoilers.
+  bool spoiler = false;
   // How deep in quotes, as styleAt() sums it: a quote inside a quote is 2.
   int depth = 0;
   // Marked: a stretch pointed at -- the part of a message a reply quoted
@@ -216,6 +220,7 @@ public:
   [[nodiscard]] bool selectable() const noexcept { return fSelectable; }
 
   void setStyles(std::vector<Styled> styles, skia::SkColor quote_colour) {
+    fSpoilersShown = false;
     fStyles = std::move(styles);
     fQuoteColour = quote_colour;
     fWrappedRoom = -1.0f;  // a quote's lines wrap narrower: wrapped again
@@ -259,6 +264,8 @@ public:
         out.struck = out.struck || one.struck;
         out.code = out.code || one.code;
         out.quote = out.quote || one.quote;
+        out.underline = out.underline || one.underline;
+        out.spoiler = out.spoiler || one.spoiler;
         out.depth += one.quote ? 1 : 0;  // quotes inside quotes overlap
         out.marked = out.marked || one.marked;
       }
@@ -422,6 +429,14 @@ public:
     // to what it quotes. A selectable text took every press, and a click on
     // it reached nothing above.
     if (fPressed && !fDragging) {
+      // A spoiler pressed: its text shown -- all of them, as Telegram's.
+      if (!fSpoilersShown && this->styleAt(fLastOffset).spoiler) {
+        fPressed = false;
+        fSpoilersShown = true;
+        this->markDamaged();
+        reply.handle();
+        return;
+      }
       if (const Link *link = this->linkAt(fLastOffset)) {
         fPressed = false;
         skiff::scene::openLink(link->target);
@@ -874,6 +889,38 @@ private:
         line.setAlphaf(line.getAlphaf() * alpha);
         canvas->drawRect(skia::SkRect::MakeXYWH(at, y - fSize * 0.32f, width, 1.0f), line);
       }
+      // A spoiler not shown yet: a faint plate under a scatter of dots in
+      // the text's colour, its text not drawn.
+      if (style.spoiler && !fSpoilersShown) {
+        skia::SkPaint plate;
+        plate.setAntiAlias(true);
+        plate.setColor(colour);
+        plate.setAlphaf(0.12f * alpha);
+        const skia::SkRect box = skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, fSize * 1.25f);
+        canvas->drawRoundRect(box, 3.0f, 3.0f, plate);
+        skia::SkPaint dot;
+        dot.setAntiAlias(true);
+        dot.setColor(colour);
+        dot.setAlphaf(0.7f * alpha);
+        for (int row = 0; row * 2.5f < box.height() - 1.0f; ++row) {
+          for (int column = 0; column * 2.5f < box.width() - 1.0f; ++column) {
+            // Scattered, the same at every frame: some places have none.
+            if ((row * 7 + column * 13 + static_cast<int>(cuts[i])) % 5 < 2) {
+              canvas->drawCircle(box.fLeft + 1.0f + column * 2.5f + (row % 2) * 1.2f, box.fTop + 1.5f + row * 2.5f,
+                                 0.55f, dot);
+            }
+          }
+        }
+        at += width;
+        continue;
+      }
+      // Underlined: a line under it, as a link's.
+      if (style.underline && !linked) {
+        skia::SkPaint under;
+        under.setColor(colour);
+        under.setAlphaf(under.getAlphaf() * alpha);
+        canvas->drawRect(skia::SkRect::MakeXYWH(at, y + 2.0f, width, 1.0f), under);
+      }
       if (link && link->picture) {
         // The picture, square, a little over the text's size, standing on
         // its baseline; nothing where the program has none (yet).
@@ -1019,6 +1066,8 @@ private:
   bool fWrapsToParent = false;
   bool fElided = false;
   std::vector<Styled> fStyles;
+  // Its spoilers shown: pressed once, until its styles are set anew.
+  bool fSpoilersShown = false;
   skia::SkColor fQuoteColour = 0;
   std::vector<std::string> fLines;
   float fMeasuredSize = -1.0f;
