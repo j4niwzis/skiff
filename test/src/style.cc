@@ -417,16 +417,16 @@ TEST(TextLayout, WrappedTextFollowsItsParentsWidth) {
 
 struct Switching : Node {
   struct parts_t {
-    splice::variant<Box<>, Text> body{std::in_place_type<Box<>>, kCard};
+    spl::variant<Box<>, Text> body{std::in_place_type<Box<>>, kCard};
   } parts;
 };
 
 TEST(Children, AVariantAlternativeIsLaidOutAndOldIdsStopResolving) {
   Scene<Switching> scene{std::in_place};
-  splice::get<Box<>>(scene.root().parts.body).apply({.width = 30.0f, .height = 10.0f});
+  spl::get<Box<>>(scene.root().parts.body).apply({.width = 30.0f, .height = 10.0f});
   scene.layoutIfNeeded(kViewport);
-  const NodeId before = splice::get<Box<>>(scene.root().parts.body).id();
-  EXPECT_FLOAT_EQ(splice::get<Box<>>(scene.root().parts.body).bounds().width(), 30.0f);
+  const NodeId before = spl::get<Box<>>(scene.root().parts.body).id();
+  EXPECT_FLOAT_EQ(spl::get<Box<>>(scene.root().parts.body).bounds().width(), 30.0f);
   (void)scene.finishFrame();
 
   scene.root().parts.body.emplace<Text>("now text", 12.0f, kOriginal);

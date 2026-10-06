@@ -457,14 +457,14 @@ struct out {};
 struct out_quint {};
 struct out_elastic_half {};
 } // namespace easing
-using Easing = splice::variant<easing::out_quint, easing::none, easing::out,
+using Easing = spl::variant<easing::out_quint, easing::none, easing::out,
                               easing::out_elastic_half>;
 
 // How far along an ease is at time t of 1.
 [[nodiscard]] inline float ease(const Easing &how, float t) {
   t = std::clamp(t, 0.0f, 1.0f);
-  return splice::visit(
-      splice::overloaded{
+  return spl::visit(
+      spl::overloaded{
           [t](easing::none) { return t; },
           [t](easing::out) { return 1.0f - (1.0f - t) * (1.0f - t); },
           [t](easing::out_quint) { return skiff::paint::outQuint(t); },
@@ -484,7 +484,7 @@ struct width {};
 struct height {};
 struct scale {};
 } // namespace property
-using Property = splice::variant<property::alpha, property::x, property::y,
+using Property = spl::variant<property::alpha, property::x, property::y,
                                 property::width, property::height,
                                 property::scale>;
 
@@ -580,7 +580,7 @@ struct right {
   friend bool operator==(right, right) = default;
 };
 } // namespace tail_side
-using TailSide = splice::variant<tail_side::left, tail_side::right>;
+using TailSide = spl::variant<tail_side::left, tail_side::right>;
 struct Tail {
   TailSide side = tail_side::right{};
   float width = 10.0f, height = 12.0f;
@@ -1177,12 +1177,12 @@ inline bool &pointerHeld() {
   static bool held = false;
   return held;
 }
-using PointerEvent = splice::variant<pointer::move, pointer::down, pointer::up,
+using PointerEvent = spl::variant<pointer::move, pointer::down, pointer::up,
                                pointer::cancel, pointer::scroll>;
 // A pointer event as a node under a shifted one sees it: moved back by the
 // shift, into the space the nodes under it are laid out in.
 [[nodiscard]] inline PointerEvent shiftedBack(const PointerEvent &input, float dx, float dy) {
-  return splice::visit(
+  return spl::visit(
       [&](auto event) -> PointerEvent {
         event.x -= dx;
         event.y -= dy;
@@ -1191,7 +1191,7 @@ using PointerEvent = splice::variant<pointer::move, pointer::down, pointer::up,
       input);
 }
 inline void notePointerHeld(const PointerEvent &input) {
-  splice::visit(splice::overloaded{[](const pointer::down &) { pointerHeld() = true; },
+  spl::visit(spl::overloaded{[](const pointer::down &) { pointerHeld() = true; },
                                    [](const pointer::up &) { pointerHeld() = false; },
                                    [](const pointer::cancel &) { pointerHeld() = false; },
                                    [](const auto &) {}},
@@ -1200,13 +1200,13 @@ inline void notePointerHeld(const PointerEvent &input) {
 
 // Where a pointer event is.
 [[nodiscard]] inline skia::SkPoint where(const PointerEvent &event) {
-  return splice::visit(
+  return spl::visit(
       [](const auto &one) { return skia::SkPoint::Make(one.x, one.y); },
       event);
 }
 // Whether it ends a gesture.
 [[nodiscard]] inline bool ends(const PointerEvent &event) {
-  return splice::visit(splice::overloaded{[](const pointer::up &) { return true; },
+  return spl::visit(spl::overloaded{[](const pointer::up &) { return true; },
                                [](const pointer::cancel &) { return true; },
                                [](const auto &) { return false; }},
                     event);
@@ -1332,7 +1332,7 @@ struct up {
   Modifiers modifiers;
 };
 } // namespace key
-using KeyEvent = splice::variant<key::down, key::up>;
+using KeyEvent = spl::variant<key::down, key::up>;
 
 // Text and composition are distinct: an IME can replace its provisional
 // range many times before committing it.
@@ -1346,7 +1346,7 @@ struct compose {
   int length = 0;
 };
 } // namespace text
-using TextEvent = splice::variant<text::commit, text::compose>;
+using TextEvent = spl::variant<text::commit, text::compose>;
 
 // What assistive technology asks of a node.
 namespace semantic_action {
@@ -1360,7 +1360,7 @@ struct set_value {
 };
 } // namespace semantic_action
 using SemanticAction =
-    splice::variant<semantic_action::focus, semantic_action::activate,
+    spl::variant<semantic_action::focus, semantic_action::activate,
                  semantic_action::increment, semantic_action::decrement,
                  semantic_action::set_value>;
 
@@ -1378,7 +1378,7 @@ struct list {};
 struct list_item {};
 } // namespace semantic_role
 using SemanticRole =
-    splice::variant<semantic_role::none, semantic_role::group,
+    spl::variant<semantic_role::none, semantic_role::group,
                  semantic_role::button, semantic_role::text,
                  semantic_role::text_box, semantic_role::slider,
                  semantic_role::toggle, semantic_role::tab,
@@ -1420,7 +1420,7 @@ struct Semantics {
 };
 
 [[nodiscard]] inline bool isTextBox(const SemanticRole &role) {
-  return splice::visit(splice::overloaded{[](semantic_role::text_box) { return true; },
+  return spl::visit(spl::overloaded{[](semantic_role::text_box) { return true; },
                                [](auto) { return false; }},
                     role);
 }
@@ -1451,16 +1451,16 @@ struct resize_vertical {
   friend bool operator==(resize_vertical, resize_vertical) = default;
 };
 } // namespace cursor
-using Cursor = splice::variant<cursor::arrow, cursor::text, cursor::hand,
+using Cursor = spl::variant<cursor::arrow, cursor::text, cursor::hand,
                             cursor::resize_horizontal, cursor::resize_vertical>;
 [[nodiscard]] inline bool isArrow(const Cursor &shape) {
-  return splice::visit(splice::overloaded{[](cursor::arrow) { return true; },
+  return spl::visit(spl::overloaded{[](cursor::arrow) { return true; },
                                [](auto) { return false; }},
                     shape);
 }
 
 [[nodiscard]] inline bool hasRole(const SemanticRole &role) {
-  return splice::visit(splice::overloaded{[](semantic_role::none) { return false; },
+  return spl::visit(spl::overloaded{[](semantic_role::none) { return false; },
                                [](auto) { return true; }},
                     role);
 }
@@ -1486,7 +1486,7 @@ struct of_field {
   bool masked = false;
 };
 }  // namespace text_menu
-using TextMenuAsk = splice::variant<text_menu::of_text, text_menu::of_field>;
+using TextMenuAsk = spl::variant<text_menu::of_text, text_menu::of_field>;
 inline std::vector<TextMenuAsk> &textMenusAsked() {
   static std::vector<TextMenuAsk> asked;
   return asked;
@@ -1496,7 +1496,7 @@ inline std::vector<TextMenuAsk> &textMenusAsked() {
   if (textMenusAsked().empty()) {
     return std::nullopt;
   }
-  return splice::visit(splice::overloaded{[](const text_menu::of_text &text) { return text.link; },
+  return spl::visit(spl::overloaded{[](const text_menu::of_text &text) { return text.link; },
                                           [](const text_menu::of_field &) { return std::optional<std::string>(); }},
                        textMenusAsked().back());
 }
@@ -2919,8 +2919,8 @@ private:
   }
 
   [[nodiscard]] float &propertyRef(const Property &property) {
-    return splice::visit(
-        splice::overloaded{[this](property::alpha) -> float & { return fAlpha; },
+    return spl::visit(
+        spl::overloaded{[this](property::alpha) -> float & { return fAlpha; },
                    [this](property::x) -> float & { return fX; },
                    [this](property::y) -> float & { return fY; },
                    [this](property::width) -> float & { return fWidth; },
@@ -2936,7 +2936,7 @@ private:
     }
     current = value;
     // Alpha only repaints; the rest move or resize.
-    splice::visit(splice::overloaded{[this](property::alpha) { this->markDamaged(); },
+    spl::visit(spl::overloaded{[this](property::alpha) { this->markDamaged(); },
                           [this](auto) { this->invalidateLayout(); }},
                property);
   }
@@ -2955,12 +2955,12 @@ struct Node;
 //   template <> inline constexpr bool skiff::scene::kTreatAsNode<MyList> = true;
 template <class T> inline constexpr bool kTreatAsNode = false;
 
-// What can be a child: a way of holding nodes -- a splice::variant (its
+// What can be a child: a way of holding nodes -- a spl::variant (its
 // alternative, unless that is std::monostate), a std::optional, a pointer, a
 // reference_wrapper, a tuple, an AnyNode, a range -- or a node. One overload
 // per holder; anything else is a node.
 template <class F> void visitChild(std::monostate &, F &&);
-template <class... Ts, class F> void visitChild(splice::variant<Ts...> &, F &&);
+template <class... Ts, class F> void visitChild(spl::variant<Ts...> &, F &&);
 template <class T, class F> void visitChild(std::optional<T> &, F &&);
 template <class T, class D, class F>
 void visitChild(std::unique_ptr<T, D> &, F &&);
@@ -2982,11 +2982,11 @@ void visitChild(N &, F &&);
 
 template <class F> void visitChild(std::monostate &, F &&) {}
 template <class... Ts, class F>
-void visitChild(splice::variant<Ts...> &child, F &&f) {
-  splice::visit([&](auto &alternative) { visitChild(alternative, f); }, child);
+void visitChild(spl::variant<Ts...> &child, F &&f) {
+  spl::visit([&](auto &alternative) { visitChild(alternative, f); }, child);
 }
 // Anything holding one of several and visiting it as C++26's variant does:
-// a std::variant, or a program's own, walked as splice::variant is.
+// a std::variant, or a program's own, walked as spl::variant is.
 template <class V>
 concept one_of_several = requires(V &v) {
   v.index();
@@ -3045,7 +3045,7 @@ template <class R>
 concept indexed_nodes = std::ranges::random_access_range<R> && std::ranges::sized_range<R> &&
                         std::derived_from<std::ranges::range_value_t<R>, Node>;
 template <class F> bool partAt(std::monostate &, std::uint32_t &, F &&);
-template <class... Ts, class F> bool partAt(splice::variant<Ts...> &, std::uint32_t &, F &&);
+template <class... Ts, class F> bool partAt(spl::variant<Ts...> &, std::uint32_t &, F &&);
 template <class V, class F>
   requires(one_of_several<V> && !std::derived_from<V, Node>)
 bool partAt(V &, std::uint32_t &, F &&);
@@ -3064,8 +3064,8 @@ bool partAt(R &, std::uint32_t &, F &&);
 template <class N, class F> bool partAt(N &, std::uint32_t &, F &&);
 
 template <class F> bool partAt(std::monostate &, std::uint32_t &, F &&) { return false; }
-template <class... Ts, class F> bool partAt(splice::variant<Ts...> &child, std::uint32_t &left, F &&f) {
-  return splice::visit([&](auto &alternative) { return partAt(alternative, left, f); }, child);
+template <class... Ts, class F> bool partAt(spl::variant<Ts...> &child, std::uint32_t &left, F &&f) {
+  return spl::visit([&](auto &alternative) { return partAt(alternative, left, f); }, child);
 }
 template <class V, class F>
   requires(one_of_several<V> && !std::derived_from<V, Node>)
@@ -3704,7 +3704,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
     return skia::SkRect::MakeEmpty();
   const Tail &tail = *state.fTail;
   const skia::SkRect &box = state.fBounds;
-  const float left = splice::visit(splice::overloaded{[&](tail_side::left) { return box.fLeft - tail.width; },
+  const float left = spl::visit(spl::overloaded{[&](tail_side::left) { return box.fLeft - tail.width; },
                                                       [&](tail_side::right) { return box.fRight; }},
                                    tail.side);
   return skia::SkRect::MakeLTRB(left, box.fBottom - tail.height, left + tail.width, box.fBottom);
@@ -3716,7 +3716,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   built.addRRect(roundedBox(state, box));
   if (state.fTail) {
     const Tail &tail = *state.fTail;
-    const float out = splice::visit(splice::overloaded{[](tail_side::left) { return -1.0f; }, [](tail_side::right) { return 1.0f; }},
+    const float out = spl::visit(spl::overloaded{[](tail_side::left) { return -1.0f; }, [](tail_side::right) { return 1.0f; }},
                                     tail.side);
     const float edge = out > 0.0f ? box.fRight : box.fLeft;
     const float bottom = box.fBottom;
@@ -3985,7 +3985,7 @@ inline void damageForHover(ErasedNode &node);
 // kind -- or, for an ErasedNode, its table's.
 template <class N, class When>
 void pointerTo(N &node, const When &when, const PointerEvent &input, PointerReply &reply) {
-  splice::visit([&](const auto &event) { node.onPointer(when, event, reply); }, input);
+  spl::visit([&](const auto &event) { node.onPointer(when, event, reply); }, input);
 }
 template <class When>
 void pointerTo(ErasedNode &node, const When &when, const PointerEvent &input, PointerReply &reply);
@@ -4698,7 +4698,7 @@ struct KeyDelivery {
   template <class N>
   void operator()(N &node, const auto &when, const KeyEvent &input,
                   Reply &reply) const {
-    splice::visit([&](const auto &event) { node.onKey(when, event, reply); },
+    spl::visit([&](const auto &event) { node.onKey(when, event, reply); },
                input);
   }
   template <class C>
@@ -4711,7 +4711,7 @@ struct TextDelivery {
   template <class N>
   void operator()(N &node, const auto &when, const TextEvent &input,
                   Reply &reply) const {
-    splice::visit([&](const auto &event) { node.onText(when, event, reply); },
+    spl::visit([&](const auto &event) { node.onText(when, event, reply); },
                input);
   }
   template <class C>
@@ -4724,7 +4724,7 @@ struct SemanticDelivery {
   template <class N>
   void operator()(N &node, const auto &when, const SemanticAction &input,
                   Reply &reply) const {
-    splice::visit([&](const auto &event) { node.onSemantic(when, event, reply); },
+    spl::visit([&](const auto &event) { node.onSemantic(when, event, reply); },
                input);
   }
   template <class C>
@@ -4984,7 +4984,7 @@ template <class T, class F> decltype(auto) walkOn(void *node, F &&f);
 // shared walks' way in.
 template <class D, class Ops, class F> decltype(auto) walkErased(void *node, const Ops *ops, F &&f);
 template <class Handler, class Event, class R> struct EventEntries;
-template <class Handler, class... Es, class R> struct EventEntries<Handler, splice::variant<Es...>, R> {
+template <class Handler, class... Es, class R> struct EventEntries<Handler, spl::variant<Es...>, R> {
   using Row = std::tuple<void (*)(void *, const Es &, R &)...>;
   std::array<Row, 3> fRows;
 
@@ -4992,9 +4992,9 @@ template <class Handler, class... Es, class R> struct EventEntries<Handler, spli
     return {{rowOf<T, phase::capture>(), rowOf<T, phase::target>(), rowOf<T, phase::bubble>()}};
   }
   template <class P>
-  void deliver(void *node, P when, const splice::variant<Es...> &input, R &reply) const {
+  void deliver(void *node, P when, const spl::variant<Es...> &input, R &reply) const {
     const Row &row = fRows[indexOf(when)];
-    splice::visit(
+    spl::visit(
         [&](const auto &event) {
           using Entry = void (*)(void *, const std::remove_cvref_t<decltype(event)> &, R &);
           std::get<Entry>(row)(node, event, reply);
@@ -5743,7 +5743,7 @@ public:
   bool dispatchPointer(const PointerEvent &input) {
     notePointerHeld(input);
     const skia::SkPoint at = where(input);
-    splice::visit(splice::overloaded{[&](const pointer::move &) {
+    spl::visit(spl::overloaded{[&](const pointer::move &) {
                             this->setHover(at.fX, at.fY);
                           },
                           [](const auto &) {}},
@@ -5768,8 +5768,8 @@ public:
       path.clear();
       found = walk::hitPath(fRoot, at.fX, at.fY, path);
     }
-    const bool press = splice::visit(
-        splice::overloaded{[](const pointer::down &) { return true; },
+    const bool press = spl::visit(
+        spl::overloaded{[](const pointer::down &) { return true; },
                    [](const auto &) { return false; }},
         input);
     if (!found) {
@@ -5852,8 +5852,8 @@ public:
 
   bool dispatchKey(const KeyEvent &input) {
     // Tab moves the focus; Shift+Tab back.
-    const std::optional<bool> tab = splice::visit(
-        splice::overloaded{[](const key::down &press) -> std::optional<bool> {
+    const std::optional<bool> tab = spl::visit(
+        spl::overloaded{[](const key::down &press) -> std::optional<bool> {
                      // Ctrl+Tab is not the focus's: a program's, as
                      // tdesktop's to the next chat.
                      if (press.key == keys::kTab && !press.modifiers.has<modifier::control>()) {
@@ -6240,8 +6240,8 @@ public:
       return handled;
     }
     fCaptured = {};
-    const bool press = splice::visit(
-        splice::overloaded{[](const pointer::down &) { return true; },
+    const bool press = spl::visit(
+        spl::overloaded{[](const pointer::down &) { return true; },
                    [](const auto &) { return false; }},
         input);
     for (auto it = fLayers.rbegin(); it != fLayers.rend(); ++it) {
@@ -6270,8 +6270,8 @@ public:
   }
 
   bool key(const KeyEvent &input) {
-    const std::optional<bool> tab = splice::visit(
-        splice::overloaded{[](const key::down &press) -> std::optional<bool> {
+    const std::optional<bool> tab = spl::visit(
+        spl::overloaded{[](const key::down &press) -> std::optional<bool> {
                      // Ctrl+Tab is not the focus's: a program's, as
                      // tdesktop's to the next chat.
                      if (press.key == keys::kTab && !press.modifiers.has<modifier::control>()) {
@@ -6317,8 +6317,8 @@ public:
   }
 
   bool semantic(NodeId id, const SemanticAction &action) {
-    const bool focusing = splice::visit(
-        splice::overloaded{[](const semantic_action::focus &) { return true; },
+    const bool focusing = spl::visit(
+        spl::overloaded{[](const semantic_action::focus &) { return true; },
                    [](const auto &) { return false; }},
         action);
     for (auto it = fLayers.rbegin(); it != fLayers.rend(); ++it) {

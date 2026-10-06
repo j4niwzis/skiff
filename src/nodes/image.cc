@@ -14,7 +14,7 @@ namespace fit {
 struct cover {};
 struct contain {};
 } // namespace fit
-using Fit = splice::variant<fit::cover, fit::contain>;
+using Fit = spl::variant<fit::cover, fit::contain>;
 
 // Where a picture comes from: a value called for each frame it is drawn,
 // so a picture that comes later -- fetched, decoded -- is drawn once it is
@@ -147,11 +147,11 @@ public:
     const skia::SkSamplingOptions sampling(skia::SkFilterMode::kLinear);
     // At its own size: put down as it is, nothing filtered.
     if (box.width() * canvas->getTotalMatrix().getScaleX() == iw && box.height() * canvas->getTotalMatrix().getScaleY() == ih) {
-      splice::visit([&](auto how) { drawFitted(canvas, *found, box, iw, ih, how, skia::SkSamplingOptions(), paint); }, fFit);
+      spl::visit([&](auto how) { drawFitted(canvas, *found, box, iw, ih, how, skia::SkSamplingOptions(), paint); }, fFit);
       canvas->restoreToCount(saved);
       return;
     }
-    splice::visit(
+    spl::visit(
         [&](auto how) { drawFitted(canvas, *found, box, iw, ih, how, sampling, paint); },
         fFit);
     canvas->restoreToCount(saved);
@@ -198,7 +198,7 @@ private:
       into->translate(-box.fLeft, -box.fTop);
       skia::SkPaint plain;
       const skia::SkSamplingOptions smooth(skia::SkFilterMode::kLinear, skia::SkMipmapMode::kLinear);
-      splice::visit([&](auto how) { drawFitted(into, image, box, iw, ih, how, smooth, plain); }, fFit);
+      spl::visit([&](auto how) { drawFitted(into, image, box, iw, ih, how, smooth, plain); }, fFit);
       fScaled = surface->makeImageSnapshot();
       // Kept for the others, within a number and a size: past them, the
       // cache let go of -- the nodes keep what they draw.

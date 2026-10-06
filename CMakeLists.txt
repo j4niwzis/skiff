@@ -138,7 +138,7 @@ find_package(Skia REQUIRED
 if(SKIFF_TEXT_SHAPING)
   cme_declare_port(NAME alef PROVIDES alef
     GITHUB_REPOSITORY j4niwzis/alef
-    GIT_TAG 6dc139f9590dc0d3ac1cc0e9748e67d7a1485480
+    GIT_TAG f4fa9db34576f78cfe5b919e30c065de1801f4e9
     LICENSE AGPL-3.0-only
     TARGETS alef)
   cme_options(alef "ALEF_TESTS OFF")

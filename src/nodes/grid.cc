@@ -19,7 +19,7 @@ struct fraction {
   float share = 1.0f;
 };
 } // namespace track
-using Track = splice::variant<track::fraction, track::fixed, track::automatic>;
+using Track = spl::variant<track::fraction, track::fixed, track::automatic>;
 
 // Rows and columns of given sizes, the children dealt into the cells in
 // order. A cell does not move its child: the child is laid out against the
@@ -132,7 +132,7 @@ private:
     float shares = 0.0f;
     for (std::size_t i = 0; i < count; ++i) {
       const Track one = i < tracks.size() ? tracks[i] : Track{};
-      splice::visit(splice::overloaded{
+      spl::visit(spl::overloaded{
                      [&](const track::fixed &fixed) {
                        sizes[i] = fixed.size;
                        taken += sizes[i];
@@ -148,7 +148,7 @@ private:
       const float left = std::max(0.0f, room - taken);
       for (std::size_t i = 0; i < count; ++i) {
         const Track one = i < tracks.size() ? tracks[i] : Track{};
-        splice::visit(splice::overloaded{
+        spl::visit(spl::overloaded{
                        [&](const track::fraction &part) {
                          sizes[i] = left * part.share / shares;
                        },

@@ -34,7 +34,7 @@ namespace direction {
 struct vertical {};
 struct horizontal {};
 } // namespace direction
-using Direction = splice::variant<direction::vertical, direction::horizontal>;
+using Direction = spl::variant<direction::vertical, direction::horizontal>;
 
 // How the room a line leaves is handed out.
 namespace justify {
@@ -44,7 +44,7 @@ struct end {};
 struct space_between {};
 struct space_around {};
 } // namespace justify
-using Justify = splice::variant<justify::start, justify::middle, justify::end,
+using Justify = spl::variant<justify::start, justify::middle, justify::end,
                                justify::space_between, justify::space_around>;
 
 struct FlowOptions {
@@ -73,8 +73,8 @@ struct Spread {
   const float slack = std::max(0.0f, room - used);
   const auto gaps = static_cast<float>(std::max(0, count - 1));
   const auto items = static_cast<float>(count);
-  return splice::visit(
-      splice::overloaded{
+  return spl::visit(
+      spl::overloaded{
           [](justify::start) { return Spread{}; },
           [&](justify::middle) { return Spread{slack * 0.5f, 0.0f}; },
           [&](justify::end) { return Spread{slack, 0.0f}; },
@@ -164,7 +164,7 @@ template <class N> struct Flowing {
   }
 
   void layout() {
-    splice::visit([this](const auto &along) { lay(along); }, fOptions.direction);
+    spl::visit([this](const auto &along) { lay(along); }, fOptions.direction);
   }
 
   // The children that show, laid out at their own size in the box; what the
