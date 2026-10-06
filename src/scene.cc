@@ -1484,6 +1484,9 @@ struct of_text {
 struct of_field {
   bool selection = false;
   bool masked = false;
+  // The field keeps formats -- bold, a link: its menu has them for what is
+  // selected.
+  bool formats = false;
 };
 }  // namespace text_menu
 using TextMenuAsk = spl::variant<text_menu::of_text, text_menu::of_field>;
