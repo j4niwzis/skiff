@@ -138,7 +138,7 @@ find_package(Skia REQUIRED
 if(SKIFF_TEXT_SHAPING)
   cme_declare_port(NAME alef PROVIDES alef
     GITHUB_REPOSITORY j4niwzis/alef
-    GIT_TAG 582cbdaed7ea7703a1df7cfbce8df2df19ecd4d9
+    GIT_TAG ca0dacaab3c6dd5a9dfb3fc4c2322b756f36f744
     LICENSE AGPL-3.0-only
     TARGETS alef)
   cme_options(alef "ALEF_TESTS OFF")
@@ -223,7 +223,7 @@ if(DEFINED ALEF_CONSTEXPR_STEPS)
     "clang's -fconstexpr-steps for splice, as alef's")
 endif()
 # The one splice, here and in the installed copy's config.
-set(skiff_splice_tag eb07788f6751dad1636aec9fd6bb134fe03a953f)
+set(skiff_splice_tag 8a7755a335917daf3bbfc54ef8a3a160f8445d15)
 cme_declare_port(NAME splice PROVIDES splice
   GITHUB_REPOSITORY j4niwzis/splice
   GIT_TAG ${skiff_splice_tag}
