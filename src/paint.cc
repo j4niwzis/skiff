@@ -671,6 +671,9 @@ private:
     // Linear metrics measure wider than hinted ones by a fraction of a pixel
     // per glyph, so a width cached under one is wrong under the other.
     hash ^= static_cast<std::uint64_t>(font.isLinearMetrics()) << 60;
+    // A slanted face (italic, made by skewing) shapes the same glyphs but
+    // draws them otherwise: its runs kept apart from the upright ones.
+    hash ^= static_cast<std::uint64_t>(font.getSkewX() != 0.0f) << 59;
     return hash;
   }
 
@@ -970,6 +973,15 @@ inline void horizontalGradient(skia::SkCanvas *canvas, const skia::SkRect &rect,
 //
 // A thin wrapper around the canvas and the shared font, so screens do not
 // repeat paint setup. Holds no state of its own.
+// How a run of text is drawn: its weight and its slant.
+struct TextFace {
+  bool bold = false;
+  bool italic = false;
+  friend bool operator==(const TextFace &, const TextFace &) = default;
+};
+// The slant of an italic made from an upright face: about 12 degrees.
+inline constexpr float kItalicSkew = -0.21f;
+
 class Painter {
 public:
   // Drawing in the monospace face, where `monospace` is asked and the stack
@@ -1043,6 +1055,21 @@ public:
     p.setAlphaf(combinedAlpha(color, alpha));
     fonts().draw(fCanvas, *fFont, str, x, y, p);
     fonts().applyWeight(*fFont, false);
+  }
+
+  // Text in a face of its own: bold, italic or both -- an editor's styled
+  // runs. Italic is the face slanted, as Qt slants a face without one.
+  [[nodiscard]] float measure(const std::string &text, float size, TextFace face) const {
+    fFont->setSkewX(face.italic ? kItalicSkew : 0.0f);
+    const float width = this->measure(text, size, face.bold);
+    fFont->setSkewX(0.0f);
+    return width;
+  }
+  void text(const std::string &str, float x, float y, float size, skia::SkColor color, float alpha,
+            TextFace face) const {
+    fFont->setSkewX(face.italic ? kItalicSkew : 0.0f);
+    this->text(str, x, y, size, color, alpha, face.bold);
+    fFont->setSkewX(0.0f);
   }
 
   void textClipped(const std::string &str, float x, float y, float maxW,
