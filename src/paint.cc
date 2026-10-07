@@ -203,7 +203,17 @@ public:
     }
     if (fStartMs < 0.0) {
       fStartMs = nowMs - 16.0;
+      fLastMs = fStartMs;
     }
+    // A frame that took long -- the one that made what slides in, a phone's
+    // first draw of it -- counts as one frame: the clock is held back by the
+    // rest. Against the wall clock, a drawer whose first frame took half a
+    // second stood still in the middle and then was all the way out, and a
+    // chat opened with its slide already over (the user's, #18662).
+    if (const double gap = nowMs - fLastMs; gap > kLongFrameMs) {
+      fStartMs += gap - kFrameMs;
+    }
+    fLastMs = nowMs;
     const float t = std::clamp(
         static_cast<float>((nowMs - fStartMs) / fDurationMs), 0.0f, 1.0f);
     const float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
@@ -219,6 +229,10 @@ private:
   float fDurationMs;
   Movement fKind;
   double fStartMs = -1.0;
+  double fLastMs = -1.0;
+  // A frame's time, and one long enough to be taken as a stall.
+  static constexpr double kFrameMs = 16.0;
+  static constexpr double kLongFrameMs = 50.0;
 };
 
 // ---- Text with fallback ---------------------------------------------------
