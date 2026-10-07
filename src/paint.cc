@@ -209,7 +209,7 @@ public:
     // first draw of it -- counts as one frame: the clock is held back by the
     // rest. Against the wall clock, a drawer whose first frame took half a
     // second stood still in the middle and then was all the way out, and a
-    // chat opened with its slide already over (the user's, #18662).
+    // chat opened with its slide already over.
     if (const double gap = nowMs - fLastMs; gap > kLongFrameMs) {
       fStartMs += gap - kFrameMs;
     }
