@@ -312,6 +312,7 @@ using ::SkBlendMode;
 using ::SkCanvas;
 using ::SkCodec;
 using ::SkColor;
+using ::SkClipOp;
 using ::SkColor4f;
 using ::SkColorFilter;
 using ::SkColorFilters;

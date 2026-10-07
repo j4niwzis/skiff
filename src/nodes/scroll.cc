@@ -250,7 +250,13 @@ public:
     fLaidOut = true;
     fLastBox = box;
     fLastOffset = offset;
+    const std::uint64_t laidBefore = scene::walkCounts().laidOut;
     scene::eachChild(*this, [&](auto &child) { scene::layout(child, box); });
+    // Anything in it laid out again, or the view another size: what was
+    // drawn ahead no longer shows what is there.
+    if (scene::walkCounts().laidOut != laidBefore || box != boxBefore) {
+      this->dropAhead();
+    }
     const skia::SkRect content = scene::childBounds(*this);
     fExtent = std::max(0.0f, content.height() - box.height());
     fScroll.setBounds(0.0f, fExtent);
@@ -361,6 +367,15 @@ public:
     const double dt = fLastMs > 0.0 ? nowMs - fLastMs : 16.0;
     fLastMs = nowMs;
     fNowMs = nowMs;
+    // At rest long enough: a pixel of it repainted, for the draw that draws
+    // the screens above and below the view with it.
+    if (fAheadDue && nowMs >= fAheadAtMs && this->atRest()) {
+      fAheadDue = false;
+      fAheadNow = true;
+      const skia::SkRect &view = fState.fBounds;
+      fState.fMovedDamage = skiff::scene::joined(
+          fState.fMovedDamage, skia::SkRect::MakeLTRB(view.fRight - 1.0f, view.fBottom - 1.0f, view.fRight, view.fBottom));
+    }
     if (fScroll.advance(dt)) {
       this->scrolled();
     }
@@ -375,13 +390,17 @@ public:
   }
   [[nodiscard]] bool settling() const { return fScroll.moving(); }
   // Ticked while it moves, or a finger holds it: at rest, nothing to step.
-  [[nodiscard]] bool wantsTick() const { return fScroll.moving() || fScroll.dragging() || fEdgeSpeed != 0.0f; }
+  [[nodiscard]] bool wantsTick() const { return fScroll.moving() || fScroll.dragging() || fEdgeSpeed != 0.0f || fAheadDue; }
+  // When it next wants a frame on its own: where it waits to draw ahead.
+  [[nodiscard]] double wakeAt() const {
+    return fAheadDue ? fAheadAtMs : std::numeric_limits<double>::infinity();
+  }
 
   // The contents, and over them a thin bar on the right saying how much
   // there is and where the view is in it: only where there is more than
   // shows, and only while the pointer is over it or it moves.
   void draw(skiff::scene::Painting &painting, skia::SkCanvas *canvas, float alpha) {
-    skiff::scene::drawDefault(*this, painting, canvas, alpha);
+    this->drawContents(painting, canvas, alpha);
     if (fExtent <= 0.0f || !(fState.fHovered || fScroll.moving() || fScroll.dragging() || fBarDragging)) {
       return;
     }
@@ -397,6 +416,115 @@ public:
                           skia::SkRect::MakeXYWH(box.fRight - 5.0f, at + 2.0f, 4.0f, thumb - 4.0f), 2.0f, 2.0f),
                       paint);
   }
+  // Drawing ahead: at rest, the screen above the view and the screen below
+  // it are drawn into pixels kept; while it scrolls, what comes into view
+  // within them is put down from those -- not every row of the strip drawn
+  // as it comes. Not where its contents read what is under them (a frosted
+  // bubble's backdrop), where they must be drawn where they are: off there.
+  void setDrawsAhead(bool ahead) {
+    fDrawsAhead = ahead;
+    if (!ahead) {
+      this->dropAhead();
+    }
+  }
+  void drawContents(skiff::scene::Painting &painting, skia::SkCanvas *canvas, float alpha) {
+    namespace scene = skiff::scene;
+    if (!fDrawsAhead || !scene::blitScrolling() || fExtent <= 0.0f || alpha < 0.999f) {
+      scene::drawDefault(*this, painting, canvas, alpha);
+      return;
+    }
+    const skia::SkMatrix matrix = canvas->getTotalMatrix();
+    const bool plain = !matrix.hasPerspective() && matrix.getSkewX() == 0.0f && matrix.getSkewY() == 0.0f;
+    // Moving: what is in the kept pixels put down from them, the rest drawn.
+    const bool moving = fScroll.moving() || fScroll.dragging();
+    const int saved = canvas->save();
+    if (moving && plain) {
+      for (const Ahead &one : fAhead) {
+        if (!one.image || one.scaleX != matrix.getScaleX() || one.scaleY != matrix.getScaleY()) {
+          continue;
+        }
+        const skia::SkRect shown = one.contents.makeOffset(0.0f, -fLastOffset);
+        // Where it goes on the device: where it was drawn, moved by as many
+        // whole pixels as the view has moved since.
+        const float dy = std::round((one.offset - fLastOffset) * matrix.getScaleY());
+        canvas->save();
+        canvas->clipRect(shown);
+        canvas->resetMatrix();
+        canvas->drawImage(one.image.get(), static_cast<float>(one.device.fLeft),
+                          static_cast<float>(one.device.fTop) + dy);
+        canvas->restore();
+        canvas->clipRect(shown, skia::SkClipOp::kDifference, false);
+      }
+    }
+    scene::drawDefault(*this, painting, canvas, alpha);
+    canvas->restoreToCount(saved);
+    // At rest, the view moved or its contents laid out again since they
+    // were drawn: drawn again once it has been still a moment -- or now,
+    // where this is the draw that moment asked for.
+    const bool stale = !fAhead[0].image || fAhead[0].offset != fLastOffset;
+    if (fAheadNow && plain && !moving) {
+      fAheadNow = false;
+      this->drawAhead(painting, canvas, matrix);
+    } else if (stale || moving) {
+      fAheadDue = true;
+      fAheadAtMs = fNowMs + kAheadQuietMs;
+      skiff::scene::work::mark(fState.fId);
+    }
+  }
+  // The screens above and below the view, drawn as the canvas would draw
+  // them, each into pixels of its own.
+  void drawAhead(skiff::scene::Painting &painting, skia::SkCanvas *canvas, const skia::SkMatrix &matrix) {
+    namespace scene = skiff::scene;
+    const skia::SkRect view = fState.fBounds;
+    const float reach = view.height();
+    // In the contents' own space: laid out as if not scrolled.
+    const float top = view.fTop + fLastOffset;
+    const float contentsTop = view.fTop;
+    const float contentsBottom = view.fBottom + fExtent;
+    const std::array<skia::SkRect, 2> wanted{
+        skia::SkRect::MakeLTRB(view.fLeft, std::max(contentsTop, top - reach), view.fRight, top),
+        skia::SkRect::MakeLTRB(view.fLeft, top + view.height(), view.fRight,
+                               std::min(contentsBottom, top + view.height() + reach))};
+    for (std::size_t i = 0; i < wanted.size(); ++i) {
+      Ahead &one = fAhead[i];
+      one = Ahead{};
+      if (wanted[i].height() < 1.0f) {
+        continue;
+      }
+      const skia::SkRect shown = wanted[i].makeOffset(0.0f, -fLastOffset);
+      const skia::SkIRect device = matrix.mapRect(shown).roundOut();
+      if (device.isEmpty()) {
+        continue;
+      }
+      const skia::SkImageInfo info = skia::SkImageInfo::MakeN32Premul(device.width(), device.height());
+      skia::Sp<skia::SkSurface> surface = canvas->makeSurface(info);
+      if (!surface) {
+        surface = skia::Raster(info);
+      }
+      if (!surface) {
+        continue;
+      }
+      skia::SkCanvas *into = surface->getCanvas();
+      into->clear(skia::SkColor{0});
+      into->translate(static_cast<float>(-device.fLeft), static_cast<float>(-device.fTop));
+      into->concat(matrix);
+      into->clipRect(shown);
+      scene::eachChild(*this, [&](auto &child) { scene::draw(child, painting, into, 1.0f); });
+      one.image = surface->makeImageSnapshot();
+      one.contents = wanted[i];
+      one.device = device;
+      one.offset = fLastOffset;
+      one.scaleX = matrix.getScaleX();
+      one.scaleY = matrix.getScaleY();
+    }
+  }
+  void dropAhead() {
+    for (Ahead &one : fAhead) {
+      one = Ahead{};
+    }
+  }
+  [[nodiscard]] bool atRest() const { return !fScroll.moving() && !fScroll.dragging() && fEdgeSpeed == 0.0f; }
+
   // Hovered or not, only its bar shows or goes -- and only where there is
   // one: a list that does not scroll has none, and the pointer going in and
   // out of it changed nothing on the screen yet repainted a strip of it.
@@ -605,6 +733,23 @@ public:
 private:
   skiff::scene::ScrollGesture fScroll;
   float fExtent = 0.0f;
+  // What was drawn ahead: above the view, below it -- each the part of the
+  // contents it shows (in their own space), where it was put on the device
+  // and at which offset and scale.
+  struct Ahead {
+    skia::Sp<skia::SkImage> image;
+    skia::SkRect contents = skia::SkRect::MakeEmpty();
+    skia::SkIRect device = skia::SkIRect::MakeEmpty();
+    float offset = 0.0f;
+    float scaleX = 0.0f, scaleY = 0.0f;
+  };
+  std::array<Ahead, 2> fAhead;
+  bool fDrawsAhead = true;
+  // Waiting to draw ahead, until when; and the draw that does it asked for.
+  bool fAheadDue = false;
+  bool fAheadNow = false;
+  double fAheadAtMs = 0.0;
+  static constexpr double kAheadQuietMs = 250.0;
   double fLastMs = 0.0;
   double fNowMs = 0.0;
   float fPressX = 0.0f;
