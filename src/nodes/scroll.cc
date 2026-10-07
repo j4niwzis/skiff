@@ -744,7 +744,7 @@ private:
     float scaleX = 0.0f, scaleY = 0.0f;
   };
   std::array<Ahead, 2> fAhead;
-  bool fDrawsAhead = true;
+  bool fDrawsAhead = false;  // off until it settles where nothing is to be drawn ahead
   // Waiting to draw ahead, until when; and the draw that does it asked for.
   bool fAheadDue = false;
   bool fAheadNow = false;
