@@ -455,7 +455,9 @@ const C &carryInto(P &, N &, const C &carried) {
 }
 
 // A press answered where it is made: what the node's onPress() returns,
-// sent up the frames carried down to it, as bind::press does.
+// sent up the frames carried down to it, as bind::press does. False where
+// it changes a part of another model than the one carried: the scene then
+// keeps its path, for the program to press it in the model it is in.
 template <class N, class C>
   requires(detail::IsCarry<C> && (detail::Presses<N> || detail::PressesNothing<N>))
 bool answerPress(N &node, const C &carried) {
@@ -469,7 +471,8 @@ bool answerPress(N &node, const C &carried) {
   detail::Pressing<M, S> op{{model, root.fSink}};
   detail::framesOf(carried, [&](const auto &...frames) { op.pressed(node, detail::hereOf(carried), frames...); });
   model.endBatch();
-  return true;
+  // Its part in another model: left to be delivered by its path, in each.
+  return !op.fMissed;
 }
 
 // What a handler returned, sent at once up the frames carried down to its
