@@ -69,6 +69,11 @@ template <class Want, class... Changes, class N>
 bind::Bound<Want, N, Changes...> bound(N node) {
   return bind::Bound<Want, N, Changes...>(std::move(node));
 }
+// A node shown what Compute makes of the model, as the parts it reads move.
+template <class... Reads, class Compute, class N>
+bind::Derived<Compute, N, Reads...> derived(Compute compute, N node) {
+  return bind::Derived<Compute, N, Reads...>(std::move(node), std::move(compute));
+}
 template <class Within, class Handlers, class N, class... Keys>
 bind::Scoped<Within, Handlers, N, Keys...> scoped(Handlers handlers, N node,
                                                   Keys... keys) {

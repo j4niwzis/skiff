@@ -363,4 +363,47 @@ TEST(Compose, WhatANodeSendsIsDeducedWhereItSaysNothing) {
   EXPECT_EQ(m.look<Count>()->n, 42);
 }
 
+// A value computed from the model: computed again only where a part it
+// reads has moved; and a scope moved to another part of its kind.
+struct Alpha {
+  int value = 1;
+};
+struct Beta {
+  int value = 2;
+};
+struct Gamma {
+  int value = 0;
+};
+struct SumRoot {
+  model::Tracked<Alpha> alpha;
+  model::Tracked<Beta> beta;
+  model::Tracked<Gamma> gamma;
+};
+struct NoReactions {};
+using SumModel = model::Model<SumRoot, NoReactions>;
+struct Total : scene::Node {
+  int fTotal = 0;
+  int fComputed = 0;
+  void read(int total) {
+    fTotal = total;
+    ++fComputed;
+  }
+};
+struct SumOf {
+  int operator()(const SumRoot &root) const { return root.alpha.fValue.value + root.beta.fValue.value; }
+};
+TEST(Compose, ADerivedValueIsComputedAgainOnlyWhereWhatItReadsMoved) {
+  SumModel m{SumRoot{}};
+  auto total = derived<Alpha, Beta>(SumOf{}, Total{});
+  bind::Binding<SumModel> binding;
+  binding.refresh(total, m);
+  EXPECT_EQ(total.fTotal, 3);
+  m.apply(model::over<Gamma>(model::setTo(Gamma{5})));
+  binding.refresh(total, m);
+  EXPECT_EQ(total.fComputed, 1);
+  m.apply(model::over<Alpha>(model::setTo(Alpha{10})));
+  binding.refresh(total, m);
+  EXPECT_EQ(total.fTotal, 12);
+  EXPECT_EQ(total.fComputed, 2);
+}
 } // namespace

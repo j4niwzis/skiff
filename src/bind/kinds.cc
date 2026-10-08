@@ -136,6 +136,32 @@ struct Bound : Base {
   }
 };
 
+// A node shown a value computed from the model -- a list sorted and
+// filtered, a header's facts put together -- by Compute, a callable type,
+// from the root: computed again only where one of the parts it reads
+// (Reads, each found once in the root) has moved since, and read as a
+// bound node reads its part.
+template <class Compute, class Base, class... Reads>
+struct Derived : Base {
+  Derived() = default;
+  explicit Derived(Base base, Compute compute = {}) : Base(std::move(base)), fCompute(std::move(compute)) {}
+  Compute fCompute{};
+  model::Revision fSeen = 0;
+  bool fShown = false;
+
+  template <class M>
+    requires((model::kFound<Reads, typename M::RootType> == 1) && ...)
+  void refresh(const M &model) {
+    const model::Revision now = std::max({model::Revision{0}, model.template look<Reads>().fRevision...});
+    if (fShown && now == fSeen)
+      return;
+    fSeen = now;
+    fShown = true;
+    if constexpr (requires(Base &b) { b.read(fCompute(model.root())); })
+      this->read(fCompute(model.root()));
+  }
+};
+
 template <class Within, class Handlers, class Base, class... Keys>
 struct Scoped : Base {
   using ScopeOf = Within;
@@ -145,6 +171,14 @@ struct Scoped : Base {
         fHandlers(std::move(handlers)) {}
   std::tuple<Keys...> fKeys{};
   Handlers fHandlers{};
+  // At another part of the same kind -- the chat chosen now: what is in it
+  // is shown that one, by the next refresh that walks it (after the
+  // binding's invalidate()).
+  void rekey(Keys... keys) {
+    fKeys = std::tuple<Keys...>(std::move(keys)...);
+    fSeen = 0;
+    fShown = false;
+  }
   // Its part's revision when its subtree was last refreshed, and the local
   // epoch then: the same now, the subtree is not walked again.
   model::Revision fSeen = 0;
