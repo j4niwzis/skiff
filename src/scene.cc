@@ -1517,11 +1517,12 @@ struct HostWork {
   std::optional<skia::SkRect> typingAt;
   std::optional<std::string> copied;
   std::vector<std::string> links;
-  // The nodes pressed that say what a press does by onPress(), each by the
-  // nodes the press went through to it, from the root (their states): for
-  // the program to deliver along them once the dispatch is over
-  // (skiff::bind::press), when nothing of it runs -- and nothing has moved.
-  std::vector<std::vector<const State *>> pressed;
+  // The node a press is being answered by, while its event is dispatched --
+  // one that says what a press does by onPress() -- and, the dispatch over,
+  // each such press by the path the scene routed it along: for the program
+  // to deliver (skiff::bind::press), when nothing of it runs.
+  const State *pressedNow = nullptr;
+  std::vector<std::vector<std::uint32_t>> pressed;  // each a Path
 };
 inline HostWork &hostWork() {
   static HostWork kept;
@@ -1533,29 +1534,7 @@ inline HostWork &hostWork() {
 // says it was pressed, once.
 template <class A>
 concept Answering = requires { typename A::Answer; };
-// The nodes an event is being routed through, from the root down: kept as
-// it goes, for a press to be delivered along the same nodes.
-inline std::vector<const State *> &routeStack() {
-  static std::vector<const State *> kept;
-  return kept;
-}
-struct RouteStep {
-  explicit RouteStep(const State &state) { routeStack().push_back(&state); }
-  ~RouteStep() { routeStack().pop_back(); }
-  RouteStep(const RouteStep &) = delete;
-  RouteStep &operator=(const RouteStep &) = delete;
-};
-inline void pressLater(State &state) {
-  auto &pressed = hostWork().pressed;
-  if (!pressed.empty() && !pressed.back().empty() && pressed.back().back() == &state) {
-    return;
-  }
-  std::vector<const State *> way = routeStack();
-  if (way.empty() || way.back() != &state) {
-    way.push_back(&state);
-  }
-  pressed.push_back(std::move(way));
-}
+inline void pressLater(State &state) { hostWork().pressedNow = &state; }
 // The system's clipboard as the host last read it: what a paste puts in.
 inline std::string &clipboardContents() {
   static std::string kept;
@@ -4675,7 +4654,6 @@ void routePointer(N &child, const Path &path, std::size_t at,
                   const PointerEvent &given, PointerReply &reply, Routed &routed,
                   bool targetOnly) {
   State &state = child.fState;
-  const RouteStep step{state};
   // In the space this is laid out in: moved back by its shift. Most nodes
   // have none, and are given the event as it is.
   const bool shifted = state.fShiftX != 0.0f || state.fShiftY != 0.0f;
@@ -4720,7 +4698,6 @@ void routePointer(N &child, const Path &path, std::size_t at,
 template <class N, class Input, class Deliver>
 void route(N &child, const Path &path, std::size_t at, const Input &input,
            Reply &reply, Deliver deliver) {
-  const RouteStep step{child.fState};
   const auto phaseOf = [&](const auto &when) {
     reply.fCurrent = child.fState.fId;
     deliver(child, when, input, reply);
@@ -5001,7 +4978,6 @@ template <class N> bool animating(N &child) {
 // not take it, to each node above in turn.
 template <class N>
 bool clickPath(N &child, const Path &path, std::size_t at, float x, float y) {
-  const RouteStep step{child.fState};
   x -= child.fState.fShiftX;
   y -= child.fState.fShiftY;
   bool taken = false;
@@ -5885,6 +5861,7 @@ public:
       this->focus(target);
       focusVisible() = false;
     }
+    this->notePress(path);
     this->restyleDirty();
     return reply.fHandled;
   }
@@ -5897,6 +5874,7 @@ public:
       return false;
     }
     const bool taken = walk::clickPath(fRoot, path, 0, x, y);
+    this->notePress(path);
     this->restyleDirty();
     return taken;
   }
@@ -5931,6 +5909,7 @@ public:
       focusVisible() = true;
       this->focusNextWithin(reply.fFocusScope, *reply.fMoveFocus);
     }
+    this->notePress(path);
     this->restyleDirty();
     return reply.fHandled;
   }
@@ -5943,6 +5922,7 @@ public:
     Reply reply;
     reply.fTarget = fFocus;
     walk::routeText(fRoot, path, 0, input, reply);
+    this->notePress(path);
     this->restyleDirty();
     return reply.fHandled;
   }
@@ -5960,6 +5940,7 @@ public:
     if (reply.fRequestFocus) {
       this->focus(id);
     }
+    this->notePress(path);
     this->restyleDirty();
     return reply.fHandled;
   }
@@ -6108,6 +6089,26 @@ private:
     walk::update(fRoot, context, {}, nullptr, false);
   }
 
+  // A press the dispatch along `path` was answered by (pressLater): kept, by
+  // the path to the node that answered -- the routed one, or a node above it
+  // that the click went on to -- for the program to deliver.
+  void notePress(const Path &path) {
+    const State *pressed = std::exchange(hostWork().pressedNow, nullptr);
+    if (pressed == nullptr) {
+      return;
+    }
+    Path way = path;
+    while (walk::idAt(fRoot, way, 0) != pressed->fId) {
+      if (way.empty()) {
+        return;
+      }
+      way.pop_back();
+    }
+    auto &all = hostWork().pressed;
+    if (all.empty() || all.back() != way) {
+      all.push_back(std::move(way));
+    }
+  }
   [[nodiscard]] bool focusPath(Path &path) {
     if (fFocus == 0) {
       return false;
