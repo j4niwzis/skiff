@@ -3266,6 +3266,47 @@ void defaultPointer(T &node, const phase::target &, const pointer::up &release,
     reply.handle();
   }
 }
+// A node whose onClick returns what the click asks for -- perhaps: taken
+// where it does -- answered with it.
+template <class T>
+concept ClickAnswers = !std::same_as<decltype(std::declval<T &>().onClick(0.0f, 0.0f)), bool>;
+template <class T>
+  requires ClickAnswers<T>
+auto defaultPointer(T &node, const phase::target &, const pointer::down &press, PointerReply &reply)
+    -> decltype(node.onClick(press.x, press.y)) {
+  if (press.button > 1) {
+    return {};
+  }
+  if (reply.fDeferClick) {
+    node.fState.fDeferredClick = true;
+    reply.handle();
+    return {};
+  }
+  auto answer = node.onClick(press.x, press.y);
+  if (answer) {
+    reply.handle();
+  } else {
+    reply.fClickAbove = skia::SkPoint::Make(press.x, press.y);
+  }
+  return answer;
+}
+template <class T>
+  requires ClickAnswers<T>
+auto defaultPointer(T &node, const phase::target &, const pointer::up &release, PointerReply &reply)
+    -> decltype(node.onClick(release.x, release.y)) {
+  if (!std::exchange(node.fState.fDeferredClick, false)) {
+    return {};
+  }
+  reply.handle();
+  if (!node.fState.fBounds.contains(release.x, release.y)) {
+    return {};
+  }
+  auto answer = node.onClick(release.x, release.y);
+  if (!answer) {
+    reply.fClickAbove = skia::SkPoint::Make(release.x, release.y);
+  }
+  return answer;
+}
 template <class T>
 void defaultPointer(T &node, const phase::target &, const pointer::cancel &,
                     PointerReply &) {
@@ -3292,6 +3333,20 @@ void defaultKey(T &node, const phase::target &, const key::down &press,
   }
 }
 
+template <class T>
+  requires ClickAnswers<T>
+auto defaultKey(T &node, const phase::target &, const key::down &press, Reply &reply)
+    -> decltype(node.onClick(0.0f, 0.0f)) {
+  const skia::SkRect &bounds = node.fState.fBounds;
+  if (press.key != keys::kEnter && press.key != keys::kSpace) {
+    return {};
+  }
+  auto answer = node.onClick(bounds.centerX(), bounds.centerY());
+  if (answer) {
+    reply.handle();
+  }
+  return answer;
+}
 template <class T, class Phase, class Action>
 void defaultSemantic(T &, const Phase &, const Action &, Reply &) {}
 template <class T>
@@ -3301,6 +3356,17 @@ void defaultSemantic(T &node, const phase::target &,
     reply.requestFocus();
     reply.handle();
   }
+}
+template <class T>
+  requires ClickAnswers<T>
+auto defaultSemantic(T &node, const phase::target &, const semantic_action::activate &, Reply &reply)
+    -> decltype(node.onClick(0.0f, 0.0f)) {
+  const skia::SkRect &bounds = node.fState.fBounds;
+  auto answer = node.onClick(bounds.centerX(), bounds.centerY());
+  if (answer) {
+    reply.handle();
+  }
+  return answer;
 }
 template <class T>
 void defaultSemantic(T &node, const phase::target &,
@@ -3390,18 +3456,20 @@ struct Node {
   }
   [[nodiscard]] bool onClick(this auto &, float, float) { return false; }
   [[nodiscard]] bool onScroll(this auto &, float) { return false; }
-  void onPointer(this auto &self, const auto &at, const auto &input,
+  // The defaults: what a click asks for, where onClick returns it, returned
+  // with them, as a handler's own answer is.
+  auto onPointer(this auto &self, const auto &at, const auto &input,
                  PointerReply &reply) {
-    defaultPointer(self, at, input, reply);
+    return defaultPointer(self, at, input, reply);
   }
-  void onKey(this auto &self, const auto &at, const auto &input,
+  auto onKey(this auto &self, const auto &at, const auto &input,
              Reply &reply) {
-    defaultKey(self, at, input, reply);
+    return defaultKey(self, at, input, reply);
   }
   void onText(this auto &, const auto &, const auto &, Reply &) {}
-  void onSemantic(this auto &self, const auto &at, const auto &action,
+  auto onSemantic(this auto &self, const auto &at, const auto &action,
                   Reply &reply) {
-    defaultSemantic(self, at, action, reply);
+    return defaultSemantic(self, at, action, reply);
   }
   [[nodiscard]] Semantics semantics(this const auto &) { return {}; }
 
@@ -5127,6 +5195,19 @@ template <class N> bool animating(N &child) {
 
 // A click told straight to the node at the end of a path and, when it does
 // not take it, to each node above in turn.
+// A click told to a node: whether it took it -- and, where its onClick
+// returns what the click asks for, that answered.
+template <class N, class C> bool clicked(N &child, float x, float y, const C &) { return child.onClick(x, y); }
+template <class N, class C>
+  requires ClickAnswers<N>
+bool clicked(N &child, float x, float y, const C &carried) {
+  auto answer = child.onClick(x, y);
+  if (!answer) {
+    return false;
+  }
+  answered(child, answer, carried);
+  return true;
+}
 template <class N, class C>
 bool clickPath(N &child, const Path &path, std::size_t at, float x, float y, const C &carried);
 template <class P, class N, class C>
@@ -5154,8 +5235,9 @@ bool clickPath(N &child, const Path &path, std::size_t at, float x, float y, con
   if (taken) {
     return true;
   }
-  if (child.fState.fBounds.contains(x, y) && child.onClick(x, y)) {
+  if (child.fState.fBounds.contains(x, y) && clicked(child, x, y, carried)) {
     answerHere(child, carried);
+    keepAnswer(path, at);
     return true;
   }
   return false;
@@ -5477,7 +5559,7 @@ private:
       +[](void *n) -> bool { return as<T>(n).focusChangesAppearance(); },
       +[](void *n) -> Semantics { return as<T>(n).semantics(); },
       +[](void *n, bool focused) { as<T>(n).onFocusChanged(focused); },
-      +[](void *n, float x, float y) -> bool { return as<T>(n).onClick(x, y); },
+      +[](void *n, float x, float y) -> bool { return walk::clicked(as<T>(n), x, y, NoCarry{}); },
       +[](void *n) -> double { return walk::ownWakeAt(as<T>(n)); },
       EventEntries<PointerHandler, PointerEvent, PointerReply>::of<T>(),
       EventEntries<KeyHandler, KeyEvent, Reply>::of<T>(),
