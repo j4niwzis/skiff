@@ -449,3 +449,86 @@ TEST(Compose, RowsReadByKeyAreKeptWhereTheirViewIsTheSame) {
   EXPECT_EQ(rows.fRows[0].fRow.fKey, 3);
   EXPECT_EQ(rows.fRows[1].fRow.fText, "A");
 }
+
+namespace {
+struct MountedFacts {
+  int value = 0;
+  friend bool operator==(MountedFacts, MountedFacts) = default;
+};
+// A control can keep a reference to itself and cannot be moved.
+struct MountedControl : scene::Node {
+  const MountedControl *owner = this;
+  int value;
+  explicit MountedControl(int given) : value(given) {}
+  MountedControl(const MountedControl &) = delete;
+  MountedControl(MountedControl &&) = delete;
+};
+struct MountedArguments {
+  int *made;
+  auto operator()(const MountedFacts &facts) const {
+    ++*made;
+    return std::tuple{facts.value};
+  }
+};
+} // namespace
+TEST(Compose, MountedConstructsInPlaceAndKeepsEqualFacts) {
+  int made = 0;
+  auto node = mount<MountedControl, MountedFacts>(MountedArguments{&made});
+  EXPECT_FALSE(node.visible());
+  EXPECT_EQ(node.shown(), nullptr);
+  node.read(std::optional{MountedFacts{7}});
+  ASSERT_NE(node.shown(), nullptr);
+  EXPECT_EQ(node.shown()->owner, node.shown());
+  EXPECT_EQ(node.shown()->value, 7);
+  const auto id = node.shown()->fState.fId;
+  node.read(std::optional{MountedFacts{7}});
+  EXPECT_EQ(made, 1);
+  EXPECT_EQ(node.shown()->fState.fId, id);
+  node.read(std::optional{MountedFacts{9}});
+  EXPECT_EQ(made, 2);
+  EXPECT_EQ(node.shown()->value, 9);
+  EXPECT_EQ(node.shown()->owner, node.shown());
+  node.read(std::optional<MountedFacts>{});
+  EXPECT_FALSE(node.visible());
+  EXPECT_EQ(node.shown(), nullptr);
+}
+
+TEST(Compose, ProjectionsReadFieldsAndRefreshFromModelEdits) {
+  auto model = twoAccounts();
+  auto label = text_for<model::Field<&Count::n>>(
+      [](int n) { return std::format("{} items", n); },
+      nodes::Text("", 12.0f, 0u));
+  bind::Binding<Model> binding;
+  binding.refresh(label, model);
+  EXPECT_EQ(label.text(), "0 items");
+  (void)model.apply(
+      model::edit(model::placeOf<Count, Root>(), model::setTo(Count{8})));
+  binding.refresh(label, model);
+  EXPECT_EQ(label.text(), "8 items");
+}
+
+TEST(Compose, StyleProjectionPreservesItsChildren) {
+  auto model = twoAccounts();
+  auto node = spec_for<Count>(
+      [](const Count &now) -> scene::Spec { return {.visible = now.n > 0}; },
+      row(text_for<model::Field<&Count::n>>(
+          [](int n) { return std::to_string(n); },
+          nodes::Text("", 12.0f, 0u))));
+  bind::Binding<Model> binding;
+  binding.refresh(node, model);
+  EXPECT_FALSE(node.visible());
+  (void)model.apply(
+      model::edit(model::placeOf<Count, Root>(), model::setTo(Count{4})));
+  binding.refresh(node, model);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(std::get<0>(node.fParts).text(), "4");
+}
+
+TEST(Compose, PollingKeepsAnExternalDeadlineAndTheNodesOwnTimer) {
+  auto quiet = keep_ticking(false, column(nodes::Text("Quiet", 14.0f, 0u)));
+  EXPECT_FALSE(quiet.wantsTick());
+  auto deadline = keep_ticking(true, column(nodes::Text("Pending", 14.0f, 0u)));
+  EXPECT_TRUE(deadline.wantsTick());
+  auto timer = keep_ticking(false, every<model::Nothing>(1000.0));
+  EXPECT_TRUE(timer.wantsTick());
+}

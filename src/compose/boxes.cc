@@ -39,11 +39,12 @@ inline constexpr bool kAnyWalks = (bind::detail::kWalks<Parts> || ...);
 // named (a parts aggregate) rather than listed -- its parts each said with
 // their own spec where they are made (styled), nothing set after.
 struct Stacked : nodes::Stack {
-  explicit Stacked(Look look) {
+  explicit Stacked(Look look, scene::Spec spec = {}) {
     if (look.fHorizontal)
       this->setHorizontal();
     this->setGap(look.fGap);
     this->fState.apply(look.fSpec);
+    this->fState.apply(spec);
     this->fStack.justify = look.fJustify;
   }
 };
@@ -96,6 +97,22 @@ N visible(bool on, N node) {
   return node;
 }
 
+// Keep a subtree polling while an external deadline is pending. The
+// node's own polling, if any, remains active independently.
+template <class N> struct Ticking : N {
+  bool fTick;
+  Ticking(bool tick, N node) : N(std::move(node)), fTick(tick) {}
+  bool wantsTick() const {
+    if constexpr (requires(const N& node) { node.wantsTick(); })
+      return fTick || N::wantsTick();
+    else
+      return fTick;
+  }
+};
+template <class N> Ticking<N> keep_ticking(bool on, N node) {
+  return Ticking<N>(on, std::move(node));
+}
+
 // A node with its spec applied: a leaf said as it is put in its place.
 template <class N>
   requires std::derived_from<N, scene::Node>
@@ -121,6 +138,50 @@ template <class... Parts>
   requires(std::derived_from<Parts, scene::Node> && ...)
 Box<Parts...> row(Parts... parts) {
   return Box<Parts...>(hbox(), std::move(parts)...);
+}
+
+// A subtree whose presence and constructor arguments are model data. Made
+// in place: controls may refer to themselves, so a rendered temporary must
+// never be moved into the tree. Make returns the arguments, not a node.
+template <class Content, class Facts, class Make> struct Mounted : Specced {
+  Make fMake;
+  std::optional<Content> fContent;
+  std::optional<Facts> fLast;
+  bool fRead = false;
+  explicit Mounted(Make make, scene::Spec spec = {}, bool floats = false)
+      : Specced(std::move(spec)), fMake(std::move(make)) {
+    this->fState.setFloats(floats);
+    this->setVisible(false);
+  }
+  void read(const std::optional<Facts> &now) {
+    if constexpr (requires { fLast == now; })
+      if (fRead && fLast == now)
+        return;
+    fLast = now;
+    fRead = true;
+    if (now)
+      std::apply(
+          [&](auto &&...arguments) {
+            fContent.emplace(std::forward<decltype(arguments)>(arguments)...);
+          },
+          fMake(*now));
+    else
+      fContent.reset();
+    this->setVisible(now.has_value());
+    this->invalidateLayout();
+    this->markDamaged();
+  }
+  template <class Self, class F> void forEachChild(this Self &self, F &&f) {
+    f(self.fContent);
+  }
+  Content *shown() { return fContent ? &*fContent : nullptr; }
+  const Content *shown() const { return fContent ? &*fContent : nullptr; }
+};
+template <class Content, class Facts, class Make>
+Mounted<Content, Facts, Make> mount(Make make, scene::Spec spec = {},
+                                    bool floats = false) {
+  return Mounted<Content, Facts, Make>(std::move(make), std::move(spec),
+                                       floats);
 }
 
 // ---- the model's kinds, around a node ------------------------------------
@@ -257,6 +318,32 @@ template <class N> struct ShownBy : N {
 };
 template <class... Reads, class Compute, class N> bind::Derived<Compute, ShownBy<N>, Reads...> shown_if(Compute compute, N node) {
   return bind::Derived<Compute, ShownBy<N>, Reads...>(ShownBy<N>(std::move(node)), std::move(compute));
+}
+
+// Project a bound part into the value a node reads. Unlike derived, this
+// works below scopes and local state as well as at the root.
+template <class Compute, class N> struct Projected : N {
+  Compute fCompute;
+  Projected(Compute compute, N node)
+      : N(std::move(node)), fCompute(std::move(compute)) {}
+  template <class T> void read(const T &value) { N::read(fCompute(value)); }
+};
+template <class Want, class Compute, class N>
+auto projected(Compute compute, N node) {
+  return bound<Want>(
+      Projected<Compute, N>(std::move(compute), std::move(node)));
+}
+template <class N> struct SpecOf : N {
+  explicit SpecOf(N node) : N(std::move(node)) {}
+  void read(const scene::Spec &spec) { this->apply(spec); }
+};
+template <class Want, class Compute, class N>
+auto spec_for(Compute compute, N node) {
+  return projected<Want>(std::move(compute), SpecOf<N>(std::move(node)));
+}
+template <class Want, class Compute>
+auto text_for(Compute compute, nodes::Text text) {
+  return projected<Want>(std::move(compute), TextOf(std::move(text)));
 }
 
 } // namespace skiff::compose
