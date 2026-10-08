@@ -28,6 +28,18 @@ inline Look hbox(float gap = 0.0f, scene::Spec spec = {}) {
 template <class... Parts>
 inline constexpr bool kAnyWalks = (bind::detail::kWalks<Parts> || ...);
 
+// A stack laid out as its look says: the base of a node whose parts are
+// named (a parts aggregate) rather than listed -- its parts each said with
+// their own spec where they are made (styled), nothing set after.
+struct Stacked : nodes::Stack {
+  explicit Stacked(Look look) {
+    if (look.fHorizontal)
+      this->setHorizontal();
+    this->setGap(look.fGap);
+    this->fState.apply(look.fSpec);
+  }
+};
+
 // A stack of its parts, in order.
 template <class... Parts> struct Box : nodes::Stack {
   using Walked = std::bool_constant<kAnyWalks<Parts...>>;
