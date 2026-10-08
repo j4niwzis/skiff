@@ -151,6 +151,9 @@ template <class Key, class T> struct Keyed {
     return item == nullptr ? nullptr : &item->fValue;
   }
   constexpr std::size_t size() const { return fItems.size(); }
+  constexpr bool contains(const Key &key) const { return slotOf(key).has_value(); }
+  // The element of a key there is: one that is not is a mistake of the caller's.
+  constexpr const T &at(const Key &key) const { return *find(key); }
   constexpr bool empty() const { return fItems.empty(); }
   constexpr const Key &keyAt(std::size_t i) const { return fItems[i].first; }
   constexpr const T &valueAt(std::size_t i) const { return fItems[i].second->fValue; }
@@ -163,6 +166,32 @@ template <class Key, class T> struct Keyed {
   constexpr auto keys() const {
     return fItems | std::views::transform([](const Item &item) -> const Key & { return item.first; });
   }
+  // Walked as (key, value) pairs, in the list's order: for (auto &[k, v] : list).
+  class Entry {
+  public:
+    using value_type = std::pair<Key, T>;
+    using reference = std::pair<const Key &, const T &>;
+    using difference_type = std::ptrdiff_t;
+    using iterator_concept = std::forward_iterator_tag;
+    constexpr Entry() = default;
+    constexpr explicit Entry(const Item *at) : fAt(at) {}
+    constexpr reference operator*() const { return {fAt->first, fAt->second->fValue}; }
+    constexpr Entry &operator++() {
+      ++fAt;
+      return *this;
+    }
+    constexpr Entry operator++(int) {
+      Entry was = *this;
+      ++fAt;
+      return was;
+    }
+    friend constexpr bool operator==(const Entry &, const Entry &) = default;
+
+  private:
+    const Item *fAt = nullptr;
+  };
+  constexpr Entry begin() const { return Entry(fItems.data()); }
+  constexpr Entry end() const { return Entry(fItems.data() + fItems.size()); }
 
   // An element put there: where its key is already, in its place; else at
   // the end, or at `position`.

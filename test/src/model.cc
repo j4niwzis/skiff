@@ -482,7 +482,12 @@ constexpr bool aListIsSeenAsRanges() {
   list.put("!b", Shown{.receipts = true});
   list.put("!a", Shown{});
   return std::ranges::equal(list.keys(), std::array{std::string("!b"), std::string("!a")}) &&
-         std::ranges::count_if(list.values(), &Shown::receipts) == 1;
+         std::ranges::count_if(list.values(), &Shown::receipts) == 1 && [&] {
+           std::string order;
+           for (const auto &[key, value] : list)
+             order += key;
+           return order == "!b!a";
+         }() && std::ranges::forward_range<const Keyed<std::string, Shown> &>;
 }
 static_assert(aListIsSeenAsRanges());
 
