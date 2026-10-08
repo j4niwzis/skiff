@@ -30,7 +30,9 @@ template <class Want, class Base>
 struct Bound : Base {
   using BoundTo = Want;
   Bound() = default;
-  explicit Bound(Base base) : Base(std::move(base)) {}
+  explicit Bound(Base base)
+    requires std::move_constructible<Base>
+      : Base(std::move(base)) {}
   // Made in place, where it is held by what makes its parts from arguments.
   template <class... Args>
     requires std::constructible_from<Base, Args...>

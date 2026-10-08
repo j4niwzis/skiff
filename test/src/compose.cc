@@ -470,7 +470,46 @@ struct MountedArguments {
     return std::tuple{facts.value};
   }
 };
+template <class N>
+concept BoundByValue = requires(N&& node) {
+  bound<MountedFacts>(std::move(node));
+};
+// Value combinators must reject an immovable node before their bodies
+// instantiate. Bound's in-place constructor still accepts its arguments.
+static_assert(!BoundByValue<MountedControl>);
+static_assert(!std::constructible_from<
+              bind::Bound<MountedFacts, MountedControl>, MountedControl>);
+static_assert(std::constructible_from<
+              bind::Bound<MountedFacts, MountedControl>, std::in_place_t, int>);
 } // namespace
+TEST(Compose, NestedBindingsKeepImmovableControlAtItsFinalAddress) {
+  using Inner = bind::Bound<MountedFacts, MountedControl>;
+  using Outer = bind::Bound<int, Inner>;
+  Outer node(std::in_place, std::in_place, 7);
+  EXPECT_EQ(node.owner, &node);
+  EXPECT_EQ(node.value, 7);
+  node.setVisible(false);
+  EXPECT_FALSE(node.owner->visible());
+}
+
+TEST(Compose, BoundMountConstructsAndReopensImmovableContentInPlace) {
+  int made = 0;
+  using Content = Mounted<MountedControl, MountedFacts, MountedArguments>;
+  bind::Bound<std::optional<MountedFacts>, Content> node(
+      std::in_place, MountedArguments{&made}, scene::Spec{.fill = true}, true);
+  for (int value : {7, 9}) {
+    node.read(std::optional{MountedFacts{value}});
+    ASSERT_NE(node.shown(), nullptr);
+    EXPECT_EQ(node.shown()->owner, node.shown());
+    EXPECT_EQ(node.shown()->value, value);
+    node.shown()->setVisible(false);
+    EXPECT_FALSE(node.shown()->owner->visible());
+    node.read(std::optional<MountedFacts>{});
+    EXPECT_EQ(node.shown(), nullptr);
+  }
+  EXPECT_EQ(made, 2);
+}
+
 TEST(Compose, MountedConstructsInPlaceAndKeepsEqualFacts) {
   int made = 0;
   auto node = mount<MountedControl, MountedFacts>(MountedArguments{&made});

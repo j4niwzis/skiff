@@ -217,7 +217,9 @@ Mounted<Content, Facts, Make> mount(Make make, scene::Spec spec = {},
 
 // ---- the model's kinds, around a node ------------------------------------
 
-template <class Want, class N> bind::Bound<Want, N> bound(N node) {
+template <class Want, class N>
+  requires std::move_constructible<N>
+bind::Bound<Want, N> bound(N node) {
   return bind::Bound<Want, N>(std::move(node));
 }
 // A node shown what Compute makes of the model, as the parts it reads move.
