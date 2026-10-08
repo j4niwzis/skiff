@@ -539,6 +539,7 @@ TEST(Compose, NamedPressKeepsItsAccessibleLabelAndActions) {
   EXPECT_EQ(info.fLabel, "Save settings");
   EXPECT_EQ(info.fActions.size(), 2u);
   EXPECT_TRUE(button.acceptsInput());
+  EXPECT_EQ(button.fState.cursorShape().index(), scene::Cursor(scene::cursor::hand{}).index());
 }
 
 TEST(Compose, LocalModelDoesNotHideTheNodesSceneState) {

@@ -273,7 +273,9 @@ template <class E, class N> struct OnClick : N {
   E fEvent;
   std::string fLabel;
   OnClick(E event, N node, std::string label = {})
-      : N(std::move(node)), fEvent(std::move(event)), fLabel(std::move(label)) {}
+      : N(std::move(node)), fEvent(std::move(event)), fLabel(std::move(label)) {
+    if (!fLabel.empty()) this->fState.setCursor(scene::cursor::hand{});
+  }
   bool onClick(float, float) {
     scene::pressLater(this->fState);
     return true;
