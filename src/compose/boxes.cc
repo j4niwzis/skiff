@@ -17,12 +17,19 @@ struct Look {
   bool fHorizontal = false;
   float fGap = 0.0f;
   scene::Spec fSpec{};
+  // Where along its way its parts sit, together.
+  nodes::Justify fJustify = nodes::justify::start{};
 };
 inline Look vbox(float gap = 0.0f, scene::Spec spec = {}) {
   return {false, gap, std::move(spec)};
 }
 inline Look hbox(float gap = 0.0f, scene::Spec spec = {}) {
   return {true, gap, std::move(spec)};
+}
+// A look with its parts put along its way as said: in the middle, at the end.
+inline Look justified(Look look, nodes::Justify justify) {
+  look.fJustify = std::move(justify);
+  return look;
 }
 
 template <class... Parts>
@@ -37,6 +44,7 @@ struct Stacked : nodes::Stack {
       this->setHorizontal();
     this->setGap(look.fGap);
     this->fState.apply(look.fSpec);
+    this->fStack.justify = look.fJustify;
   }
 };
 
@@ -50,6 +58,7 @@ template <class... Parts> struct Box : nodes::Stack {
       this->setHorizontal();
     this->setGap(look.fGap);
     this->fState.apply(look.fSpec);
+    this->fStack.justify = look.fJustify;
   }
   template <class Self, class F> void forEachChild(this Self &self, F &&f) {
     std::apply([&](auto &...each) { (f(each), ...); }, self.fParts);
@@ -67,6 +76,7 @@ template <class N> struct Many : nodes::Stack {
       this->setHorizontal();
     this->setGap(look.fGap);
     this->fState.apply(look.fSpec);
+    this->fStack.justify = look.fJustify;
   }
   template <class Self, class F> void forEachChild(this Self &self, F &&f) { std::ranges::for_each(self.fParts, f); }
 };
