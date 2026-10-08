@@ -571,3 +571,20 @@ TEST(Compose, TextSelectionIsDeclaredAtConstruction) {
   EXPECT_TRUE(selectable.selectable());
   EXPECT_FALSE(ordinary.selectable());
 }
+
+TEST(Compose, PressFactoryReadsCurrentDataWithoutRebuildingTheNode) {
+  struct Event { int value; };
+  struct Sink {
+    std::vector<int> values;
+    void take(const Event& event) { values.push_back(event.value); }
+  } sink;
+  model::Model<int, bind::NoReactions> model(0);
+  int current = 1;
+  auto button = onPress([&] { return Event{current}; }, Pad{}, "Current value");
+  const auto id = button.fState.id();
+  ASSERT_TRUE(bind::press(button, model, scene::Path{}, &sink));
+  current = 2;
+  ASSERT_TRUE(bind::press(button, model, scene::Path{}, &sink));
+  EXPECT_EQ(sink.values, (std::vector<int>{1, 2}));
+  EXPECT_EQ(button.fState.id(), id);
+}

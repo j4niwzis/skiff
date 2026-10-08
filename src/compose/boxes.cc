@@ -121,6 +121,29 @@ N recorded(N node, bool on = true) {
   return node;
 }
 
+// Leaf options declared where the node is composed. Keep the concrete
+// node type, including a text's picture provider and a widget's actions.
+template <class N> requires requires(N& node) { node.setWrapped(true); }
+N wrapped(N node, bool on = true) {
+  node.setWrapped(on);
+  return node;
+}
+template <class N> requires requires(N& node) { node.setElided(true); }
+N elided(N node, bool on = true) {
+  node.setElided(on);
+  return node;
+}
+template <class N> requires requires(N& node) { node.setPrimary(true); }
+N primary(N node, bool on = true) {
+  node.setPrimary(on);
+  return node;
+}
+template <class N> requires requires(N& node) { node.setOnNow(true); }
+N on_now(N node, bool on) {
+  node.setOnNow(on);
+  return node;
+}
+
 // A node with its spec applied: a leaf said as it is put in its place.
 template <class N>
   requires std::derived_from<N, scene::Node>
@@ -307,6 +330,21 @@ template <class E, class N> struct OnClick : N {
 };
 template <class E, class N> OnClick<E, N> onClick(E event, N node, std::string label = {}) {
   return OnClick<E, N>(std::move(event), std::move(node), std::move(label));
+}
+
+// Compute a typed answer at press time, for actions whose data can change
+// while the node remains mounted.
+template <class Make, class N> struct OnPress : OnClick<model::Nothing, N> {
+  using Out = model::Types<std::invoke_result_t<Make&>>;
+  Make fMake;
+  OnPress(Make make, N node, std::string label)
+      : OnClick<model::Nothing, N>({}, std::move(node), std::move(label)), fMake(std::move(make)) {}
+  auto onPress() { return std::invoke(fMake); }
+};
+template <class Make, class N>
+  requires std::invocable<Make&> && (!std::is_void_v<std::invoke_result_t<Make&>>)
+OnPress<Make, N> onPress(Make make, N node, std::string label = {}) {
+  return OnPress<Make, N>(std::move(make), std::move(node), std::move(label));
 }
 
 // Answers a key with a copy of its event: Esc, as a bar is let go.
