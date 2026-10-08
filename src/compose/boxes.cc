@@ -270,16 +270,29 @@ template <class E, class N> struct OnClick : N {
   using HasLocal = std::bool_constant<bind::detail::kHasLocal<N>>;
   using Out = model::Types<E>;
   E fEvent;
-  OnClick(E event, N node) : N(std::move(node)), fEvent(std::move(event)) {}
+  std::string fLabel;
+  OnClick(E event, N node, std::string label = {})
+      : N(std::move(node)), fEvent(std::move(event)), fLabel(std::move(label)) {}
   bool onClick(float, float) {
     scene::pressLater(this->fState);
     return true;
   }
   E onPress() const { return fEvent; }
   bool acceptsInput() const { return true; }
+  scene::Semantics semantics() const {
+    scene::Semantics result;
+    if constexpr (requires(const N& node) { node.semantics(); })
+      result = N::semantics();
+    if (!fLabel.empty()) {
+      result.fRole = scene::semantic_role::button{};
+      result.fLabel = fLabel;
+      result.fActions = {scene::semantic_action::focus{}, scene::semantic_action::activate{}};
+    }
+    return result;
+  }
 };
-template <class E, class N> OnClick<E, N> onClick(E event, N node) {
-  return OnClick<E, N>(std::move(event), std::move(node));
+template <class E, class N> OnClick<E, N> onClick(E event, N node, std::string label = {}) {
+  return OnClick<E, N>(std::move(event), std::move(node), std::move(label));
 }
 
 // Answers a key with a copy of its event: Esc, as a bar is let go.

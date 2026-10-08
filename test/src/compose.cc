@@ -532,3 +532,11 @@ TEST(Compose, PollingKeepsAnExternalDeadlineAndTheNodesOwnTimer) {
   auto timer = keep_ticking(false, every<model::Nothing>(1000.0));
   EXPECT_TRUE(timer.wantsTick());
 }
+
+TEST(Compose, NamedPressKeepsItsAccessibleLabelAndActions) {
+  auto button = onClick(model::Nothing{}, nodes::Text("Save", 14.0f, 0u), "Save settings");
+  const auto info = button.semantics();
+  EXPECT_EQ(info.fLabel, "Save settings");
+  EXPECT_EQ(info.fActions.size(), 2u);
+  EXPECT_TRUE(button.acceptsInput());
+}
