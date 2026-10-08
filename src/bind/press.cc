@@ -1,8 +1,7 @@
-// skiff.bind:press -- a press delivered to the node pressed: the walk goes
-// down the tree with every type known, gathering the frames around each node
-// as the drain does, and at the node pressed -- found by its address, as the
-// scene recorded it -- what its onPress() returns is sent up through them at
-// once (the module is skiff.bind: see bind.cc).
+// skiff.bind:press -- a press delivered along the path to the node pressed:
+// the walk goes down that one path with every type known, gathering the
+// frames around it as the drain does, and what the node's onPress() returns
+// is sent up through them at once (the module is skiff.bind: see bind.cc).
 export module skiff.bind:press;
 
 import std;
@@ -17,6 +16,151 @@ import :ops;
 export namespace skiff::bind {
 namespace detail {
 
+// ---- the child at a place, as the scene counts them ------------------------
+//
+// The scene's paths (scene::Path) give, at each level, a child's place in
+// its parent's count of its children: each node held, however it is held --
+// in an optional, a variant, a list -- one; an erased node one, not seen
+// through. The same count here, with the child's own type.
+template <class F> bool pressPart(std::monostate &, std::uint32_t &, F &&) { return false; }
+template <class... Ts, class F> bool pressPart(spl::variant<Ts...> &held, std::uint32_t &left, F &&f) {
+  return spl::visit([&](auto &one) { return pressPart(one, left, f); }, held);
+}
+template <class V, class F>
+  requires(scene::one_of_several<V> && !std::derived_from<V, scene::Node>)
+bool pressPart(V &held, std::uint32_t &left, F &&f) {
+  bool found = false;
+  held.visit([&](auto &one) { found = pressPart(one, left, f); });
+  return found;
+}
+template <class T, class F> bool pressPart(std::optional<T> &held, std::uint32_t &left, F &&f) {
+  return held && pressPart(*held, left, f);
+}
+template <class T, class D, class F> bool pressPart(std::unique_ptr<T, D> &held, std::uint32_t &left, F &&f) {
+  return held && pressPart(*held, left, f);
+}
+template <class T, class F> bool pressPart(std::shared_ptr<T> &held, std::uint32_t &left, F &&f) {
+  return held && pressPart(*held, left, f);
+}
+template <class T, class F> bool pressPart(std::reference_wrapper<T> &held, std::uint32_t &left, F &&f) {
+  return pressPart(held.get(), left, f);
+}
+template <class... Ts, class F> bool pressPart(std::tuple<Ts...> &held, std::uint32_t &left, F &&f) {
+  return std::apply([&](auto &...each) { return (pressPart(each, left, f) || ...); }, held);
+}
+// Erased: counted, but what it is was given up -- a press inside it is not
+// delivered from here.
+template <class F> bool pressPart(scene::AnyNode &held, std::uint32_t &left, F &&) {
+  if (!held)
+    return false;
+  if (left != 0) {
+    --left;
+    return false;
+  }
+  return true;
+}
+template <class R, class F>
+  requires(std::ranges::range<R> && !scene::kTreatAsNode<R> && !std::derived_from<R, scene::Node>)
+bool pressPart(R &held, std::uint32_t &left, F &&f) {
+  return std::ranges::any_of(held, [&](auto &each) { return pressPart(each, left, f); });
+}
+template <class N, class F>
+  requires(std::derived_from<N, scene::Node> || scene::kTreatAsNode<N>)
+bool pressPart(N &held, std::uint32_t &left, F &&f) {
+  if (left != 0) {
+    --left;
+    return false;
+  }
+  f(held);
+  return true;
+}
+
+// ---- the walk along the path ------------------------------------------------
+
+template <class Op, class N, class Here, class... Frames>
+void pressNode(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames);
+
+// Below a node: an Each's row, a scope of its element; a pipe's end, what
+// the first sends going to the second; else the node's own child.
+template <class Op, class N, class Here, class... Frames>
+  requires IsEach<N>
+void pressRows(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
+  auto &list = asEach(node);
+  const std::size_t i = path[at];
+  if (i >= list.fRows.size())
+    return;
+  const auto place = listPlaceOf(node, here);
+  using P = typename std::remove_cvref_t<decltype(place)>::PathType;
+  using Key = decltype(keyOf(node));
+  using RowPath = model::Join<P, model::Path<model::At<Key>>>;
+  const model::Place<typename Here::RootType, RowPath, model::BorrowedKeysOf<RowPath>> row{
+      std::tuple_cat(place.fKeys, std::tuple<const Key &>{list.fKeys[i]})};
+  pressNode(op, list.fRows[i], path, at + 1, row, frames...);
+}
+template <class Op, class N, class Here, class... Frames>
+  requires(!IsEach<N> && requires(N &n) { n.fPipe; })
+void pressRows(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
+  auto &[from, to] = node.fPipe;
+  std::uint32_t left = path[at];
+  if (pressPart(from, left, [&](auto &child) {
+        pressNode(op, child, path, at + 1, here, PipeFrame<std::remove_cvref_t<decltype(to)>>{&to}, frames...);
+      }))
+    return;
+  (void)pressPart(to, left, [&](auto &child) { pressNode(op, child, path, at + 1, here, frames...); });
+}
+template <class Op, class N, class Here, class... Frames>
+void pressRows(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
+  std::uint32_t left = path[at];
+  bool found = false;
+  node.forEachChild([&](auto &part) {
+    found = found || pressPart(part, left, [&](auto &child) { pressNode(op, child, path, at + 1, here, frames...); });
+  });
+}
+
+// The node itself: pressed where the path ends, else its child on the path.
+template <class Op, class N, class Here, class... Frames>
+void pressBody(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
+  if (at == path.size()) {
+    op.fReached = true;
+    op.pressed(node, frames...);
+    return;
+  }
+  pressRows(op, node, path, at, here, frames...);
+}
+
+// The frames a node is: a Local's, a scope's -- as the drain has them.
+template <class Op, class N, class Here, class... Frames>
+  requires IsLocal<N>
+void pressLocal(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
+  auto &local = asLocal(node);
+  const LocalFrame<std::remove_reference_t<decltype(local)>> frame{&local};
+  pressBody(op, node, path, at, here, frame, frames...);
+}
+template <class Op, class N, class Here, class... Frames>
+void pressLocal(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
+  pressBody(op, node, path, at, here, frames...);
+}
+template <class Op, class N, class Here, class... Frames>
+  requires(IsScoped<N> && (Op::template kOwns<N> || (kInLocal<N, Frames> || ...)))
+void pressScoped(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
+  auto &scoped = asScoped(node);
+  using Within = decltype(scopeOfOf(scoped));
+  using Handlers = decltype(handlersOf(scoped));
+  const auto inner = std::apply([&](const auto &...keys) { return model::borrowBelow<Within>(here, keys...); }, scoped.fKeys);
+  pressLocal(op, node, path, at, inner, ScopeFrame<std::remove_cvref_t<decltype(inner)>, Handlers>{&inner, &scoped.fHandlers},
+             frames...);
+}
+template <class Op, class N, class Here, class... Frames>
+void pressScoped(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
+  pressLocal(op, node, path, at, here, frames...);
+}
+template <class Op, class N, class Here, class... Frames>
+void pressNode(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
+  pressScoped(op, node, path, at, here, frames...);
+}
+
+// ---- what a press asks for, sent ------------------------------------------
+
 // What a node's onPress() may return: nothing, one event, one perhaps, a
 // few at once.
 template <class N>
@@ -26,30 +170,8 @@ concept PressesNothing = requires(N &n) {
 template <class N>
 concept Presses = requires(N &n) { n.onPress(); } && !PressesNothing<N>;
 
-// A drain of one press: nothing else a drain does -- no change applied, no
-// event kept elsewhere sent -- only the node pressed, where it is met, with
-// the frames around it; the walk done once it is.
 template <class M, class Sink> struct Pressing : Draining<M, Sink> {
-  const scene::State *fPressed = nullptr;
-  bool fDone = false;
-
-  template <class N, class Here, class... Frames> void bound(N &, const Here &, const Frames &...) {}
-  template <class N> void itself(N &) {}
-  template <class N, class Here, class... Frames>
-  void emitted(N &node, const Here &, const Frames &...frames) {
-    if (fDone || &node.fState != fPressed)
-      return;
-    fDone = true;
-    this->pressed(node, frames...);
-  }
-  template <class S, class Place> bool enter(S &, const Place &) { return !fDone; }
-  template <class N, class Here, class... Frames> bool local(N &, const Here &, const Frames &...) { return !fDone; }
-  template <class N, class Place, class VisitRow>
-  void eachRows(N &node, const Place &, const VisitRow &visitRow) {
-    for (std::size_t i = 0; !fDone && i < asEach(node).fRows.size(); ++i)
-      visitRow(*this, i);
-  }
-
+  bool fReached = false;
   template <class N, class... Frames>
     requires PressesNothing<N>
   void pressed(N &node, const Frames &...) {
@@ -76,19 +198,19 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
 
 }  // namespace detail
 
-// A press, delivered: the node below `root` whose state is `pressed` -- as
-// the scene recorded it (scene::hostWork().pressed) -- found with every
-// type known, and what its onPress() says it asks for sent at once up the
-// frames around it, as an event a node emits: to the first scope, Local or
-// pipe that takes it, else to the model's reactions, else to the program's
-// sink. The edits it makes, one batch.
+// A press, delivered: down `path` from `root` -- the path the scene found
+// to the node pressed (Scene::pathOf) -- to that node, whose onPress() says
+// what it asks for; that sent at once up the frames around it, as an event
+// a node emits: to the first scope, Local or pipe that takes it, else to the
+// model's reactions, else to the program's sink. The edits it makes, one
+// batch.
 template <class M, class N, class S = detail::NoSink>
-bool press(N &root, M &model, const scene::State *pressed, S *sink = nullptr) {
+bool press(N &root, M &model, const scene::Path &path, S *sink = nullptr) {
   model.beginBatch();
-  detail::Pressing<M, S> op{{model, sink}, pressed};
-  detail::visitNode(op, root, model::Place<typename M::RootType, model::Path<>>{});
+  detail::Pressing<M, S> op{{model, sink}};
+  detail::pressNode(op, root, path, 0, model::Place<typename M::RootType, model::Path<>>{});
   model.endBatch();
-  return op.fDone;
+  return op.fReached;
 }
 
 }  // namespace skiff::bind

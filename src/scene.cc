@@ -1517,9 +1517,9 @@ struct HostWork {
   std::optional<skia::SkRect> typingAt;
   std::optional<std::string> copied;
   std::vector<std::string> links;
-  // The nodes pressed that say what a press does by onPress(), by their
-  // state's address: for the program to deliver once the dispatch is over
-  // (skiff::bind::press), when nothing of it runs.
+  // The nodes pressed that say what a press does by onPress(): for the
+  // program to deliver along their paths (Scene::pathOf) once the dispatch
+  // is over (skiff::bind::press), when nothing of it runs.
   std::vector<const State *> pressed;
 };
 inline HostWork &hostWork() {
@@ -6075,6 +6075,12 @@ private:
     walk::update(fRoot, context, {}, nullptr, false);
   }
 
+  // The path to a node, as presses are delivered along it: its place at each
+  // level below the root.
+  [[nodiscard]] bool pathOf(NodeId id, Path &path) {
+    path.clear();
+    return walk::findPath(fRoot, id, path);
+  }
   [[nodiscard]] bool focusPath(Path &path) {
     if (fFocus == 0) {
       return false;

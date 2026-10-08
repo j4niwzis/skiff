@@ -212,19 +212,18 @@ TEST(Bind, AnEditFromElsewhereIsShown) {
 } // namespace
 
 namespace {
-TEST(Bind, APressIsDeliveredToTheNodePressedAndTakenByItsRowsScope) {
+TEST(Bind, APressIsDeliveredAlongItsPathAndTakenByTheRowsScope) {
   Model m = twoAccounts();
   Page page;
   bind::refresh(page, m);
-  // The second row's button, by its state, as the scene records a press.
-  auto &pressed = page.parts.accounts.fRows[1].parts.press;
-  EXPECT_TRUE(bind::press(page, m, &pressed.fState));
-  EXPECT_EQ(pressed.fPressed, 1);
+  // The page's list (0), its second row (1), the row's press (3): the path
+  // the scene finds to it.
+  EXPECT_TRUE(bind::press(page, m, scene::Path{0, 1, 3}));
+  EXPECT_EQ(page.parts.accounts.fRows[1].parts.press.fPressed, 1);
   ASSERT_EQ(m.root().settings.fValue.accounts.size(), 1u);
   EXPECT_TRUE(m.root().settings.fValue.accounts.contains("@a:x.org"));
-  // A node no longer in the tree: nothing pressed, nothing sent.
-  scene::Node elsewhere;
-  EXPECT_FALSE(bind::press(page, m, &elsewhere.fState));
+  // A path that leads nowhere: nothing pressed, nothing sent.
+  EXPECT_FALSE(bind::press(page, m, scene::Path{0, 7, 3}));
   EXPECT_EQ(m.root().settings.fValue.accounts.size(), 1u);
 }
 }  // namespace
