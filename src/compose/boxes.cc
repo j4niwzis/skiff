@@ -44,6 +44,30 @@ template <class... Parts> struct Box : nodes::Stack {
   }
 };
 
+// A stack of a list of parts, as many as there are: made from them, in
+// their order.
+template <class N> struct Many : nodes::Stack {
+  using Walked = std::bool_constant<kAnyWalks<N>>;
+  using HasLocal = std::bool_constant<bind::detail::kHasLocal<N>>;
+  std::vector<N> fParts;
+  Many(Look look, std::vector<N> parts) : fParts(std::move(parts)) {
+    if (look.fHorizontal)
+      this->setHorizontal();
+    this->setGap(look.fGap);
+    this->fState.apply(look.fSpec);
+  }
+  template <class Self, class F> void forEachChild(this Self &self, F &&f) { std::ranges::for_each(self.fParts, f); }
+};
+template <class N> Many<N> many(Look look, std::vector<N> parts) { return Many<N>(std::move(look), std::move(parts)); }
+
+// A node shown, or there but hidden.
+template <class N>
+  requires std::derived_from<N, scene::Node>
+N visible(bool on, N node) {
+  node.setVisible(on);
+  return node;
+}
+
 // A node with its spec applied: a leaf said as it is put in its place.
 template <class N>
   requires std::derived_from<N, scene::Node>
