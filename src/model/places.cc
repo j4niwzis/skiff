@@ -373,6 +373,17 @@ template <class T> struct Seen {
 // reaction is chosen by.
 template <class T> struct Changed {};
 template <class T> struct Removed {};
+// That the member I of a C changed: what a reaction to a field,
+// Changed<Field<&C::m>>, is chosen by -- it takes this one only where m is
+// that member.
+template <class C, std::size_t I> struct MemberChanged {};
+template <auto M> struct Changed<Field<M>> {
+  constexpr Changed() = default;
+  template <class C, std::size_t I>
+    requires(std::same_as<C, typename detail::MemberPointer<decltype(M)>::Class> &&
+             I == detail::kIndexOfMember<M>)
+  constexpr Changed(MemberChanged<C, I>) {}
+};
 
 // Where a reaction's part is: the part, the element of the innermost list
 // it is in (or itself), and the keys that lead to it -- by place, or by type

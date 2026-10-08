@@ -222,10 +222,48 @@ template <class... E> struct VariantOf<Types<E...>> {
   using type = std::variant<E...>;
 };
 
+// And what a reaction to a member, as a field of its aggregate, returns.
+template <class P> struct ParentOf;
+template <class... S> struct ParentOf<Path<S...>> {
+  using type = decltype([]<std::size_t... I>(std::index_sequence<I...>) {
+    return Path<std::tuple_element_t<I, std::tuple<S...>>...>{};
+  }(std::make_index_sequence<sizeof...(S) - 1>{}));
+};
+template <class R, class C, std::size_t I, class N, class O, class Keys>
+concept FieldTellsAt = requires(const R &r, const N &n, const O &o, const Keys &k) {
+  r.on(MemberChanged<C, I>{}, At_<N, O, Keys>{n, o, k});
+};
+template <class R, class C, std::size_t I, class O>
+concept FieldTellsShort = requires(const R &r, const O &o) { r.on(MemberChanged<C, I>{}, o); };
+template <class R, class C, std::size_t I, class N, class O, class Keys> struct FieldReturnOf {
+  using type = Nothing;
+};
+template <class R, class C, std::size_t I, class N, class O, class Keys>
+  requires FieldTellsAt<R, C, I, N, O, Keys>
+struct FieldReturnOf<R, C, I, N, O, Keys> {
+  using type = decltype(std::declval<const R &>().on(MemberChanged<C, I>{}, std::declval<At_<N, O, Keys>>()));
+};
+template <class R, class C, std::size_t I, class N, class O, class Keys>
+  requires(!FieldTellsAt<R, C, I, N, O, Keys> && FieldTellsShort<R, C, I, O>)
+struct FieldReturnOf<R, C, I, N, O, Keys> {
+  using type = decltype(std::declval<const R &>().on(MemberChanged<C, I>{}, std::declval<const O &>()));
+};
+template <class R, class Root, class P, class Step = typename LastStep<P>::type> struct FieldEffectsAt {
+  using type = Types<>;
+};
+template <class R, class Root, class P, std::size_t I> struct FieldEffectsAt<R, Root, P, Member<I>> {
+  using C = ::skiff::model::TypeAt<Root, typename ParentOf<P>::type>;
+  using N = ::skiff::model::TypeAt<Root, P>;
+  using O = typename OwnerAt<Root, P, N>::type;
+  using type = typename EffectsIn<std::remove_cvref_t<
+      typename FieldReturnOf<R, C, I, N, O, BorrowedKeysOf<P>>::type>>::type;
+};
+
 template <class Root, class R, class Places> struct EffectsOfPlaces;
 template <class Root, class R, class... P> struct EffectsOfPlaces<Root, R, Types<P...>> {
   using type = typename VariantOf<typename Unique<typename Concat<
-      typename EffectsAt<R, Root, P>::type..., typename RemovedAt<R, Root, P>::type...>::type>::type>::type;
+      typename EffectsAt<R, Root, P>::type..., typename FieldEffectsAt<R, Root, P>::type...,
+      typename RemovedAt<R, Root, P>::type...>::type>::type>::type;
 };
 template <class Root, class R, class E> struct EffectOf {
   using type = E;

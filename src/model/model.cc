@@ -44,7 +44,8 @@ public:
       return {};
     return {v.fFound, v.fRevision, v.fTracked};
   }
-  template <class Want> constexpr Seen<Want> look() const {
+  // (Want a type, or a Field<&C::m>: what is seen is the part's own type.)
+  template <class Want> constexpr auto look() const {
     return look(placeOf<Want, Root>());
   }
 
@@ -180,7 +181,9 @@ private:
   template <class P, Decomposable N, class O, class Keys>
   constexpr bool tellAll(const N &part, const O &owner, const Keys &keys, bool log) {
     const bool below = [&]<std::size_t... I>(std::index_sequence<I...>) {
-      return (tellAll<Join<P, Path<Member<I>>>>(aggregate::get<I>(part), owner, keys, log) | ...);
+      return ((tellAll<Join<P, Path<Member<I>>>>(aggregate::get<I>(part), owner, keys, log) |
+               tellField<N, I>(aggregate::get<I>(part), owner, keys)) |
+              ...);
     }(std::make_index_sequence<MemberTypes<N>::size>{});
     if (touched(std::addressof(part)))
       react(part, detail::ownerOf(part, owner), keys);
@@ -331,6 +334,23 @@ private:
   }
   template <class N, class O, class Keys>
   constexpr void react(const N &, const O &, const Keys &) {}
+
+  // And the reactions to a member as a field of its aggregate
+  // (on(Changed<Field<&C::m>>, ...)): looked for only where there are some,
+  // told where it is, else -- the short form -- given its list's element.
+  template <class C, std::size_t I, class N, class O, class Keys>
+  constexpr bool tellField(const N &part, const O &owner, const Keys &keys) {
+    using Owner = std::remove_cvref_t<decltype(detail::ownerOf(part, owner))>;
+    if constexpr (detail::FieldTellsAt<Reactions, C, I, N, Owner, Keys>) {
+      if (touched(std::addressof(part)))
+        fOutbox.take(fReactions.on(MemberChanged<C, I>{},
+                                   At_<N, Owner, Keys>{part, detail::ownerOf(part, owner), keys}));
+    } else if constexpr (detail::FieldTellsShort<Reactions, C, I, Owner>) {
+      if (touched(std::addressof(part)))
+        fOutbox.take(fReactions.on(MemberChanged<C, I>{}, detail::ownerOf(part, owner)));
+    }
+    return false;
+  }
 
   // What a change took from a list, however it took it: its reactions
   // told, with what it was and its key, and then let go.

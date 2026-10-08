@@ -437,6 +437,45 @@ constexpr bool lessToWrite() {
 }
 static_assert(lessToWrite());
 
+// Fields named by their member pointers: two of one type told apart, with
+// no type of their own; a reaction to one is not told of the other.
+struct Shown {
+  bool receipts = false;
+  bool previews = false;
+  std::optional<bool> typing;
+};
+struct Chats {
+  Keyed<std::string, Shown> chats;
+};
+struct SaidPreviews {
+  bool on = false;
+  std::string chat;
+};
+struct OnPreviews {
+  constexpr auto on(Changed<Field<&Shown::previews>>, const auto &at) const {
+    return SaidPreviews{part(at), key<0>(at)};
+  }
+};
+static_assert(std::same_as<PathTo<Field<&Shown::previews>, Chats>,
+                           Path<Member<0>, At<std::string>, Member<1>>>);
+static_assert(std::same_as<EffectsOf<Chats, OnPreviews>, std::variant<SaidPreviews>>);
+constexpr bool fieldsByMemberPointer() {
+  Chats root;
+  root.chats.put("!a", Shown{});
+  Model<Chats, OnPreviews> m(std::move(root));
+  m.apply(edit(placeOf<Field<&Shown::receipts>, Chats>(std::string("!a")), flip));
+  const bool quietForOthers = m.outbox().size() == 0;
+  m.apply(edit(placeOf<Field<&Shown::previews>, Chats>(std::string("!a")), flip));
+  m.apply(edit(placeOf<Field<&Shown::typing>, Chats>(std::string("!a")),
+               setTo(std::optional<bool>(true))));
+  const auto out = m.outbox().drain();
+  const Shown &now = m.root().chats.valueAt(0);
+  return quietForOthers && out.size() == 1 && std::get<SaidPreviews>(out[0]).on &&
+         std::get<SaidPreviews>(out[0]).chat == "!a" && now.receipts && now.previews &&
+         now.typing == true && *m.look(placeOf<Field<&Shown::previews>, Chats>(std::string("!a")));
+}
+static_assert(fieldsByMemberPointer());
+
 // No effect type written: deduced from what the reactions return.
 static_assert(std::same_as<EffectsOf<Root, Reactions>, std::variant<SetMentionsSharing, WriteSettings>> ||
               std::same_as<EffectsOf<Root, Reactions>, std::variant<WriteSettings, SetMentionsSharing>>);

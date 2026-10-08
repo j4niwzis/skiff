@@ -275,6 +275,12 @@ struct IfThere {};
 template <std::size_t I> struct Alt {};
 template <class... Steps> struct Path {};
 
+// A field of an aggregate, named by its member pointer -- Field<&Chat::muted>
+// -- where its type alone does not say which it is: placeOf<Field<...>>,
+// look<Field<...>>, a reaction to Changed<Field<...>>. The aggregate is found
+// by its type, as any part; the member by its place in it.
+template <auto M> struct Field {};
+
 template <class... T> struct Types {
   static constexpr std::size_t size = sizeof...(T);
   template <std::size_t I> using at = std::tuple_element_t<I, std::tuple<T...>>;
@@ -330,6 +336,14 @@ template <class Step, class... S> struct Prefix1<Step, Path<S...>> {
 template <class Step, class L> struct Prefix;
 template <class Step, class... P> struct Prefix<Step, Types<P...>> {
   using type = Types<typename Prefix1<Step, P>::type...>;
+};
+template <class Step, class P> struct Suffix1;
+template <class Step, class... S> struct Suffix1<Step, Path<S...>> {
+  using type = Path<S..., Step>;
+};
+template <class Step, class L> struct Suffix;
+template <class Step, class... P> struct Suffix<Step, Types<P...>> {
+  using type = Types<typename Suffix1<Step, P>::type...>;
 };
 template <class... L> struct Concat {
   using type = Types<>;
@@ -387,6 +401,48 @@ struct SearchBelow<Want, V<Ts...>>
 template <class Want, class In> struct Search : SearchBelow<Want, In> {};
 template <class Want> struct Search<Want, Want> {
   using type = Types<Path<>>;
+};
+
+// A member pointer's class and type.
+template <class M> struct MemberPointer;
+template <class C, class T> struct MemberPointer<T C::*> {
+  using Class = C;
+  using Type = T;
+};
+// Declared, never defined, never read: only where its members are is asked.
+template <class T> extern const T kDeclaredOnly;
+// Which member of its class a member pointer names: the one at the same
+// address -- no reflection needed, nothing left for run time.
+template <auto M, class C> consteval std::size_t indexIn(const C &object) {
+  const void *want = std::addressof(object.*M);
+  std::size_t found = MemberTypes<C>::size;
+  [&]<std::size_t... I>(std::index_sequence<I...>) {
+    ((static_cast<const void *>(std::addressof(aggregate::get<I>(object))) == want
+          ? void(found = I)
+          : void()),
+     ...);
+  }(std::make_index_sequence<MemberTypes<C>::size>{});
+  return found;
+}
+// Asked of one made while compiling, where the class can be (a model's
+// parts can: it is constexpr); else of one only declared, which a class of
+// a type local to a file cannot be asked of.
+template <class C>
+concept MadeWhileCompiling = requires { typename std::integral_constant<int, (C{}, 0)>; };
+template <auto M> consteval std::size_t indexOfMember() {
+  using C = typename MemberPointer<decltype(M)>::Class;
+  if constexpr (MadeWhileCompiling<C>) {
+    const C object{};
+    return indexIn<M>(object);
+  } else {
+    return indexIn<M>(kDeclaredOnly<C>);
+  }
+}
+template <auto M> inline constexpr std::size_t kIndexOfMember = indexOfMember<M>();
+// A field: where its aggregate is, and on, into the member.
+template <auto M, class In> struct Search<Field<M>, In> {
+  using type = typename Suffix<Member<kIndexOfMember<M>>,
+                               typename Search<typename MemberPointer<decltype(M)>::Class, In>::type>::type;
 };
 } // namespace detail
 
