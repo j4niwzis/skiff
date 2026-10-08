@@ -284,6 +284,8 @@ target_link_libraries(${PROJECT_NAME} PUBLIC skiff_model)
 # Outside a release build, the walks over a tree see each child through an
 # AnyNode (scene.cc, kErasedWalks): made once, not per type of node. Off,
 # every build walks its tree statically, as a release build does.
+# The same debug mode combines model changes into one binding walk, avoiding
+# a separate specialization of the whole tree for each tracked model path.
 option(SKIFF_ERASE_WALKS "Outside a release build, walk every child through an AnyNode" ON)
 target_compile_definitions(${PROJECT_NAME} PUBLIC
   $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<NOT:$<CONFIG:Release>>>:SKIFF_ERASED_WALKS>)

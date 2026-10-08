@@ -113,6 +113,73 @@ private:
   template <class N, class Here, class L, class Place, class... Frames>
   void showIfOnTheWay(N &, const Here &, const InLocal<L, Place> &, const Frames &...) {}
 };
+#ifdef SKIFF_ERASED_WALKS
+// Debug builds use one walk for the union of changed paths. Specializing
+// the whole tree for every C made code generation proportional to the
+// number of tracked places; only the small path comparisons need C here.
+template <class M, class Changes> struct ChangedTargeting {
+  const M &fModel;
+  const Changes &fChanges;
+  Refreshing<M> fFull{fModel};
+
+  template <class N, class Here, class... Frames>
+    requires(IsBound<N> && (kOfModel<typename M::RootType, N> || (kInLocal<N, Frames> || ...)))
+  void bound(N &node, const Here &here, const Frames &...frames) {
+    show(node, here, where<decltype(boundToOf(asBound(node)))>(here, frames...), frames...);
+  }
+  template <class N, class Here, class... Frames>
+  void bound(N &, const Here &, const Frames &...) {}
+  template <class N> requires ReadsItself<N, M>
+  void itself(N &node) { node.refresh(fModel); }
+  template <class N> void itself(N &) {}
+  template <class N> static constexpr bool kWants = true;
+  template <class N> static constexpr bool kOwns = kOfModel<typename M::RootType, N>;
+  template <class N, class Here, class... Frames>
+  bool local(N &, const Here &, const Frames &...) { return true; }
+  template <class S, class Place>
+  bool enter(S &, const Place &place) { return related(place); }
+  template <class N, class Place> void rows(N &, const Place &) {}
+
+  template <class N, class Root, class P, class K, class VisitRow>
+  void eachRows(N &node, const model::Place<Root, P, K> &place, const VisitRow &visitRow) {
+    if (!related(place))
+      return;
+    fFull.rows(node, place);
+    auto &list = asEach(node);
+    using Key = decltype(keyOf(node));
+    using RowPath = model::Join<P, model::Path<model::At<Key>>>;
+    for (std::size_t i = 0; i < list.fRows.size(); ++i) {
+      const model::Place<Root, RowPath, model::BorrowedKeysOf<RowPath>> row{
+          std::tuple_cat(place.fKeys, std::tuple<const Key &>{list.fKeys[i]})};
+      if (related(row))
+        visitRow(*this, i);
+    }
+  }
+
+private:
+  template <class C, class Root, class P, class K, class Keys>
+    requires kRelated<P, C>
+  static bool matches(const model::Place<Root, P, K> &place, const std::vector<Keys> &changed) {
+    return std::ranges::any_of(changed, [&](const Keys &keys) { return sameKeys(place.fKeys, keys); });
+  }
+  template <class C, class Place, class Keys>
+  static bool matches(const Place &, const std::vector<Keys> &) { return false; }
+  template <class Place> bool related(const Place &place) const {
+    using Places = model::ChangedPlaces<typename M::RootType>;
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+      return (matches<typename Places::template at<I>>(place, std::get<I>(fChanges)) || ...);
+    }(std::make_index_sequence<std::tuple_size_v<Changes>>{});
+  }
+  template <class N, class Here, class Place, class... Frames>
+  void show(N &node, const Here &here, const InModel<Place> &at, const Frames &...frames) {
+    if (related(at.fPlace))
+      fFull.bound(node, here, frames...);
+  }
+  template <class N, class Here, class L, class Place, class... Frames>
+  void show(N &, const Here &, const InLocal<L, Place> &, const Frames &...) {}
+};
+#endif
+
 // One change of one Local's state shown: inside that Local, only what is on
 // its way; what shows the model's parts, or another Local's, left.
 template <class M, class L, class C> struct LocalTargeting {
@@ -244,8 +311,13 @@ public:
     if (!fShown || !std::get<0>(changes).empty()) {  // an edit of nothing tracked
       bind::refresh(root, model);
     } else {
+#ifdef SKIFF_ERASED_WALKS
+      detail::ChangedTargeting<M, decltype(changes)> op{model, changes};
+      detail::visitNode(op, root, model::Place<typename M::RootType, model::Path<>>{});
+#else
       targeted(root, model, changes,
                std::make_index_sequence<std::tuple_size_v<decltype(changes)>>{});
+#endif
       if (fEpoch != localEpoch()) {
         detail::LocalPass<M> op{model};
         detail::visitNode(op, root, model::Place<typename M::RootType, model::Path<>>{});

@@ -602,3 +602,33 @@ TEST(Compose, VisibilityProjectionReadsLocalModelFields) {
   binding.refresh(node, model);
   EXPECT_TRUE(node.visible());
 }
+
+TEST(Compose, ARefreshCombinesChangedPathsAndLeavesOtherBindingsAlone) {
+  struct First { int value = 0; };
+  struct Second { int value = 0; };
+  struct Third { int value = 0; };
+  struct Root {
+    model::Tracked<First> first;
+    model::Tracked<Second> second;
+    model::Tracked<Third> third;
+  };
+  struct Probe : scene::Node {
+    int reads = 0, value = 0;
+    void read(const First& part) { value = part.value; ++reads; }
+    void read(const Second& part) { value = part.value; ++reads; }
+    void read(const Third& part) { value = part.value; ++reads; }
+  };
+  model::Model<Root, bind::NoReactions> model;
+  auto page = column(bound<First>(Probe{}), bound<Second>(Probe{}), bound<Third>(Probe{}));
+  bind::Binding<decltype(model)> binding;
+  binding.refresh(page, model);
+  model.applyBatch(model::over<First>(model::setTo(First{1})), model::over<Second>(model::setTo(Second{2})));
+  binding.refresh(page, model);
+  EXPECT_EQ(std::get<0>(page.fParts).reads, 2);
+  EXPECT_EQ(std::get<0>(page.fParts).value, 1);
+  EXPECT_EQ(std::get<1>(page.fParts).reads, 2);
+  EXPECT_EQ(std::get<1>(page.fParts).value, 2);
+  EXPECT_EQ(std::get<2>(page.fParts).reads, 1);
+  binding.refresh(page, model);
+  EXPECT_EQ(std::get<0>(page.fParts).reads, 2);
+}
