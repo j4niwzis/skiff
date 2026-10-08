@@ -6090,19 +6090,22 @@ private:
   }
 
   // A press the dispatch along `path` was answered by (pressLater): kept, by
-  // the path to the node that answered -- the routed one, or a node above it
-  // that the click went on to -- for the program to deliver.
+  // the path to the node that answered -- the routed one, a node above it
+  // that the click went on to, or one pressed on another's behalf -- for the
+  // program to deliver.
   void notePress(const Path &path) {
     const State *pressed = std::exchange(hostWork().pressedNow, nullptr);
     if (pressed == nullptr) {
       return;
     }
     Path way = path;
-    while (walk::idAt(fRoot, way, 0) != pressed->fId) {
-      if (way.empty()) {
-        return;
-      }
+    while (!way.empty() && walk::idAt(fRoot, way, 0) != pressed->fId) {
       way.pop_back();
+    }
+    // Not on the way the event went -- a node pressed on another's behalf,
+    // a page's back arrow for Esc: found where it is.
+    if (walk::idAt(fRoot, way, 0) != pressed->fId && !walk::findPath(fRoot, pressed->fId, way)) {
+      return;
     }
     auto &all = hostWork().pressed;
     if (all.empty() || all.back() != way) {
