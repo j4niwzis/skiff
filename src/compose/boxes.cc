@@ -48,6 +48,12 @@ struct Stacked : nodes::Stack {
   }
 };
 
+// A node of its own drawing or input, its parts placed in it by their own
+// specs: its spec said where it is made.
+struct Specced : scene::Node {
+  explicit Specced(scene::Spec spec) { this->fState.apply(spec); }
+};
+
 // A stack of its parts, in order.
 template <class... Parts> struct Box : nodes::Stack {
   using Walked = std::bool_constant<kAnyWalks<Parts...>>;
