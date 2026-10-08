@@ -4746,10 +4746,11 @@ void routePointer(N &child, const Path &path, std::size_t at,
   }
 }
 
-// The same for keys, text and semantic actions, which have one kind of reply.
-template <class N, class Input, class Deliver>
+// The same for keys, text and semantic actions, which have one kind of
+// reply -- what binds the tree carried down as with the pointer's.
+template <class N, class Input, class Deliver, class C>
 void route(N &child, const Path &path, std::size_t at, const Input &input,
-           Reply &reply, Deliver deliver) {
+           Reply &reply, Deliver deliver, const C &carried) {
   const auto phaseOf = [&](const auto &when) {
     reply.fCurrent = child.fState.fId;
     deliver(child, when, input, reply);
@@ -4757,6 +4758,7 @@ void route(N &child, const Path &path, std::size_t at, const Input &input,
   if (at == path.size()) {
     if (!reply.fHandled) {
       phaseOf(phase::target{});
+      answerHere(child, carried);
     }
     return;
   }
@@ -4764,7 +4766,7 @@ void route(N &child, const Path &path, std::size_t at, const Input &input,
     phaseOf(phase::capture{});
   }
   childAt(child, path[at], [&](auto &each) {
-    deliver.next(each, path, at + 1, input, reply);
+    deliver.next(child, each, path, at + 1, input, reply, carried);
   });
   if (!reply.fHandled) {
     phaseOf(phase::bubble{});
@@ -4780,9 +4782,14 @@ struct KeyDelivery {
     spl::visit([&](const auto &event) { node.onKey(when, event, reply); },
                input);
   }
-  template <class C>
-  void next(C &child, const Path &path, std::size_t at, const KeyEvent &input,
-            Reply &reply) const;
+  // Down to a child, with what is carried extended at it; an erased one is
+  // seen through its table, and nothing is carried past it.
+  template <class P, class Child, class Carried>
+  void next(P &parent, Child &child, const Path &path, std::size_t at, const KeyEvent &input, Reply &reply,
+            const Carried &carried) const;
+  template <class P, class Carried>
+  void next(P &parent, AnyNodeRef &child, const Path &path, std::size_t at, const KeyEvent &input, Reply &reply,
+            const Carried &carried) const;
 };
 struct TextDelivery {
   template <class When>
@@ -4793,9 +4800,14 @@ struct TextDelivery {
     spl::visit([&](const auto &event) { node.onText(when, event, reply); },
                input);
   }
-  template <class C>
-  void next(C &child, const Path &path, std::size_t at, const TextEvent &input,
-            Reply &reply) const;
+  // Down to a child, with what is carried extended at it; an erased one is
+  // seen through its table, and nothing is carried past it.
+  template <class P, class Child, class Carried>
+  void next(P &parent, Child &child, const Path &path, std::size_t at, const TextEvent &input, Reply &reply,
+            const Carried &carried) const;
+  template <class P, class Carried>
+  void next(P &parent, AnyNodeRef &child, const Path &path, std::size_t at, const TextEvent &input, Reply &reply,
+            const Carried &carried) const;
 };
 struct SemanticDelivery {
   template <class When>
@@ -4806,40 +4818,59 @@ struct SemanticDelivery {
     spl::visit([&](const auto &event) { node.onSemantic(when, event, reply); },
                input);
   }
-  template <class C>
-  void next(C &child, const Path &path, std::size_t at,
-            const SemanticAction &input, Reply &reply) const;
+  // Down to a child, with what is carried extended at it; an erased one is
+  // seen through its table, and nothing is carried past it.
+  template <class P, class Child, class Carried>
+  void next(P &parent, Child &child, const Path &path, std::size_t at, const SemanticAction &input, Reply &reply,
+            const Carried &carried) const;
+  template <class P, class Carried>
+  void next(P &parent, AnyNodeRef &child, const Path &path, std::size_t at, const SemanticAction &input, Reply &reply,
+            const Carried &carried) const;
 };
 
-template <class N>
+template <class N, class C = NoCarry>
 void routeKey(N &child, const Path &path, std::size_t at, const KeyEvent &input,
-              Reply &reply) {
-  route(child, path, at, input, reply, KeyDelivery{});
+              Reply &reply, const C &carried = {}) {
+  route(child, path, at, input, reply, KeyDelivery{}, carried);
 }
-template <class N>
+template <class N, class C = NoCarry>
 void routeText(N &child, const Path &path, std::size_t at,
-               const TextEvent &input, Reply &reply) {
-  route(child, path, at, input, reply, TextDelivery{});
+               const TextEvent &input, Reply &reply, const C &carried = {}) {
+  route(child, path, at, input, reply, TextDelivery{}, carried);
 }
-template <class N>
+template <class N, class C = NoCarry>
 void routeSemantic(N &child, const Path &path, std::size_t at,
-                   const SemanticAction &input, Reply &reply) {
-  route(child, path, at, input, reply, SemanticDelivery{});
+                   const SemanticAction &input, Reply &reply, const C &carried = {}) {
+  route(child, path, at, input, reply, SemanticDelivery{}, carried);
 }
-template <class C>
-void KeyDelivery::next(C &child, const Path &path, std::size_t at,
-                       const KeyEvent &input, Reply &reply) const {
+template <class P, class Child, class Carried>
+void KeyDelivery::next(P &parent, Child &child, const Path &path, std::size_t at, const KeyEvent &input, Reply &reply,
+               const Carried &carried) const {
+  walk::routeKey(child, path, at, input, reply, carryInto(parent, child, carried));
+}
+template <class P, class Carried>
+void KeyDelivery::next(P &, AnyNodeRef &child, const Path &path, std::size_t at, const KeyEvent &input, Reply &reply,
+               const Carried &) const {
   walk::routeKey(child, path, at, input, reply);
 }
-template <class C>
-void TextDelivery::next(C &child, const Path &path, std::size_t at,
-                        const TextEvent &input, Reply &reply) const {
+template <class P, class Child, class Carried>
+void TextDelivery::next(P &parent, Child &child, const Path &path, std::size_t at, const TextEvent &input, Reply &reply,
+               const Carried &carried) const {
+  walk::routeText(child, path, at, input, reply, carryInto(parent, child, carried));
+}
+template <class P, class Carried>
+void TextDelivery::next(P &, AnyNodeRef &child, const Path &path, std::size_t at, const TextEvent &input, Reply &reply,
+               const Carried &) const {
   walk::routeText(child, path, at, input, reply);
 }
-template <class C>
-void SemanticDelivery::next(C &child, const Path &path, std::size_t at,
-                            const SemanticAction &input,
-                            Reply &reply) const {
+template <class P, class Child, class Carried>
+void SemanticDelivery::next(P &parent, Child &child, const Path &path, std::size_t at, const SemanticAction &input, Reply &reply,
+               const Carried &carried) const {
+  walk::routeSemantic(child, path, at, input, reply, carryInto(parent, child, carried));
+}
+template <class P, class Carried>
+void SemanticDelivery::next(P &, AnyNodeRef &child, const Path &path, std::size_t at, const SemanticAction &input, Reply &reply,
+               const Carried &) const {
   walk::routeSemantic(child, path, at, input, reply);
 }
 
@@ -5977,7 +6008,7 @@ public:
     }
     Reply reply;
     reply.fTarget = fFocus;
-    walk::routeKey(fRoot, path, 0, input, reply);
+    walk::routeKey(fRoot, path, 0, input, reply, startCarry(fRoot));
     if (reply.fMoveFocus) {
       focusVisible() = true;
       this->focusNextWithin(reply.fFocusScope, *reply.fMoveFocus);
@@ -5994,7 +6025,7 @@ public:
     }
     Reply reply;
     reply.fTarget = fFocus;
-    walk::routeText(fRoot, path, 0, input, reply);
+    walk::routeText(fRoot, path, 0, input, reply, startCarry(fRoot));
     this->notePress(path);
     this->restyleDirty();
     return reply.fHandled;
@@ -6009,7 +6040,7 @@ public:
     }
     Reply reply;
     reply.fTarget = id;
-    walk::routeSemantic(fRoot, path, 0, action, reply);
+    walk::routeSemantic(fRoot, path, 0, action, reply, startCarry(fRoot));
     if (reply.fRequestFocus) {
       this->focus(id);
     }
