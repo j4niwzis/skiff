@@ -547,3 +547,19 @@ TEST(Compose, LocalModelDoesNotHideTheNodesSceneState) {
   EXPECT_EQ(node.fModel.root(), 3);
   node.apply({.width = 80.0f});
 }
+
+TEST(Compose, NamedClickKeepsTheWrappedToggleRoleAndValue) {
+  struct Toggle : scene::Node {
+    scene::Semantics semantics() const {
+      scene::Semantics result;
+      result.fRole = scene::semantic_role::toggle{};
+      result.fValue = "on";
+      return result;
+    }
+  };
+  auto node = onClick(model::Nothing{}, Toggle{}, "Encrypt local data");
+  const auto info = node.semantics();
+  EXPECT_EQ(info.fRole.index(), scene::SemanticRole(scene::semantic_role::toggle{}).index());
+  EXPECT_EQ(info.fValue, "on");
+  EXPECT_EQ(info.fLabel, "Encrypt local data");
+}

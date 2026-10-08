@@ -285,7 +285,10 @@ template <class E, class N> struct OnClick : N {
     if constexpr (requires(const N& node) { node.semantics(); })
       result = N::semantics();
     if (!fLabel.empty()) {
-      result.fRole = scene::semantic_role::button{};
+      result.fRole = spl::visit(spl::overloaded{
+          [](scene::semantic_role::toggle role) -> scene::SemanticRole { return role; },
+          [](scene::semantic_role::tab role) -> scene::SemanticRole { return role; },
+          [](auto) -> scene::SemanticRole { return scene::semantic_role::button{}; }}, result.fRole);
       result.fLabel = fLabel;
       result.fActions = {scene::semantic_action::focus{}, scene::semantic_action::activate{}};
     }
