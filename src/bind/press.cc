@@ -186,6 +186,7 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
   template <class N, class... Frames> void pressed(N &, const Frames &...) {}
 
   template <class... Frames> void sendAll(model::Nothing, const Frames &...) {}
+  template <class... Frames> void sendAll(scene::Taken, const Frames &...) {}
   template <class E, class... Frames> void sendAll(const std::optional<E> &maybe, const Frames &...frames) {
     if (maybe)
       this->sendAll(*maybe, frames...);
@@ -205,12 +206,12 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
 // What a handler kept, delivered along its path: at its node, the answer --
 // of the node's own Answer, as it was kept -- sent up the frames there.
 template <class M, class Sink> struct Answering : Pressing<M, Sink> {
-  const std::any *fAnswer = nullptr;
+  const scene::HostWork::KeptAnswer *fKept = nullptr;
   template <class N, class... Frames>
     requires requires { typename N::Answer; }
   void pressed(N &, const Frames &...frames) {
-    if (const auto *answer = std::any_cast<typename N::Answer>(fAnswer))
-      this->sendAll(*answer, frames...);
+    if (fKept->type == &scene::kTypeKey<typename N::Answer>)
+      this->sendAll(*static_cast<const typename N::Answer *>(fKept->answer.get()), frames...);
   }
   template <class N, class... Frames> void pressed(N &, const Frames &...) {}
 };
@@ -221,7 +222,7 @@ template <class M, class Sink> struct Answering : Pressing<M, Sink> {
 template <class M, class N, class S = detail::NoSink>
 bool answer(N &root, M &model, const scene::HostWork::KeptAnswer &kept, S *sink = nullptr) {
   model.beginBatch();
-  detail::Answering<M, S> op{{{model, sink}}, &kept.answer};
+  detail::Answering<M, S> op{{{model, sink}}, &kept};
   detail::pressNode(op, root, kept.path, 0, model::Place<typename M::RootType, model::Path<>>{});
   model.endBatch();
   return op.fReached;

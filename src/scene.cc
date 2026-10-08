@@ -1506,6 +1506,9 @@ inline std::vector<TextMenuAsk> &textMenusAsked() {
                        textMenusAsked().back());
 }
 class State;
+// A type, told by the address of its own: what an erased answer is, outside a
+// release build -- one per type, the same wherever it is seen.
+template <class T> inline constexpr char kTypeKey = 0;
 struct HostWork {
   // Keys for the node with the focus, as if pressed: what the host's own
   // controls stand for. Given, down and up, before the next frame.
@@ -1530,9 +1533,11 @@ struct HostWork {
   // is over (skiff::bind::answer). Never in a release build.
   struct KeptAnswer {
     std::vector<std::uint32_t> path;
-    std::any answer;
+    std::shared_ptr<const void> answer;
+    const void *type = nullptr;  // what it is: kTypeKey<Answer>'s address
   };
-  std::any answerNow;
+  std::shared_ptr<const void> answerNow;
+  const void *answerType = nullptr;
   std::vector<KeptAnswer> answers;
 };
 inline HostWork &hostWork() {
@@ -1551,6 +1556,10 @@ inline void pressLater(State &state) { hostWork().pressedNow = &state; }
 // binds the tree extends it at each node it binds (skiff::bind's carryInto,
 // found by the carried type); nothing by default, nor past an erased node.
 struct NoCarry {};
+// A click a node took with nothing to ask for: an answer of its own, for a
+// node whose onClick returns what a click asks for, perhaps (ClickAnswers),
+// to say it was taken all the same. Sending it does nothing.
+struct Taken {};
 template <class P, class N, class C>
 [[nodiscard]] const C &carryInto(P &, N &, const C &carried) {
   return carried;
@@ -1570,7 +1579,8 @@ bool answerPress(N &, const C &) {
 template <class N, class A, class C>
 void answerWith(N &, const A &answer, const C &) {
   if constexpr (kErasedWalks) {
-    hostWork().answerNow = typename N::Answer(answer);
+    hostWork().answerNow = std::make_shared<const typename N::Answer>(answer);
+    hostWork().answerType = &kTypeKey<typename N::Answer>;
   }
 }
 template <class N, class A, class C> void answered(N &node, const A &answer, const C &carried) {
@@ -4789,8 +4799,9 @@ template <class N> NodeId idAt(N &child, const Path &path, std::size_t at) {
 inline void keepAnswer(const Path &path, std::size_t at) {
   if constexpr (kErasedWalks) {
     auto &work = hostWork();
-    if (work.answerNow.has_value()) {
-      work.answers.push_back({Path(path.begin(), path.begin() + static_cast<std::ptrdiff_t>(at)), std::move(work.answerNow)});
+    if (work.answerNow) {
+      work.answers.push_back({Path(path.begin(), path.begin() + static_cast<std::ptrdiff_t>(at)), std::move(work.answerNow),
+                              std::exchange(work.answerType, nullptr)});
       work.answerNow.reset();
     }
   }
