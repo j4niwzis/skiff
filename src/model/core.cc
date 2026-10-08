@@ -155,6 +155,14 @@ template <class Key, class T> struct Keyed {
   constexpr const Key &keyAt(std::size_t i) const { return fItems[i].first; }
   constexpr const T &valueAt(std::size_t i) const { return fItems[i].second->fValue; }
   constexpr const Tracked<T> &elementAt(std::size_t i) const { return fItems[i].second.get(); }
+  // Its elements' values, and their keys, in the list's order: seen, not
+  // copied.
+  constexpr auto values() const {
+    return fItems | std::views::transform([](const Item &item) -> const T & { return item.second->fValue; });
+  }
+  constexpr auto keys() const {
+    return fItems | std::views::transform([](const Item &item) -> const Key & { return item.first; });
+  }
 
   // An element put there: where its key is already, in its place; else at
   // the end, or at `position`.

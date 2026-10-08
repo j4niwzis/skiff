@@ -476,6 +476,16 @@ constexpr bool fieldsByMemberPointer() {
 }
 static_assert(fieldsByMemberPointer());
 
+// A list walked as ranges: its values and keys in its order.
+constexpr bool aListIsSeenAsRanges() {
+  Keyed<std::string, Shown> list;
+  list.put("!b", Shown{.receipts = true});
+  list.put("!a", Shown{});
+  return std::ranges::equal(list.keys(), std::array{std::string("!b"), std::string("!a")}) &&
+         std::ranges::count_if(list.values(), &Shown::receipts) == 1;
+}
+static_assert(aListIsSeenAsRanges());
+
 // No effect type written: deduced from what the reactions return.
 static_assert(std::same_as<EffectsOf<Root, Reactions>, std::variant<SetMentionsSharing, WriteSettings>> ||
               std::same_as<EffectsOf<Root, Reactions>, std::variant<WriteSettings, SetMentionsSharing>>);
