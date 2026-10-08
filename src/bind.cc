@@ -17,16 +17,17 @@
 //       model's (or, hidden, instead of it): its parts are found there first;
 //       its handlers take events with it at hand. Nothing in it reaches the
 //       model's reactions, nor is kept anywhere.
-//   Emits<E...>  a node's events: emit(e) sends one up through the frames
-//       around it -- pipes, local handlers, scopes -- to the first that takes
-//       it. One that nothing takes does not compile.
+//   onPress()  what a press of a node answers: an event, sent up through the
+//       frames around it -- pipes, local handlers, scopes -- to the first
+//       that takes it (one that nothing takes does not compile); or
+//       own(change), a change of its own part.
 //
-// Nothing here is called from a node, and no node knows where it is: two
+// Nothing here is called from a node, and no node knows where it is: the
 // walks carry the place and the frames down the tree. refresh() shows what
-// changed; drain() does what the nodes asked for. A Binding does both only
-// where something can have happened: refresh nothing where neither the
-// model nor any local state moved, drain nothing where nothing was asked,
-// and a scope's subtree not at all where its part did not move.
+// changed -- a Binding only where something can have happened: nothing
+// where neither the model nor any local state moved, and a scope's subtree
+// not at all where its part did not move. press() delivers a press along
+// the path the scene routed it on, and does what its node answers then.
 //
 // The walks are static even where the scene's are erased: what a part is
 // decides what is done with it, and that is known only of its type. A type

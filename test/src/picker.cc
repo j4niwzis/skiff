@@ -46,8 +46,10 @@ static_assert(std::same_as<Model::Effect, std::variant<Invite>>);
 struct QueryChanged {
   std::string text;
 };
-struct Field : scene::Node, bind::Emits<QueryChanged> {
-  void type(std::string text) { this->emit(QueryChanged{std::move(text)}); }
+struct Field : scene::Node {
+  std::optional<QueryChanged> fTyped;
+  void type(std::string text) { fTyped = QueryChanged{std::move(text)}; }
+  std::optional<QueryChanged> onPress() { return std::exchange(fTyped, std::nullopt); }
 };
 struct Label : scene::Node {
   std::string fText;
@@ -105,10 +107,16 @@ Model twoPeople() {
 // Where the parts are, by the expression's shape.
 auto &dialogOf(Page &page) { return std::get<0>(page.fParts); }
 auto &wiringOf(Page &page) { return std::get<0>(dialogOf(page).fParts); }
-auto &doneOf(Page &page) { return std::get<1>(dialogOf(page).fParts); }
 auto &fieldOf(Page &page) { return wiringOf(page).fPipe.from.fPipe.from; }
 auto &quietOf(Page &page) { return wiringOf(page).fPipe.from.fPipe.to; }
 auto &listOf(Page &page) { return wiringOf(page).fPipe.to; }
+// Where they are, to press: the dialog, its pipe (or the button beside it),
+// the field's pipe (or the list), then the field or the debounce -- or the
+// list's rows, then a row.
+const scene::Path kField{0, 0, 0, 0};
+const scene::Path kQuiet{0, 0, 0, 1};
+const scene::Path kDone{0, 1};
+scene::Path rowAt(std::uint32_t row) { return {0, 0, 1, 0, row}; }
 
 TEST(Picker, ThePeopleAreShown) {
   Model m = twoPeople();
@@ -127,11 +135,11 @@ TEST(Picker, AQueryGoesThroughTheDebounceIntoTheList) {
   bind::Binding<Model> binding;
   binding.refresh(page, m);
   fieldOf(page).type("b");
-  binding.drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, kField));
   EXPECT_EQ(listOf(page).fQuery, "");  // still quiet: not yet
   quietOf(page).update(0.0);
   quietOf(page).update(300.0);
-  binding.drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, kQuiet));
   EXPECT_EQ(listOf(page).fQuery, "b");
 }
 
@@ -141,13 +149,11 @@ TEST(Picker, APickIsTheDialogsOwnAndItsResultBecomesAnInvite) {
   bind::Binding<Model> binding;
   binding.refresh(page, m);
   auto &rows = std::get<0>(listOf(page).fParts).fRows;
-  rows[1].onClick(0, 0);  // Bob
-  binding.drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, rowAt(1)));  // Bob
   EXPECT_EQ(dialogOf(page).fState.look<Selected>()->value, std::optional<std::string>("b"));
   EXPECT_FALSE(m.look(model::placeOf<Invited, Root>(std::string("b")))->value);
   EXPECT_EQ(m.outbox().size(), 0u);
-  doneOf(page).onClick(0, 0);
-  binding.drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, kDone));
   EXPECT_TRUE(m.look(model::placeOf<Invited, Root>(std::string("b")))->value);
   const auto effects = m.outbox().drain();
   ASSERT_EQ(effects.size(), 1u);

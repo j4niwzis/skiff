@@ -56,8 +56,6 @@ template <class M, class C> struct Targeting {
     node.refresh(fModel);
   }
   template <class N> void itself(N &) {}
-  template <class N, class Here, class... Frames>
-  void emitted(N &, const Here &, const Frames &...) {}
   template <class N> static constexpr bool kWants = true;
   // Its model's nodes, not another model's in the same tree.
   template <class N> static constexpr bool kOwns = kOfModel<typename M::RootType, N>;
@@ -132,8 +130,6 @@ template <class M, class L, class C> struct LocalTargeting {
   template <class N, class Here, class... Frames>
   void bound(N &, const Here &, const Frames &...) {}
   template <class N> void itself(N &) {}
-  template <class N, class Here, class... Frames>
-  void emitted(N &, const Here &, const Frames &...) {}
   template <class N> static constexpr bool kWants = true;
   // Its model's nodes, not another model's in the same tree.
   template <class N> static constexpr bool kOwns = kOfModel<typename M::RootType, N>;
@@ -173,8 +169,6 @@ template <class M> struct LocalPass {
   template <class N, class Here, class... Frames>
   void bound(N &, const Here &, const Frames &...) {}
   template <class N> void itself(N &) {}
-  template <class N, class Here, class... Frames>
-  void emitted(N &, const Here &, const Frames &...) {}
   template <class N> static constexpr bool kWants = kHasLocal<N>;
   template <class N> static constexpr bool kOwns = kOfModel<typename M::RootType, N>;
   template <class S, class Place> bool enter(S &, const Place &) { return true; }
@@ -227,19 +221,6 @@ template <class M, class N> void refresh(N &node, const M &model) {
                     model::Place<typename M::RootType, model::Path<>>{});
 }
 
-// What the nodes below `node` asked for, done: their changes applied where
-// they are bound, their events sent up the frames they are in.
-template <class M, class N, class S = detail::NoSink> void drain(N &node, M &model, S *sink = nullptr) {
-  // One batch: the reactions told once, at the end, of what the whole drain
-  // left -- not once per node's change.
-  model.beginBatch();
-  detail::Draining<M, S> op{model, sink};
-  detail::visitNode(op, node,
-                    model::Place<typename M::RootType, model::Path<>>{});
-  model.endBatch();
-  pendingCount() = 0;
-}
-
 // A message given to a component from outside it -- send<Clear>(field),
 // Fudgets' high-level input -- taken as from a pipe: its on(), or a
 // processor's step.
@@ -273,12 +254,6 @@ public:
     fShown = true;
     fRevision = model.revision();
     fEpoch = localEpoch();
-  }
-  // And the events nothing takes, to the program's sink where it takes them.
-  template <class N, class S = detail::NoSink> void drain(N &root, M &model, S *sink = nullptr) {
-    if (pendingCount() == 0)
-      return;
-    bind::drain(root, model, sink);
   }
   // A tree changed by hand -- nodes made or replaced: walked whole next time.
   void invalidate() { fShown = false; }

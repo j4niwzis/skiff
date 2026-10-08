@@ -1526,6 +1526,9 @@ struct HostWork {
   // to deliver (skiff::bind::press), when nothing of it runs.
   const State *pressedNow = nullptr;
   std::vector<std::vector<std::uint32_t>> pressed;  // each a Path
+  // Nodes that came due as they ticked -- a timer: pressed, by the path
+  // to each found once the frame's update is over.
+  std::vector<const State *> due;
   // What a handler returned that it asks for, where nothing was carried down
   // to send it with -- outside a release build, where the routing is erased:
   // kept, erased (as outside one anything may be), with the path to its
@@ -4220,6 +4223,8 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
   if (context.fTick) {
     state.updateTransforms(context.fNowMs);
     child.update(context.fNowMs);
+    if (hostWork().pressedNow == &state)
+      hostWork().due.push_back(std::exchange(hostWork().pressedNow, nullptr));
   }
   if (!state.fTransforms.empty() || child.settling()) {
     context.fAnimating = true;
@@ -5932,6 +5937,12 @@ public:
       work::births().clear();
     }
     fTickedBorn = work::bornGeneration();
+    auto &pressed = hostWork().pressed;
+    std::ranges::for_each(std::exchange(hostWork().due, {}), [&](const State *one) {
+      Path way;
+      if (walk::findPath(fRoot, one->fId, way))
+        pressed.push_back(std::move(way));
+    });
   }
 
   // Whether this frame's walks go everywhere: where a full walk was asked

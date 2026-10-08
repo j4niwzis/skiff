@@ -143,16 +143,18 @@ template <class... H> struct Handlers : H... {
 };
 template <class... H> Handlers<H...> handlers(H... each) { return {std::move(each)...}; }
 
-// Sends a copy of its event when pressed.
-template <class E, class N> struct OnClick : N, bind::Emits<E> {
+// Answers a press with a copy of its event.
+template <class E, class N> struct OnClick : N {
   using Walked = std::true_type;
   using HasLocal = std::bool_constant<bind::detail::kHasLocal<N>>;
+  using Out = model::Types<E>;
   E fEvent;
   OnClick(E event, N node) : N(std::move(node)), fEvent(std::move(event)) {}
   bool onClick(float, float) {
-    this->emit(fEvent);
+    scene::pressLater(this->fState);
     return true;
   }
+  E onPress() const { return fEvent; }
   bool acceptsInput() const { return true; }
 };
 template <class E, class N> OnClick<E, N> onClick(E event, N node) {

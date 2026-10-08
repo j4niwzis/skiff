@@ -1,5 +1,5 @@
 // skiff.bind:kinds -- the kinds of node the model knows: Bound, Scoped,
-// Each, Local, Emits (the module is skiff.bind: see bind.cc).
+// Each, Local (the module is skiff.bind: see bind.cc).
 export module skiff.bind:kinds;
 
 import std;
@@ -10,12 +10,6 @@ import skiff.scene;
 
 export namespace skiff::bind {
 
-// Asked of the nodes since the last drain: what a Binding's drain looks at
-// before it walks. Kept per thread, as the scene is.
-inline std::uint64_t &pendingCount() {
-  thread_local std::uint64_t count = 0;
-  return count;
-}
 // Bound parts read with no tracked part of their own above them: each is
 // read again at every edit anywhere. Counted, for a test or a debug build to
 // see where a Tracked<> is missing.
@@ -28,88 +22,6 @@ inline std::uint64_t &untrackedReads() {
 inline std::uint64_t &localEpoch() {
   thread_local std::uint64_t epoch = 0;
   return epoch;
-}
-
-// A node's events, of the types it sends.
-template <class... E> struct Emits {
-  using Out = model::Types<E...>;
-  std::vector<spl::variant<E...>> fEmitted;
-  template <class X> void emit(X event) {
-    fEmitted.emplace_back(std::move(event));
-    ++pendingCount();
-  }
-};
-
-// ---- events of types nobody listed: deduced -----------------------------
-//
-// A node that does not say what it sends -- no Emits<E...>, no Out -- may
-// still send: emitFrom(*this, e). What types a node of its type sends is
-// then deduced, by the loophole of friend injection: each emitFrom<C, E>
-// instantiated records E against C, and the drain reads C's back. Nothing
-// of this is instantiated for a node that lists what it sends. What is
-// read is what was instantiated before the read, so a node's sending code
-// has to be instantiated before the drain is (in the same translation
-// unit, or by deduce<C, E...>() said there).
-namespace loophole {
-template <class C, int N> struct Slot {
-  friend consteval auto typeAt(Slot);
-};
-template <class C, int N, class T> struct Fill {
-  friend consteval auto typeAt(Slot<C, N>) { return std::type_identity<T>{}; }
-};
-template <class C, int N, auto Tag>
-consteval int count() {
-  if constexpr (requires { typeAt(Slot<C, N>{}); })
-    return count<C, N + 1, Tag>();
-  else
-    return N;
-}
-template <class C, class T, int N, auto Tag> consteval bool has() {
-  if constexpr (N == 0)
-    return false;
-  else
-    return std::same_as<typename decltype(typeAt(Slot<C, N - 1>{}))::type, T> ||
-           has<C, T, N - 1, Tag>();
-}
-template <class C, class T, auto Tag = [] {}> consteval bool record() {
-  constexpr int n = count<C, 0, Tag>();
-  if constexpr (!has<C, T, n, Tag>())
-    (void)sizeof(Fill<C, n, T>);
-  return true;
-}
-template <class C, class Indices> struct ReadAll;
-template <class C, int... I>
-struct ReadAll<C, std::integer_sequence<int, I...>> {
-  using type =
-      model::Types<typename decltype(typeAt(Slot<C, I>{}))::type...>;
-};
-// The types a C was seen to send, as many as were instantiated by now.
-template <class C, auto Tag = [] {}>
-using Deduced = typename ReadAll<
-    C, std::make_integer_sequence<int, count<C, 0, Tag>()>>::type;
-} // namespace loophole
-
-// Marks a node whose events are deduced.
-struct Emitter {};
-
-// Where deduced events wait: per type, with the node that sent them.
-template <class E> std::vector<std::pair<const void *, E>> &pendingOf() {
-  thread_local std::vector<std::pair<const void *, E>> pending;
-  return pending;
-}
-// Recorded in its signature, where it is called: a function template's
-// body is instantiated at the end of the translation unit, and a read
-// before that would see nothing.
-template <class C, class E, auto Tag = [] {},
-          bool = loophole::record<C, E, Tag>()>
-void emitFrom(C &self, E event) {
-  pendingOf<E>().emplace_back(&self, std::move(event));
-  ++pendingCount();
-}
-// That a C sends these, said where its drain is instantiated, so that the
-// deduction sees them whatever was instantiated first.
-template <class C, class... E> consteval bool deduce() {
-  return (loophole::record<C, E>() && ...);
 }
 
 // A node shown the one Want where it is found; what it changes of it, its
@@ -273,8 +185,6 @@ template <class N>
 concept IsEach = decltype(detail::eachTest(static_cast<N *>(nullptr)))::value;
 template <class N>
 concept IsLocal = decltype(detail::localTest(static_cast<N *>(nullptr)))::value;
-template <class N>
-concept EmitsEvents = requires(N &n) { n.fEmitted.clear(); };
 // A node that reads the model itself, the imperative way.
 template <class N, class M>
 concept ReadsItself = requires(N &n, const M &m) { n.refresh(m); };

@@ -45,9 +45,6 @@ template <class M> struct Refreshing {
     node.refresh(fModel);
   }
   template <class N> void itself(N &) {}
-
-  template <class N, class Here, class... Frames>
-  void emitted(N &, const Here &, const Frames &...) {}
   template <class N> static constexpr bool kWants = true;
   // Its model's nodes, not another model's in the same tree.
   template <class N> static constexpr bool kOwns = kOfModel<typename M::RootType, N>;
@@ -136,46 +133,6 @@ template <class M, class Sink = NoSink> struct Draining {
   void bound(N &, const Here &, const Frames &...) {}
 
   template <class N> void itself(N &) {}
-
-  template <class N, class Here, class... Frames>
-    requires EmitsEvents<N>
-  void emitted(N &node, const Here &, const Frames &...frames) {
-    for (auto &one : std::exchange(node.fEmitted, {}))
-      send(one, frames...);
-  }
-  // A widget whose own action keeps the events it sent (takeEvents()).
-  template <class N, class Here, class... Frames>
-    requires(!EmitsEvents<N> && requires(N &n) { n.takeEvents(); })
-  void emitted(N &node, const Here &, const Frames &...frames) {
-    for (auto &one : node.takeEvents())
-      send(one, frames...);
-  }
-  template <class N, class Here, class... Frames>
-    requires(!EmitsEvents<N> && !requires(N &n) { n.takeEvents(); } &&
-             std::derived_from<N, Emitter>)
-  void emitted(N &node, const Here &, const Frames &...frames) {
-    sendDeduced(node, loophole::Deduced<N>{}, frames...);
-  }
-  template <class N, class Here, class... Frames>
-  void emitted(N &, const Here &, const Frames &...) {}
-
-  template <class N, class... E, class... Frames>
-  void sendDeduced(N &node, model::Types<E...>, const Frames &...frames) {
-    (sendDeducedOne<E>(node, frames...), ...);
-  }
-  template <class E, class N, class... Frames>
-  void sendDeducedOne(N &node, const Frames &...frames) {
-    auto &pending = pendingOf<E>();
-    std::vector<E> mine;
-    std::erase_if(pending, [&](auto &one) {
-      if (one.first != &node)
-        return false;
-      mine.push_back(std::move(one.second));
-      return true;
-    });
-    for (const E &event : mine)
-      send(event, frames...);
-  }
 
   template <class S, class Place> bool enter(S &, const Place &) {
     return true;

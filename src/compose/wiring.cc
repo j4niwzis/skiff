@@ -62,9 +62,9 @@ typename C::Out outOf(Rank<3>);
 template <class C, auto>
   requires requires { typename C::OutOfParts; }
 typename C::OutOfParts outOf(Rank<2>);
-template <class C, auto Tag>
-  requires std::derived_from<C, bind::Emitter>
-bind::loophole::Deduced<C, Tag> outOf(Rank<1>);
+template <class C, auto>
+  requires requires(C &c) { c.onPress(); }
+model::Types<std::remove_cvref_t<decltype(std::declval<C &>().onPress())>> outOf(Rank<1>);
 template <class C, auto> model::Types<> outOf(Rank<0>);
 // Asked anew where it is asked (Tag): a deduced Out is what was seen by then.
 template <class C, auto Tag> struct OutOfT {

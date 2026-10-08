@@ -127,6 +127,7 @@ auto &rowsOf(Page &page) { return std::get<0>(page.fParts).fRows; }
 // Where they are, to press: the list, the row, then down its column.
 scene::Path chevronAt(std::uint32_t row) { return {0, row, 0, 1}; }
 scene::Path switchAt(std::uint32_t row) { return {0, row, 1}; }
+scene::Path removeAt(std::uint32_t row) { return {0, row, 2}; }
 
 TEST(Compose, APageWrittenAsAnExpressionShowsTheModel) {
   Model m = twoAccounts();
@@ -158,8 +159,7 @@ TEST(Compose, ARowsEventIsTakenByItsScopeAndItsLocalStateGoesWithIt) {
   Model m = twoAccounts();
   Page page = accountsPage();
   bind::refresh(page, m);
-  removeOf(rowsOf(page)[0]).onClick(0, 0);
-  bind::drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, removeAt(0)));
   bind::refresh(page, m);
   ASSERT_EQ(rowsOf(page).size(), 1u);
   EXPECT_EQ(nameOf(rowsOf(page)[0]).fText, "B");
@@ -207,15 +207,15 @@ TEST(Compose, AProcessorStepsItsHiddenStateAndSendsWhatChanged) {
   CounterPage page = counterPage();
   bind::refresh(page, m);
   auto &view = viewOf(page);
-  std::get<2>(view.fParts).onClick(0, 0);  // +
-  std::get<2>(view.fParts).onClick(0, 0);  // +
-  std::get<0>(view.fParts).onClick(0, 0);  // -
-  bind::drain(page, m);
+  // The process, its view, then the button in it.
+  const auto button = [](std::uint32_t at) { return scene::Path{0, 0, at}; };
+  EXPECT_TRUE(bind::press(page, m, button(2)));  // +
+  EXPECT_TRUE(bind::press(page, m, button(2)));  // +
+  EXPECT_TRUE(bind::press(page, m, button(0)));  // -
   bind::refresh(page, m);
   EXPECT_EQ(std::get<1>(view.fParts).fValue, 1);
   EXPECT_EQ(m.look<Count>()->n, 1);  // Changed, taken by the scope around it
-  std::get<3>(view.fParts).onClick(0, 0);  // reset, in place: nothing sent
-  bind::drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, button(3)));  // reset, in place: nothing sent
   bind::refresh(page, m);
   EXPECT_EQ(std::get<1>(view.fParts).fValue, 0);
   EXPECT_EQ(m.look<Count>()->n, 1);
@@ -227,9 +227,14 @@ struct QueryChanged {
   std::string text;
 };
 struct Cleared {};
-struct SearchField : scene::Node, bind::Emits<QueryChanged, Cleared> {
-  void type(std::string text) { this->emit(QueryChanged{std::move(text)}); }
-  void clear() { this->emit(Cleared{}); }
+// What it was last given -- typed, cleared -- answered as it is pressed.
+struct SearchField : scene::Node {
+  using Out = model::Types<QueryChanged, Cleared>;
+  using Said = spl::variant<QueryChanged, Cleared>;
+  std::optional<Said> fSaid;
+  void type(std::string text) { fSaid = Said(QueryChanged{std::move(text)}); }
+  void clear() { fSaid = Said(Cleared{}); }
+  std::optional<Said> onPress() { return std::exchange(fSaid, std::nullopt); }
   std::string fShown;
   void on(const Cleared &) { fShown.clear(); }
 };
@@ -248,9 +253,11 @@ TEST(Compose, APipeGivesWhatItsEndTakesAndPassesTheRestUp) {
   Model m = twoAccounts();
   auto page = scoped<SettingsT>(ClearedEvents{}, column(SearchField{} >> Filtered{}));
   auto &pipe = std::get<0>(page.fParts);
+  // The pipe, then its field.
   pipe.fPipe.from.type("bo");
+  EXPECT_TRUE(bind::press(page, m, scene::Path{0, 0}));
   pipe.fPipe.from.clear();
-  bind::drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, scene::Path{0, 0}));
   EXPECT_EQ(pipe.fPipe.to.fQuery, "bo");
   EXPECT_EQ(m.look<Count>()->n, -1);
   // And told from outside, as Fudgets' input: send<>.
@@ -278,20 +285,22 @@ TEST(Compose, TimeIsEvents) {
   auto ticks = every<Inc>(100.0);
   ticks.update(0.0);
   ticks.update(250.0);
-  EXPECT_EQ(ticks.fEmitted.size(), 2u);
+  EXPECT_EQ(ticks.onPress().size(), 2u);
+  EXPECT_TRUE(ticks.onPress().empty());
   auto quiet = debounce<QueryChanged>(300.0);
   quiet.update(0.0);
   quiet.on(QueryChanged{"a"});
   quiet.update(100.0);
   quiet.on(QueryChanged{"ab"});
   quiet.update(350.0);
-  EXPECT_TRUE(quiet.fEmitted.empty());
+  EXPECT_FALSE(quiet.onPress());
   quiet.update(500.0);
-  ASSERT_EQ(quiet.fEmitted.size(), 1u);
+  const auto said = quiet.onPress();
+  ASSERT_TRUE(said);
+  EXPECT_EQ(said->text, "ab");
 }
 
-// A Binding: a refresh with nothing moved walks nothing, a drain with
-// nothing asked neither.
+// A Binding: a refresh with nothing moved walks nothing.
 TEST(Compose, ABindingDoesOnlyWhatCanHaveHappened) {
   Model m = twoAccounts();
   Page page = accountsPage();
@@ -345,23 +354,20 @@ TEST(Compose, ALocalChangeGoesOnlyToItsLocal) {
   EXPECT_EQ(switchOf(rows[1]).fReads, 1);
 }
 
-// A node that says nothing of what it sends: deduced.
+// A node that says nothing of what it sends: what its onPress() answers.
 struct Ping {};
-struct Pinger : scene::Node, bind::Emitter {
-  void press() { bind::emitFrom(*this, Ping{}); }
+struct Pinger : scene::Node {
+  Ping onPress() const { return {}; }
 };
 struct PingEvents {
   auto on(const Ping &) const { return model::over<Count>(model::setTo(Count{42})); }
 };
-// Its sending code instantiated before its drain: here, by its use.
-[[maybe_unused]] void pressIt(Pinger &p) { p.press(); }
 
-TEST(Compose, WhatANodeSendsIsDeducedWhereItSaysNothing) {
+TEST(Compose, WhatANodeSendsIsWhatItsPressAnswers) {
   static_assert(std::same_as<OutOf<Pinger>, model::Types<Ping>>);
   Model m = twoAccounts();
   auto page = scoped<SettingsT>(PingEvents{}, column(Pinger{}));
-  pressIt(std::get<0>(page.fParts));
-  bind::drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, scene::Path{0}));
   EXPECT_EQ(m.look<Count>()->n, 42);
 }
 

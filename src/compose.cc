@@ -24,8 +24,8 @@
 //
 // What a component takes and sends -- In and Out -- is what it declares
 // (using In = model::Types<...>, using Out = ...); a composite's is made of
-// its parts'; a node that declares nothing sends what it is seen to send
-// (skiff.bind's emitFrom, deduced).
+// its parts'; a node that declares nothing sends what its onPress()
+// answers.
 export module skiff.compose;
 
 export import :boxes;

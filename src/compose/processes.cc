@@ -67,26 +67,34 @@ template <class P> Processor<P> process(typename P::State initial = {}) {
 
 // ---- time --------------------------------------------------------------------
 
-// An E every so many milliseconds.
-template <class E> struct Every : scene::Node, bind::Emits<E> {
+// An E every so many milliseconds: each come due as it ticks, a press of
+// it, answered with as many as are due.
+template <class E> struct Every : scene::Node {
+  using Out = model::Types<E>;
   double fPeriod = 1000.0;
   double fNext = -1.0;
+  std::size_t fDue = 0;
   explicit Every(double period) : fPeriod(period) {}
   void update(double nowMs) {
     if (fNext < 0.0)
       fNext = nowMs + fPeriod;
-    while (nowMs >= fNext) {
-      this->emit(E{});
-      fNext += fPeriod;
-    }
+    const auto due = nowMs < fNext ? std::size_t{0} : static_cast<std::size_t>((nowMs - fNext) / fPeriod) + 1;
+    fNext += static_cast<double>(due) * fPeriod;
+    fDue += due;
+    if (fDue > 0)
+      scene::pressLater(fState);
   }
+  std::vector<E> onPress() { return std::vector<E>(std::exchange(fDue, 0)); }
   bool wantsTick() const { return true; }
 };
 template <class E> Every<E> every(double periodMs) { return Every<E>(periodMs); }
 
-// What it is given, sent on once nothing more has come for a while.
-template <class M> struct Debounce : scene::Node, bind::Emits<M> {
+// What it is given, sent on once nothing more has come for a while: then
+// a press of it, answered with it.
+template <class M> struct Debounce : scene::Node {
   using In = model::Types<M>;
+  using Out = model::Types<M>;
+  std::optional<M> fReady;
   double fQuiet = 300.0;
   double fNow = 0.0;
   double fAt = 0.0;
@@ -98,9 +106,12 @@ template <class M> struct Debounce : scene::Node, bind::Emits<M> {
   }
   void update(double nowMs) {
     fNow = nowMs;
-    if (fLatest && nowMs - fAt >= fQuiet)
-      this->emit(*std::exchange(fLatest, std::nullopt));
+    if (fLatest && nowMs - fAt >= fQuiet) {
+      fReady = std::exchange(fLatest, std::nullopt);
+      scene::pressLater(fState);
+    }
   }
+  std::optional<M> onPress() { return std::exchange(fReady, std::nullopt); }
   bool wantsTick() const { return true; }
 };
 template <class M> Debounce<M> debounce(double quietMs) {

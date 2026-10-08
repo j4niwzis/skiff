@@ -119,7 +119,6 @@ template <class Op, class N, class Here, class... Frames>
 void visitBody(Op &op, N &node, const Here &here, const Frames &...frames) {
   op.bound(node, here, frames...);
   op.itself(node);
-  op.emitted(node, here, frames...);
   visitRows(op, node, here, frames...);
 }
 
