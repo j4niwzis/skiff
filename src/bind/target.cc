@@ -224,11 +224,11 @@ template <class M, class N> void refresh(N &node, const M &model) {
 
 // What the nodes below `node` asked for, done: their changes applied where
 // they are bound, their events sent up the frames they are in.
-template <class M, class N> void drain(N &node, M &model) {
+template <class M, class N, class S = detail::NoSink> void drain(N &node, M &model, S *sink = nullptr) {
   // One batch: the reactions told once, at the end, of what the whole drain
   // left -- not once per node's change.
   model.beginBatch();
-  detail::Draining<M> op{model};
+  detail::Draining<M, S> op{model, sink};
   detail::visitNode(op, node,
                     model::Place<typename M::RootType, model::Path<>>{});
   model.endBatch();
@@ -269,10 +269,11 @@ public:
     fRevision = model.revision();
     fEpoch = localEpoch();
   }
-  template <class N> void drain(N &root, M &model) {
+  // And the events nothing takes, to the program's sink where it takes them.
+  template <class N, class S = detail::NoSink> void drain(N &root, M &model, S *sink = nullptr) {
     if (pendingCount() == 0)
       return;
-    bind::drain(root, model);
+    bind::drain(root, model, sink);
   }
   // A tree changed by hand -- nodes made or replaced: walked whole next time.
   void invalidate() { fShown = false; }

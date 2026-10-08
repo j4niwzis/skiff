@@ -132,6 +132,32 @@ TEST(Bind, AnEventIsTakenByTheRowsScope) {
   EXPECT_EQ(page.parts.accounts.fRows[0].parts.name.fText, "A");
 }
 
+// An event nothing in the tree nor the model takes: to the program's sink.
+struct Opened {
+  int which = 0;
+};
+struct OpenButton : scene::Node {
+  std::vector<Opened> fEmitted;
+};
+struct Window : scene::Node {
+  struct parts_t {
+    OpenButton open;
+  } parts;
+};
+struct Program {
+  std::vector<int> opened;
+  void take(const Opened &e) { opened.push_back(e.which); }
+};
+TEST(Bind, AnEventNothingTakesGoesToTheProgramsSink) {
+  Model m = twoAccounts();
+  Window window;
+  Program program;
+  window.parts.open.fEmitted.push_back(Opened{7});
+  bind::drain(window, m, &program);
+  ASSERT_EQ(program.opened.size(), 1u);
+  EXPECT_EQ(program.opened[0], 7);
+}
+
 TEST(Bind, AnEditFromElsewhereIsShown) {
   Model m = twoAccounts();
   Page page;

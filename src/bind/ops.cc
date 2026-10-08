@@ -122,8 +122,13 @@ template <class M> struct Refreshing {
 
 // ---- draining: what the nodes asked for, done ------------------------------
 
-template <class M> struct Draining {
+// Where the events nothing in the tree nor the model takes go: nowhere, by
+// default -- one sent there does not compile.
+struct NoSink {};
+
+template <class M, class Sink = NoSink> struct Draining {
   M &fModel;
+  Sink *fSink = nullptr;
 
   template <class N, class Here, class... Frames>
     requires IsBound<N>
@@ -217,11 +222,18 @@ template <class M> struct Draining {
   }
 
   // One nothing it was sent within takes, given to the model, whose
-  // reactions take it where they say so: an effect for the program.
+  // reactions take it where they say so: an effect for the program. Else,
+  // to the program's sink -- the type it drains with -- where it takes it.
   template <class E>
     requires requires(const typename M::ReactionsType &r, const E &e) { r.on(e); }
   void route(const E &event) {
     fModel.send(event);
+  }
+  template <class E>
+    requires(!requires(const typename M::ReactionsType &r, const E &e) { r.on(e); } &&
+             requires(Sink &s, const E &e) { s.take(e); })
+  void route(const E &event) {
+    fSink->take(event);
   }
   template <class E> void route(const E &) {
     static_assert(false, "skiff::bind: nothing this event was sent within -- "
