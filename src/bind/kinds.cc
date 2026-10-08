@@ -153,9 +153,9 @@ struct Local : Base {
   using Store = model::Model<T, NoReactions, std::variant<model::Nothing>>;
   Local() = default;
   explicit Local(Handlers handlers, Base base, T initial = {})
-      : Base(std::move(base)), fState(std::move(initial)),
+      : Base(std::move(base)), fModel(std::move(initial)),
         fHandlers(std::move(handlers)) {}
-  Store fState{};
+  Store fModel{};
   Handlers fHandlers{};
 };
 

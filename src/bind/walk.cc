@@ -185,7 +185,7 @@ auto lookAt(const M &model, const InModel<Place> &at) {
 }
 template <class M, class L, class Place>
 auto lookAt(const M &, const InLocal<L, Place> &at) {
-  return at.fLocal->fState.look(at.fPlace);
+  return at.fLocal->fModel.look(at.fPlace);
 }
 
 } // namespace detail

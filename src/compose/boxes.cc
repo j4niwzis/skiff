@@ -204,6 +204,7 @@ template <class T, class N> bind::Local<T, bind::NoHandlers, N> local(N node, T 
   return bind::Local<T, bind::NoHandlers, N>({}, std::move(node), std::move(initial));
 }
 template <class T, class Handlers, class N>
+  requires std::derived_from<N, scene::Node>
 bind::Local<T, Handlers, N> local(Handlers handlers, N node, T initial = {}) {
   return bind::Local<T, Handlers, N>(std::move(handlers), std::move(node),
                                      std::move(initial));

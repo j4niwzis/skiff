@@ -184,7 +184,7 @@ template <class M> struct LocalPass {
     auto &local = asLocal(node);
     using L = std::remove_reference_t<decltype(local)>;
     using T = typename L::LocalOf;
-    auto changes = local.fState.takeChanges();
+    auto changes = local.fModel.takeChanges();
     if (!std::get<0>(changes).empty()) {
       // An edit of nothing tracked in it: the Local shown whole.
       Refreshing<M> full{fModel};

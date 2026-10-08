@@ -540,3 +540,10 @@ TEST(Compose, NamedPressKeepsItsAccessibleLabelAndActions) {
   EXPECT_EQ(info.fActions.size(), 2u);
   EXPECT_TRUE(button.acceptsInput());
 }
+
+TEST(Compose, LocalModelDoesNotHideTheNodesSceneState) {
+  auto node = local<int>(nodes::Text("Local", 14.0f, 0u), 3);
+  EXPECT_EQ(&scene::stateOf(node), &static_cast<scene::Node&>(node).fState);
+  EXPECT_EQ(node.fModel.root(), 3);
+  node.apply({.width = 80.0f});
+}

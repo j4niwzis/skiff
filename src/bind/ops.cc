@@ -51,7 +51,7 @@ template <class M> struct Refreshing {
   // A Local walked whole: what its state logged is shown by this walk.
   template <class N, class Here, class... Frames>
   bool local(N &node, const Here &, const Frames &...) {
-    (void)asLocal(node).fState.takeChanges();
+    (void)asLocal(node).fModel.takeChanges();
     return true;
   }
 
@@ -205,7 +205,7 @@ protected:
   }
   template <class L, class Root, class P, class K, class C>
   void changeAt(const InLocal<L, model::Place<Root, P, K>> &at, const C &change) {
-    (void)at.fLocal->fState.apply(model::Edit<Root, P, C, K>{at.fPlace.borrowed(), change});
+    (void)at.fLocal->fModel.apply(model::Edit<Root, P, C, K>{at.fPlace.borrowed(), change});
     ++localEpoch();
   }
 
@@ -221,9 +221,9 @@ protected:
   template <class E, class L, class... Rest>
   void take(const E &event, const LocalFrame<L> &frame, const Rest &...rest) {
     auto &local = *frame.fLocal;
-    if constexpr (requires { local.fHandlers.on(event, *local.fState.template look<typename L::LocalOf>()); })
+    if constexpr (requires { local.fHandlers.on(event, *local.fModel.template look<typename L::LocalOf>()); })
       answer(local.fHandlers.on(
-                 event, *local.fState.template look<typename L::LocalOf>()),
+                 event, *local.fModel.template look<typename L::LocalOf>()),
              frame, rest...);
     else
       answer(local.fHandlers.on(event), frame, rest...);
@@ -292,7 +292,7 @@ private:
     requires(model::kFound<Want, typename L::LocalOf> == 1)
   void edit(const model::Over<Want, C, Keys...> &over,
             const LocalFrame<L> &frame, const Rest &...) {
-    (void)frame.fLocal->fState.apply(over);
+    (void)frame.fLocal->fModel.apply(over);
     ++localEpoch();
   }
   template <class Want, class C, class... Keys, class F, class... Rest>
