@@ -1523,6 +1523,17 @@ struct HostWork {
   // to deliver (skiff::bind::press), when nothing of it runs.
   const State *pressedNow = nullptr;
   std::vector<std::vector<std::uint32_t>> pressed;  // each a Path
+  // What a handler returned that it asks for, where nothing was carried down
+  // to send it with -- outside a release build, where the routing is erased:
+  // kept, erased (as outside one anything may be), with the path to its
+  // node, for skiff::bind to send up the frames it is in once the dispatch
+  // is over (skiff::bind::answer). Never in a release build.
+  struct KeptAnswer {
+    std::vector<std::uint32_t> path;
+    std::any answer;
+  };
+  std::any answerNow;
+  std::vector<KeptAnswer> answers;
 };
 inline HostWork &hostWork() {
   static HostWork kept;
@@ -1550,6 +1561,35 @@ template <class P, class N, class C>
 template <class N, class C>
 bool answerPress(N &, const C &) {
   return false;
+}
+// What a handler returned that it asks for -- its node's Answer, or perhaps
+// one: sent at once up the frames carried down to it (skiff::bind's
+// answerWith, found by the carried type), else -- nothing carried, as
+// outside a release build -- kept for its path to be added as the routing
+// leaves it.
+template <class N, class A, class C>
+void answerWith(N &, const A &answer, const C &) {
+  if constexpr (kErasedWalks) {
+    hostWork().answerNow = typename N::Answer(answer);
+  }
+}
+template <class N, class A, class C> void answered(N &node, const A &answer, const C &carried) {
+  answerWith(node, answer, carried);
+}
+template <class N, class A, class C> void answered(N &node, const std::optional<A> &answer, const C &carried) {
+  if (answer) {
+    answered(node, *answer, carried);
+  }
+}
+// A handler called: one that returns nothing, as ever; one that returns
+// what it asks for, that answered.
+template <class N, class C, class F>
+  requires std::is_void_v<std::invoke_result_t<F &>>
+void handled(N &, const C &, F &&call) {
+  call();
+}
+template <class N, class C, class F> void handled(N &node, const C &carried, F &&call) {
+  answered(node, call(), carried);
 }
 // What a routing starts with at the root: what the program says for its
 // root's type (startCarry, found by that type); nothing by default.
@@ -4032,12 +4072,16 @@ namespace walk {
 inline void damageForHover(ErasedNode &node);
 // A pointer event to a node, in a phase: its own handler for the event's
 // kind -- or, for an ErasedNode, its table's.
-template <class N, class When>
-void pointerTo(N &node, const When &when, const PointerEvent &input, PointerReply &reply) {
-  spl::visit([&](const auto &event) { node.onPointer(when, event, reply); }, input);
+template <class N, class When, class C = NoCarry>
+void pointerTo(N &node, const When &when, const PointerEvent &input, PointerReply &reply, const C &carried = {}) {
+  spl::visit([&](const auto &event) { handled(node, carried, [&] { return node.onPointer(when, event, reply); }); }, input);
 }
 template <class When>
 void pointerTo(ErasedNode &node, const When &when, const PointerEvent &input, PointerReply &reply);
+template <class When, class C>
+void pointerTo(ErasedNode &node, const When &when, const PointerEvent &input, PointerReply &reply, const C &) {
+  pointerTo(node, when, input, reply);
+}
 
 // Every walk, for an AnyNode: through its table.
 void update(AnyNodeRef &, UpdateContext &, StyleResolver, const Style *, bool);
@@ -4673,6 +4717,16 @@ template <class N> NodeId idAt(N &child, const Path &path, std::size_t at) {
 // way back up. `targetOnly` delivers to the end of the path alone.
 // A press the node just answered by saying so (pressLater), answered here,
 // with what was carried down to it, where that can: then not kept.
+// An answer a handler on the way just kept: with the path to its node.
+inline void keepAnswer(const Path &path, std::size_t at) {
+  if constexpr (kErasedWalks) {
+    auto &work = hostWork();
+    if (work.answerNow.has_value()) {
+      work.answers.push_back({Path(path.begin(), path.begin() + static_cast<std::ptrdiff_t>(at)), std::move(work.answerNow)});
+      work.answerNow.reset();
+    }
+  }
+}
 template <class N, class C> void answerHere(N &child, const C &carried) {
   if (hostWork().pressedNow == &child.fState && answerPress(child, carried)) {
     hostWork().pressedNow = nullptr;
@@ -4715,7 +4769,8 @@ void routePointer(N &child, const Path &path, std::size_t at,
     reply.fCapturePointer = false;
     reply.fReleasePointer = false;
     reply.fRequestFocus = false;
-    pointerTo(child, when, input, reply);
+    pointerTo(child, when, input, reply, carried);
+    keepAnswer(path, at);
     if (reply.fCapturePointer) {
       routed.fCaptureRequest = state.fId;
     }
@@ -4753,7 +4808,8 @@ void route(N &child, const Path &path, std::size_t at, const Input &input,
            Reply &reply, Deliver deliver, const C &carried) {
   const auto phaseOf = [&](const auto &when) {
     reply.fCurrent = child.fState.fId;
-    deliver(child, when, input, reply);
+    deliver(child, when, input, reply, carried);
+    keepAnswer(path, at);
   };
   if (at == path.size()) {
     if (!reply.fHandled) {
@@ -4776,10 +4832,14 @@ void route(N &child, const Path &path, std::size_t at, const Input &input,
 struct KeyDelivery {
   template <class When>
   void operator()(ErasedNode &node, const When &when, const KeyEvent &input, Reply &reply) const;
-  template <class N>
+  template <class When, class C>
+  void operator()(ErasedNode &node, const When &when, const KeyEvent &input, Reply &reply, const C &) const {
+    (*this)(node, when, input, reply);
+  }
+  template <class N, class C = NoCarry>
   void operator()(N &node, const auto &when, const KeyEvent &input,
-                  Reply &reply) const {
-    spl::visit([&](const auto &event) { node.onKey(when, event, reply); },
+                  Reply &reply, const C &carried = {}) const {
+    spl::visit([&](const auto &event) { handled(node, carried, [&] { return node.onKey(when, event, reply); }); },
                input);
   }
   // Down to a child, with what is carried extended at it; an erased one is
@@ -4794,10 +4854,14 @@ struct KeyDelivery {
 struct TextDelivery {
   template <class When>
   void operator()(ErasedNode &node, const When &when, const TextEvent &input, Reply &reply) const;
-  template <class N>
+  template <class When, class C>
+  void operator()(ErasedNode &node, const When &when, const TextEvent &input, Reply &reply, const C &) const {
+    (*this)(node, when, input, reply);
+  }
+  template <class N, class C = NoCarry>
   void operator()(N &node, const auto &when, const TextEvent &input,
-                  Reply &reply) const {
-    spl::visit([&](const auto &event) { node.onText(when, event, reply); },
+                  Reply &reply, const C &carried = {}) const {
+    spl::visit([&](const auto &event) { handled(node, carried, [&] { return node.onText(when, event, reply); }); },
                input);
   }
   // Down to a child, with what is carried extended at it; an erased one is
@@ -4812,10 +4876,14 @@ struct TextDelivery {
 struct SemanticDelivery {
   template <class When>
   void operator()(ErasedNode &node, const When &when, const SemanticAction &input, Reply &reply) const;
-  template <class N>
+  template <class When, class C>
+  void operator()(ErasedNode &node, const When &when, const SemanticAction &input, Reply &reply, const C &) const {
+    (*this)(node, when, input, reply);
+  }
+  template <class N, class C = NoCarry>
   void operator()(N &node, const auto &when, const SemanticAction &input,
-                  Reply &reply) const {
-    spl::visit([&](const auto &event) { node.onSemantic(when, event, reply); },
+                  Reply &reply, const C &carried = {}) const {
+    spl::visit([&](const auto &event) { handled(node, carried, [&] { return node.onSemantic(when, event, reply); }); },
                input);
   }
   // Down to a child, with what is carried extended at it; an erased one is
@@ -5143,22 +5211,22 @@ private:
 // Each family's handler, called on a node of its own type.
 struct PointerHandler {
   template <class N, class P, class E> void operator()(N &node, P when, const E &event, PointerReply &reply) const {
-    node.onPointer(when, event, reply);
+    handled(node, NoCarry{}, [&] { return node.onPointer(when, event, reply); });
   }
 };
 struct KeyHandler {
   template <class N, class P, class E> void operator()(N &node, P when, const E &event, Reply &reply) const {
-    node.onKey(when, event, reply);
+    handled(node, NoCarry{}, [&] { return node.onKey(when, event, reply); });
   }
 };
 struct TextHandler {
   template <class N, class P, class E> void operator()(N &node, P when, const E &event, Reply &reply) const {
-    node.onText(when, event, reply);
+    handled(node, NoCarry{}, [&] { return node.onText(when, event, reply); });
   }
 };
 struct SemanticHandler {
   template <class N, class P, class E> void operator()(N &node, P when, const E &event, Reply &reply) const {
-    node.onSemantic(when, event, reply);
+    handled(node, NoCarry{}, [&] { return node.onSemantic(when, event, reply); });
   }
 };
 class AnyNode {

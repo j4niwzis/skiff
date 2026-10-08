@@ -193,10 +193,39 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
   template <class... E, class... Frames> void sendAll(const std::tuple<E...> &all, const Frames &...frames) {
     std::apply([&](const auto &...each) { (this->sendAll(each, frames...), ...); }, all);
   }
+  template <class... E, class... Frames> void sendAll(const std::variant<E...> &one, const Frames &...frames) {
+    std::visit([&](const auto &event) { this->sendAll(event, frames...); }, one);
+  }
+  template <class... E, class... Frames> void sendAll(const spl::variant<E...> &one, const Frames &...frames) {
+    spl::visit([&](const auto &event) { this->sendAll(event, frames...); }, one);
+  }
   template <class E, class... Frames> void sendAll(const E &event, const Frames &...frames) { this->send(event, frames...); }
 };
 
+// What a handler kept, delivered along its path: at its node, the answer --
+// of the node's own Answer, as it was kept -- sent up the frames there.
+template <class M, class Sink> struct Answering : Pressing<M, Sink> {
+  const std::any *fAnswer = nullptr;
+  template <class N, class... Frames>
+    requires requires { typename N::Answer; }
+  void pressed(N &, const Frames &...frames) {
+    if (const auto *answer = std::any_cast<typename N::Answer>(fAnswer))
+      this->sendAll(*answer, frames...);
+  }
+  template <class N, class... Frames> void pressed(N &, const Frames &...) {}
+};
 }  // namespace detail
+
+// What a handler returned, kept outside a release build (the routing erased
+// carries nothing down): delivered along its path, sent up the frames there.
+template <class M, class N, class S = detail::NoSink>
+bool answer(N &root, M &model, const scene::HostWork::KeptAnswer &kept, S *sink = nullptr) {
+  model.beginBatch();
+  detail::Answering<M, S> op{{{model, sink}}, &kept.answer};
+  detail::pressNode(op, root, kept.path, 0, model::Place<typename M::RootType, model::Path<>>{});
+  model.endBatch();
+  return op.fReached;
+}
 
 // A press, delivered: down `path` from `root` -- the path the scene routed
 // the press along to the node that answered it (hostWork().pressed) -- to
@@ -396,6 +425,23 @@ bool answerPress(N &node, const C &carried) {
   detail::framesOf(carried, [&](const auto &...frames) { op.pressed(node, frames...); });
   model.endBatch();
   return true;
+}
+
+// What a handler returned, sent at once up the frames carried down to its
+// node, in a release build.
+template <class N, class A, class C>
+  requires detail::IsCarry<C>
+void answerWith(N &, const A &answer, const C &carried) {
+  const auto &root = detail::rootOf(carried);
+  if (root.fModel == nullptr)
+    return;
+  using M = typename C::Model;
+  using S = typename C::Sink;
+  M &model = *root.fModel;
+  model.beginBatch();
+  detail::Pressing<M, S> op{{model, root.fSink}};
+  detail::framesOf(carried, [&](const auto &...frames) { op.sendAll(answer, frames...); });
+  model.endBatch();
 }
 
 }  // namespace skiff::bind

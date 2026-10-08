@@ -62,6 +62,17 @@ struct Removed {};
 struct RemoveButton : scene::Node {
   std::vector<Removed> fEmitted;
 };
+// One whose key handler returns what it asks for.
+struct KeyRemove : scene::Node {
+  using Answer = Removed;
+  std::optional<Removed> onKey(scene::phase::target, const scene::key::down &press, scene::Reply &reply) {
+    if (press.key != scene::keys::kDelete)
+      return std::nullopt;
+    reply.handle();
+    return Removed{};
+  }
+  using Node::onKey;
+};
 // One that says what a press does: returned, not kept.
 struct PressRemove : scene::Node {
   int fPressed = 0;
@@ -83,6 +94,7 @@ struct AccountRow : bind::Scoped<AccountT, AccountEvents, scene::Node> {
     bind::Bound<ReadReceipts, Switch, model::Flip> receipts;
     RemoveButton remove;
     PressRemove press;
+    KeyRemove key;
   } parts;
 };
 struct Page : scene::Node {
@@ -262,5 +274,27 @@ TEST(Bind, APressIsAnsweredWhereItIsRoutedWithWhatWasCarriedDown) {
   }
   EXPECT_EQ(left.parts.press.fPressed, 1);
   EXPECT_EQ(m.root().settings.fValue.accounts.size(), 0u);
+}
+}  // namespace
+
+namespace {
+// A key handler returns what it asks for: sent up the frames its node is
+// in, as the routing goes -- or, erased, kept with its path and sent from
+// there once the dispatch is over.
+TEST(Bind, WhatAKeyHandlerReturnsIsSentUpItsScopes) {
+  Model m = twoAccounts();
+  Page page;
+  bind::refresh(page, m);
+  scene::Reply reply;
+  scene::walk::routeKey(page, scene::Path{0, 1, 4}, 0, scene::KeyEvent{scene::key::down{scene::keys::kDelete, {}}}, reply,
+                        bind::carryFrom(&m));
+  EXPECT_TRUE(reply.fHandled);
+  if constexpr (scene::kErasedWalks) {
+    auto kept = std::exchange(scene::hostWork().answers, {});
+    ASSERT_EQ(kept.size(), 1u);
+    EXPECT_TRUE(bind::answer(page, m, kept[0]));
+  }
+  ASSERT_EQ(m.root().settings.fValue.accounts.size(), 1u);
+  EXPECT_TRUE(m.root().settings.fValue.accounts.contains("@a:x.org"));
 }
 }  // namespace
