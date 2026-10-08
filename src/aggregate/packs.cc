@@ -20,4 +20,20 @@ template <class A, class B, class F> void eachPair(A &one, B &other, F &&f) {
   (f(mine, theirs), ...);
 }
 
+// An aggregate's member types, in order, as a std::tuple of them (named,
+// never made).
+template <class Aggregate>
+using Members = typename decltype([](Aggregate &value) {
+  auto &[... member] = value;
+  return std::type_identity<
+      std::tuple<std::remove_cvref_t<decltype(member)>...>>{};
+}(std::declval<Aggregate &>()))::type;
+
+// The member at a place, as the aggregate holds it (const where it is).
+template <std::size_t I, class Aggregate>
+constexpr auto &get(Aggregate &value) {
+  auto &[... member] = value;
+  return member...[I];
+}
+
 } // namespace skiff::aggregate

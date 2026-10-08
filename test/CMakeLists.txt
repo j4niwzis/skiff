@@ -38,7 +38,9 @@ else()
   CPMAddPackage(NAME skiff SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/..)
 endif()
 
-add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/style.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/tracking.cc)
+add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/style.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/tracking.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/model.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/bind.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/compose.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/picker.cc)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   gtest
@@ -50,6 +52,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 
 enable_testing()
 add_test(NAME ${PROJECT_NAME} COMMAND ${PROJECT_NAME})
+
 
 if(ENABLE_TEST_COVERAGE)
   target_compile_options(skiff PRIVATE -O0 -g -fprofile-arcs -ftest-coverage)

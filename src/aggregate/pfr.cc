@@ -18,4 +18,23 @@ template <class A, class B, class F> void eachPair(A &one, B &other, F &&f) {
   boost::pfr::for_each_field(one, [&](auto &mine, auto index) { f(mine, boost::pfr::get<decltype(index)::value>(other)); });
 }
 
+// An aggregate's member types, in order, as a std::tuple of them (named,
+// never made).
+template <class Aggregate, class Indices> struct MembersOf;
+template <class Aggregate, std::size_t... I>
+struct MembersOf<Aggregate, std::index_sequence<I...>> {
+  using type = std::tuple<
+      std::remove_cvref_t<boost::pfr::tuple_element_t<I, Aggregate>>...>;
+};
+template <class Aggregate>
+using Members = typename MembersOf<
+    Aggregate,
+    std::make_index_sequence<boost::pfr::tuple_size_v<Aggregate>>>::type;
+
+// The member at a place, as the aggregate holds it (const where it is).
+template <std::size_t I, class Aggregate>
+constexpr auto &get(Aggregate &value) {
+  return boost::pfr::get<I>(value);
+}
+
 } // namespace skiff::aggregate

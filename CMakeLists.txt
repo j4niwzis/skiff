@@ -202,13 +202,45 @@ else()
   cme_find_package(Boost COMPONENTS pfr[modules] REQUIRED)
 endif()
 
+# skiff.model: what a program shows, in one place -- the parts of its state
+# found by their types, the edits that change them, the events taken by the
+# scopes they are sent in. A library of its own, with nothing under it but
+# the standard library and skiff.aggregate (and, on C++23, Boost.PFR, which
+# that walks members with): a program's state and its rules are tested
+# without a window, a Skia, or a scene. skiff.aggregate is built here, and
+# skiff has it from here. skiff.bind, in skiff, binds a scene's nodes to it.
+add_library(skiff_model STATIC)
+add_library(skiff::model ALIAS skiff_model)
+set_target_properties(skiff_model PROPERTIES
+  EXPORT_NAME model CXX_STANDARD ${skiff_cxx_standard})
+target_compile_features(skiff_model PUBLIC cxx_std_${skiff_cxx_standard})
+# Its partitions, one directory each, as the nodes' are.
+file(GLOB skiff_model_partitions CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/model/*.cc")
+file(GLOB skiff_bind_partitions CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/bind/*.cc")
+file(GLOB skiff_compose_partitions CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/compose/*.cc")
+target_sources(skiff_model PUBLIC
+  FILE_SET CXX_MODULES FILES ${skiff_aggregate}
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/model.cc
+                             ${skiff_model_partitions})
+if(skiff_cxx_standard LESS 26)
+  # In this build only, as for skiff below: an installed copy finds Boost's
+  # pfr again, in its config.
+  target_link_libraries(skiff_model PUBLIC $<BUILD_INTERFACE:Boost::pfr>)
+endif()
+
 set(skiff_sources
-  ${skiff_aggregate}
   ${CMAKE_CURRENT_SOURCE_DIR}/src/skia.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/paint.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/scene.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/nodes.cc
   ${skiff_node_partitions}
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/bind.cc
+  ${skiff_bind_partitions}
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/compose.cc
+  ${skiff_compose_partitions}
 )
 
 if(SKIFF_EMSCRIPTEN)
@@ -238,6 +270,7 @@ add_library(skiff::skiff ALIAS ${PROJECT_NAME})
 # In this build only, as Skia and Boost.PFR: an installed copy finds splice
 # again, in its config.
 target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:splice>)
+target_link_libraries(${PROJECT_NAME} PUBLIC skiff_model)
 # Outside a release build, the walks over a tree see each child through an
 # AnyNode (scene.cc, kErasedWalks): made once, not per type of node. Off,
 # every build walks its tree statically, as a release build does.
@@ -308,7 +341,7 @@ if(COMMAND cme_declare_port)
     # context of its own, so which backend there is -- Ganesh on GL, Graphite
     # on Vulkan, or none at all -- is decided by the program that draws.
     DEPENDS "skia[freetype]"
-    TARGETS skiff::skiff
+    TARGETS skiff::skiff skiff::model
     CHECK_HEADER skiff/skiff.modules
   )
 endif()
@@ -330,7 +363,7 @@ option(SKIFF_INSTALL "Install skiff and its CMake package"
        ${PROJECT_IS_TOP_LEVEL})
 if(SKIFF_INSTALL)
   include(GNUInstallDirs)
-  install(TARGETS ${PROJECT_NAME}
+  install(TARGETS ${PROJECT_NAME} skiff_model
     EXPORT skiffTargets
     FILE_SET CXX_MODULES DESTINATION ${CMAKE_INSTALL_LIBDIR}/skiff/modules
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
