@@ -221,4 +221,42 @@ template <class E, class N> OnClick<E, N> onClick(E event, N node) {
   return OnClick<E, N>(std::move(event), std::move(node));
 }
 
+// Answers a key with a copy of its event: Esc, as a bar is let go.
+template <class E, class N, class K> struct OnKey : N {
+  using Walked = std::bool_constant<bind::detail::kWalks<N>>;
+  using HasLocal = std::bool_constant<bind::detail::kHasLocal<N>>;
+  using Answer = E;
+  K fKey;
+  E fEvent;
+  OnKey(K key, E event, N node) : N(std::move(node)), fKey(key), fEvent(std::move(event)) {}
+  using N::onKey;
+  std::optional<E> onKey(scene::phase::bubble, const scene::key::down &press, scene::Reply &reply) {
+    if (press.key != fKey)
+      return std::nullopt;
+    reply.handle();
+    return fEvent;
+  }
+};
+template <class K, class E, class N> OnKey<E, N, K> onKey(K key, E event, N node) {
+  return OnKey<E, N, K>(key, std::move(event), std::move(node));
+}
+
+// What a node shows, read from the model: a text made from the parts it
+// reads (Reads), and a node shown or hidden as they say -- never set by
+// hand. Compute takes the parts' values.
+struct TextOf : nodes::Text {
+  explicit TextOf(nodes::Text text) : nodes::Text(std::move(text)) {}
+  void read(const std::string &now) { this->setText(now); }
+};
+template <class... Reads, class Compute> bind::Derived<Compute, TextOf, Reads...> text_of(Compute compute, nodes::Text text) {
+  return bind::Derived<Compute, TextOf, Reads...>(TextOf(std::move(text)), std::move(compute));
+}
+template <class N> struct ShownBy : N {
+  explicit ShownBy(N node) : N(std::move(node)) {}
+  void read(bool on) { this->setVisible(on); }
+};
+template <class... Reads, class Compute, class N> bind::Derived<Compute, ShownBy<N>, Reads...> shown_if(Compute compute, N node) {
+  return bind::Derived<Compute, ShownBy<N>, Reads...>(ShownBy<N>(std::move(node)), std::move(compute));
+}
+
 } // namespace skiff::compose

@@ -124,7 +124,7 @@ consteval bool walksOf(Rank<5>) {
   return false;
 }
 template <class T, class... Seen>
-  requires(IsBound<T> || IsScoped<T> || IsEach<T> || IsLocal<T> || requires(T &t) { t.onPress(); })
+  requires(IsBound<T> || IsScoped<T> || IsEach<T> || IsLocal<T> || requires { typename T::Computes; } || requires(T &t) { t.onPress(); })
 consteval bool walksOf(Rank<4>) {
   return true;
 }

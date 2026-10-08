@@ -47,6 +47,7 @@ struct Bound : Base {
 // bound node reads its part.
 template <class Compute, class Base, class... Reads>
 struct Derived : Base {
+  using Computes = Compute;
   Derived() = default;
   explicit Derived(Base base, Compute compute = {}) : Base(std::move(base)), fCompute(std::move(compute)) {}
   Compute fCompute{};
@@ -61,7 +62,11 @@ struct Derived : Base {
       return;
     fSeen = now;
     fShown = true;
-    if constexpr (requires(Base &b) { b.read(fCompute(model.root())); })
+    // Computed from the parts it reads, where Compute takes them; else from
+    // the whole root.
+    if constexpr (requires(Base &b) { b.read(fCompute(*model.template look<Reads>()...)); })
+      this->read(fCompute(*model.template look<Reads>()...));
+    else if constexpr (requires(Base &b) { b.read(fCompute(model.root())); })
       this->read(fCompute(model.root()));
   }
 };
