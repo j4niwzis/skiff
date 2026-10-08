@@ -653,6 +653,64 @@ private:
   std::optional<Content> fContent;
 };
 
+// A Memo told how its content is made: shown a view by what reads the
+// model for it (bind::Derived calls read), with nothing passed but the view.
+template <class View, class Content, class Make> class MemoOf : public Memo<View, Content> {
+public:
+  MemoOf() = default;
+  explicit MemoOf(Make make) : fMake(std::move(make)) {}
+  bool read(const View &view) { return this->show(view, fMake); }
+  Make fMake{};
+};
+
+// One row of MemoRows: its key, the view it was made from, and the row
+// made from its item -- as its child, filling it across.
+template <class Key, class View, class Row> class KeptRow : public skiff::scene::Node {
+public:
+  template <class Item, class Make>
+  KeptRow(const Item &item, Make &make)
+      : fKey(std::get<0>(item)), fView(std::get<1>(item)), fRow(std::invoke(make, item)) {
+    fState.apply({.fillX = true, .autoSize = skiff::scene::axes::kY});
+  }
+  void forEachChild(auto &&f) { f(fRow); }
+  Key fKey;
+  View fView;
+  Row fRow;
+};
+
+// Rows as a function of a list of views, by their keys -- a chat list
+// read from the model: each read, a row whose key is still listed with
+// the view it was made from is kept as it is, the others are made by Make
+// from their items, and the rows no longer listed go. An item is a tuple:
+// its key, its view, and whatever else making its row needs (the part it
+// shows, while the list is read). Fed by what reads the model
+// (bind::Derived calls read with the list).
+template <class Key, class View, class Row, class Make, class Container = Stack>
+class MemoRows : public Container {
+public:
+  using Kept = KeptRow<Key, View, Row>;
+  MemoRows() = default;
+  explicit MemoRows(Make make, Container container = {})
+      : Container(std::move(container)), fMake(std::move(make)) {}
+  // Items: a key, its view, and the rest, in the order they are listed.
+  template <std::ranges::input_range Items> bool read(Items &&items) {
+    const bool changed = reconcile(
+        fRows, std::forward<Items>(items),
+        [](const auto &item) -> const Key & { return std::get<0>(item); },
+        [](const Kept &row) -> const Key & { return row.fKey; },
+        [this](const auto &item) { return Kept(item, fMake); },
+        [](const Kept &row, const auto &item) { return row.fView == std::get<1>(item); });
+    if (changed) {
+      this->invalidateLayout();
+    }
+    return changed;
+  }
+  template <class Self, class F> void forEachChild(this Self &self, F &&f) { f(self.fRows); }
+  [[nodiscard]] std::size_t size() const noexcept { return fRows.size(); }
+  std::vector<Kept> fRows;
+  Make fMake{};
+};
+
 // A vertical flow and a horizontal one, as they are usually written.
 template <class... Children>
 [[nodiscard]] Flow<Children...> column(float spacing, Children... children) {

@@ -5,6 +5,7 @@ import skiff.scene;
 import skiff.model;
 import skiff.bind;
 import skiff.compose;
+import skiff.nodes;
 
 #include "gtest/gtest-macros.h"
 
@@ -407,3 +408,37 @@ TEST(Compose, ADerivedValueIsComputedAgainOnlyWhereWhatItReadsMoved) {
   EXPECT_EQ(total.fComputed, 2);
 }
 } // namespace
+
+namespace {
+// A row of a list fed views by key: how many were made tells which were
+// kept.
+struct Shown : skiff::scene::Node {
+  Shown(int key, const std::string &view) : fKey(key), fText(view) {}
+  int fKey;
+  std::string fText;
+};
+struct MakeShown {
+  int *fMade;
+  Shown operator()(const std::pair<int, std::string> &item) const {
+    ++*fMade;
+    return Shown(item.first, item.second);
+  }
+};
+} // namespace
+
+TEST(Compose, RowsReadByKeyAreKeptWhereTheirViewIsTheSame) {
+  int made = 0;
+  skiff::nodes::MemoRows<int, std::string, Shown, MakeShown> rows(MakeShown{&made});
+  using Item = std::pair<int, std::string>;
+  EXPECT_TRUE(rows.read(std::vector<Item>{{1, "a"}, {2, "b"}, {3, "c"}}));
+  EXPECT_EQ(made, 3);
+  // The same: nothing made.
+  EXPECT_FALSE(rows.read(std::vector<Item>{{1, "a"}, {2, "b"}, {3, "c"}}));
+  EXPECT_EQ(made, 3);
+  // One view changed, one gone, the order turned: one made again.
+  EXPECT_TRUE(rows.read(std::vector<Item>{{3, "c"}, {1, "A"}}));
+  EXPECT_EQ(made, 4);
+  ASSERT_EQ(rows.size(), 2u);
+  EXPECT_EQ(rows.fRows[0].fRow.fKey, 3);
+  EXPECT_EQ(rows.fRows[1].fRow.fText, "A");
+}
