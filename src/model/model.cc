@@ -12,6 +12,7 @@ template <class Root, class Reactions, class EffectOrDeduced = DeducedEffects> c
 public:
   using Effect = typename detail::EffectOf<Root, Reactions, EffectOrDeduced>::type;
   using RootType = Root;
+  using ReactionsType = Reactions;
   using EffectType = Effect;
 
   constexpr Model() = default;
@@ -397,6 +398,14 @@ private:
     answer(o, outer...);
   }
 
+  // One no scope takes, taken by the reactions themselves: what they ask
+  // for, an effect for the program to carry out (a dialog opened, a file
+  // written) -- where they take it.
+  template <class E>
+    requires requires(const Reactions &r, const E &e) { r.on(e); }
+  constexpr void route(const E &e) {
+    fOutbox.take(fReactions.on(e));
+  }
   template <class E> constexpr void route(const E &) {
     static_assert(false, "skiff::model: no scope this event was sent in, nor "
                          "any around it, has a handler for it (a scope that "

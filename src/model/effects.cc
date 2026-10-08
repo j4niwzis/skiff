@@ -260,10 +260,26 @@ template <class R, class Root, class P, std::size_t I> struct FieldEffectsAt<R, 
 };
 
 template <class Root, class R, class Places> struct EffectsOfPlaces;
+// The events the reactions take themselves -- sent from widgets, taken by
+// no scope -- as they say them (using Taken = Types<E...>), and what each
+// asks for.
+template <class R> struct TakenBy {
+  using type = Types<>;
+};
+template <class R>
+  requires requires { typename R::Taken; }
+struct TakenBy<R> {
+  using type = typename R::Taken;
+};
+template <class R, class Events> struct TakenEffects;
+template <class R, class... E> struct TakenEffects<R, Types<E...>> {
+  using type = typename Concat<typename EffectsIn<std::remove_cvref_t<
+      decltype(std::declval<const R &>().on(std::declval<const E &>()))>>::type...>::type;
+};
 template <class Root, class R, class... P> struct EffectsOfPlaces<Root, R, Types<P...>> {
   using type = typename VariantOf<typename Unique<typename Concat<
       typename EffectsAt<R, Root, P>::type..., typename FieldEffectsAt<R, Root, P>::type...,
-      typename RemovedAt<R, Root, P>::type...>::type>::type>::type;
+      typename RemovedAt<R, Root, P>::type..., typename TakenEffects<R, typename TakenBy<R>::type>::type>::type>::type>::type;
 };
 template <class Root, class R, class E> struct EffectOf {
   using type = E;

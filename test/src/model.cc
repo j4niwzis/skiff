@@ -486,6 +486,26 @@ constexpr bool aListIsSeenAsRanges() {
 }
 static_assert(aListIsSeenAsRanges());
 
+// An event no scope takes, taken by the reactions: an effect asked for.
+struct OpenDialog {
+  int which = 0;
+};
+struct DialogOpened {
+  int which = 0;
+};
+struct TakesEvents {
+  using Taken = Types<OpenDialog>;
+  constexpr DialogOpened on(const OpenDialog &e) const { return {e.which}; }
+};
+static_assert(std::same_as<EffectsOf<Chats, TakesEvents>, std::variant<DialogOpened>>);
+constexpr bool eventsBecomeEffects() {
+  Model<Chats, TakesEvents> m;
+  m.send(OpenDialog{3});
+  const auto out = m.outbox().drain();
+  return out.size() == 1 && std::get<DialogOpened>(out[0]).which == 3;
+}
+static_assert(eventsBecomeEffects());
+
 // No effect type written: deduced from what the reactions return.
 static_assert(std::same_as<EffectsOf<Root, Reactions>, std::variant<SetMentionsSharing, WriteSettings>> ||
               std::same_as<EffectsOf<Root, Reactions>, std::variant<WriteSettings, SetMentionsSharing>>);

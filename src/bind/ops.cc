@@ -216,6 +216,13 @@ template <class M> struct Draining {
     route(event, frames...);
   }
 
+  // One nothing it was sent within takes, given to the model, whose
+  // reactions take it where they say so: an effect for the program.
+  template <class E>
+    requires requires(const typename M::ReactionsType &r, const E &e) { r.on(e); }
+  void route(const E &event) {
+    fModel.send(event);
+  }
   template <class E> void route(const E &) {
     static_assert(false, "skiff::bind: nothing this event was sent within -- "
                          "no pipe, no local handler, no scope -- takes it");
