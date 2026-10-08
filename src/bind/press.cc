@@ -181,6 +181,8 @@ concept Presses = requires(N &n) { n.onPress(); } && !PressesNothing<N>;
 
 template <class M, class Sink> struct Pressing : Draining<M, Sink> {
   bool fReached = false;
+  // An own change whose part is not in this model.
+  bool fMissed = false;
   template <class N, class Here, class... Frames>
     requires PressesNothing<N>
   void pressed(N &node, const Here &, const Frames &...) {
@@ -197,9 +199,22 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
   // An answer at its node: a change of the node's own part made where the
   // part is found; else sent up the frames.
   template <class N, class Here, class C, class... Frames>
+    requires(IsBound<N> && kOfModel<typename M::RootType, N>)
   void answerAt(N &node, const Here &here, const Own<C> &own, const Frames &...frames) {
     using Want = decltype(boundToOf(asBound(node)));
     this->change(where<Want>(here, frames...), own.fChange);
+  }
+  // A part of a bound node that binds nothing itself -- a segment of a
+  // field: the part it sets is the one it is in, of the type it sets.
+  template <class N, class Here, class T, class... Frames>
+    requires(!IsBound<N> && std::same_as<typename Here::Target, T>)
+  void answerAt(N &, const Here &here, const Own<model::SetTo<T>> &own, const Frames &...frames) {
+    this->change(where<T>(here, frames...), own.fChange);
+  }
+  // Its part is in another model: pressed there.
+  template <class N, class Here, class C, class... Frames>
+  void answerAt(N &, const Here &, const Own<C> &, const Frames &...) {
+    fMissed = true;
   }
   template <class N, class Here, class A, class... Frames>
   void answerAt(N &node, const Here &here, const std::optional<A> &answer, const Frames &...frames) {
@@ -251,7 +266,7 @@ bool answer(N &root, M &model, const scene::HostWork::KeptAnswer &kept, S *sink 
   detail::Answering<M, S> op{{{model, sink}}, &kept};
   detail::pressNode(op, root, kept.path, 0, model::Place<typename M::RootType, model::Path<>>{});
   model.endBatch();
-  return op.fReached;
+  return op.fReached && !op.fMissed;
 }
 
 // A press, delivered: down `path` from `root` -- the path the scene routed
@@ -267,7 +282,7 @@ bool press(N &root, M &model, const scene::Path &path, S *sink = nullptr) {
   detail::Pressing<M, S> op{{model, sink}};
   detail::pressNode(op, root, path, 0, model::Place<typename M::RootType, model::Path<>>{});
   model.endBatch();
-  return op.fReached;
+  return op.fReached && !op.fMissed;
 }
 
 
