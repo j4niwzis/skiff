@@ -563,3 +563,10 @@ TEST(Compose, NamedClickKeepsTheWrappedToggleRoleAndValue) {
   EXPECT_EQ(info.fValue, "on");
   EXPECT_EQ(info.fLabel, "Encrypt local data");
 }
+
+TEST(Compose, TextSelectionIsDeclaredAtConstruction) {
+  const nodes::Text selectable("Selectable", 14.0f, 0u, false, true);
+  const nodes::Text ordinary("Ordinary", 14.0f, 0u);
+  EXPECT_TRUE(selectable.selectable());
+  EXPECT_FALSE(ordinary.selectable());
+}

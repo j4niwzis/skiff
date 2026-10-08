@@ -156,8 +156,8 @@ public:
   using Link = TextLink;
   using Styled = TextStyled;
 
-  BasicText(std::string text, float size, skia::SkColor colour, bool bold = false)
-      : fText(std::move(text)), fSize(size), fColour(colour), fBold(bold) {}
+  BasicText(std::string text, float size, skia::SkColor colour, bool bold = false, bool selectable = false)
+      : fText(std::move(text)), fSize(size), fColour(colour), fBold(bold), fSelectable(selectable) {}
 
   void setText(std::string text) {
     if (text == fText) {
