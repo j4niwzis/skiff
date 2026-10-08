@@ -44,6 +44,14 @@ template <class... Parts> struct Box : nodes::Stack {
   }
 };
 
+// A node with its spec applied: a leaf said as it is put in its place.
+template <class N>
+  requires std::derived_from<N, scene::Node>
+N styled(scene::Spec spec, N node) {
+  node.apply(spec);
+  return node;
+}
+
 template <class... Parts> Box<Parts...> column(Look look, Parts... parts) {
   look.fHorizontal = false;
   return Box<Parts...>(std::move(look), std::move(parts)...);
