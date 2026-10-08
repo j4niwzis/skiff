@@ -42,7 +42,7 @@ template <class M, class C> struct Targeting {
   Refreshing<M> fFull{fModel};
 
   template <class N, class Here, class... Frames>
-    requires IsBound<N>
+    requires(IsBound<N> && (kOfModel<typename M::RootType, N> || (kInLocal<N, Frames> || ...)))
   void bound(N &node, const Here &here, const Frames &...frames) {
     showIfOnTheWay(node, here, where<decltype(boundToOf(asBound(node)))>(here, frames...),
                    frames...);
@@ -59,6 +59,8 @@ template <class M, class C> struct Targeting {
   template <class N, class Here, class... Frames>
   void emitted(N &, const Here &, const Frames &...) {}
   template <class N> static constexpr bool kWants = true;
+  // Its model's nodes, not another model's in the same tree.
+  template <class N> static constexpr bool kOwns = kOfModel<typename M::RootType, N>;
   template <class N, class Here, class... Frames>
   bool local(N &, const Here &, const Frames &...) {
     return true;
@@ -122,7 +124,7 @@ template <class M, class L, class C> struct LocalTargeting {
   Refreshing<M> fFull{fModel};
 
   template <class N, class Here, class... Frames>
-    requires IsBound<N>
+    requires(IsBound<N> && (kOfModel<typename M::RootType, N> || (kInLocal<N, Frames> || ...)))
   void bound(N &node, const Here &here, const Frames &...frames) {
     showIfOnTheWay(node, here, where<decltype(boundToOf(asBound(node)))>(here, frames...),
                    frames...);
@@ -133,6 +135,8 @@ template <class M, class L, class C> struct LocalTargeting {
   template <class N, class Here, class... Frames>
   void emitted(N &, const Here &, const Frames &...) {}
   template <class N> static constexpr bool kWants = true;
+  // Its model's nodes, not another model's in the same tree.
+  template <class N> static constexpr bool kOwns = kOfModel<typename M::RootType, N>;
   // Another Local inside: its own changes are its own pass's.
   template <class N, class Here, class... Frames>
   bool local(N &node, const Here &, const Frames &...) {
@@ -172,6 +176,7 @@ template <class M> struct LocalPass {
   template <class N, class Here, class... Frames>
   void emitted(N &, const Here &, const Frames &...) {}
   template <class N> static constexpr bool kWants = kHasLocal<N>;
+  template <class N> static constexpr bool kOwns = kOfModel<typename M::RootType, N>;
   template <class S, class Place> bool enter(S &, const Place &) { return true; }
   template <class N, class Place> void rows(N &, const Place &) {}
   template <class N, class Place, class VisitRow>

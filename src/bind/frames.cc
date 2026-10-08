@@ -22,6 +22,15 @@ template <class Place, class Handlers> struct ScopeFrame {
 template <class L> struct LocalFrame {
   L *fLocal;
 };
+// Whether a bound node within these frames is bound to a Local's state
+// around it, not to the model: one whose part is that state's.
+template <class N, class Frame> inline constexpr bool kInLocal = false;
+template <class N, class L>
+  requires requires { typename N::BoundTo; }
+inline constexpr bool kInLocal<N, LocalFrame<L>> = model::kFound<typename N::BoundTo, typename L::LocalOf> > 0;
+template <class N, class L>
+  requires(!requires { typename N::BoundTo; } && requires { typename N::ScopeOf; })
+inline constexpr bool kInLocal<N, LocalFrame<L>> = model::kFound<typename N::ScopeOf, typename L::LocalOf> > 0;
 // A pipe: the component that what is sent from within goes to first.
 template <class To> struct PipeFrame {
   To *fTo;

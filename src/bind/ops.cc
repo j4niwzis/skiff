@@ -17,7 +17,7 @@ template <class M> struct Refreshing {
   const M &fModel;
 
   template <class N, class Here, class... Frames>
-    requires IsBound<N>
+    requires(IsBound<N> && (kOfModel<typename M::RootType, N> || (kInLocal<N, Frames> || ...)))
   void bound(N &node, const Here &here, const Frames &...frames) {
     auto &shown = asBound(node);
     using Want = decltype(boundToOf(shown));
@@ -49,6 +49,8 @@ template <class M> struct Refreshing {
   template <class N, class Here, class... Frames>
   void emitted(N &, const Here &, const Frames &...) {}
   template <class N> static constexpr bool kWants = true;
+  // Its model's nodes, not another model's in the same tree.
+  template <class N> static constexpr bool kOwns = kOfModel<typename M::RootType, N>;
   // A Local walked whole: what its state logged is shown by this walk.
   template <class N, class Here, class... Frames>
   bool local(N &node, const Here &, const Frames &...) {
@@ -131,7 +133,7 @@ template <class M, class Sink = NoSink> struct Draining {
   Sink *fSink = nullptr;
 
   template <class N, class Here, class... Frames>
-    requires IsBound<N>
+    requires(IsBound<N> && (kOfModel<typename M::RootType, N> || (kInLocal<N, Frames> || ...)))
   void bound(N &node, const Here &here, const Frames &...frames) {
     auto &asked = asBound(node);
     using Want = decltype(boundToOf(asked));
@@ -200,6 +202,8 @@ template <class M, class Sink = NoSink> struct Draining {
     return true;
   }
   template <class N> static constexpr bool kWants = true;
+  // Its model's nodes, not another model's in the same tree.
+  template <class N> static constexpr bool kOwns = kOfModel<typename M::RootType, N>;
   template <class N, class Here, class... Frames>
   bool local(N &, const Here &, const Frames &...) {
     return true;

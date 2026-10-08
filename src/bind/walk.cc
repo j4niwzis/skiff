@@ -138,7 +138,7 @@ void visitLocal(Op &op, N &node, const Here &here, const Frames &...frames) {
 }
 
 template <class Op, class N, class Here, class... Frames>
-  requires IsScoped<N>
+  requires(IsScoped<N> && (Op::template kOwns<N> || (kInLocal<N, Frames> || ...)))
 void visitScoped(Op &op, N &node, const Here &here, const Frames &...frames) {
   auto &scoped = asScoped(node);
   using Within = decltype(scopeOfOf(scoped));

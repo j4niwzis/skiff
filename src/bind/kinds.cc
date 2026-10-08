@@ -236,6 +236,17 @@ concept IsBound = decltype(detail::boundTest(static_cast<N *>(nullptr)))::value;
 template <class N>
 concept IsScoped =
     decltype(detail::scopedTest(static_cast<N *>(nullptr)))::value;
+
+// Whether a node is one a model with this root binds: one bound to a part,
+// or a scope at one, that is there to find -- a tree may be bound to more
+// than one model, each binding what is its own and passing the rest by.
+template <class Root, class N> inline constexpr bool kOfModel = true;
+template <class Root, class N>
+  requires IsBound<N>
+inline constexpr bool kOfModel<Root, N> = model::kFound<typename N::BoundTo, Root> > 0;
+template <class Root, class N>
+  requires(IsScoped<N> && !IsBound<N>)
+inline constexpr bool kOfModel<Root, N> = model::kFound<typename N::ScopeOf, Root> > 0;
 template <class N>
 concept IsEach = decltype(detail::eachTest(static_cast<N *>(nullptr)))::value;
 template <class N>

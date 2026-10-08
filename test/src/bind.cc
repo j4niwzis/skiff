@@ -158,6 +158,36 @@ TEST(Bind, AnEventNothingTakesGoesToTheProgramsSink) {
   EXPECT_EQ(program.opened[0], 7);
 }
 
+// A tree bound to two models: each binding binds its own nodes and passes
+// the other's by.
+struct Volume {
+  int level = 3;
+};
+struct OtherRoot {
+  model::Tracked<Volume> volume;
+};
+struct OtherReactions {};
+using OtherModel = model::Model<OtherRoot, OtherReactions>;
+struct VolumeLabel : scene::Node {
+  int fLevel = 0;
+  void read(const Volume &now) { fLevel = now.level; }
+};
+struct TwoModels : scene::Node {
+  struct parts_t {
+    bind::Bound<ReadReceipts, Switch, model::Flip> receipts;
+    bind::Bound<Volume, VolumeLabel> volume;
+  } parts;
+};
+TEST(Bind, ATreeIsBoundToTwoModelsEachItsOwn) {
+  Root root;
+  root.settings.fValue.accounts.put("@a:x.org", AccountT{"@a:x.org", {"A"}, {true}});
+  OtherModel other{OtherRoot{}};
+  TwoModels tree;
+  bind::refresh(tree, other);
+  EXPECT_EQ(tree.parts.volume.fLevel, 3);
+  EXPECT_EQ(tree.parts.receipts.fReads, 0);
+}
+
 TEST(Bind, AnEditFromElsewhereIsShown) {
   Model m = twoAccounts();
   Page page;
