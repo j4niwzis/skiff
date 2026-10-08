@@ -481,7 +481,19 @@ static_assert(!std::constructible_from<
               bind::Bound<MountedFacts, MountedControl>, MountedControl>);
 static_assert(std::constructible_from<
               bind::Bound<MountedFacts, MountedControl>, std::in_place_t, int>);
+static_assert(!std::constructible_from<scene::Scene<MountedControl>, MountedControl>);
+static_assert(std::constructible_from<scene::Scene<MountedControl>, std::in_place_t, int>);
 } // namespace
+// Match a program that explicitly instantiates its scene in one module
+// unit: unavailable value constructors must not instantiate their bodies.
+template class skiff::scene::Scene<MountedControl>;
+
+TEST(Compose, ExplicitlyInstantiatedSceneKeepsImmovableRootInPlace) {
+  scene::Scene<MountedControl> tree(std::in_place, 7);
+  EXPECT_EQ(tree.root().owner, &tree.root());
+  EXPECT_EQ(tree.root().value, 7);
+}
+
 TEST(Compose, NestedBindingsKeepImmovableControlAtItsFinalAddress) {
   using Inner = bind::Bound<MountedFacts, MountedControl>;
   using Outer = bind::Bound<int, Inner>;

@@ -5896,7 +5896,11 @@ public:
       : fRoot(std::forward<Args>(args)...) {
     work::roots().insert(fRoot.fState.fId);
   }
-  explicit Scene(Root root) : fRoot(std::move(root)) { work::roots().insert(fRoot.fState.fId); }
+  // Explicit class instantiation also instantiates this constructor.
+  // An immovable root must use the in-place overload instead.
+  explicit Scene(Root root)
+    requires std::move_constructible<Root>
+      : fRoot(std::move(root)) { work::roots().insert(fRoot.fState.fId); }
   Scene(const Scene &) = delete;
   Scene &operator=(const Scene &) = delete;
 
