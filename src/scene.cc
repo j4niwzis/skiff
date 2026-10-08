@@ -1505,6 +1505,7 @@ inline std::vector<TextMenuAsk> &textMenusAsked() {
                                           [](const text_menu::of_field &) { return std::optional<std::string>(); }},
                        textMenusAsked().back());
 }
+class State;
 struct HostWork {
   // Keys for the node with the focus, as if pressed: what the host's own
   // controls stand for. Given, down and up, before the next frame.
@@ -1516,6 +1517,10 @@ struct HostWork {
   std::optional<skia::SkRect> typingAt;
   std::optional<std::string> copied;
   std::vector<std::string> links;
+  // The nodes pressed that say what a press does by onPress(), by their
+  // state's address: for the program to deliver once the dispatch is over
+  // (skiff::bind::press), when nothing of it runs.
+  std::vector<const State *> pressed;
 };
 inline HostWork &hostWork() {
   static HostWork kept;
@@ -3304,6 +3309,14 @@ struct Node {
     return false;
   }
   void onFocusChanged(this auto &, bool) {}
+  // A node that says what a press does by onPress() takes the press: the
+  // host delivers it once the dispatch is over (skiff::bind::press).
+  [[nodiscard]] bool onClick(this auto &self, float, float)
+    requires requires { self.onPress(); }
+  {
+    hostWork().pressed.push_back(&self.fState);
+    return true;
+  }
   [[nodiscard]] bool onClick(this auto &, float, float) { return false; }
   [[nodiscard]] bool onScroll(this auto &, float) { return false; }
   void onPointer(this auto &self, const auto &at, const auto &input,

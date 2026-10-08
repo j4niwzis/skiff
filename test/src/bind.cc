@@ -62,6 +62,14 @@ struct Removed {};
 struct RemoveButton : scene::Node {
   std::vector<Removed> fEmitted;
 };
+// One that says what a press does: returned, not kept.
+struct PressRemove : scene::Node {
+  int fPressed = 0;
+  Removed onPress() {
+    ++fPressed;
+    return {};
+  }
+};
 
 struct AccountEvents {
   template <class P> auto on(const Removed &, const P &here) const {
@@ -74,6 +82,7 @@ struct AccountRow : bind::Scoped<AccountT, AccountEvents, scene::Node> {
     bind::Bound<DisplayName, Label> name;
     bind::Bound<ReadReceipts, Switch, model::Flip> receipts;
     RemoveButton remove;
+    PressRemove press;
   } parts;
 };
 struct Page : scene::Node {
@@ -201,3 +210,21 @@ TEST(Bind, AnEditFromElsewhereIsShown) {
 }
 
 } // namespace
+
+namespace {
+TEST(Bind, APressIsDeliveredToTheNodePressedAndTakenByItsRowsScope) {
+  Model m = twoAccounts();
+  Page page;
+  bind::refresh(page, m);
+  // The second row's button, by its state, as the scene records a press.
+  auto &pressed = page.parts.accounts.fRows[1].parts.press;
+  EXPECT_TRUE(bind::press(page, m, &pressed.fState));
+  EXPECT_EQ(pressed.fPressed, 1);
+  ASSERT_EQ(m.root().settings.fValue.accounts.size(), 1u);
+  EXPECT_TRUE(m.root().settings.fValue.accounts.contains("@a:x.org"));
+  // A node no longer in the tree: nothing pressed, nothing sent.
+  scene::Node elsewhere;
+  EXPECT_FALSE(bind::press(page, m, &elsewhere.fState));
+  EXPECT_EQ(m.root().settings.fValue.accounts.size(), 1u);
+}
+}  // namespace
