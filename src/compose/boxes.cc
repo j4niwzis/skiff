@@ -398,6 +398,11 @@ auto projected(Compute compute, N node) {
   return bound<Want>(
       Projected<Compute, N>(std::move(compute), std::move(node)));
 }
+// Visibility projected from a bound part, including a scope or local model.
+template <class Want, class Compute, class N>
+auto shown_for(Compute compute, N node) {
+  return projected<Want>(std::move(compute), ShownBy<N>(std::move(node)));
+}
 template <class N> struct SpecOf : N {
   explicit SpecOf(N node) : N(std::move(node)) {}
   void read(const scene::Spec &spec) { this->apply(spec); }

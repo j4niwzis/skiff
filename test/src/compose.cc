@@ -588,3 +588,17 @@ TEST(Compose, PressFactoryReadsCurrentDataWithoutRebuildingTheNode) {
   EXPECT_EQ(sink.values, (std::vector<int>{1, 2}));
   EXPECT_EQ(button.fState.id(), id);
 }
+
+TEST(Compose, VisibilityProjectionReadsLocalModelFields) {
+  struct Flag { bool on = false; };
+  model::Model<int, bind::NoReactions> model(0);
+  auto node = local<Flag>(shown_for<model::Field<&Flag::on>>(
+      [](bool on) { return on; }, Pad{}), Flag{});
+  bind::Binding<decltype(model)> binding;
+  binding.refresh(node, model);
+  EXPECT_FALSE(node.visible());
+  node.fModel.apply(model::over<model::Field<&Flag::on>>(model::setTo(true)));
+  binding.invalidate();
+  binding.refresh(node, model);
+  EXPECT_TRUE(node.visible());
+}
