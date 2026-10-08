@@ -1518,7 +1518,7 @@ struct HostWork {
   std::optional<std::string> copied;
   std::vector<std::string> links;
   // The nodes pressed that say what a press does by onPress(): for the
-  // program to deliver along their paths (Scene::pathOf) once the dispatch
+  // program to deliver along their paths (Scene::nodesTo) once the dispatch
   // is over (skiff::bind::press), when nothing of it runs.
   std::vector<const State *> pressed;
 };
@@ -6087,11 +6087,19 @@ private:
     walk::update(fRoot, context, {}, nullptr, false);
   }
 
-  // The path to a node, as presses are delivered along it: its place at each
-  // level below the root.
-  [[nodiscard]] bool pathOf(NodeId id, Path &path) {
-    path.clear();
-    return walk::findPath(fRoot, id, path);
+  // The nodes on the way to one, below the root, level by level, each by its
+  // id: what a press is delivered along (skiff::bind::press). None where the
+  // node is not in the tree.
+  [[nodiscard]] std::vector<NodeId> nodesTo(NodeId id) {
+    Path path;
+    if (!walk::findPath(fRoot, id, path)) {
+      return {};
+    }
+    return std::views::iota(std::size_t{1}, path.size() + 1) | std::views::transform([&](std::size_t depth) {
+             const Path upTo(path.begin(), path.begin() + static_cast<std::ptrdiff_t>(depth));
+             return walk::idAt(fRoot, upTo, 0);
+           }) |
+           std::ranges::to<std::vector>();
   }
   [[nodiscard]] bool focusPath(Path &path) {
     if (fFocus == 0) {
