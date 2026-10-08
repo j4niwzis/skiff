@@ -116,7 +116,8 @@ consteval bool walksOf(Rank<5>) {
 }
 template <class T, class... Seen>
   requires(IsBound<T> || IsScoped<T> || IsEach<T> || IsLocal<T> ||
-           EmitsEvents<T> || std::derived_from<T, Emitter>)
+           EmitsEvents<T> || std::derived_from<T, Emitter> ||
+           requires(T &t) { t.takeEvents(); })
 consteval bool walksOf(Rank<4>) {
   return true;
 }

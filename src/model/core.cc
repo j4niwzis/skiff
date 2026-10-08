@@ -89,8 +89,11 @@ template <std::size_t N> struct Name {
   constexpr Name(const char (&text)[N]) { std::ranges::copy(text, fText); }
   friend constexpr bool operator==(const Name &, const Name &) = default;
 };
+// Read and written as its value by knot (json_transparent: nothing of knot
+// is needed to say it), so a setting given its type keeps its JSON.
 template <Name N, class T> struct Named {
   T value{};
+  using json_transparent = void;
   friend constexpr bool operator==(const Named &, const Named &) = default;
 };
 

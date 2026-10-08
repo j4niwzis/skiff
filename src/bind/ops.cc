@@ -130,6 +130,16 @@ template <class M> struct Draining {
   void bound(N &node, const Here &here, const Frames &...frames) {
     auto &asked = asBound(node);
     using Want = decltype(boundToOf(asked));
+    // And what the node itself recorded -- a widget whose own action keeps
+    // what it did (takeChanges()).
+    if constexpr (requires { node.takeChanges(); }) {
+      auto recorded = node.takeChanges();
+      if (!recorded.empty()) {
+        const auto at = where<Want>(here, frames...);
+        for (auto &one : recorded)
+          change(at, one);
+      }
+    }
     if (asked.fChanges.empty())
       return;
     const auto at = where<Want>(here, frames...);
@@ -147,8 +157,16 @@ template <class M> struct Draining {
     for (auto &one : std::exchange(node.fEmitted, {}))
       send(one, frames...);
   }
+  // A widget whose own action keeps the events it sent (takeEvents()).
   template <class N, class Here, class... Frames>
-    requires(!EmitsEvents<N> && std::derived_from<N, Emitter>)
+    requires(!EmitsEvents<N> && requires(N &n) { n.takeEvents(); })
+  void emitted(N &node, const Here &, const Frames &...frames) {
+    for (auto &one : node.takeEvents())
+      send(one, frames...);
+  }
+  template <class N, class Here, class... Frames>
+    requires(!EmitsEvents<N> && !requires(N &n) { n.takeEvents(); } &&
+             std::derived_from<N, Emitter>)
   void emitted(N &node, const Here &, const Frames &...frames) {
     sendDeduced(node, loophole::Deduced<N>{}, frames...);
   }
