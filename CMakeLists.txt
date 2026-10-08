@@ -53,6 +53,13 @@ if(PROJECT_SOURCE_DIR STREQUAL PROJECT_BINARY_DIR)
   message(FATAL_ERROR "In-source builds not allowed.")
 endif()
 
+# What of skiff is built: all of it, or skiff.model alone. Off, there is
+# nothing here that draws -- no Skia, no splice, no scene -- and what is built
+# and installed is skiff::model: the state of a program and its rules, for a
+# build that keeps that state with no window to show it in (a program's
+# headless parts, its tests, a command-line copy of it).
+option(SKIFF_UI "Build the scene, the nodes and their binding, on Skia; off, skiff.model alone" ON)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   set(SKIFF_EMSCRIPTEN TRUE)
 else()
@@ -128,6 +135,7 @@ set(SKIFF_TEXT_SHAPING OFF)
 if("text-shaping" IN_LIST skiff_asked)
   set(SKIFF_TEXT_SHAPING ON)
 endif()
+if(SKIFF_UI)
 find_package(Skia REQUIRED
              COMPONENTS ${skiff_skia_components} ${SKIFF_SKIA_COMPONENTS})
 
@@ -174,6 +182,7 @@ if(ANDROID)
   find_library(SKIFF_GLES_LIBRARY NAMES GLESv3 GLESv2)
 elseif(NOT SKIFF_EMSCRIPTEN)
   find_package(OpenGL)
+endif()
 endif()
 
 # The primary interface unit first, then its partitions. Globbed per
@@ -231,6 +240,7 @@ if(skiff_cxx_standard LESS 26)
   target_link_libraries(skiff_model PUBLIC $<BUILD_INTERFACE:Boost::pfr>)
 endif()
 
+if(SKIFF_UI)
 set(skiff_sources
   ${CMAKE_CURRENT_SOURCE_DIR}/src/skia.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/paint.cc
@@ -316,6 +326,13 @@ endif()
 if(SKIFF_EMSCRIPTEN)
   target_compile_options(${PROJECT_NAME} PRIVATE -fexceptions -pthread -msimd128)
 endif()
+endif()
+set(skiff_targets skiff::model)
+set(skiff_built skiff_model)
+if(SKIFF_UI)
+  list(PREPEND skiff_targets skiff::skiff)
+  list(PREPEND skiff_built ${PROJECT_NAME})
+endif()
 
 # ---- What this library is, said by the library ----
 #
@@ -341,7 +358,7 @@ if(COMMAND cme_declare_port)
     # context of its own, so which backend there is -- Ganesh on GL, Graphite
     # on Vulkan, or none at all -- is decided by the program that draws.
     DEPENDS "skia[freetype]"
-    TARGETS skiff::skiff skiff::model
+    TARGETS ${skiff_targets}
     CHECK_HEADER skiff/skiff.modules
   )
 endif()
@@ -363,7 +380,7 @@ option(SKIFF_INSTALL "Install skiff and its CMake package"
        ${PROJECT_IS_TOP_LEVEL})
 if(SKIFF_INSTALL)
   include(GNUInstallDirs)
-  install(TARGETS ${PROJECT_NAME} skiff_model
+  install(TARGETS ${skiff_built}
     EXPORT skiffTargets
     FILE_SET CXX_MODULES DESTINATION ${CMAKE_INSTALL_LIBDIR}/skiff/modules
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
@@ -381,10 +398,12 @@ if(SKIFF_INSTALL)
   # something makes it -- "links to OpenGL::GL but the target was not
   # found", which is where a consumer of this stopped.
   set(skiff_config "include(CMakeFindDependencyMacro)\n")
+  if(SKIFF_UI)
   string(APPEND skiff_config
     "find_dependency(PkgConfig)\n"
     "pkg_check_modules(SKIA REQUIRED skia)\n")
-  if(NOT ANDROID AND NOT SKIFF_EMSCRIPTEN)
+  endif()
+  if(SKIFF_UI AND NOT ANDROID AND NOT SKIFF_EMSCRIPTEN)
     string(APPEND skiff_config "find_dependency(OpenGL)\n")
   endif()
   # What its module interfaces import and this build made in-tree, found
@@ -395,8 +414,9 @@ if(SKIFF_INSTALL)
   # sources, downloaded. Else what the machine has. Never found, a consumer
   # compiling the installed interfaces stopped at "module 'splice' not
   # found" (and, on C++23, at find_dependency(Boost COMPONENTS pfr)).
+  string(APPEND skiff_config "if(COMMAND cme_find_package)\n")
+  if(SKIFF_UI)
   string(APPEND skiff_config
-    "if(COMMAND cme_find_package)\n"
     "  cme_declare_port(NAME splice PROVIDES splice\n"
     "    GITHUB_REPOSITORY j4niwzis/splice\n"
     "    GIT_TAG ${skiff_splice_tag}\n"
@@ -404,16 +424,21 @@ if(SKIFF_INSTALL)
     "    TARGETS splice)\n"
     "  cme_options(splice \"SPLICE_TESTS OFF\")\n"
     "  cme_find_package(splice REQUIRED)\n")
+  endif()
   if(skiff_cxx_standard LESS 26)
     string(APPEND skiff_config "  cme_find_package(Boost COMPONENTS pfr[modules] REQUIRED)\n")
   endif()
-  string(APPEND skiff_config "else()\n  find_dependency(splice)\n")
+  string(APPEND skiff_config "else()\n")
+  if(SKIFF_UI)
+    string(APPEND skiff_config "  find_dependency(splice)\n")
+  endif()
   if(skiff_cxx_standard LESS 26)
     string(APPEND skiff_config "  find_dependency(Boost COMPONENTS pfr)\n")
   endif()
   string(APPEND skiff_config "endif()\n")
   string(APPEND skiff_config
     "include(\"\${CMAKE_CURRENT_LIST_DIR}/skiffTargets.cmake\")\n")
+  if(SKIFF_UI)
   # And Skia put back on the target, since the exported one carries it only
   # in the build interface. A consumer of this compiles the module interface
   # units that are installed beside it, so it needs Skia's headers, the
@@ -448,6 +473,7 @@ if(SKIFF_INSTALL)
       "             INTERFACE_LINK_LIBRARIES Boost::pfr)\n"
       "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
       "             IMPORTED_CXX_MODULES_LINK_LIBRARIES Boost::pfr)\n")
+  endif()
   endif()
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake" "${skiff_config}")
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake"

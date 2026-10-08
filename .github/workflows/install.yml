@@ -126,6 +126,27 @@ jobs:
           cmake --build build/test
           ctest --test-dir build/test --output-on-failure
 
+      # skiff.model alone, as a build with no window takes it: no Skia, no
+      # splice, nothing that draws -- and still installed as a package.
+      - name: the model alone
+        run: |
+          cmake -S . -B build-model -G Ninja \
+            -DSKIFF_UI=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-22 \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
+            -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
+            -DCME_STORE_ENABLED=ON \
+            -DCME_SOURCES_ENABLED=ON \
+            -DCMAKE_INSTALL_PREFIX="$PWD/prefix-model"
+          cmake --build build-model
+          cmake --install build-model
+          find prefix-model -type f | sort
+          test -f prefix-model/lib/cmake/skiff/skiffTargets.cmake
+          ! grep -q skia prefix-model/lib/cmake/skiff/skiffConfig.cmake
+          ! find prefix-model -name 'libskiff.a' | grep -q .
+
       # What was installed, said out loud: an archive, the module sources a
       # consumer compiles its own interfaces from, a CMake package, and the
       # port declaration that describes this library to whoever answers
