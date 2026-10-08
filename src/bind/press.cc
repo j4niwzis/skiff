@@ -1,5 +1,6 @@
 // skiff.bind:press -- a press delivered along the path to the node pressed:
-// the walk goes down that one path -- the nodes on it, by their ids -- with
+// the walk goes down that one path -- the nodes the press went through --
+// with
 // every type known, gathering the
 // frames around it as the drain does, and what the node's onPress() returns
 // is sent up through them at once (the module is skiff.bind: see bind.cc).
@@ -17,50 +18,52 @@ import :ops;
 export namespace skiff::bind {
 namespace detail {
 
-// ---- the child on the way, by its id ---------------------------------------
+// ---- the child on the way -------------------------------------------------
 //
-// A press's path (scene::Scene::nodesTo) names, level by level, the node
-// the press went into: the child held under that id, however it is held --
-// in an optional, a variant, a list -- with its own type. An erased node is
-// not seen through: a press inside one is not delivered from here.
-using PressPath = std::vector<scene::NodeId>;
+// A press's path (scene::hostWork().pressed) is the nodes the press went
+// through, from the root, by their states: at each level, the child held
+// there, however it is held -- in an optional, a variant, a list -- with its
+// own type. Nothing has moved since: the press is delivered right after the
+// dispatch. An erased node is not seen through: a press inside one is not
+// delivered from here.
+using PressPath = std::vector<const scene::State *>;
 
-template <class F> bool pressFind(std::monostate &, scene::NodeId, F &&) { return false; }
-template <class... Ts, class F> bool pressFind(spl::variant<Ts...> &held, scene::NodeId id, F &&f) {
+template <class F> bool pressFind(std::monostate &, const scene::State *, F &&) { return false; }
+template <class... Ts, class F> bool pressFind(spl::variant<Ts...> &held, const scene::State *id, F &&f) {
   return spl::visit([&](auto &one) { return pressFind(one, id, f); }, held);
 }
 template <class V, class F>
   requires(scene::one_of_several<V> && !std::derived_from<V, scene::Node>)
-bool pressFind(V &held, scene::NodeId id, F &&f) {
+bool pressFind(V &held, const scene::State *id, F &&f) {
   bool found = false;
   held.visit([&](auto &one) { found = pressFind(one, id, f); });
   return found;
 }
-template <class T, class F> bool pressFind(std::optional<T> &held, scene::NodeId id, F &&f) {
+template <class T, class F> bool pressFind(std::optional<T> &held, const scene::State *id, F &&f) {
   return held && pressFind(*held, id, f);
 }
-template <class T, class D, class F> bool pressFind(std::unique_ptr<T, D> &held, scene::NodeId id, F &&f) {
+template <class T, class D, class F> bool pressFind(std::unique_ptr<T, D> &held, const scene::State *id, F &&f) {
   return held && pressFind(*held, id, f);
 }
-template <class T, class F> bool pressFind(std::shared_ptr<T> &held, scene::NodeId id, F &&f) {
+template <class T, class F> bool pressFind(std::shared_ptr<T> &held, const scene::State *id, F &&f) {
   return held && pressFind(*held, id, f);
 }
-template <class T, class F> bool pressFind(std::reference_wrapper<T> &held, scene::NodeId id, F &&f) {
+template <class T, class F> bool pressFind(std::reference_wrapper<T> &held, const scene::State *id, F &&f) {
   return pressFind(held.get(), id, f);
 }
-template <class... Ts, class F> bool pressFind(std::tuple<Ts...> &held, scene::NodeId id, F &&f) {
+template <class... Ts, class F> bool pressFind(std::tuple<Ts...> &held, const scene::State *id, F &&f) {
   return std::apply([&](auto &...each) { return (pressFind(each, id, f) || ...); }, held);
 }
-template <class F> bool pressFind(scene::AnyNode &, scene::NodeId, F &&) { return false; }
+template <class F> bool pressFind(scene::AnyNode &, const scene::State *, F &&) { return false; }
 template <class R, class F>
   requires(std::ranges::range<R> && !scene::kTreatAsNode<R> && !std::derived_from<R, scene::Node>)
-bool pressFind(R &held, scene::NodeId id, F &&f) {
+bool pressFind(R &held, const scene::State *id, F &&f) {
   return std::ranges::any_of(held, [&](auto &each) { return pressFind(each, id, f); });
 }
 template <class N, class F>
   requires(std::derived_from<N, scene::Node> || scene::kTreatAsNode<N>)
-bool pressFind(N &held, scene::NodeId id, F &&f) {
-  if (held.fState.fId != id)
+bool pressFind(N &held, const scene::State *id, F &&f) {
+  if (&held.fState != id)
     return false;
   f(held);
   return true;
@@ -77,7 +80,7 @@ template <class Op, class N, class Here, class... Frames>
   requires IsEach<N>
 void pressRows(Op &op, N &node, const PressPath &path, std::size_t at, const Here &here, const Frames &...frames) {
   auto &list = asEach(node);
-  const auto row_at = std::ranges::find(list.fRows, path[at], [](const auto &row) { return row.fState.fId; });
+  const auto row_at = std::ranges::find(list.fRows, path[at], [](const auto &row) { return &row.fState; });
   if (row_at == list.fRows.end())
     return;
   const auto i = static_cast<std::size_t>(row_at - list.fRows.begin());
@@ -188,18 +191,20 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
 
 }  // namespace detail
 
-// A press, delivered: down `path` from `root` -- the nodes the scene found
-// on the way to the one pressed (Scene::nodesTo), by their ids -- to that
-// node, whose onPress() says
+// A press, delivered: down `path` from `root` -- the nodes the press went
+// through, from the root, as the scene kept them (hostWork().pressed) -- to
+// the node pressed, whose onPress() says
 // what it asks for; that sent at once up the frames around it, as an event
 // a node emits: to the first scope, Local or pipe that takes it, else to the
 // model's reactions, else to the program's sink. The edits it makes, one
 // batch.
 template <class M, class N, class S = detail::NoSink>
 bool press(N &root, M &model, const detail::PressPath &path, S *sink = nullptr) {
+  if (path.empty() || path.front() != &root.fState)
+    return false;
   model.beginBatch();
   detail::Pressing<M, S> op{{model, sink}};
-  detail::pressNode(op, root, path, 0, model::Place<typename M::RootType, model::Path<>>{});
+  detail::pressNode(op, root, path, 1, model::Place<typename M::RootType, model::Path<>>{});
   model.endBatch();
   return op.fReached;
 }

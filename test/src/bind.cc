@@ -216,16 +216,17 @@ TEST(Bind, APressIsDeliveredAlongItsPathAndTakenByTheRowsScope) {
   Model m = twoAccounts();
   Page page;
   bind::refresh(page, m);
-  // The page's list, its second row, the row's press: the nodes the scene
-  // finds on the way to it, by their ids.
+  // The page, its list, its second row, the row's press: the nodes the
+  // press went through, as the scene keeps them.
   auto &list = page.parts.accounts;
   auto &row = list.fRows[1];
-  EXPECT_TRUE(bind::press(page, m, {list.fState.fId, row.fState.fId, row.parts.press.fState.fId}));
+  EXPECT_TRUE(bind::press(page, m, {&page.fState, &list.fState, &row.fState, &row.parts.press.fState}));
   EXPECT_EQ(row.parts.press.fPressed, 1);
   ASSERT_EQ(m.root().settings.fValue.accounts.size(), 1u);
   EXPECT_TRUE(m.root().settings.fValue.accounts.contains("@a:x.org"));
   // A path that leads nowhere: nothing pressed, nothing sent.
-  EXPECT_FALSE(bind::press(page, m, {list.fState.fId, scene::NodeId{0}}));
+  scene::Node elsewhere;
+  EXPECT_FALSE(bind::press(page, m, {&page.fState, &list.fState, &elsewhere.fState}));
   EXPECT_EQ(m.root().settings.fValue.accounts.size(), 1u);
 }
 }  // namespace

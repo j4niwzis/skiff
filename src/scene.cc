@@ -1517,10 +1517,11 @@ struct HostWork {
   std::optional<skia::SkRect> typingAt;
   std::optional<std::string> copied;
   std::vector<std::string> links;
-  // The nodes pressed that say what a press does by onPress(): for the
-  // program to deliver along their paths (Scene::nodesTo) once the dispatch
-  // is over (skiff::bind::press), when nothing of it runs.
-  std::vector<const State *> pressed;
+  // The nodes pressed that say what a press does by onPress(), each by the
+  // nodes the press went through to it, from the root (their states): for
+  // the program to deliver along them once the dispatch is over
+  // (skiff::bind::press), when nothing of it runs -- and nothing has moved.
+  std::vector<std::vector<const State *>> pressed;
 };
 inline HostWork &hostWork() {
   static HostWork kept;
@@ -1532,11 +1533,28 @@ inline HostWork &hostWork() {
 // says it was pressed, once.
 template <class A>
 concept Answering = requires { typename A::Answer; };
+// The nodes an event is being routed through, from the root down: kept as
+// it goes, for a press to be delivered along the same nodes.
+inline std::vector<const State *> &routeStack() {
+  static std::vector<const State *> kept;
+  return kept;
+}
+struct RouteStep {
+  explicit RouteStep(const State &state) { routeStack().push_back(&state); }
+  ~RouteStep() { routeStack().pop_back(); }
+  RouteStep(const RouteStep &) = delete;
+  RouteStep &operator=(const RouteStep &) = delete;
+};
 inline void pressLater(State &state) {
   auto &pressed = hostWork().pressed;
-  if (pressed.empty() || pressed.back() != &state) {
-    pressed.push_back(&state);
+  if (!pressed.empty() && !pressed.back().empty() && pressed.back().back() == &state) {
+    return;
   }
+  std::vector<const State *> way = routeStack();
+  if (way.empty() || way.back() != &state) {
+    way.push_back(&state);
+  }
+  pressed.push_back(std::move(way));
 }
 // The system's clipboard as the host last read it: what a paste puts in.
 inline std::string &clipboardContents() {
@@ -3326,7 +3344,7 @@ struct Node {
   [[nodiscard]] bool onClick(this auto &self, float, float)
     requires requires { self.onPress(); }
   {
-    hostWork().pressed.push_back(&self.fState);
+    pressLater(self.fState);
     return true;
   }
   [[nodiscard]] bool onClick(this auto &, float, float) { return false; }
@@ -4657,6 +4675,7 @@ void routePointer(N &child, const Path &path, std::size_t at,
                   const PointerEvent &given, PointerReply &reply, Routed &routed,
                   bool targetOnly) {
   State &state = child.fState;
+  const RouteStep step{state};
   // In the space this is laid out in: moved back by its shift. Most nodes
   // have none, and are given the event as it is.
   const bool shifted = state.fShiftX != 0.0f || state.fShiftY != 0.0f;
@@ -4701,6 +4720,7 @@ void routePointer(N &child, const Path &path, std::size_t at,
 template <class N, class Input, class Deliver>
 void route(N &child, const Path &path, std::size_t at, const Input &input,
            Reply &reply, Deliver deliver) {
+  const RouteStep step{child.fState};
   const auto phaseOf = [&](const auto &when) {
     reply.fCurrent = child.fState.fId;
     deliver(child, when, input, reply);
@@ -4981,6 +5001,7 @@ template <class N> bool animating(N &child) {
 // not take it, to each node above in turn.
 template <class N>
 bool clickPath(N &child, const Path &path, std::size_t at, float x, float y) {
+  const RouteStep step{child.fState};
   x -= child.fState.fShiftX;
   y -= child.fState.fShiftY;
   bool taken = false;
@@ -6087,20 +6108,6 @@ private:
     walk::update(fRoot, context, {}, nullptr, false);
   }
 
-  // The nodes on the way to one, below the root, level by level, each by its
-  // id: what a press is delivered along (skiff::bind::press). None where the
-  // node is not in the tree.
-  [[nodiscard]] std::vector<NodeId> nodesTo(NodeId id) {
-    Path path;
-    if (!walk::findPath(fRoot, id, path)) {
-      return {};
-    }
-    return std::views::iota(std::size_t{1}, path.size() + 1) | std::views::transform([&](std::size_t depth) {
-             const Path upTo(path.begin(), path.begin() + static_cast<std::ptrdiff_t>(depth));
-             return walk::idAt(fRoot, upTo, 0);
-           }) |
-           std::ranges::to<std::vector>();
-  }
   [[nodiscard]] bool focusPath(Path &path) {
     if (fFocus == 0) {
       return false;
