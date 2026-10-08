@@ -1526,6 +1526,18 @@ inline HostWork &hostWork() {
   static HostWork kept;
   return kept;
 }
+// An action that answers -- returns what a press asks for, as its type says
+// (Answer) -- is asked when the press is delivered (a node's onPress(),
+// through skiff::bind::press), not where the press is handled: the node
+// says it was pressed, once.
+template <class A>
+concept Answering = requires { typename A::Answer; };
+inline void pressLater(State &state) {
+  auto &pressed = hostWork().pressed;
+  if (pressed.empty() || pressed.back() != &state) {
+    pressed.push_back(&state);
+  }
+}
 // The system's clipboard as the host last read it: what a paste puts in.
 inline std::string &clipboardContents() {
   static std::string kept;
