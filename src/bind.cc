@@ -3,11 +3,11 @@
 // What a node is to the model is said by what it derives from; everything
 // else is walked through as it is:
 //
-//   Bound<Want, Node, Changes...>  shows the one Want where it is found --
-//       in the state of a Local around it, else below the scope it is in:
-//       read(const Want &) when first seen and whenever its revision moves,
-//       gone() where it is not there (a key no longer in its list). What it
-//       asks to change -- change(flip) -- is applied where it is found.
+//   Bound<Want, Node>  shows the one Want where it is found -- in the state
+//       of a Local around it, else below the scope it is in: read(const
+//       Want &) when first seen and whenever its revision moves, gone()
+//       where it is not there (a key no longer in its list). What a press
+//       of it changes -- onPress() answering own(flip) -- is made there.
 //   Scoped<Within, Handlers, Node, Keys...>  narrows what is below it to the
 //       one Within below the scope around it, through the keys it holds; and
 //       takes, by Handlers' on() overloads, the events sent from within.

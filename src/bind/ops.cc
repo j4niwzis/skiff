@@ -133,27 +133,6 @@ template <class M, class Sink = NoSink> struct Draining {
   Sink *fSink = nullptr;
 
   template <class N, class Here, class... Frames>
-    requires(IsBound<N> && (kOfModel<typename M::RootType, N> || (kInLocal<N, Frames> || ...)))
-  void bound(N &node, const Here &here, const Frames &...frames) {
-    auto &asked = asBound(node);
-    using Want = decltype(boundToOf(asked));
-    // And what the node itself recorded -- a widget whose own action keeps
-    // what it did (takeChanges()).
-    if constexpr (requires { node.takeChanges(); }) {
-      auto recorded = node.takeChanges();
-      if (!recorded.empty()) {
-        const auto at = where<Want>(here, frames...);
-        for (auto &one : recorded)
-          change(at, one);
-      }
-    }
-    if (asked.fChanges.empty())
-      return;
-    const auto at = where<Want>(here, frames...);
-    for (auto &one : std::exchange(asked.fChanges, {}))
-      change(at, one);
-  }
-  template <class N, class Here, class... Frames>
   void bound(N &, const Here &, const Frames &...) {}
 
   template <class N> void itself(N &) {}

@@ -68,10 +68,12 @@ struct Switch : scene::Node {
     fOn = now.on;
     ++fReads;
   }
+  auto onPress() { return bind::own(model::flip); }
 };
 struct Chevron : scene::Node {
   bool fOpen = false;
   template <class T> void read(const T &now) { fOpen = now.on; }
+  auto onPress() { return bind::own(model::flip); }
 };
 struct Label : scene::Node {
   std::string fText;
@@ -101,8 +103,8 @@ auto accountRow() {
       accountEvents(),
       local<Expanded>(
           column(row(bound<DisplayName>(Label{}),
-                     bound<Expanded, model::Flip>(Chevron{})),
-                 bound<ReadReceipts, model::Flip>(Switch{}),
+                     bound<Expanded>(Chevron{})),
+                 bound<ReadReceipts>(Switch{}),
                  onClick(Removed{}, Pad{}))));
 }
 auto accountsPage() {
@@ -122,6 +124,9 @@ auto &chevronOf(auto &row) {
 auto &switchOf(auto &row) { return std::get<1>(rowColumn(row).fParts); }
 auto &removeOf(auto &row) { return std::get<2>(rowColumn(row).fParts); }
 auto &rowsOf(Page &page) { return std::get<0>(page.fParts).fRows; }
+// Where they are, to press: the list, the row, then down its column.
+scene::Path chevronAt(std::uint32_t row) { return {0, row, 0, 1}; }
+scene::Path switchAt(std::uint32_t row) { return {0, row, 1}; }
 
 TEST(Compose, APageWrittenAsAnExpressionShowsTheModel) {
   Model m = twoAccounts();
@@ -141,8 +146,7 @@ TEST(Compose, LocalStateIsEachRowsOwnAndTellsNoOne) {
   bind::refresh(page, m);
   auto &rows = rowsOf(page);
   const auto before = m.revision();
-  chevronOf(rows[1]).change(model::flip);
-  bind::drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, chevronAt(1)));
   bind::refresh(page, m);
   EXPECT_FALSE(chevronOf(rows[0]).fOpen);
   EXPECT_TRUE(chevronOf(rows[1]).fOpen);
@@ -296,10 +300,8 @@ TEST(Compose, ABindingDoesOnlyWhatCanHaveHappened) {
   auto &rows = rowsOf(page);
   EXPECT_EQ(switchOf(rows[0]).fReads, 1);
   binding.refresh(page, m);
-  binding.drain(page, m);
   EXPECT_EQ(switchOf(rows[0]).fReads, 1);
-  switchOf(rows[0]).change(model::flip);
-  binding.drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, switchAt(0)));
   binding.refresh(page, m);
   EXPECT_EQ(switchOf(rows[0]).fReads, 2);
   EXPECT_EQ(switchOf(rows[1]).fReads, 1);  // its scope's part did not move
@@ -335,8 +337,7 @@ TEST(Compose, ALocalChangeGoesOnlyToItsLocal) {
   binding.refresh(page, m);
   auto &rows = rowsOf(page);
   const int before0 = switchOf(rows[0]).fReads;
-  chevronOf(rows[1]).change(model::flip);
-  binding.drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, chevronAt(1)));
   binding.refresh(page, m);
   EXPECT_TRUE(chevronOf(rows[1]).fOpen);
   EXPECT_FALSE(chevronOf(rows[0]).fOpen);

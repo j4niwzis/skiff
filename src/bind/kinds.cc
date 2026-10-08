@@ -112,28 +112,16 @@ template <class C, class... E> consteval bool deduce() {
   return (loophole::record<C, E>() && ...);
 }
 
-template <class... Changes> struct ChangesOf {
-  using type = std::vector<spl::variant<Changes...>>;
-};
-template <> struct ChangesOf<> {
-  using type = std::vector<model::Nothing>;
-};
-
-template <class Want, class Base, class... Changes>
+// A node shown the one Want where it is found; what it changes of it, its
+// answers to presses say (Own<change>).
+template <class Want, class Base>
 struct Bound : Base {
   using BoundTo = Want;
   Bound() = default;
   explicit Bound(Base base) : Base(std::move(base)) {}
-  typename ChangesOf<Changes...>::type fChanges;
   model::Revision fSeen = 0;
   bool fShown = false;
   bool fGone = false;
-
-  // A change of the part it shows, made at the next drain.
-  template <class C> void change(C change) {
-    fChanges.emplace_back(std::move(change));
-    ++pendingCount();
-  }
 };
 
 // A node shown a value computed from the model -- a list sorted and
@@ -251,8 +239,8 @@ struct Local : Base {
 };
 
 namespace detail {
-template <class W, class B, class... C>
-std::true_type boundTest(const Bound<W, B, C...> *);
+template <class W, class B>
+std::true_type boundTest(const Bound<W, B> *);
 std::false_type boundTest(const void *);
 template <class W, class H, class B, class... K>
 std::true_type scopedTest(const Scoped<W, H, B, K...> *);
@@ -293,8 +281,7 @@ concept ReadsItself = requires(N &n, const M &m) { n.refresh(m); };
 
 namespace detail {
 // A node as the kind it derives from: deduced through the base.
-template <class W, class B, class... C>
-Bound<W, B, C...> &asBound(Bound<W, B, C...> &node) {
+template <class W, class B> Bound<W, B> &asBound(Bound<W, B> &node) {
   return node;
 }
 template <class W, class H, class B, class... K>
@@ -309,7 +296,7 @@ template <class T, class H, class B, bool D>
 Local<T, H, B, D> &asLocal(Local<T, H, B, D> &node) {
   return node;
 }
-template <class W, class B, class... C> W boundToOf(const Bound<W, B, C...> &);
+template <class W, class B> W boundToOf(const Bound<W, B> &);
 template <class W, class H, class B, class... K>
 W scopeOfOf(const Scoped<W, H, B, K...> &);
 template <class W, class H, class B, class... K>

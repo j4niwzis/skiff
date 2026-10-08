@@ -199,7 +199,7 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
   // An answer at its node: a change of the node's own part made where the
   // part is found; else sent up the frames.
   template <class N, class Here, class C, class... Frames>
-    requires(IsBound<N> && kOfModel<typename M::RootType, N>)
+    requires(IsBound<N> && (kOfModel<typename M::RootType, N> || (kInLocal<N, Frames> || ...)))
   void answerAt(N &node, const Here &here, const Own<C> &own, const Frames &...frames) {
     using Want = decltype(boundToOf(asBound(node)));
     this->change(where<Want>(here, frames...), own.fChange);

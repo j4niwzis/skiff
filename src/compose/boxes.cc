@@ -65,9 +65,8 @@ Box<Parts...> row(Parts... parts) {
 
 // ---- the model's kinds, around a node ------------------------------------
 
-template <class Want, class... Changes, class N>
-bind::Bound<Want, N, Changes...> bound(N node) {
-  return bind::Bound<Want, N, Changes...>(std::move(node));
+template <class Want, class N> bind::Bound<Want, N> bound(N node) {
+  return bind::Bound<Want, N>(std::move(node));
 }
 // A node shown what Compute makes of the model, as the parts it reads move.
 template <class... Reads, class Compute, class N>

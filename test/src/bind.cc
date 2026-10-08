@@ -51,6 +51,8 @@ struct Switch : scene::Node {
     fOn = now.on;
     ++fReads;
   }
+  // Pressed: flipped, where it is bound.
+  auto onPress() { return bind::own(model::flip); }
 };
 struct Label : scene::Node {
   std::string fText;
@@ -60,7 +62,7 @@ struct Label : scene::Node {
 };
 struct Removed {};
 struct RemoveButton : scene::Node {
-  std::vector<Removed> fEmitted;
+  Removed onPress() { return {}; }
 };
 // One whose key handler returns what it asks for.
 struct KeyRemove : scene::Node {
@@ -91,7 +93,7 @@ struct AccountEvents {
 struct AccountRow : bind::Scoped<AccountT, AccountEvents, scene::Node> {
   struct parts_t {
     bind::Bound<DisplayName, Label> name;
-    bind::Bound<ReadReceipts, Switch, model::Flip> receipts;
+    bind::Bound<ReadReceipts, Switch> receipts;
     RemoveButton remove;
     PressRemove press;
     KeyRemove key;
@@ -128,8 +130,7 @@ TEST(Bind, AChangeIsMadeWhereTheNodeIsAndOnlyItsRowReadsAgain) {
   Page page;
   bind::refresh(page, m);
   auto &rows = page.parts.accounts.fRows;
-  rows[0].parts.receipts.change(model::flip);
-  bind::drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, scene::Path{0, 0, 1}));
   const auto a = m.look(model::placeOf<ReadReceipts, Root>(std::string("@a:x.org")));
   ASSERT_TRUE(a);
   EXPECT_FALSE(a->on);
@@ -145,8 +146,7 @@ TEST(Bind, AnEventIsTakenByTheRowsScope) {
   Model m = twoAccounts();
   Page page;
   bind::refresh(page, m);
-  page.parts.accounts.fRows[1].parts.remove.fEmitted.push_back(Removed{});
-  bind::drain(page, m);
+  EXPECT_TRUE(bind::press(page, m, scene::Path{0, 1, 2}));
   EXPECT_EQ(m.root().settings.fValue.accounts.size(), 1u);
   bind::refresh(page, m);
   ASSERT_EQ(page.parts.accounts.fRows.size(), 1u);
@@ -158,7 +158,7 @@ struct Opened {
   int which = 0;
 };
 struct OpenButton : scene::Node {
-  std::vector<Opened> fEmitted;
+  Opened onPress() { return {7}; }
 };
 struct Window : scene::Node {
   struct parts_t {
@@ -173,8 +173,7 @@ TEST(Bind, AnEventNothingTakesGoesToTheProgramsSink) {
   Model m = twoAccounts();
   Window window;
   Program program;
-  window.parts.open.fEmitted.push_back(Opened{7});
-  bind::drain(window, m, &program);
+  EXPECT_TRUE(bind::press(window, m, scene::Path{0}, &program));
   ASSERT_EQ(program.opened.size(), 1u);
   EXPECT_EQ(program.opened[0], 7);
 }
@@ -195,7 +194,7 @@ struct VolumeLabel : scene::Node {
 };
 struct TwoModels : scene::Node {
   struct parts_t {
-    bind::Bound<ReadReceipts, Switch, model::Flip> receipts;
+    bind::Bound<ReadReceipts, Switch> receipts;
     bind::Bound<Volume, VolumeLabel> volume;
   } parts;
 };
