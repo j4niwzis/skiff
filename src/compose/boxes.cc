@@ -113,6 +113,14 @@ template <class N> Ticking<N> keep_ticking(bool on, N node) {
   return Ticking<N>(on, std::move(node));
 }
 
+// A subtree whose drawing can be replayed until it is damaged.
+template <class N>
+  requires std::derived_from<N, scene::Node>
+N recorded(N node, bool on = true) {
+  node.fState.setRecorded(on);
+  return node;
+}
+
 // A node with its spec applied: a leaf said as it is put in its place.
 template <class N>
   requires std::derived_from<N, scene::Node>
