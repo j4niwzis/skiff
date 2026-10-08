@@ -31,6 +31,10 @@ struct Bound : Base {
   using BoundTo = Want;
   Bound() = default;
   explicit Bound(Base base) : Base(std::move(base)) {}
+  // Made in place, where it is held by what makes its parts from arguments.
+  template <class... Args>
+    requires std::constructible_from<Base, Args...>
+  explicit Bound(std::in_place_t, Args &&...args) : Base(std::forward<Args>(args)...) {}
   model::Revision fSeen = 0;
   bool fShown = false;
   bool fGone = false;
