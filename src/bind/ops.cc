@@ -253,7 +253,7 @@ template <class M, class Sink = NoSink> struct Draining {
     route(event, rest...);
   }
 
-private:
+protected:
   // Changes made where the part is found.
   template <class At> void change(const At &, const model::Nothing &) {}
   template <class At, class... C>

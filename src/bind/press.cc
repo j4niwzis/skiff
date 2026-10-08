@@ -14,6 +14,15 @@ import :walk;
 import :ops;
 
 export namespace skiff::bind {
+
+// A change of the part a bound node shows, as what its press answers: made
+// where the part is found -- in a Local around it, else below its scope --
+// as the press is answered. What a model widget answers with.
+template <class C> struct Own {
+  C fChange;
+};
+template <class C> Own<C> own(C change) { return {std::move(change)}; }
+
 namespace detail {
 
 // ---- the child at a place, as the scene counts them ------------------------
@@ -122,7 +131,7 @@ template <class Op, class N, class Here, class... Frames>
 void pressBody(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
   if (at == path.size()) {
     op.fReached = true;
-    op.pressed(node, frames...);
+    op.pressed(node, here, frames...);
     return;
   }
   pressRows(op, node, path, at, here, frames...);
@@ -172,18 +181,35 @@ concept Presses = requires(N &n) { n.onPress(); } && !PressesNothing<N>;
 
 template <class M, class Sink> struct Pressing : Draining<M, Sink> {
   bool fReached = false;
-  template <class N, class... Frames>
+  template <class N, class Here, class... Frames>
     requires PressesNothing<N>
-  void pressed(N &node, const Frames &...) {
+  void pressed(N &node, const Here &, const Frames &...) {
     node.onPress();
   }
-  template <class N, class... Frames>
+  template <class N, class Here, class... Frames>
     requires Presses<N>
-  void pressed(N &node, const Frames &...frames) {
-    this->sendAll(node.onPress(), frames...);
+  void pressed(N &node, const Here &here, const Frames &...frames) {
+    this->answerAt(node, here, node.onPress(), frames...);
   }
   // Pressed, but saying nothing of what a press does: the scene's own.
-  template <class N, class... Frames> void pressed(N &, const Frames &...) {}
+  template <class N, class Here, class... Frames> void pressed(N &, const Here &, const Frames &...) {}
+
+  // An answer at its node: a change of the node's own part made where the
+  // part is found; else sent up the frames.
+  template <class N, class Here, class C, class... Frames>
+  void answerAt(N &node, const Here &here, const Own<C> &own, const Frames &...frames) {
+    using Want = decltype(boundToOf(asBound(node)));
+    this->change(where<Want>(here, frames...), own.fChange);
+  }
+  template <class N, class Here, class A, class... Frames>
+  void answerAt(N &node, const Here &here, const std::optional<A> &answer, const Frames &...frames) {
+    if (answer)
+      this->answerAt(node, here, *answer, frames...);
+  }
+  template <class N, class Here, class A, class... Frames>
+  void answerAt(N &, const Here &, const A &answer, const Frames &...frames) {
+    this->sendAll(answer, frames...);
+  }
 
   template <class... Frames> void sendAll(model::Nothing, const Frames &...) {}
   template <class... Frames> void sendAll(scene::Taken, const Frames &...) {}
@@ -207,13 +233,13 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
 // of the node's own Answer, as it was kept -- sent up the frames there.
 template <class M, class Sink> struct Answering : Pressing<M, Sink> {
   const scene::HostWork::KeptAnswer *fKept = nullptr;
-  template <class N, class... Frames>
+  template <class N, class Here, class... Frames>
     requires requires { typename N::Answer; }
-  void pressed(N &, const Frames &...frames) {
+  void pressed(N &node, const Here &here, const Frames &...frames) {
     if (fKept->type == &scene::kTypeKey<typename N::Answer>)
-      this->sendAll(*static_cast<const typename N::Answer *>(fKept->answer.get()), frames...);
+      this->answerAt(node, here, *static_cast<const typename N::Answer *>(fKept->answer.get()), frames...);
   }
-  template <class N, class... Frames> void pressed(N &, const Frames &...) {}
+  template <class N, class Here, class... Frames> void pressed(N &, const Here &, const Frames &...) {}
 };
 }  // namespace detail
 
@@ -423,7 +449,7 @@ bool answerPress(N &node, const C &carried) {
   M &model = *root.fModel;
   model.beginBatch();
   detail::Pressing<M, S> op{{model, root.fSink}};
-  detail::framesOf(carried, [&](const auto &...frames) { op.pressed(node, frames...); });
+  detail::framesOf(carried, [&](const auto &...frames) { op.pressed(node, detail::hereOf(carried), frames...); });
   model.endBatch();
   return true;
 }
@@ -432,7 +458,7 @@ bool answerPress(N &node, const C &carried) {
 // node, in a release build.
 template <class N, class A, class C>
   requires detail::IsCarry<C>
-void answerWith(N &, const A &answer, const C &carried) {
+void answerWith(N &node, const A &answer, const C &carried) {
   const auto &root = detail::rootOf(carried);
   if (root.fModel == nullptr)
     return;
@@ -441,7 +467,7 @@ void answerWith(N &, const A &answer, const C &carried) {
   M &model = *root.fModel;
   model.beginBatch();
   detail::Pressing<M, S> op{{model, root.fSink}};
-  detail::framesOf(carried, [&](const auto &...frames) { op.sendAll(answer, frames...); });
+  detail::framesOf(carried, [&](const auto &...frames) { op.answerAt(node, detail::hereOf(carried), answer, frames...); });
   model.endBatch();
 }
 
