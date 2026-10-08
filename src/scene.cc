@@ -1535,6 +1535,28 @@ inline HostWork &hostWork() {
 template <class A>
 concept Answering = requires { typename A::Answer; };
 inline void pressLater(State &state) { hostWork().pressedNow = &state; }
+// What a routing carries down to its target, for a press to be answered
+// where it is made -- in a release build, where the routing is static: what
+// binds the tree extends it at each node it binds (skiff::bind's carryInto,
+// found by the carried type); nothing by default, nor past an erased node.
+struct NoCarry {};
+template <class P, class N, class C>
+[[nodiscard]] const C &carryInto(P &, N &, const C &carried) {
+  return carried;
+}
+// A press answered where it is made, with what was carried down to it
+// (skiff::bind's answerPress): whether it was. By default it is not: it is
+// kept, by its path, for the program to deliver.
+template <class N, class C>
+bool answerPress(N &, const C &) {
+  return false;
+}
+// What a routing starts with at the root: what the program says for its
+// root's type (startCarry, found by that type); nothing by default.
+template <class R>
+[[nodiscard]] NoCarry startCarry(R &) {
+  return {};
+}
 // The system's clipboard as the host last read it: what a paste puts in.
 inline std::string &clipboardContents() {
   static std::string kept;
@@ -4649,10 +4671,39 @@ template <class N> NodeId idAt(N &child, const Path &path, std::size_t at) {
 
 // Capture on the way down, the target at the end of the path, bubble on the
 // way back up. `targetOnly` delivers to the end of the path alone.
+// A press the node just answered by saying so (pressLater), answered here,
+// with what was carried down to it, where that can: then not kept.
+template <class N, class C> void answerHere(N &child, const C &carried) {
+  if (hostWork().pressedNow == &child.fState && answerPress(child, carried)) {
+    hostWork().pressedNow = nullptr;
+  }
+}
+template <class N, class C>
+void routePointer(N &child, const Path &path, std::size_t at,
+                  const PointerEvent &given, PointerReply &reply, Routed &routed,
+                  bool targetOnly, const C &carried);
+// Down to a child, with what is carried extended at it; an erased one is
+// seen through its table, and nothing is carried past it.
+template <class P, class N, class C>
+void routeOn(P &parent, N &each, const Path &path, std::size_t at, const PointerEvent &input, PointerReply &reply,
+             Routed &routed, bool targetOnly, const C &carried) {
+  walk::routePointer(each, path, at, input, reply, routed, targetOnly, carryInto(parent, each, carried));
+}
+template <class P, class C>
+void routeOn(P &, AnyNodeRef &each, const Path &path, std::size_t at, const PointerEvent &input, PointerReply &reply,
+             Routed &routed, bool targetOnly, const C &) {
+  walk::routePointer(each, path, at, input, reply, routed, targetOnly);
+}
 template <class N>
 void routePointer(N &child, const Path &path, std::size_t at,
                   const PointerEvent &given, PointerReply &reply, Routed &routed,
                   bool targetOnly) {
+  walk::routePointer(child, path, at, given, reply, routed, targetOnly, NoCarry{});
+}
+template <class N, class C>
+void routePointer(N &child, const Path &path, std::size_t at,
+                  const PointerEvent &given, PointerReply &reply, Routed &routed,
+                  bool targetOnly, const C &carried) {
   State &state = child.fState;
   // In the space this is laid out in: moved back by its shift. Most nodes
   // have none, and are given the event as it is.
@@ -4680,6 +4731,7 @@ void routePointer(N &child, const Path &path, std::size_t at,
       routed.fTargetDelivered = true;
       routed.fTargetFocusable = child.focusable() && child.takesFocusOnPress();
       deliver(phase::target{});
+      answerHere(child, carried);
     }
     return;
   }
@@ -4687,7 +4739,7 @@ void routePointer(N &child, const Path &path, std::size_t at,
     deliver(phase::capture{});
   }
   childAt(child, path[at], [&](auto &each) {
-    walk::routePointer(each, path, at + 1, input, reply, routed, targetOnly);
+    routeOn(child, each, path, at + 1, input, reply, routed, targetOnly, carried);
   });
   if (!targetOnly && !reply.fHandled) {
     deliver(phase::bubble{});
@@ -4976,18 +5028,38 @@ template <class N> bool animating(N &child) {
 
 // A click told straight to the node at the end of a path and, when it does
 // not take it, to each node above in turn.
+template <class N, class C>
+bool clickPath(N &child, const Path &path, std::size_t at, float x, float y, const C &carried);
+template <class P, class N, class C>
+bool clickOn(P &parent, N &each, const Path &path, std::size_t at, float x, float y, const C &carried) {
+  return walk::clickPath(each, path, at, x, y, carryInto(parent, each, carried));
+}
+template <class P, class C>
+bool clickOn(P &, AnyNodeRef &each, const Path &path, std::size_t at, float x, float y, const C &) {
+  return walk::clickPath(each, path, at, x, y);
+}
 template <class N>
 bool clickPath(N &child, const Path &path, std::size_t at, float x, float y) {
+  return walk::clickPath(child, path, at, x, y, NoCarry{});
+}
+template <class N, class C>
+bool clickPath(N &child, const Path &path, std::size_t at, float x, float y, const C &carried) {
   x -= child.fState.fShiftX;
   y -= child.fState.fShiftY;
   bool taken = false;
   if (at < path.size()) {
     childAt(child, path[at], [&](auto &each) {
-      taken = walk::clickPath(each, path, at + 1, x, y);
+      taken = clickOn(child, each, path, at + 1, x, y, carried);
     });
   }
-  return taken ||
-         (child.fState.fBounds.contains(x, y) && child.onClick(x, y));
+  if (taken) {
+    return true;
+  }
+  if (child.fState.fBounds.contains(x, y) && child.onClick(x, y)) {
+    answerHere(child, carried);
+    return true;
+  }
+  return false;
 }
 
 } // namespace walk
@@ -5816,14 +5888,15 @@ public:
     reply.fTarget = target;
     reply.fCaptured = fCapture != 0;
     Routed routed;
-    walk::routePointer(fRoot, path, 0, input, reply, routed, false);
+    const auto carried = startCarry(fRoot);
+    walk::routePointer(fRoot, path, 0, input, reply, routed, false, carried);
     // A click the target did not take: to the nodes above it, in turn.
     if (reply.fClickAbove) {
       // Said by the target where it is laid out; the walk down from the root
       // takes the point where it is on the screen: the target's and its
       // ancestors' shifts put back -- a click in a scrolled list moved twice.
       const work::Offset shifted = work::drawnOffset(target);
-      (void)walk::clickPath(fRoot, path, 0, reply.fClickAbove->fX + shifted.x, reply.fClickAbove->fY + shifted.y);
+      (void)walk::clickPath(fRoot, path, 0, reply.fClickAbove->fX + shifted.x, reply.fClickAbove->fY + shifted.y, carried);
     }
 
     if (routed.fReleaseRequest || ending) {
@@ -5873,7 +5946,7 @@ public:
     if (!walk::hitPath(fRoot, x, y, path)) {
       return false;
     }
-    const bool taken = walk::clickPath(fRoot, path, 0, x, y);
+    const bool taken = walk::clickPath(fRoot, path, 0, x, y, startCarry(fRoot));
     this->notePress(path);
     this->restyleDirty();
     return taken;

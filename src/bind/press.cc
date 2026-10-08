@@ -214,4 +214,188 @@ bool press(N &root, M &model, const scene::Path &path, S *sink = nullptr) {
   return op.fReached;
 }
 
+
+// ---- answered where it is made: a release build's routing ------------------
+//
+// A release build routes an event statically, every node with its type: what
+// binds the tree is carried down along it -- the model and the program's sink
+// at the root, then at each node that binds something its place below the
+// model and its frames -- and a press is answered at its node there and then,
+// through the frames it is in. No path kept, no walk again. (skiff.scene calls
+// carryInto and answerPress as it routes; they are found here by the carried
+// type.) Each step is made where the routing goes into a node and lives while
+// the routing is below it: it points to the step above, and owns its own
+// place.
+template <class M, class S> struct CarryRoot {
+  using Model = M;
+  using Sink = S;
+  M *fModel = nullptr;
+  S *fSink = nullptr;
+  model::Place<typename M::RootType, model::Path<>> fPlace{};
+};
+// What a routing starts with, for a program to give from its root's
+// startCarry: the model its scopes are bound to, and its sink.
+template <class M, class S = detail::NoSink> CarryRoot<M, S> carryFrom(M *model, S *sink = nullptr) {
+  return {model, sink, {}};
+}
+
+namespace detail {
+struct NoPart {};
+// An Each's row: its element's place.
+template <class Place> struct RowPart {
+  Place fPlace;
+};
+// A scope of the model's: the place below it, and its handlers.
+template <class Place, class H> struct ScopePart {
+  Place fPlace;
+  const H *fHandlers;
+};
+// A Local: its state and handlers.
+template <class L> struct LocalPart {
+  L *fLocal;
+};
+
+template <class Outer, class Row, class Scope, class Local> struct CarryStep;
+template <class C> struct IsCarryT : std::false_type {};
+template <class M, class S> struct IsCarryT<CarryRoot<M, S>> : std::true_type {};
+template <class O, class R, class Sc, class L> struct IsCarryT<CarryStep<O, R, Sc, L>> : std::true_type {};
+template <class C>
+concept IsCarry = IsCarryT<C>::value;
+
+// The place a step leaves the routing at: its scope's, else its row's, else
+// the one above it.
+template <class M, class S> const auto &hereOf(const CarryRoot<M, S> &root) { return root.fPlace; }
+template <class O, class R, class Sc, class L> const auto &hereOf(const CarryStep<O, R, Sc, L> &step);
+template <class P, class H, class R, class O> const auto &placeOf(const ScopePart<P, H> &scope, const R &, const O &) {
+  return scope.fPlace;
+}
+template <class P, class O> const auto &placeOf(NoPart, const RowPart<P> &row, const O &) { return row.fPlace; }
+template <class O> const auto &placeOf(NoPart, NoPart, const O &outer) { return hereOf(outer); }
+template <class O, class R, class Sc, class L> const auto &hereOf(const CarryStep<O, R, Sc, L> &step) {
+  return placeOf(step.fScope, step.fRow, *step.fOuter);
+}
+template <class R, class O> const auto &rowOrAbove(const RowPart<R> &row, const O &) { return row.fPlace; }
+template <class O> const auto &rowOrAbove(NoPart, const O &outer) { return hereOf(outer); }
+
+template <class M, class S> const auto &rootOf(const CarryRoot<M, S> &root) { return root; }
+template <class O, class R, class Sc, class L> const auto &rootOf(const CarryStep<O, R, Sc, L> &step) {
+  return rootOf(*step.fOuter);
+}
+
+// What a node binds, made where the routing goes into it.
+template <class P, class N, class C>
+  requires IsEach<P>
+auto rowPartOf(P &parent, N &row, const C &outer) {
+  auto &list = asEach(parent);
+  const auto i = static_cast<std::size_t>(&row - list.fRows.data());
+  const auto place = listPlaceOf(parent, hereOf(outer));
+  using Pl = typename std::remove_cvref_t<decltype(place)>::PathType;
+  using Key = decltype(keyOf(parent));
+  using RowPath = model::Join<Pl, model::Path<model::At<Key>>>;
+  using RowPlace = model::Place<typename std::remove_cvref_t<decltype(hereOf(outer))>::RootType, RowPath,
+                                model::BorrowedKeysOf<RowPath>>;
+  return RowPart<RowPlace>{RowPlace{std::tuple_cat(place.fKeys, std::tuple<const Key &>{list.fKeys[i]})}};
+}
+template <class P, class N, class C> NoPart rowPartOf(P &, N &, const C &) { return {}; }
+
+template <class N, class Here, class Root>
+  requires(IsScoped<N> && kOfModel<Root, N>)
+auto scopePartOf(N &node, const Here &here, std::type_identity<Root>) {
+  auto &scoped = asScoped(node);
+  using Within = decltype(scopeOfOf(scoped));
+  using Handlers = decltype(handlersOf(scoped));
+  using Inner = decltype(std::apply([&](const auto &...keys) { return model::borrowBelow<Within>(here, keys...); }, scoped.fKeys));
+  return ScopePart<Inner, Handlers>{
+      std::apply([&](const auto &...keys) { return model::borrowBelow<Within>(here, keys...); }, scoped.fKeys), &scoped.fHandlers};
+}
+template <class N, class Here, class Root> NoPart scopePartOf(N &, const Here &, std::type_identity<Root>) { return {}; }
+
+template <class N>
+  requires IsLocal<N>
+auto localPartOf(N &node) {
+  auto &local = asLocal(node);
+  return LocalPart<std::remove_reference_t<decltype(local)>>{&local};
+}
+template <class N> NoPart localPartOf(N &) { return {}; }
+
+// A step: what one node binds, its parts made in order -- the row's place,
+// then the scope's below it -- each where it is kept.
+template <class Outer, class Row, class Scope, class Local> struct CarryStep {
+  using Model = typename Outer::Model;
+  using Sink = typename Outer::Sink;
+  template <class P, class N>
+  CarryStep(const Outer &outer, P &parent, N &child)
+      : fOuter(&outer), fRow(rowPartOf(parent, child, outer)),
+        fScope(scopePartOf(child, rowOrAbove(fRow, outer), std::type_identity<typename Model::RootType>{})),
+        fLocal(localPartOf(child)) {}
+  CarryStep(const CarryStep &) = delete;
+  CarryStep &operator=(const CarryStep &) = delete;
+  const Outer *fOuter;
+  Row fRow;
+  Scope fScope;
+  Local fLocal;
+};
+
+template <class P, class N, class C>
+using StepOf = CarryStep<C, decltype(rowPartOf(std::declval<P &>(), std::declval<N &>(), std::declval<const C &>())),
+                         decltype(scopePartOf(std::declval<N &>(),
+                                              rowOrAbove(std::declval<decltype(rowPartOf(std::declval<P &>(), std::declval<N &>(),
+                                                                                         std::declval<const C &>())) &>(),
+                                                         std::declval<const C &>()),
+                                              std::type_identity<typename C::Model::RootType>{})),
+                         decltype(localPartOf(std::declval<N &>()))>;
+template <class S>
+inline constexpr bool kBindsNothing = false;
+template <class C, class... Parts>
+inline constexpr bool kBindsNothing<CarryStep<C, Parts...>> = (std::same_as<Parts, NoPart> && ...);
+
+// The frames a step is, the innermost first, as the drain makes them: its
+// Local's, then its scope's.
+template <class G> void framesHere(NoPart, NoPart, G &&g) { g(); }
+template <class L, class G> void framesHere(const LocalPart<L> &local, NoPart, G &&g) { g(LocalFrame<L>{local.fLocal}); }
+template <class P, class H, class G> void framesHere(NoPart, const ScopePart<P, H> &scope, G &&g) {
+  g(ScopeFrame<P, H>{&scope.fPlace, scope.fHandlers});
+}
+template <class L, class P, class H, class G> void framesHere(const LocalPart<L> &local, const ScopePart<P, H> &scope, G &&g) {
+  g(LocalFrame<L>{local.fLocal}, ScopeFrame<P, H>{&scope.fPlace, scope.fHandlers});
+}
+template <class M, class S, class F> void framesOf(const CarryRoot<M, S> &, F &&f) { f(); }
+template <class O, class R, class Sc, class L, class F> void framesOf(const CarryStep<O, R, Sc, L> &step, F &&f) {
+  framesOf(*step.fOuter, [&](const auto &...outer) {
+    framesHere(step.fLocal, step.fScope, [&](const auto &...mine) { f(mine..., outer...); });
+  });
+}
+}  // namespace detail
+
+// Down the routing, into a child: what it binds -- a row of an Each, a scope
+// of the model's, a Local -- a step of its own; nothing, the same carried on.
+template <class P, class N, class C>
+  requires(detail::IsCarry<C> && !detail::kBindsNothing<detail::StepOf<P, N, C>>)
+detail::StepOf<P, N, C> carryInto(P &parent, N &child, const C &carried) {
+  return detail::StepOf<P, N, C>(carried, parent, child);
+}
+template <class P, class N, class C>
+  requires(detail::IsCarry<C> && detail::kBindsNothing<detail::StepOf<P, N, C>>)
+const C &carryInto(P &, N &, const C &carried) {
+  return carried;
+}
+
+// A press answered where it is made: what the node's onPress() returns,
+// sent up the frames carried down to it, as bind::press does.
+template <class N, class C>
+  requires(detail::IsCarry<C> && (detail::Presses<N> || detail::PressesNothing<N>))
+bool answerPress(N &node, const C &carried) {
+  const auto &root = detail::rootOf(carried);
+  if (root.fModel == nullptr)
+    return false;
+  using M = typename C::Model;
+  using S = typename C::Sink;
+  M &model = *root.fModel;
+  model.beginBatch();
+  detail::Pressing<M, S> op{{model, root.fSink}};
+  detail::framesOf(carried, [&](const auto &...frames) { op.pressed(node, frames...); });
+  model.endBatch();
+  return true;
+}
+
 }  // namespace skiff::bind

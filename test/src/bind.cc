@@ -227,3 +227,40 @@ TEST(Bind, APressIsDeliveredAlongItsPathAndTakenByTheRowsScope) {
   EXPECT_EQ(m.root().settings.fValue.accounts.size(), 1u);
 }
 }  // namespace
+
+namespace {
+// A release build answers a press where it is routed: what binds the tree
+// carried down with it, no path kept.
+TEST(Bind, APressIsAnsweredWhereItIsRoutedWithWhatWasCarriedDown) {
+  Model m = twoAccounts();
+  Page page;
+  bind::refresh(page, m);
+  auto &list = page.parts.accounts;
+  auto &row = list.fRows[1];
+  // By hand, level by level.
+  const auto atPage = bind::carryFrom(&m);
+  const auto &atList = carryInto(page, list, atPage);
+  const auto atRow = carryInto(list, row, atList);
+  const auto &atPress = carryInto(row, row.parts.press, atRow);
+  EXPECT_TRUE(answerPress(row.parts.press, atPress));
+  ASSERT_EQ(m.root().settings.fValue.accounts.size(), 1u);
+  EXPECT_TRUE(m.root().settings.fValue.accounts.contains("@a:x.org"));
+  // And as the scene routes a press: answered at the node, nothing kept.
+  bind::refresh(page, m);
+  auto &left = page.parts.accounts.fRows[0];
+  scene::PointerReply reply;
+  scene::Routed routed;
+  scene::walk::routePointer(page, scene::Path{0, 0, 3}, 0, scene::PointerEvent{scene::pointer::down{1.0f, 1.0f, 1}}, reply,
+                            routed, false, bind::carryFrom(&m));
+  if constexpr (scene::kErasedWalks) {
+    // Erased walks carry nothing: the press is kept, for the program to
+    // deliver along its path.
+    EXPECT_EQ(std::exchange(scene::hostWork().pressedNow, nullptr), &left.parts.press.fState);
+    EXPECT_TRUE(bind::press(page, m, scene::Path{0, 0, 3}));
+  } else {
+    EXPECT_EQ(scene::hostWork().pressedNow, nullptr);
+  }
+  EXPECT_EQ(left.parts.press.fPressed, 1);
+  EXPECT_EQ(m.root().settings.fValue.accounts.size(), 0u);
+}
+}  // namespace
