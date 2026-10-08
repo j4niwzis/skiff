@@ -206,14 +206,14 @@ template <class R, class Root, class P> struct RemovedAt<R, Root, P, void> {
   using type = Types<>;
 };
 
-template <class L, class Seen = Types<>> struct Unique;
-template <class... S> struct Unique<Types<>, Types<S...>> {
-  using type = Types<S...>;
+// Each once, in the order first seen: a fold too, for the same reason.
+template <class E> struct One {};
+template <class... S, class E>
+std::conditional_t<(std::same_as<E, S> || ...), Types<S...>, Types<S..., E>> operator*(Types<S...>, One<E>);
+template <class L> struct Unique;
+template <class... E> struct Unique<Types<E...>> {
+  using type = decltype((Types<>{} * ... * One<E>{}));
 };
-template <class E, class... Es, class... S>
-struct Unique<Types<E, Es...>, Types<S...>>
-    : Unique<Types<Es...>, std::conditional_t<(std::same_as<E, S> || ...), Types<S...>,
-                                              Types<S..., E>>> {};
 template <class L> struct VariantOf;
 template <> struct VariantOf<Types<>> {
   using type = std::variant<Nothing>;

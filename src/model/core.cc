@@ -353,15 +353,12 @@ template <class Step, class L> struct Suffix;
 template <class Step, class... P> struct Suffix<Step, Types<P...>> {
   using type = Types<typename Suffix1<Step, P>::type...>;
 };
+// Lists joined end to end. A fold over a declared operator, not a template
+// recursing once per list: a model with thousands of places joins as many
+// lists, past any depth of instantiation.
+template <class... A, class... B> Types<A..., B...> operator+(Types<A...>, Types<B...>);
 template <class... L> struct Concat {
-  using type = Types<>;
-};
-template <class... A> struct Concat<Types<A...>> {
-  using type = Types<A...>;
-};
-template <class... A, class... B, class... Rest>
-struct Concat<Types<A...>, Types<B...>, Rest...> {
-  using type = typename Concat<Types<A..., B...>, Rest...>::type;
+  using type = decltype((Types<>{} + ... + L{}));
 };
 
 template <class Want, class In> struct Search;
