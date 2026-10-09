@@ -309,3 +309,50 @@ TEST(Tracking, SharedDebugEventRowsKeepPhaseAndAlternative) {
 }
 }
 #endif
+
+namespace {
+struct MediaFrame {
+  skia::Sp<skia::SkImage> image;
+  double due = 40.0;
+};
+struct TimedPicture {
+  std::shared_ptr<MediaFrame> frame;
+  const skia::Sp<skia::SkImage>* operator()() const { return &frame->image; }
+  bool animated() const { return true; }
+  double wakeAt() const { return frame->due; }
+};
+template <class Image> struct TimedMedia : Node {
+  struct parts_t { Image image; } parts;
+  explicit TimedMedia(std::shared_ptr<MediaFrame> frame)
+      : parts{make<Image>({.x = 10.0f, .y = 10.0f, .width = 40.0f, .height = 20.0f}, TimedPicture{frame})} {
+    parts.image.keepBox();
+  }
+};
+
+TEST(Tracking, MediaDeadlinesPreserveLocalDamageWithoutContinuousFrames) {
+  auto surface = skia::Raster(skia::SkImageInfo::MakeN32Premul(8, 8));
+  ASSERT_TRUE(surface);
+  const auto check = [&]<class Image>() {
+    auto frame = std::make_shared<MediaFrame>();
+    frame->image = surface->makeImageSnapshot();
+    Scene<TimedMedia<Image>> scene{std::in_place, frame};
+    scene.update(0.0);
+    scene.layoutIfNeeded(kView);
+    const auto first = scene.finishFrame();
+    EXPECT_DOUBLE_EQ(first.fWakeAtMs, 40.0);
+    EXPECT_FALSE(first.fWantsAnotherFrame);
+    scene.update(20.0);
+    EXPECT_TRUE(scene.finishFrame().fDamage.isEmpty());
+    surface->getCanvas()->clear(kFill);
+    frame->image = surface->makeImageSnapshot();
+    frame->due = 140.0;
+    scene.update(40.0);
+    const auto next = scene.finishFrame();
+    EXPECT_DOUBLE_EQ(next.fWakeAtMs, 140.0);
+    EXPECT_FALSE(next.fWantsAnotherFrame);
+    EXPECT_EQ(next.fDamage, scene.root().parts.image.bounds());
+  };
+  check.template operator()<skiff::nodes::internal::Image<TimedPicture>>();
+  check.template operator()<skiff::nodes::Image<TimedPicture>>();
+}
+} // namespace

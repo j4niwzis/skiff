@@ -146,11 +146,17 @@ struct AnyPictures {
   std::optional<skiff::scene::PillPicture> (*fPill)(std::string_view) = &NoPictures::pill;
   const skia::Sp<skia::SkImage> *(*fPicture)(std::string_view) = &NoPictures::picture;
   bool (*fAnimated)(std::string_view) = nullptr;
+  double (*fWakeAt)(std::string_view) = nullptr;
   template <class Pictures> [[nodiscard]] static AnyPictures of() {
+    AnyPictures made{&Pictures::pill, &Pictures::picture};
     if constexpr (requires { Pictures::animated(std::string_view{}); })
-      return {&Pictures::pill, &Pictures::picture, &Pictures::animated};
-    else
-      return {&Pictures::pill, &Pictures::picture};
+      made.fAnimated = &Pictures::animated;
+    if constexpr (requires { Pictures::wakeAt(std::string_view{}); })
+      made.fWakeAt = &Pictures::wakeAt;
+    return made;
+  }
+  [[nodiscard]] double wakeAt(std::string_view target) const {
+    return fWakeAt ? fWakeAt(target) : std::numeric_limits<double>::infinity();
   }
   [[nodiscard]] bool animated(std::string_view target) const { return fAnimated && fAnimated(target); }
   [[nodiscard]] std::optional<skiff::scene::PillPicture> pill(std::string_view target) const { return fPill(target); }
@@ -439,6 +445,14 @@ public:
       this->publishSelection();
       this->markDamaged();
     }
+  }
+  [[nodiscard]] double wakeAt() const {
+    double next = std::numeric_limits<double>::infinity();
+    if constexpr (requires { fPictures.wakeAt(std::string_view{}); })
+      for (const auto& link : fLinks)
+        if (link.picture)
+          next = std::min(next, fPictures.wakeAt(link.target));
+    return next;
   }
   [[nodiscard]] bool wantsTick() const {
     if (fDragging)

@@ -38,9 +38,15 @@ public:
       return source.animated();
     else
       return false;
+  }), fWakeAt([source] {
+    if constexpr (requires { source.wakeAt(); })
+      return source.wakeAt();
+    else
+      return std::numeric_limits<double>::infinity();
   }) {}
   [[nodiscard]] const skia::Sp<skia::SkImage> *operator()() const { return fGet(); }
   [[nodiscard]] bool animated() const { return fAnimated(); }
+  [[nodiscard]] double wakeAt() const { return fWakeAt(); }
   // Waited on by `id`, where the source says who waits: whether it does.
   [[nodiscard]] bool wait(skiff::scene::NodeId id) const {
     if (!fWait)
@@ -62,6 +68,7 @@ private:
   std::function<const skia::Sp<skia::SkImage> *()> fGet;
   std::function<void(skiff::scene::NodeId)> fWait;
   std::function<bool()> fAnimated;
+  std::function<double()> fWakeAt;
 };
 
 namespace internal {
@@ -109,6 +116,14 @@ public:
       if (fSource.animated())
         return true;
     return !fHad && !fWaiting;
+  }
+  // Media wakes at its next frame boundary, without requesting continuous
+  // scene animation or damaging any ancestor.
+  [[nodiscard]] double wakeAt() const {
+    if constexpr (requires { fSource.wakeAt(); })
+      return fSource.wakeAt();
+    else
+      return std::numeric_limits<double>::infinity();
   }
   void update(double) {
     const auto* found = this->image();
