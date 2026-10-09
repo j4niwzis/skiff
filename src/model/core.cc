@@ -221,13 +221,14 @@ template <class Key, class T> struct Keyed {
     // Include keys inserted earlier in this range in subsequent lookups.
     // The list's sorted index is rebuilt only after all the puts.
     auto positions = std::ranges::to<std::map<Key, std::size_t>>(fIndex);
-    for (auto &&[key, value] : elements) {
+    for (auto &&element : elements) {
+      auto &&[key, value] = element;
       const auto [at, added] = positions.try_emplace(key, fItems.size());
       if (!added)
-        fItems[at->second].second.mut().fValue = std::forward<decltype(value)>(value);
+        fItems[at->second].second.mut().fValue = std::forward_like<decltype(element)>(value);
       else {
         fItems.emplace_back(key, Shared<Tracked<T>>(
-                                     Tracked<T>{std::forward<decltype(value)>(value)}));
+                                     Tracked<T>{std::forward_like<decltype(element)>(value)}));
         fReshaped = true;
       }
       fFresh.push_back(key);

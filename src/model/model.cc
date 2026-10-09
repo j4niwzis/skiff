@@ -75,7 +75,10 @@ public:
   // Several, as one batch: each applied in turn. And all or none: only
   // where every one's part is there.
   template <class... E> constexpr bool applyEach(const E &...edits) {
-    return (apply(edits) & ...);
+    bool all = true;
+    // Comma sequences the edits; bitwise-and does not specify their order.
+    ((all = apply(edits) && all), ...);
+    return all;
   }
   template <class... E> constexpr bool applyAll(const E &...edits) {
     if (!(isThere(edits) && ...))
@@ -88,7 +91,8 @@ public:
   // batch is the batch's, not one per edit.
   template <class... E> constexpr bool applyBatch(const E &...edits) {
     beginBatch();
-    const bool all = (apply(edits) & ...);
+    bool all = true;
+    ((all = apply(edits) && all), ...);
     endBatch();
     return all;
   }

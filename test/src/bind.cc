@@ -125,6 +125,38 @@ TEST(Bind, RowsAreTheListsElementsAndShowThem) {
   EXPECT_FALSE(rows[1].parts.receipts.fOn);
 }
 
+TEST(Bind, AWholeListReplacementRefreshesRetainedRows) {
+  Model m = twoAccounts();
+  Page page;
+  bind::Binding<Model> binding;
+  binding.refresh(page, m);
+  const auto id = page.parts.accounts.fRows[0].fState.fId;
+  m.apply(model::put<AccountT>(std::string("@a:x.org"),
+                              AccountT{"@a:x.org", {"Changed"}, {false}}));
+  binding.refresh(page, m);
+  ASSERT_EQ(page.parts.accounts.fRows.size(), 2u);
+  EXPECT_EQ(page.parts.accounts.fRows[0].fState.fId, id);
+  EXPECT_EQ(page.parts.accounts.fRows[0].parts.name.fText, "Changed");
+  EXPECT_FALSE(page.parts.accounts.fRows[0].parts.receipts.fOn);
+}
+
+TEST(Bind, ADisappearingListClearsItsRowIndex) {
+  struct OptionalRoot {
+    model::Tracked<std::optional<SettingsT>> settings;
+  };
+  OptionalRoot root{{std::optional(twoAccounts().snapshot().settings.fValue)}};
+  model::Model<OptionalRoot, Reactions, Effect> m(std::move(root));
+  Page page;
+  bind::Binding<decltype(m)> binding;
+  binding.refresh(page, m);
+  ASSERT_NE(page.parts.accounts.rowFor("@a:x.org"), nullptr);
+  m.apply(model::over<std::optional<SettingsT>>(model::setTo(std::optional<SettingsT>{})));
+  binding.refresh(page, m);
+  EXPECT_TRUE(page.parts.accounts.fRows.empty());
+  EXPECT_TRUE(page.parts.accounts.fRowIndex.empty());
+  EXPECT_EQ(page.parts.accounts.rowFor("@a:x.org"), nullptr);
+}
+
 TEST(Bind, AChangeIsMadeWhereTheNodeIsAndOnlyItsRowReadsAgain) {
   Model m = twoAccounts();
   Page page;

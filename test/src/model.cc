@@ -527,6 +527,87 @@ static_assert(deducedEffectsWork());
 
 TEST(Model, ItsRulesHoldWhileItIsCompiled) { SUCCEED(); }
 
+TEST(Model, BulkPutsReplaceRepeatedKeysWithoutConsumingLvalueInputs) {
+  Keyed<int, std::string> list;
+  const std::vector<std::pair<int, std::string>> expected{{2, "first"}, {2, "last"}, {1, "other"}};
+  auto input = expected;
+  list.putAll(input);
+  EXPECT_EQ(input, expected);
+  ASSERT_EQ(list.size(), 2u);
+  EXPECT_EQ(list.keyAt(0), 2);
+  EXPECT_EQ(list.at(2), "last");
+  EXPECT_EQ(list.at(1), "other");
+  EXPECT_TRUE(list.take(2));
+  EXPECT_FALSE(list.contains(2));
+}
+
+struct NestedEntry {
+  Tracked<AppTheme> theme;
+};
+struct NestedListRoot {
+  Keyed<int, NestedEntry> entries;
+};
+TEST(Model, ReplacingAnExistingKeyRefreshesItsNestedTrackedParts) {
+  NestedListRoot root;
+  root.entries.put(1, NestedEntry{{AppTheme{2}, 90}});
+  Model<NestedListRoot, NoReactions> m(std::move(root));
+  const auto at = placeOf<AppTheme, NestedListRoot>(1);
+  const auto before = m.look(at).fRevision;
+  m.apply(put<NestedEntry>(1, NestedEntry{{AppTheme{8}, before}}));
+  EXPECT_EQ(m.look(at)->which, 8);
+  EXPECT_EQ(m.look(at).fRevision, m.revision());
+  EXPECT_GT(m.look(at).fRevision, before);
+}
+
+TEST(Model, ANewModelRebasesTheRevisionsOfItsSnapshot) {
+  auto old = withOne();
+  old.apply(over<AppTheme>(setTo(AppTheme{3})));
+  old.apply(over<AppTheme>(setTo(AppTheme{4})));
+  Model<Root, Reactions, Effect> copy(old.snapshot());
+  EXPECT_EQ(copy.look<AppTheme>().fRevision, copy.revision());
+  const auto before = copy.look<AppTheme>().fRevision;
+  copy.apply(over<AppTheme>(setTo(AppTheme{5})));
+  EXPECT_GT(copy.look<AppTheme>().fRevision, before);
+  EXPECT_EQ(old.look<AppTheme>()->which, 4);
+}
+
+struct ExternalEntry {
+  External<int> number;
+};
+struct ExternalRoot {
+  Tracked<ExternalEntry> entry;
+};
+TEST(Model, ReplacingAnAncestorRefreshesExternalPartRevisions) {
+  ExternalRoot root{{ExternalEntry{External<int>{share(2), 50}}, 60}};
+  Model<ExternalRoot, NoReactions> m(std::move(root));
+  const auto before = m.look<int>().fRevision;
+  m.apply(over<ExternalEntry>(setTo(ExternalEntry{External<int>{share(7), before}})));
+  EXPECT_EQ(*m.look<int>(), 7);
+  EXPECT_EQ(m.look<int>().fRevision, m.revision());
+  EXPECT_GT(m.look<int>().fRevision, before);
+}
+
+TEST(Model, RemovalsBeforeTheModelExistsAreNotReportedByItsNextEdit) {
+  Root root;
+  root.settings.fValue.accounts.put("old", AccountT{.who = "old"});
+  root.settings.fValue.accounts.take("old");
+  Model<Root, OnRemoved, GoneEffect> m(std::move(root));
+  m.apply(put<AccountT>(std::string("new"), AccountT{.who = "new"}));
+  EXPECT_TRUE(m.outbox().drain().empty());
+}
+
+TEST(Model, EditPacksExecuteInOrderAndDoNotStopAtMissingParts) {
+  auto m = withOne();
+  EXPECT_TRUE(m.applyEach());
+  EXPECT_TRUE(m.applyBatch());
+  EXPECT_TRUE(m.applyBatch(take<AccountT>(std::string("@me:a.org")),
+                          put<AccountT>(std::string("@me:a.org"), AccountT{.who = "new"})));
+  EXPECT_TRUE(m.look(placeOf<AccountT, Root>(std::string("@me:a.org"))));
+  EXPECT_FALSE(m.applyEach(over<MentionsShared>(flip, std::string("missing")),
+                          over<AppTheme>(setTo(AppTheme{9}))));
+  EXPECT_EQ(m.look<AppTheme>()->which, 9);
+}
+
 // Edits from another thread, applied where the model lives.
 TEST(Model, AnInboxTakesEditsFromOtherThreads) {
   auto m = withOne();
