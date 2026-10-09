@@ -79,6 +79,24 @@ template <class C> struct InOfT {
   using type = decltype(inOf<C>(Rank<1>{}));
 };
 
+// Pointer handling composed around an existing node. The handler sees the
+// node so it can read the current text selection and laid-out children.
+template <class E, class Make, class N> struct OnPointer : N {
+  using Answer = E;
+  using Out = Union<OutOf<N>, model::Types<E>>;
+  Make fPointer;
+  OnPointer(Make make, N node) : N(std::move(node)), fPointer(std::move(make)) {}
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  using N::onPointer;
+  std::optional<E> onPointer(scene::phase::bubble, const scene::pointer::down& press, scene::PointerReply& reply) {
+    return std::invoke(fPointer, static_cast<N&>(*this), press, reply);
+  }
+};
+template <class E, class Make, class N>
+OnPointer<E, Make, N> onPointer(Make make, N node) {
+  return OnPointer<E, Make, N>(std::move(make), std::move(node));
+}
+
 // ---- a >> b, a + b ----------------------------------------------------------
 
 template <class A, class B> struct Ends {

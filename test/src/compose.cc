@@ -707,3 +707,16 @@ TEST(Compose, ARefreshCombinesChangedPathsAndLeavesOtherBindingsAlone) {
   binding.refresh(page, model);
   EXPECT_EQ(std::get<0>(page.fParts).reads, 2);
 }
+
+TEST(Compose, PointerHandlerRetainsClickOutputsAndReadsItsNode) {
+  auto node = onPointer<std::string>([](auto& base, const scene::pointer::down& event, scene::PointerReply& reply) -> std::optional<std::string> {
+    if (event.button != 3) return std::nullopt;
+    reply.handle();
+    return std::get<0>(base.fParts).text();
+  }, onClick(42, column(vbox(), nodes::Text("event", 13.0f, 0))));
+  static_assert(std::same_as<OutOf<decltype(node)>, model::Types<int, std::string>>);
+  EXPECT_EQ(node.onPress(), 42);
+  scene::PointerReply reply;
+  EXPECT_EQ(node.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 3}, reply), "event");
+  EXPECT_FALSE(node.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 1}, reply).has_value());
+}
