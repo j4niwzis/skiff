@@ -21,7 +21,7 @@ public:
     // What was put together before is the model's first state: stamped, so
     // that nothing in it looks new at the first edit.
     fRevision = 1;
-    detail::stamp(fRoot, fRevision, false, true);
+    detail::stamp(fRoot, fRevision, true, true);
   }
 
   constexpr const Root &root() const { return fRoot; }

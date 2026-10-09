@@ -199,6 +199,7 @@ template <class Key, class T> struct Keyed {
                      std::size_t position = std::numeric_limits<std::size_t>::max()) {
     if (auto *item = findItem(key)) {
       item->fValue = std::move(value);
+      fFresh.push_back(key);
       return;
     }
     position = std::min(position, fItems.size());
@@ -217,15 +218,19 @@ template <class Key, class T> struct Keyed {
   }
   // Many at once, at the end, in their order: the index made once.
   template <std::ranges::input_range R> constexpr void putAll(R &&elements) {
+    // Include keys inserted earlier in this range in subsequent lookups.
+    // The list's sorted index is rebuilt only after all the puts.
+    auto positions = std::ranges::to<std::map<Key, std::size_t>>(fIndex);
     for (auto &&[key, value] : elements) {
-      if (auto *item = findItem(key))
-        item->fValue = std::forward<decltype(value)>(value);
+      const auto [at, added] = positions.try_emplace(key, fItems.size());
+      if (!added)
+        fItems[at->second].second.mut().fValue = std::forward<decltype(value)>(value);
       else {
         fItems.emplace_back(key, Shared<Tracked<T>>(
                                      Tracked<T>{std::forward<decltype(value)>(value)}));
-        fFresh.push_back(key);
         fReshaped = true;
       }
+      fFresh.push_back(key);
     }
     reindex();
   }

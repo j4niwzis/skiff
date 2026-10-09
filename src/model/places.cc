@@ -297,6 +297,7 @@ inline constexpr bool kReplaces = requires(const F &f, T &&t) {
 // what its lists say changed: nothing has, for the model.
 template <class T> constexpr void stamp(T &, Revision, bool, bool = false) {}
 template <class T> constexpr void stamp(Tracked<T> &, Revision, bool, bool = false);
+template <class T> constexpr void stamp(External<T> &, Revision, bool, bool = false);
 template <class K, class T> constexpr void stamp(Keyed<K, T> &, Revision, bool, bool = false);
 template <class T> constexpr void stamp(std::optional<T> &, Revision, bool, bool = false);
 template <VariantLike V> constexpr void stamp(V &, Revision, bool, bool = false);
@@ -307,13 +308,19 @@ template <class T> constexpr void stamp(Tracked<T> &part, Revision now, bool all
     part.fRevision = now;
   stamp(part.fValue, now, all, settle);
 }
+template <class T> constexpr void stamp(External<T> &part, Revision now, bool all, bool) {
+  if (all || part.fRevision == 0)
+    part.fRevision = now;
+}
 // A list: every element where it was made whole; else only those put since
 // (fFresh) -- a put stamps what it made, not the whole list.
 template <class K, class T> constexpr void stamp(Keyed<K, T> &list, Revision now, bool all, bool settle) {
   if (all || list.fRevision == 0)
     list.fRevision = now;
-  if (settle)
+  if (settle) {
     list.fReshaped = false;
+    list.fTaken.clear();
+  }
   if (all) {
     list.fFresh.clear();
     for (auto &[key, element] : list.fItems)
@@ -322,7 +329,8 @@ template <class K, class T> constexpr void stamp(Keyed<K, T> &list, Revision now
   }
   for (const K &key : std::exchange(list.fFresh, {}))
     if (Tracked<T> *element = list.findItem(key))
-      stamp(*element, now, all, settle);
+      // A put replaces this element whole, including nested tracked parts.
+      stamp(*element, now, true, settle);
 }
 template <class T> constexpr void stamp(std::optional<T> &part, Revision now, bool all, bool settle) {
   if (part)

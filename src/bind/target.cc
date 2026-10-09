@@ -83,11 +83,11 @@ template <class M, class C> struct Targeting {
     if constexpr (std::same_as<P, C>) {
       if (!sameKeys(place.fKeys, fKeys))
         return;
-      const std::vector<Key> had = list.fKeys;
       fFull.rows(node, place);
+      // A change of the list may also replace values at existing keys.
+      // Their rows are retained, but must read the new element revisions.
       for (std::size_t i = 0; i < list.fRows.size(); ++i)
-        if (!std::ranges::contains(had, list.fKeys[i]))
-          visitRow(fFull, i);
+        visitRow(fFull, i);
     } else if constexpr (IsPrefix<Element, C>::value) {
       if (!sameKeys(place.fKeys, fKeys))
         return;

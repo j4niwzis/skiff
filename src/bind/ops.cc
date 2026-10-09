@@ -77,6 +77,7 @@ template <class M> struct Refreshing {
       if (!list.fRows.empty()) {
         list.fRows.clear();
         list.fKeys.clear();
+        list.fRowIndex.clear();
         list.invalidateLayout();
       }
       return;
