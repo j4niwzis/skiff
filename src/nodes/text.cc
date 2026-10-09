@@ -754,7 +754,24 @@ public:
       canvas->clipRect(bounds, true);
     }
     // The baseline sits at the top plus the ascent share of the line box.
-    if (fElided) {
+    if (!fLinks.empty() || !fStyles.empty()) {
+      const float baseline = bounds.fTop + fSize;
+      const std::string shown = fElided ? p.elide(fText, bounds.width(), fSize, fBold) : fText;
+      if (shown == fText) {
+        this->drawWithLinks(canvas, p, 0, fText, bounds.fLeft, baseline, alpha);
+      } else {
+        constexpr std::string_view ellipsis = "\u2026";
+        std::size_t end = shown.empty() ? 0 : shown.size() - ellipsis.size();
+        // An elision must not replace part of a picture or pill with an
+        // ellipsis that would then inherit that object's span.
+        for (const Link& link : fLinks)
+          if ((link.picture || link.pill) && link.first < end && end < link.last)
+            end = link.first;
+        const float x = this->drawWithLinks(canvas, p, 0, std::string_view(fText).substr(0, end),
+                                            bounds.fLeft, baseline, alpha);
+        if (!shown.empty()) p.text(std::string(ellipsis), x, baseline, fSize, fColour, alpha, fBold);
+      }
+    } else if (fElided) {
       p.textElided(fText, bounds.fLeft, bounds.fTop + fSize, bounds.width(),
                    fSize, fColour, alpha, fBold);
     } else {
@@ -896,7 +913,7 @@ private:
 
   // A line in pieces: plain in the text's colour, links in theirs and
   // underlined.
-  void drawWithLinks(skia::SkCanvas *canvas, const skiff::paint::Painter &p, std::size_t start,
+  float drawWithLinks(skia::SkCanvas *canvas, const skiff::paint::Painter &p, std::size_t start,
                      std::string_view line, float x, float y, float alpha) const {
     const std::size_t end = start + line.size();
     std::vector<std::size_t> cuts{start, end};
@@ -1027,6 +1044,7 @@ private:
       }
       at += width;
     }
+    return at;
   }
 
   // How far a line's text stands in: a quoted one's, past its bar -- for

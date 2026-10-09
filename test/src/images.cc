@@ -1,9 +1,18 @@
 import std;
 import skia;
+import skiff.paint;
+import skiff.scene;
+import skiff.nodes.text;
 import gtest;
 #include "gtest/gtest-macros.h"
 
 namespace {
+struct inline_images {
+  static inline skia::Sp<skia::SkImage> image;
+  static inline int drawn = 0;
+  static std::optional<skiff::scene::PillPicture> pill(std::string_view) { return std::nullopt; }
+  static const skia::Sp<skia::SkImage>* picture(std::string_view) { ++drawn; return &image; }
+};
 std::string frame_data(std::string_view png) {
   std::string out;
   for (std::size_t at = 8; at + 12 <= png.size();) {
@@ -12,6 +21,37 @@ std::string frame_data(std::string_view png) {
     at += length + 12;
   }
   return out;
+}
+
+TEST(Images, SingleLineTextDrawsBothRepeatedInlineImagesWithOrWithoutElision) {
+  auto manager = skia::SkFontMgr_New_Custom_Directory("/usr/share/fonts");
+  auto face = manager ? manager->matchFamilyStyle("DejaVu Sans", skia::SkFontStyle()) : nullptr;
+  if (!face) GTEST_SKIP() << "Needs a font for inline image advances";
+  skiff::paint::fonts().setPrimary(face);
+  skia::SkFont font(face);
+  skiff::paint::defaultFont() = &font;
+  struct cleanup { ~cleanup() { skiff::paint::defaultFont() = nullptr; inline_images::image.reset(); } } clear;
+  const std::array<std::uint8_t, 4> red{255, 0, 0, 255};
+  inline_images::image = skia::imageFromRGBA(1, 1, red.data());
+  for (const bool elided : {false, true}) {
+    skiff::nodes::BasicText<inline_images> text("\u2003 \u2003", 13.0f, skia::colorSetARGB(255, 0, 0, 0));
+    text.setWrapped(false);
+    text.setElided(elided);
+    text.setLinks({{0, 3, "image", false, true}, {4, 7, "image", false, true}}, skia::colorSetARGB(255, 0, 0, 0));
+    skiff::scene::layout(text, skia::SkRect::MakeWH(64.0f, 32.0f));
+    skia::SkBitmap pixels;
+    ASSERT_TRUE(pixels.tryAllocN32Pixels(64, 32));
+    pixels.eraseColor(0);
+    skia::SkCanvas canvas(pixels);
+    inline_images::drawn = 0;
+    text.drawSelf(&canvas, 1.0f);
+    EXPECT_EQ(inline_images::drawn, 2);
+    int red_pixels = 0;
+    for (int y = 0; y < 32; ++y)
+      for (int x = 0; x < 64; ++x)
+        red_pixels += pixels.getColor(x, y) == skia::colorSetARGB(255, 255, 0, 0);
+    EXPECT_GT(red_pixels, 0);
+  }
 }
 void control(std::string& png, std::uint32_t seq, std::uint32_t width, std::uint32_t x,
              int numerator, int denominator, int disposal, int blend) {
