@@ -53,6 +53,14 @@ TEST(Images, SingleLineTextDrawsBothRepeatedInlineImagesWithOrWithoutElision) {
     EXPECT_GT(red_pixels, 0);
   }
 }
+TEST(Images, MentionPillsReserveTheirFullHeight) {
+  skiff::nodes::Text plain("Name", 16.0f, skia::colorSetARGB(255, 0, 0, 0));
+  skiff::nodes::Text pill("Name", 16.0f, skia::colorSetARGB(255, 0, 0, 0));
+  pill.setLinks({{0, 4, "user", true, false}}, skia::colorSetARGB(255, 0, 0, 0));
+  EXPECT_FLOAT_EQ(plain.lineHeight(), 20.0f);
+  EXPECT_FLOAT_EQ(pill.lineHeight(), 24.0f);
+}
+
 void control(std::string& png, std::uint32_t seq, std::uint32_t width, std::uint32_t x,
              int numerator, int denominator, int disposal, int blend) {
   std::string bytes;

@@ -111,7 +111,7 @@ inline void drawPillPicture(skia::SkCanvas *canvas, const skiff::paint::Painter 
 inline void drawPill(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float x, float y, float width,
                      float size, skia::SkColor colour, const std::optional<skiff::scene::PillPicture> &look,
                      float alpha) {
-  const float height = size * 1.25f;
+  const float height = size * 1.5f;
   const skia::SkRect plate = skia::SkRect::MakeXYWH(x - 1.0f, y - size, width + 2.0f, height);
   skia::SkPaint fill;
   fill.setAntiAlias(true);
@@ -248,7 +248,7 @@ public:
       if (offset < start + line.size() + 1) {
         return y;
       }
-      y += fSize * 1.25f;
+      y += this->lineHeight();
     }
     return y;
   }
@@ -536,6 +536,9 @@ public:
       reply.handle();
     }
   }
+  [[nodiscard]] float lineHeight() const {
+    return fSize * (std::ranges::any_of(fLinks, [](const Link& link) { return link.pill; }) ? 1.5f : 1.25f);
+  }
   [[nodiscard]] float fontSize() const noexcept { return fSize; }
   [[nodiscard]] skia::SkColor colour() const noexcept { return fColour; }
   [[nodiscard]] bool bold() const noexcept { return fBold; }
@@ -678,7 +681,7 @@ public:
       fLines = p.wrap(fText, room - indent, fSize, fBold);
       state.fHeight =
           static_cast<float>(std::max<std::size_t>(1, fLines.size())) *
-          fSize * 1.25f;
+          this->lineHeight();
       // Its width is the room it wraps in -- unless that width is its
       // parent's to give, as a share of the parent's width, or its glyphs'.
       // One given no width at all keeps taking the parent's: the width
@@ -700,7 +703,7 @@ public:
       return;
     }
     this->sizeOnOneLine(parent);
-    state.fHeight = fSize * 1.25f;
+    state.fHeight = this->lineHeight();
     fMeasuredSize = fSize;
   }
   // On one line: as wide as its glyphs, within its largest width. Sized by
@@ -738,12 +741,12 @@ public:
       if (fLinks.empty() && fStyles.empty()) {
         for (const std::string &line : fLines) {
           p.text(line, bounds.fLeft, y, fSize, fColour, alpha, fBold);
-          y += fSize * 1.25f;
+          y += this->lineHeight();
         }
       } else {
         for (const auto &[start, line] : this->shownLines()) {
           this->drawWithLinks(canvas, p, start, line, bounds.fLeft, y, alpha);
-          y += fSize * 1.25f;
+          y += this->lineHeight();
         }
       }
       canvas->restoreToCount(saved);
@@ -809,7 +812,7 @@ private:
     }
     const skiff::paint::Painter p(nullptr, *font, fMonospace);
     const skia::SkRect &bounds = fState.fBounds;
-    const float lineHeight = fSize * 1.25f;
+    const float lineHeight = this->lineHeight();
     const auto index = static_cast<std::size_t>(
         std::clamp((y - bounds.fTop) / lineHeight, 0.0f, static_cast<float>(lines.size() - 1)));
     const auto [start, line] = lines[index];
@@ -893,7 +896,7 @@ private:
     }
     const std::size_t low = std::min(fAnchor, fCaret), high = std::max(fAnchor, fCaret);
     const skia::SkRect &bounds = fState.fBounds;
-    const float lineHeight = fSize * 1.25f;
+    const float lineHeight = this->lineHeight();
     float top = bounds.fTop;
     skia::SkPaint plate;
     plate.setColor(fSelectionColour);
@@ -946,7 +949,7 @@ private:
         plate.setAntiAlias(true);
         plate.setColor(fQuoteColour);
         plate.setAlphaf(0.28f * alpha);
-        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, fSize * 1.25f), 3.0f, 3.0f,
+        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight()), 3.0f, 3.0f,
                               plate);
       }
       // Code: on a plate of the text's colour, faint.
@@ -955,7 +958,7 @@ private:
         plate.setAntiAlias(true);
         plate.setColor(fColour);
         plate.setAlphaf(0.10f * alpha);
-        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, fSize * 1.25f), 3.0f, 3.0f,
+        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight()), 3.0f, 3.0f,
                               plate);
       }
       // Struck: a line through its middle.
@@ -972,7 +975,7 @@ private:
         plate.setAntiAlias(true);
         plate.setColor(colour);
         plate.setAlphaf(0.12f * alpha);
-        const skia::SkRect box = skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, fSize * 1.25f);
+        const skia::SkRect box = skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight());
         canvas->drawRoundRect(box, 3.0f, 3.0f, plate);
         skia::SkPaint dot;
         dot.setAntiAlias(true);
@@ -1060,7 +1063,7 @@ private:
   // text's colour, readable on any bubble.
   void drawQuotes(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float alpha) const {
     const skia::SkRect &bounds = fState.fBounds;
-    const float lineHeight = fSize * 1.25f;
+    const float lineHeight = this->lineHeight();
     std::vector<int> depths;
     int deepest = 0;
     for (const auto &[start, line] : this->shownLines()) {
