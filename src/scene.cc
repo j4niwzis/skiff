@@ -1185,6 +1185,34 @@ inline std::string &selectedText() {
   static std::string kept;
   return kept;
 }
+// Inline objects kept beside copied text, without depending on a widget's
+// types. Display offsets describe the editable placeholder text.
+struct ClipboardAtom {
+  std::size_t first = 0, last = 0;
+  std::string target, plain;
+  bool picture = false;
+};
+struct ClipboardFragment {
+  std::string text;
+  std::string display;
+  std::vector<ClipboardAtom> atoms;
+};
+inline ClipboardFragment clipboardFragment(std::string display, std::vector<ClipboardAtom> atoms = {}) {
+  ClipboardFragment made{display, std::move(display), std::move(atoms)};
+  std::ranges::sort(made.atoms, {}, &ClipboardAtom::first);
+  for (const auto& atom : std::views::reverse(made.atoms))
+    if (atom.last <= made.text.size() && atom.first <= atom.last)
+      made.text.replace(atom.first, atom.last - atom.first, atom.plain);
+  return made;
+}
+inline std::optional<ClipboardFragment>& clipboardCandidate() {
+  static std::optional<ClipboardFragment> kept;
+  return kept;
+}
+inline std::optional<ClipboardFragment>& clipboardRichText() {
+  static std::optional<ClipboardFragment> kept;
+  return kept;
+}
 // Whether a button is held now, as the last press and release said -- to
 // whatever scene they went: a release outside a text's own scene still ends
 // the press it began.
@@ -1636,7 +1664,11 @@ inline std::string &clipboardContents() {
 [[nodiscard]] inline std::string clipboardText() {
   return hostWork().copied ? *hostWork().copied : clipboardContents();
 }
-inline void setClipboardText(const std::string &text) { hostWork().copied = text; }
+inline void setClipboardText(const std::string &text) {
+  hostWork().copied = text;
+  const auto& candidate = clipboardCandidate();
+  clipboardRichText() = candidate && candidate->text == text ? candidate : std::nullopt;
+}
 inline void openLink(std::string_view target) { hostWork().links.emplace_back(target); }
 inline void giveKey(key::down press) { hostWork().keys.push_back(press); }
 

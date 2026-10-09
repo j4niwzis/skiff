@@ -217,11 +217,132 @@ struct Frame {
   ::sk_sp<::SkImage> image;
   int durationMs = 100;
 };
+// libpng's SkCodec exposes only the PNG default image. Reconstruct each
+// APNG frame as a PNG, then compose it with its blend and disposal rules.
+// https://www.w3.org/TR/png-3/#11APNG
+namespace apng {
+inline std::uint32_t word(std::string_view data, std::size_t at) {
+  std::uint32_t value = 0;
+  for (int i = 0; i < 4; ++i) value = (value << 8) | static_cast<unsigned char>(data[at + i]);
+  return value;
+}
+inline void word(std::string& data, std::uint32_t value) {
+  for (int i = 3; i >= 0; --i) data.push_back(static_cast<char>(value >> (i * 8)));
+}
+inline std::uint32_t crc(std::string_view bytes) {
+  std::uint32_t value = 0xffffffffu;
+  for (unsigned char byte : bytes) {
+    value ^= byte;
+    for (int bit = 0; bit < 8; ++bit) value = (value >> 1) ^ (0xedb88320u & (0u - (value & 1u)));
+  }
+  return ~value;
+}
+inline void chunk(std::string& png, std::string_view type, std::string_view data) {
+  word(png, static_cast<std::uint32_t>(data.size()));
+  const auto at = png.size();
+  png += type;
+  png += data;
+  word(png, crc(std::string_view(png).substr(at)));
+}
+inline std::optional<std::vector<Frame>> decode(std::string_view bytes, std::size_t budget) {
+  constexpr std::string_view signature{"\x89PNG\r\n\x1a\n", 8};
+  if (!bytes.starts_with(signature)) return std::nullopt;
+  std::string header, shared, data;
+  bool animated = false, controlled = false, seen_data = false;
+  std::uint32_t width = 0, height = 0, w = 0, h = 0, x = 0, y = 0, sequence = 0, declared = 0;
+  int duration = 100, disposal = 0, blend = 0;
+  std::vector<Frame> out;
+  ::sk_sp<::SkSurface> surface;
+  std::size_t frame_bytes = 0;
+  const auto finish = [&]() -> bool {
+    if (!controlled) return true; // A default image outside the animation.
+    if (data.empty() || !surface) return false;
+    if (frame_bytes > budget || out.size() >= budget / frame_bytes) return false;
+    std::string png(signature);
+    std::string dimensions;
+    word(dimensions, w); word(dimensions, h);
+    dimensions += std::string_view(header).substr(8);
+    chunk(png, "IHDR", dimensions);
+    png += shared;
+    png += data;
+    chunk(png, "IEND", {});
+    auto frame = decodeImage(png.data(), png.size());
+    if (!frame) return false;
+    auto before = disposal == 2 ? surface->makeImageSnapshot() : ::sk_sp<::SkImage>{};
+    ::SkPaint paint;
+    paint.setBlendMode(blend == 0 ? ::SkBlendMode::kSrc : ::SkBlendMode::kSrcOver);
+    surface->getCanvas()->drawImage(frame, static_cast<float>(x), static_cast<float>(y), ::SkSamplingOptions{}, &paint);
+    auto image = surface->makeImageSnapshot();
+    if (!image) return false;
+    out.push_back({std::move(image), duration});
+    if (disposal == 1 || (disposal == 2 && out.size() == 1)) {
+      ::SkPaint clear;
+      clear.setBlendMode(::SkBlendMode::kClear);
+      surface->getCanvas()->drawRect(::SkRect::MakeXYWH(x, y, w, h), clear);
+    } else if (before) {
+      ::SkPaint restore;
+      restore.setBlendMode(::SkBlendMode::kSrc);
+      surface->getCanvas()->drawImage(before, 0, 0, ::SkSamplingOptions{}, &restore);
+    }
+    data.clear();
+    return true;
+  };
+  for (std::size_t at = 8; at + 12 <= bytes.size();) {
+    const auto length = word(bytes, at);
+    if (length > bytes.size() - at - 12) return animated ? std::optional(out) : std::nullopt;
+    const auto type = bytes.substr(at + 4, 4), payload = bytes.substr(at + 8, length);
+    if (crc(bytes.substr(at + 4, length + 4)) != word(bytes, at + 8 + length))
+      return animated ? std::optional(out) : std::nullopt;
+    if (type == "IHDR") {
+      if (at != 8 || length != 13) return std::nullopt;
+      header = payload; width = word(payload, 0); height = word(payload, 4);
+      if (!width || !height || std::uint64_t(width) * height > kMostPixels) return std::vector<Frame>{};
+      frame_bytes = std::size_t(width) * height * 4;
+    } else if (type == "acTL") {
+      if (length != 8 || seen_data || header.empty() || !(declared = word(payload, 0))) return std::vector<Frame>{};
+      animated = true;
+      if (frame_bytes > budget) return std::vector<Frame>{};
+      surface = ::SkSurfaces::Raster(::SkImageInfo::MakeN32Premul(static_cast<int>(width), static_cast<int>(height)));
+      if (!surface) return std::vector<Frame>{};
+      surface->getCanvas()->clear(::SK_ColorTRANSPARENT);
+    } else if (type == "fcTL") {
+      if (!animated || length != 26 || word(payload, 0) != sequence++) return animated ? std::optional(out) : std::nullopt;
+      if (!finish()) return out;
+      w = word(payload, 4); h = word(payload, 8); x = word(payload, 12); y = word(payload, 16);
+      if (!w || !h || w > width || h > height || x > width - w || y > height - h || out.size() >= declared)
+        return out;
+      if (!seen_data && (w != width || h != height || x || y)) return out;
+      const auto numerator = (static_cast<unsigned char>(payload[20]) << 8) | static_cast<unsigned char>(payload[21]);
+      auto denominator = (static_cast<unsigned char>(payload[22]) << 8) | static_cast<unsigned char>(payload[23]);
+      if (!denominator) denominator = 100;
+      duration = std::max(1, (1000 * numerator + denominator / 2) / denominator);
+      disposal = static_cast<unsigned char>(payload[24]); blend = static_cast<unsigned char>(payload[25]);
+      if (disposal > 2 || blend > 1) return out;
+      controlled = true;
+    } else if (type == "IDAT") {
+      seen_data = true;
+      if (controlled) chunk(data, "IDAT", payload);
+    } else if (type == "fdAT") {
+      if (!animated || !controlled || length < 4 || word(payload, 0) != sequence++) return animated ? std::optional(out) : std::nullopt;
+      chunk(data, "IDAT", payload.substr(4));
+    } else if (type == "IEND") {
+      if (!animated) return std::nullopt;
+      finish();
+      return out;
+    } else if (!seen_data && type != "IHDR") {
+      shared += bytes.substr(at, length + 12);
+    }
+    at += length + 12;
+  }
+  return animated ? std::optional(out) : std::nullopt;
+}
+} // namespace apng
 // Every frame of an animated picture (a GIF, an animated WebP), in order; the
 // one of a still picture; none where it cannot be read. Frames stop where
 // they would pass `budget` bytes of pixels in all: what came so far plays.
 inline std::vector<Frame> decodeFrames(const void *bytes, std::size_t size,
                                        std::size_t budget = 64u << 20) {
+  if (auto png = apng::decode({static_cast<const char*>(bytes), size}, budget)) return std::move(*png);
   std::vector<Frame> out;
   auto codec = ::SkCodec::MakeFromData(::SkData::MakeWithCopy(bytes, size), decoders());
   if (!codec) {

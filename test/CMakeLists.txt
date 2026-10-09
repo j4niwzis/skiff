@@ -40,7 +40,8 @@ endif()
 
 add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/style.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/tracking.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/model.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/bind.cc
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/compose.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/picker.cc)
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/compose.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/picker.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/images.cc)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   gtest

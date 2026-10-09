@@ -47,6 +47,7 @@ struct TextLink {
   // takes (an em space); the picture is the program's, for the target,
   // as the text's Pictures say.
   bool picture = false;
+  std::string plain;  // custom emoji label, copied in place of its placeholder
 };
 
 // Stretches of the text drawn otherwise: strong, emphasised (slanted),
@@ -318,8 +319,16 @@ public:
     return p.measure(fLines.back(), fSize, fBold);
   }
   [[nodiscard]] bool hasSelection() const noexcept { return fAnchor != fCaret; }
+  [[nodiscard]] scene::ClipboardFragment copiedRange(std::size_t first, std::size_t last) const {
+    std::vector<scene::ClipboardAtom> atoms;
+    for (const auto& link : fLinks)
+      if (link.picture && link.first >= first && link.last <= last)
+        atoms.push_back({link.first - first, link.last - first, link.target,
+                         link.plain.empty() ? std::string(":emoji:") : link.plain, true});
+    return scene::clipboardFragment(fText.substr(first, last - first), std::move(atoms));
+  }
   [[nodiscard]] std::string selected() const {
-    return fText.substr(std::min(fAnchor, fCaret), std::max(fAnchor, fCaret) - std::min(fAnchor, fCaret));
+    return this->copiedRange(std::min(fAnchor, fCaret), std::max(fAnchor, fCaret)).text;
   }
   [[nodiscard]] bool acceptsInput() const { return fSelectable; }
   [[nodiscard]] bool showsFocus() const { return false; }
@@ -343,7 +352,9 @@ public:
       // all of it not selected for that, lit up blue at every right-click.
       // Not taken: what holds the text may have a menu of its own -- a
       // message's -- which the program puts first.
-      scene::textMenusAsked().push_back(scene::text_menu::of_text{in_selection ? this->selected() : fText, std::move(link)});
+      auto copied = in_selection ? this->copiedRange(low, high) : this->copiedRange(0, fText.size());
+      scene::clipboardCandidate() = copied;
+      scene::textMenusAsked().push_back(scene::text_menu::of_text{std::move(copied.text), std::move(link)});
       return;
     }
     if (at.button != 1) {
@@ -483,7 +494,8 @@ public:
       }
       if (const Link *link = this->linkAt(fLastOffset)) {
         fPressed = false;
-        skiff::scene::openLink(link->target);
+        if (!link->picture)
+          skiff::scene::openLink(link->target);
         reply.handle();
         return;
       }
@@ -513,6 +525,7 @@ public:
       return;
     }
     if (press.key == keys::kC && this->hasSelection()) {
+      scene::clipboardCandidate() = this->copiedRange(std::min(fAnchor, fCaret), std::max(fAnchor, fCaret));
       skiff::scene::setClipboardText(this->selected());
       reply.handle();
     } else if (press.key == keys::kA) {
@@ -833,7 +846,7 @@ private:
   void takePillsWhole() {
     const bool forward = fCaret >= fAnchor;
     for (const Link &one : fLinks) {
-      if (!one.pill) {
+      if (!one.pill && !one.picture) {
         continue;
       }
       const auto inside = [&](std::size_t at) { return at > one.first && at < one.last; };
@@ -849,7 +862,9 @@ private:
   // What is selected, said to the scene: this is the text showing it.
   void publishSelection() const {
     if (textSelectionOwner() == fState.fId) {
-      skiff::scene::selectedText() = this->selected();
+      auto copied = this->copiedRange(std::min(fAnchor, fCaret), std::max(fAnchor, fCaret));
+      skiff::scene::selectedText() = copied.text;
+      skiff::scene::clipboardCandidate() = std::move(copied);
     }
   }
   void drawSelection(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float alpha) const {
