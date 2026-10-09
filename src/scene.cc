@@ -2076,6 +2076,12 @@ inline Offset &damageOffset() {
   static Offset at;
   return at;
 }
+// The masks above the node, in screen coordinates. Individual damage
+// rectangles must obey the same clips as the subtree's damage union.
+inline std::optional<skia::SkRect> &damageClip() {
+  static std::optional<skia::SkRect> clip;
+  return clip;
+}
 // Whether a walk goes into a child.
 [[nodiscard]] inline bool visit(NodeId id) { return walkingFull() || pending().contains(id); }
 // Written only where it changed: most walks pass the same children as the
@@ -4544,6 +4550,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   state.fRedrawn = false;
   // A scroll view moved in this frame: its view, where it is on the screen.
   const work::Offset above = work::damageOffset();
+  const auto aboveClip = work::damageClip();
   for (ScrollMove &move : scrollMoves()) {
     if (move.node == state.fId) {
       move.rect.offset(above.x, above.y);
@@ -4568,9 +4575,19 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
     }
   }
   if (!damage.isEmpty()) {
-    damageFound().push_back(damage.makeOffset(above.x, above.y));
+    auto piece = damage.makeOffset(above.x, above.y);
+    if (!aboveClip || piece.intersect(*aboveClip)) {
+      damageFound().push_back(piece);
+    }
   }
   work::damageOffset() = {above.x + state.fShiftX, above.y + state.fShiftY};
+  if (state.fMasking) {
+    auto clip = state.fBounds.makeOffset(above.x + state.fShiftX, above.y + state.fShiftY);
+    if (aboveClip && !clip.intersect(*aboveClip)) {
+      clip.setEmpty();
+    }
+    work::damageClip() = clip;
+  }
   state.fMovedDamage = skia::SkRect::MakeEmpty();
   state.fLayoutMoved = skia::SkRect::MakeEmpty();
   state.fDamaged = false;
@@ -4629,6 +4646,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
     });
   }
   work::damageOffset() = above;
+  work::damageClip() = aboveClip;
   // Its reach: its bounds and every child's area, as they are now.
   // One that clips what it holds reaches no further than itself.
   state.fReach = state.fBounds;
@@ -6165,6 +6183,7 @@ public:
     std::erase_if(detail::liveBackdrops(), [](const auto &one) { return work::entry(one.first) == nullptr; });
     damageFound().clear();
     work::damageOffset() = {};
+    work::damageClip().reset();
     ++work::frameNumber();
     skia::SkRect damage = walk::collectDamage(fRoot, true);
     // Walked as this frame asked: what was marked is done.

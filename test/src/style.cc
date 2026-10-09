@@ -339,6 +339,49 @@ TEST(Style, ARuleForATemplateMatchesEverySpecialisation) {
 
 // ---- state and damage
 
+auto damage_viewports() {
+  return make<Box>(
+      {.fill = true}, kOriginal,
+      make<Box>(
+          {.x = 20.0f, .y = 10.0f, .width = 60.0f, .height = 40.0f, .masking = true}, kCard,
+          make<Box>(
+              {.x = 10.0f, .y = 5.0f, .width = 70.0f, .height = 50.0f, .masking = true}, kCard,
+              make<Box>({.width = 300.0f, .height = 200.0f}, kOriginal))),
+      make<Box>({.x = 85.0f, .y = 45.0f, .width = 10.0f, .height = 10.0f}, kOriginal));
+}
+
+TEST(State, DamageRectanglesRespectNestedShiftedViewports) {
+  for (const float shift : {0.0f, -15.0f, 15.0f}) {
+    Scene<decltype(damage_viewports())> scene{damage_viewports()};
+    scene.layoutIfNeeded(kViewport);
+    auto &outer = std::get<0>(scene.root().fChildren);
+    auto &inner = std::get<0>(outer.fChildren);
+    auto &content = std::get<0>(inner.fChildren);
+    outer.fState.fShiftX = 5.0f;
+    inner.fState.fShiftY = shift;
+    (void)scene.finishFrame();
+
+    content.setColour(kSelected);
+    auto expected = inner.bounds().makeOffset(5.0f, shift);
+    ASSERT_TRUE(expected.intersect(outer.bounds().makeOffset(5.0f, 0.0f)));
+    ASSERT_TRUE(expected.intersect(kViewport));
+    const auto frame = scene.finishFrame();
+    EXPECT_EQ(frame.fDamage, expected);
+    ASSERT_FALSE(frame.fDamageRects.empty());
+    for (const auto &piece : frame.fDamageRects) {
+      EXPECT_TRUE(expected.contains(piece));
+    }
+
+    // Leaving a masked subtree restores the clip for subsequent siblings.
+    auto &sibling = std::get<1>(scene.root().fChildren);
+    sibling.setColour(kSelected);
+    const auto next = scene.finishFrame();
+    EXPECT_EQ(next.fDamage, sibling.bounds());
+    ASSERT_EQ(next.fDamageRects.size(), 1u);
+    EXPECT_EQ(next.fDamageRects.front(), sibling.bounds());
+  }
+}
+
 struct OneBox : Node {
   struct parts_t {
     Box<> child = make<Box>(
