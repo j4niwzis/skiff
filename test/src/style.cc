@@ -339,6 +339,20 @@ TEST(Style, ARuleForATemplateMatchesEverySpecialisation) {
 
 // ---- state and damage
 
+TEST(State, ManyDamageRectanglesKeepSeparatePanelsSeparate) {
+  std::vector<skia::SkRect> damage;
+  for (int i = 0; i < 100; ++i) {
+    damage.push_back(skia::SkRect::MakeXYWH(10.0f, 10.0f + i, 10.0f, 2.0f));
+    damage.push_back(skia::SkRect::MakeXYWH(900.0f, 10.0f + i, 10.0f, 2.0f));
+  }
+  const auto pieces = skiff::scene::fewRects(damage);
+  ASSERT_LE(pieces.size(), 6u);
+  for (const auto& piece : pieces)
+    EXPECT_LT(piece.width(), 100.0f) << "unchanged space between the panels must stay outside the repaint";
+  for (const auto& rect : damage)
+    EXPECT_TRUE(std::ranges::any_of(pieces, [&](const auto& piece) { return piece.contains(rect); }));
+}
+
 auto damage_viewports() {
   return make<Box>(
       {.fill = true}, kOriginal,

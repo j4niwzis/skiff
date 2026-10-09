@@ -33,8 +33,14 @@ public:
   // copied, which is this.
   template <class Source>
     requires(!std::same_as<std::remove_cvref_t<Source>, AnyImageSource> && ImageSource<Source>)
-  explicit AnyImageSource(Source source) : fGet([source] { return source(); }), fWait(waiting_on(source)) {}
+  explicit AnyImageSource(Source source) : fGet([source] { return source(); }), fWait(waiting_on(source)), fAnimated([source] {
+    if constexpr (requires { source.animated(); })
+      return source.animated();
+    else
+      return false;
+  }) {}
   [[nodiscard]] const skia::Sp<skia::SkImage> *operator()() const { return fGet(); }
+  [[nodiscard]] bool animated() const { return fAnimated(); }
   // Waited on by `id`, where the source says who waits: whether it does.
   [[nodiscard]] bool wait(skiff::scene::NodeId id) const {
     if (!fWait)
@@ -55,6 +61,7 @@ private:
 
   std::function<const skia::Sp<skia::SkImage> *()> fGet;
   std::function<void(skiff::scene::NodeId)> fWait;
+  std::function<bool()> fAnimated;
 };
 
 namespace internal {
@@ -97,9 +104,19 @@ public:
   // waiting on it (waiters()), not ticked at all: woken when it comes. A
   // person without a picture was otherwise asked for it at every frame,
   // for as long as they were shown.
-  [[nodiscard]] bool wantsTick() const { return !fHad && !fWaiting; }
+  [[nodiscard]] bool wantsTick() const {
+    if constexpr (requires { fSource.animated(); })
+      if (fSource.animated())
+        return true;
+    return !fHad && !fWaiting;
+  }
   void update(double) {
-    const bool has = this->image() != nullptr;
+    const auto* found = this->image();
+    const bool has = found != nullptr;
+    const std::uint32_t image_id = has ? (*found)->uniqueID() : 0;
+    if (has == fHad && image_id != fImageId)
+      this->markDamaged();
+    fImageId = image_id;
     if (has != fHad) {
       fHad = has;
       if (fBoxKept) {
@@ -266,6 +283,7 @@ private:
   Source fSource;
   Fit fFit;
   bool fHad = false;
+  std::uint32_t fImageId = 0;
   bool fBoxKept = false;
   bool fWaiting = false;
   // The picture scaled to what it covers, and what it was made for.

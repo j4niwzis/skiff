@@ -323,11 +323,20 @@ inline std::vector<skia::SkRect> &damageFound() {
 [[nodiscard]] inline std::vector<skia::SkRect> fewRects(std::vector<skia::SkRect> rects, std::size_t most = 6) {
   std::erase_if(rects, [](const skia::SkRect &one) { return one.isEmpty(); });
   if (rects.size() > 64) {
-    skia::SkRect all = rects.front();
-    for (const skia::SkRect &one : rects) {
-      all.join(one);
+    // A long list can report hundreds of child rectangles. Keep the work
+    // bounded without joining unrelated panels across the window. Parent
+    // damage already covers its children's damage; discard those first.
+    std::vector<skia::SkRect> bounded;
+    bounded.reserve(64);
+    for (const auto& rect : rects) {
+      if (std::ranges::any_of(bounded, [&](const auto& kept) { return kept.contains(rect); }))
+        continue;
+      std::erase_if(bounded, [&](const auto& kept) { return rect.contains(kept); });
+      if (bounded.size() == 64)
+        bounded = fewRects(std::move(bounded), 32);
+      bounded.push_back(rect);
     }
-    return {all};
+    return fewRects(std::move(bounded), most);
   }
   const auto area = [](const skia::SkRect &one) { return one.width() * one.height(); };
   // Joined where the join is hardly bigger than the two: one inside the
