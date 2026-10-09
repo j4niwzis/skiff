@@ -140,7 +140,10 @@ public:
         this->invalidateLayout();
       }
     }
-    fWaiting = !has && this->waitOn(fSource);
+    // A cached image can be replaced or removed too. Keep a subscription
+    // while it is present, so the cache wakes this node without repainting
+    // the root. Waiters deduplicates repeated subscriptions.
+    fWaiting = this->waitOn(fSource);
   }
 
   void drawSelf(skia::SkCanvas *canvas, float alpha) {

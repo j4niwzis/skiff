@@ -2189,7 +2189,7 @@ struct Alive {
 // frame. A node waits by its id; one gone meanwhile is passed over.
 class Waiters {
 public:
-  void wait(NodeId id) { fIds.push_back(id); }
+  void wait(NodeId id) { fIds.insert(id); }
   void wake() {
     for (const NodeId id : std::exchange(fIds, {})) {
       if (work::parents().contains(id)) {
@@ -2200,7 +2200,7 @@ public:
   [[nodiscard]] bool empty() const noexcept { return fIds.empty(); }
 
 private:
-  std::vector<NodeId> fIds;
+  std::unordered_set<NodeId> fIds;
 };
 
 class State {

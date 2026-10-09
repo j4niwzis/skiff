@@ -356,3 +356,41 @@ TEST(Tracking, MediaDeadlinesPreserveLocalDamageWithoutContinuousFrames) {
   check.template operator()<skiff::nodes::Image<TimedPicture>>();
 }
 } // namespace
+
+namespace {
+struct CachedPicture {
+  std::shared_ptr<MediaFrame> frame;
+  std::shared_ptr<Waiters> waiting;
+  const skia::Sp<skia::SkImage>* operator()() const { return frame->image ? &frame->image : nullptr; }
+  Waiters& waiters() const { return *waiting; }
+};
+struct CachedMedia : Node {
+  struct parts_t { skiff::nodes::Image<CachedPicture> image; } parts;
+  explicit CachedMedia(CachedPicture source)
+      : parts{make<skiff::nodes::Image<CachedPicture>>(
+            {.x = 10.0f, .y = 10.0f, .width = 40.0f, .height = 20.0f}, source)} {
+    parts.image.keepBox();
+  }
+};
+TEST(Tracking, CacheReplacementWakesAnAlreadyLoadedImageAndDamagesOnlyItsBox) {
+  auto surface = skia::Raster(skia::SkImageInfo::MakeN32Premul(8, 8));
+  ASSERT_TRUE(surface);
+  auto frame = std::make_shared<MediaFrame>();
+  frame->image = surface->makeImageSnapshot();
+  auto waiting = std::make_shared<Waiters>();
+  Scene<CachedMedia> scene{std::in_place, CachedPicture{frame, waiting}};
+  scene.update(0.0);
+  scene.layoutIfNeeded(kView);
+  (void)scene.finishFrame();
+  EXPECT_FALSE(scene.root().parts.image.wantsTick());
+  frame->image.reset();
+  waiting->wake();
+  scene.update(40.0);
+  EXPECT_EQ(scene.finishFrame().fDamage, scene.root().parts.image.bounds());
+  frame->image = surface->makeImageSnapshot();
+  waiting->wake();
+  scene.update(100.0);
+  EXPECT_EQ(scene.finishFrame().fDamage, scene.root().parts.image.bounds());
+  EXPECT_FALSE(scene.root().parts.image.wantsTick());
+}
+} // namespace
