@@ -470,6 +470,19 @@ struct MountedArguments {
     return std::tuple{facts.value};
   }
 };
+struct ShortcutScreen : scene::Node {
+  using Node::onKey;
+  std::optional<Count> onKey(scene::phase::bubble, const scene::key::down& key,
+                            scene::Reply& reply) {
+    if (key.key != scene::keys::kUp || !key.modifiers.has<scene::modifier::control>())
+      return std::nullopt;
+    reply.handle();
+    return Count{1};
+  }
+};
+struct ShownShortcutScreen : ShortcutScreen {
+  using ShortcutScreen::onKey;
+};
 template <class N>
 concept BoundByValue = requires(N&& node) {
   bound<MountedFacts>(std::move(node));
@@ -502,6 +515,17 @@ TEST(Compose, NestedBindingsKeepImmovableControlAtItsFinalAddress) {
   EXPECT_EQ(node.value, 7);
   node.setVisible(false);
   EXPECT_FALSE(node.owner->visible());
+}
+
+TEST(Compose, BoundKeepsInheritedScreenShortcuts) {
+  bind::Bound<Count, ShownShortcutScreen> screen;
+  scene::key::down key{.key = scene::keys::kUp,
+                       .modifiers = scene::modifiers::kControl};
+  scene::Reply reply;
+  const auto answer = screen.onKey(scene::phase::bubble{}, key, reply);
+  ASSERT_TRUE(answer.has_value());
+  EXPECT_EQ(answer->n, 1);
+  EXPECT_TRUE(reply.fHandled);
 }
 
 TEST(Compose, BoundMountConstructsAndReopensImmovableContentInPlace) {

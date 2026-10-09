@@ -29,6 +29,12 @@ inline std::uint64_t &localEpoch() {
 template <class Want, class Base>
 struct Bound : Base {
   using BoundTo = Want;
+  // Keep the wrapped node's overloads at this wrapper's level. Node's
+  // deduced-this defaults otherwise beat inherited event handlers.
+  using Base::onKey;
+  using Base::onPointer;
+  using Base::onText;
+  using Base::onSemantic;
   Bound() = default;
   explicit Bound(Base base)
     requires std::move_constructible<Base>
