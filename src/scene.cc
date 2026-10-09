@@ -3891,10 +3891,19 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
     const float edge = out > 0.0f ? box.fRight : box.fLeft;
     const float bottom = box.fBottom;
     const float w = tail.width, h = tail.height;
-    built.moveTo(edge - out, bottom - h);
-    built.lineTo(edge, bottom - h);
-    built.cubicTo(edge, bottom - h * 5.0f / 12.0f, edge + out * w * 0.4f, bottom - h / 12.0f, edge + out * w, bottom);
-    built.lineTo(edge - out, bottom);
+    // Match the rounded box's clockwise winding on both sides. A mirrored
+    // contour cancels the fill where a left tail overlaps the box.
+    if (out < 0.0f) {
+      built.moveTo(edge - out, bottom);
+      built.lineTo(edge + out * w, bottom);
+      built.cubicTo(edge + out * w * 0.4f, bottom - h / 12.0f, edge, bottom - h * 5.0f / 12.0f, edge, bottom - h);
+      built.lineTo(edge - out, bottom - h);
+    } else {
+      built.moveTo(edge - out, bottom - h);
+      built.lineTo(edge, bottom - h);
+      built.cubicTo(edge, bottom - h * 5.0f / 12.0f, edge + out * w * 0.4f, bottom - h / 12.0f, edge + out * w, bottom);
+      built.lineTo(edge - out, bottom);
+    }
     built.close();
   }
   return built.detach();

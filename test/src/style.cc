@@ -19,6 +19,19 @@ using skiff::nodes::Text;
 
 const auto kViewport = skia::SkRect::MakeWH(100.0f, 60.0f);
 
+TEST(Style, BubbleTailsKeepTheOverlapFilledOnBothSides) {
+  const auto box = skia::SkRect::MakeWH(100.0f, 100.0f);
+  skiff::scene::Node bubble;
+  bubble.apply({.tail = skiff::scene::Tail{.side = skiff::scene::tail_side::left{}}});
+  const auto left = skiff::scene::detail::boxWithTail(bubble.fState, box);
+  EXPECT_TRUE(left.contains(0.5f, 99.0f));
+  EXPECT_TRUE(left.contains(-2.0f, 99.0f));
+  bubble.apply({.tail = skiff::scene::Tail{.side = skiff::scene::tail_side::right{}}});
+  const auto right = skiff::scene::detail::boxWithTail(bubble.fState, box);
+  EXPECT_TRUE(right.contains(99.5f, 99.0f));
+  EXPECT_TRUE(right.contains(102.0f, 99.0f));
+}
+
 TEST(Animation, DoesNotSettleBeforeApproachReachesItsTarget) {
   float value = 0.0015f;
   EXPECT_FALSE(skiff::paint::settled(value, 0.0f));
