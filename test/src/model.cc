@@ -10,6 +10,25 @@ import skiff.model;
 using namespace skiff::model;
 
 namespace {
+// Thousands of empty effect lists still require concatenation. These checks
+// exceed the default Clang expression nesting limit without changing flags.
+template <std::size_t I> struct ConcatItem {};
+template <class Indices> struct LargeConcat;
+template <std::size_t... I> struct LargeConcat<std::index_sequence<I...>> {
+  using Empty = typename skiff::model::detail::Concat<
+      std::conditional_t<(I % 2 == 0), Types<>, Types<>>...>::type;
+  using Mixed = typename skiff::model::detail::Concat<
+      std::conditional_t<(I % 3 == 0), Types<>, Types<ConcatItem<I>>>...>::type;
+};
+template <class Indices> struct ExpectedConcat;
+template <std::size_t... I> struct ExpectedConcat<std::index_sequence<I...>> {
+  using type = Types<ConcatItem<3 * (I / 2) + I % 2 + 1>...>;
+};
+using LargeLists = LargeConcat<std::make_index_sequence<4095>>;
+static_assert(std::same_as<typename skiff::model::detail::Concat<>::type, Types<>>);
+static_assert(std::same_as<typename LargeLists::Empty, Types<>>);
+static_assert(std::same_as<typename LargeLists::Mixed,
+                          typename ExpectedConcat<std::make_index_sequence<2730>>::type>);
 struct ReadReceipts { bool on = true; };
 struct MentionsShared { bool on = false; };
 struct MentionsSealed { bool on = false; };

@@ -388,12 +388,21 @@ template <class Step, class L> struct Suffix;
 template <class Step, class... P> struct Suffix<Step, Types<P...>> {
   using type = Types<typename Suffix1<Step, P>::type...>;
 };
-// Lists joined end to end. A fold over a declared operator, not a template
-// recursing once per list: a model with thousands of places joins as many
-// lists, past any depth of instantiation.
+// Lists joined end to end. Each fold has at most sixteen lists, and each
+// recursive step consumes sixteen: large models stay below both expression
+// nesting and template depth limits, including lists of empty effects.
 template <class... A, class... B> Types<A..., B...> operator+(Types<A...>, Types<B...>);
 template <class... L> struct Concat {
   using type = decltype((Types<>{} + ... + L{}));
+};
+template <class L0, class L1, class L2, class L3, class L4, class L5, class L6, class L7,
+          class L8, class L9, class L10, class L11, class L12, class L13, class L14, class L15,
+          class... Rest>
+struct Concat<L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, Rest...> {
+  using Head = decltype(Types<>{} + L0{} + L1{} + L2{} + L3{} + L4{} + L5{} + L6{} + L7{} +
+                        L8{} + L9{} + L10{} + L11{} + L12{} + L13{} + L14{} + L15{});
+  using Tail = typename Concat<Rest...>::type;
+  using type = decltype(Head{} + Tail{});
 };
 
 template <class Want, class In> struct Search;
