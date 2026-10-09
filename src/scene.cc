@@ -1066,7 +1066,7 @@ public:
     // A glide begun from rest: its first step one frame's, not the time
     // since the last frame drawn -- which, at rest, was long ago, and made
     // the first step most of the way at once.
-    const double dt = std::min(dtMs, fFromRest ? 1000.0 / 60.0 : 64.0);
+    const double dt = std::max(0.0, fFromRest ? std::min(dtMs, 1000.0 / 60.0) : dtMs);
     fFromRest = false;
     // Between frames the bounds are the real ones: the target within them
     // from here, so that what shrank for good -- a search's few results --
@@ -1080,10 +1080,16 @@ public:
     if (fFlinging) {
       // Friction per millisecond, so thirty frames and two hundred agree on
       // how far a flick travels.
-      fVelocity *= std::pow(kFriction, static_cast<float>(dt));
-      fOffset += fVelocity * static_cast<float>(dt);
+      const float decay = -std::log(kFriction);
+      const float untilRest = std::log(std::abs(fVelocity) / kMinVelocity) / decay;
+      const float elapsed = std::clamp(static_cast<float>(dt), 0.0f, std::max(0.0f, untilRest));
+      const float before = fVelocity;
+      fVelocity *= std::exp(-decay * elapsed);
+      // Integrate the decay, rather than multiplying the final velocity by
+      // the frame time: the latter made the distance depend on the FPS.
+      fOffset += (before - fVelocity) / decay;
       if (fOffset < fLo || fOffset > fHi ||
-          std::abs(fVelocity) < kMinVelocity) {
+          dt >= untilRest) {
         fFlinging = false;
         fVelocity = 0.0f;
         fTarget = std::clamp(fOffset, fLo, fHi);
@@ -1489,6 +1495,9 @@ struct of_field {
   // The field keeps formats -- bold, a link: its menu has them for what is
   // selected.
   bool formats = false;
+  bool undo = false;
+  bool redo = false;
+  bool text = true;
 };
 }  // namespace text_menu
 using TextMenuAsk = spl::variant<text_menu::of_text, text_menu::of_field>;

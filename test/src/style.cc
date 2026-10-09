@@ -979,6 +979,48 @@ TEST(Motion, ATweenTakesItsTimeEitherWay) {
   level = was;
 }
 
+TEST(Motion, TweenSkipsSamplesWithoutStretchingTime) {
+  using namespace skiff::paint;
+  const Motion was = motionLevel();
+  motionLevel() = motion::full{};
+  Tween fast{0.0f, 200.0f}, slow{0.0f, 200.0f};
+  fast.setTarget(1.0f);
+  slow.setTarget(1.0f);
+  (void)fast.step(1000.0);
+  (void)slow.step(1000.0);
+  for (double now : {1016.0, 1032.0, 1048.0, 1064.0, 1080.0, 1096.0})
+    (void)fast.step(now);
+  (void)fast.step(1100.0);
+  (void)slow.step(1100.0);
+  EXPECT_FLOAT_EQ(fast.value(), slow.value());
+  (void)fast.step(1250.0);
+  (void)slow.step(1250.0);
+  EXPECT_EQ(fast.value(), 1.0f);
+  EXPECT_EQ(slow.value(), 1.0f);
+  motionLevel() = was;
+}
+
+TEST(Motion, FlingDistanceDoesNotDependOnFrameRate) {
+  const auto flick = [] {
+    ScrollGesture gesture;
+    gesture.setBounds(0.0f, 10000.0f);
+    gesture.jumpTo(1000.0f);
+    (void)gesture.press(0.0f);
+    (void)gesture.drag(-30.0f, 1000.0);
+    (void)gesture.drag(-60.0f, 1016.0);
+    gesture.release();
+    return gesture;
+  };
+  auto fast = flick(), slow = flick();
+  for (int frame = 0; frame < 100; ++frame)
+    (void)fast.advance(16.0);
+  for (int frame = 0; frame < 16; ++frame)
+    (void)slow.advance(100.0);
+  EXPECT_NEAR(fast.offset(), slow.offset(), 0.02f);
+  EXPECT_FALSE(fast.moving());
+  EXPECT_FALSE(slow.moving());
+}
+
 // A node's time moves only with frames: a press between frames restyles the
 // tree, and must not hand the nodes the last frame's time as if it were now.
 struct Clocked : Node {
