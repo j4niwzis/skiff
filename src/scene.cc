@@ -5356,7 +5356,12 @@ template <class T, class F> decltype(auto) walkOn(void *node, F &&f);
 template <class D, class Ops, class F> decltype(auto) walkErased(void *node, const Ops *ops, F &&f);
 template <class Handler, class Event, class R> struct EventEntries;
 template <class Handler, class... Es, class R> struct EventEntries<Handler, spl::variant<Es...>, R> {
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  using Entry = void (*)(void *, const void *, R &);
+  using Row = std::array<Entry, sizeof...(Es)>;
+#else
   using Row = std::tuple<void (*)(void *, const Es &, R &)...>;
+#endif
   std::array<Row, 3> fRows;
 
   template <class T> [[nodiscard]] static constexpr EventEntries of() {
@@ -5367,16 +5372,35 @@ template <class Handler, class... Es, class R> struct EventEntries<Handler, spl:
     const Row &row = fRows[indexOf(when)];
     spl::visit(
         [&](const auto &event) {
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+          row[eventIndex<std::remove_cvref_t<decltype(event)>>()](node, &event, reply);
+#else
           using Entry = void (*)(void *, const std::remove_cvref_t<decltype(event)> &, R &);
           std::get<Entry>(row)(node, event, reply);
+#endif
         },
         input);
   }
 
 private:
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  // The event alternatives already have a stable order. A flat row avoids
+  // generating tuple construction and lookup machinery in every node table.
+  template <class E> static consteval std::size_t eventIndex() {
+    std::size_t at = 0, found = 0;
+    ((std::same_as<E, Es> ? found = at : 0, ++at), ...);
+    return found;
+  }
+  template <class T, class P> [[nodiscard]] static constexpr Row rowOf() {
+    return Row{+[](void *node, const void *event, R &reply) {
+      Handler{}(*static_cast<T *>(node), P{}, *static_cast<const Es *>(event), reply);
+    }...};
+  }
+#else
   template <class T, class P> [[nodiscard]] static constexpr Row rowOf() {
     return Row{+[](void *node, const Es &event, R &reply) { Handler{}(*static_cast<T *>(node), P{}, event, reply); }...};
   }
+#endif
   [[nodiscard]] static constexpr std::size_t indexOf(phase::capture) { return 0; }
   [[nodiscard]] static constexpr std::size_t indexOf(phase::target) { return 1; }
   [[nodiscard]] static constexpr std::size_t indexOf(phase::bubble) { return 2; }

@@ -277,5 +277,35 @@ TEST(Tracking, SharedDebugDefaultDrawKeepsCustomDrawAndChildHooks) {
   EXPECT_EQ(std::get<0>(root.fChildren).draws, 1);
   EXPECT_EQ(std::get<1>(root.fChildren).fDraws, 1);
 }
+
+struct TextProbeForSharedEvents : Node {
+  using Node::onText;
+  std::vector<int> received;
+  void onText(const phase::capture &, const text::commit &event, Reply &) {
+    received.push_back(10 + static_cast<int>(event.text.size()));
+  }
+  void onText(const phase::target &, const text::compose &event, Reply &) {
+    received.push_back(20 + static_cast<int>(event.text.size()) + event.start * event.length);
+  }
+  void onText(const phase::bubble &, const text::commit &event, Reply &) {
+    received.push_back(30 + static_cast<int>(event.text.size()));
+  }
+};
+
+TEST(Tracking, SharedDebugEventRowsKeepPhaseAndAlternative) {
+  auto node = make<TextProbeForSharedEvents>({});
+  constexpr auto entries = EventEntries<TextHandler, TextEvent, Reply>::of<TextProbeForSharedEvents>();
+  const TextEvent committed = text::commit{"alpha"};
+  const TextEvent composing = text::compose{"beta", 3, 2};
+  Reply reply;
+  auto deliver = [&](auto when) {
+    entries.deliver(&node, when, committed, reply);
+    entries.deliver(&node, when, composing, reply);
+  };
+  deliver(phase::capture{});
+  deliver(phase::target{});
+  deliver(phase::bubble{});
+  EXPECT_EQ(node.received, (std::vector<int>{15, 30, 35}));
+}
 }
 #endif
