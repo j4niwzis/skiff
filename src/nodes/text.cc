@@ -145,7 +145,14 @@ inline std::uint64_t &textSelectionOwner() {
 struct AnyPictures {
   std::optional<skiff::scene::PillPicture> (*fPill)(std::string_view) = &NoPictures::pill;
   const skia::Sp<skia::SkImage> *(*fPicture)(std::string_view) = &NoPictures::picture;
-  template <class Pictures> [[nodiscard]] static AnyPictures of() { return {&Pictures::pill, &Pictures::picture}; }
+  bool (*fAnimated)(std::string_view) = nullptr;
+  template <class Pictures> [[nodiscard]] static AnyPictures of() {
+    if constexpr (requires { Pictures::animated(std::string_view{}); })
+      return {&Pictures::pill, &Pictures::picture, &Pictures::animated};
+    else
+      return {&Pictures::pill, &Pictures::picture};
+  }
+  [[nodiscard]] bool animated(std::string_view target) const { return fAnimated && fAnimated(target); }
   [[nodiscard]] std::optional<skiff::scene::PillPicture> pill(std::string_view target) const { return fPill(target); }
   [[nodiscard]] const skia::Sp<skia::SkImage> *picture(std::string_view target) const { return fPicture(target); }
 };
@@ -410,6 +417,18 @@ public:
   // Dragged past a scrolling view's edge, the text moves under a pointer
   // held still: the selection follows it, as a move would.
   void update(double) {
+    if constexpr (requires { fPictures.animated(std::string_view{}); }) {
+      std::vector<std::uint32_t> ids;
+      for (const auto& link : fLinks)
+        if (link.picture) {
+          const auto* picture = fPictures.picture(link.target);
+          ids.push_back(picture && *picture ? (*picture)->uniqueID() : 0);
+        }
+      if (ids != fPictureIds) {
+        fPictureIds = std::move(ids);
+        this->markDamaged();
+      }
+    }
     if (!fDragging) {
       return;
     }
@@ -421,7 +440,18 @@ public:
       this->markDamaged();
     }
   }
-  [[nodiscard]] bool wantsTick() const { return fDragging; }
+  [[nodiscard]] bool wantsTick() const {
+    if (fDragging)
+      return true;
+    if constexpr (requires { fPictures.animated(std::string_view{}); })
+      for (const auto& link : fLinks)
+        if (link.picture) {
+          const auto* picture = fPictures.picture(link.target);
+          if (!picture || !*picture || fPictures.animated(link.target))
+            return true;
+        }
+    return false;
+  }
   void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::up &release,
                  skiff::scene::PointerReply &reply) {
     // Pressed and let go without selecting: a link there is opened; else a
@@ -1082,6 +1112,7 @@ private:
   bool fDragging = false;
   bool fPressed = false;
   std::vector<Link> fLinks;
+  std::vector<std::uint32_t> fPictureIds;
   // The link the pointer was last on, of fLinks: lit while it is over this.
   std::optional<std::size_t> fHoveredLink;
   skia::SkColor fLinkColour = skia::colorSetARGB(255, 82, 160, 230);
