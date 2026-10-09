@@ -289,6 +289,9 @@ target_link_libraries(${PROJECT_NAME} PUBLIC skiff_model)
 option(SKIFF_ERASE_WALKS "Outside a release build, walk every child through an AnyNode" ON)
 target_compile_definitions(${PROJECT_NAME} PUBLIC
   $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<NOT:$<CONFIG:Release>>>:SKIFF_ERASED_WALKS>)
+option(SKIFF_SHARE_DEBUG_ALGORITHMS "In Debug, share layout and drawing code between erased node types" ON)
+target_compile_definitions(${PROJECT_NAME} PUBLIC
+  $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<BOOL:${SKIFF_SHARE_DEBUG_ALGORITHMS}>,$<CONFIG:Debug>>:SKIFF_SHARED_DEBUG_ALGORITHMS>)
 
 # PUBLIC: anything linking this gets `import skia`, `import skiff.paint`,
 # `import skiff.scene` and `import skiff.nodes`.

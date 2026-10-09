@@ -223,3 +223,59 @@ TEST(Tracking, ShrunkScrollViewKeepsItsBottom) {
 }
 
 } // namespace
+
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+namespace {
+// Both hooks must still run on the original node, even though the geometry
+// around them is shared. An inherited default layout must see real children.
+struct MeasuredForSharedLayout : Node {
+  int measures = 0, layouts = 0;
+  DrawProbe child = make<DrawProbe>({.width = 13.0f, .height = 7.0f});
+  void forEachChild(auto&& f) { f(child); }
+  void measure(const skia::SkRect&) { ++measures; }
+  void layoutChildren() {
+    ++layouts;
+    layout(child, fState.contentBox());
+  }
+};
+
+TEST(Tracking, SharedDebugLayoutKeepsMeasurementChildrenAndPlacement) {
+  auto node = make<MeasuredForSharedLayout>({.autoSize = axes::kBoth});
+  auto ref = AnyNodeRef::of(node);
+  layout(ref, kView);
+  EXPECT_EQ(node.measures, 1);
+  EXPECT_GE(node.layouts, 2);
+  EXPECT_EQ(node.bounds().width(), 13.0f);
+  EXPECT_EQ(node.bounds().height(), 7.0f);
+  const auto before = node.child.bounds();
+  const int measured = node.measures;
+  node.setPosition(10.0f, 5.0f);
+  layout(ref, kView);
+  EXPECT_EQ(node.measures, measured);
+  EXPECT_EQ(node.child.bounds(), before.makeOffset(10.0f, 5.0f));
+}
+
+struct CustomDrawForSharedDefault : Node {
+  int draws = 0;
+  void draw(Painting& painting, skia::SkCanvas* canvas, float alpha) {
+    ++draws;
+    drawDefault(*this, painting, canvas, alpha);
+  }
+};
+
+TEST(Tracking, SharedDebugDefaultDrawKeepsCustomDrawAndChildHooks) {
+  auto root = make<Group<CustomDrawForSharedDefault, DrawProbe>>({.width = 100.0f, .height = 100.0f},
+      make<CustomDrawForSharedDefault>({.width = 10.0f, .height = 10.0f}),
+      make<DrawProbe>({.width = 10.0f, .height = 10.0f}));
+  auto ref = AnyNodeRef::of(root);
+  layout(ref, kView);
+  skia::SkBitmap pixels;
+  ASSERT_TRUE(pixels.tryAllocN32Pixels(200, 120));
+  skia::SkCanvas canvas(pixels);
+  detail::PlainPaint painting;
+  draw(ref, painting, &canvas, 1.0f);
+  EXPECT_EQ(std::get<0>(root.fChildren).draws, 1);
+  EXPECT_EQ(std::get<1>(root.fChildren).fDraws, 1);
+}
+}
+#endif

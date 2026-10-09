@@ -3426,11 +3426,19 @@ struct Node {
 
   // -- layout
   // Sets fWidth/fHeight from content before layout uses them.
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  void measure(const skia::SkRect &) {}
+#else
   void measure(this auto &, const skia::SkRect &) {}
+#endif
   void layoutChildren(this auto &self) { layoutChildrenInContentBox(self); }
 
   // -- drawing
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  void drawSelf(skia::SkCanvas *, float) {}
+#else
   void drawSelf(this auto &, skia::SkCanvas *, float) {}
+#endif
   // The whole subtree, overridden by a node that draws it another way.
   void draw(this auto &self, Painting &painting, skia::SkCanvas *canvas, float alpha) {
     drawDefault(self, painting, canvas, alpha);
@@ -3439,10 +3447,18 @@ struct Node {
   // -- time
   void update(this auto &, double) {}
   // Part-way to somewhere by hand, so the next frame differs.
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  [[nodiscard]] bool settling() const { return false; }
+#else
   [[nodiscard]] bool settling(this const auto &) { return false; }
+#endif
 
   // -- input
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  [[nodiscard]] bool acceptsInput() const { return false; }
+#else
   [[nodiscard]] bool acceptsInput(this const auto &) { return false; }
+#endif
   [[nodiscard]] bool focusable(this const auto &self) {
     return self.acceptsInput();
   }
@@ -3451,14 +3467,30 @@ struct Node {
   // reached by Tab, and a click on them leaves the focus where it is (Qt's
   // ClickFocus and NoFocus, GTK's focus-on-click). A program where the
   // input keeps the focus through clicks elsewhere needs no work for it.
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  [[nodiscard]] bool takesFocusOnPress() const { return false; }
+#else
   [[nodiscard]] bool takesFocusOnPress(this const auto &) { return false; }
+#endif
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  [[nodiscard]] bool hoverChangesAppearance() const { return false; }
+#else
   [[nodiscard]] bool hoverChangesAppearance(this const auto &) {
     return false;
   }
+#endif
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  [[nodiscard]] bool focusChangesAppearance() const { return false; }
+#else
   [[nodiscard]] bool focusChangesAppearance(this const auto &) {
     return false;
   }
+#endif
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  void onFocusChanged(bool) {}
+#else
   void onFocusChanged(this auto &, bool) {}
+#endif
   // A node that says what a press does by onPress() takes the press: the
   // host delivers it once the dispatch is over (skiff::bind::press).
   [[nodiscard]] bool onClick(this auto &self, float, float)
@@ -3468,7 +3500,11 @@ struct Node {
     return true;
   }
   [[nodiscard]] bool onClick(this auto &, float, float) { return false; }
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  [[nodiscard]] bool onScroll(float) { return false; }
+#else
   [[nodiscard]] bool onScroll(this auto &, float) { return false; }
+#endif
   // The defaults: what a click asks for, where onClick returns it, returned
   // with them, as a handler's own answer is.
   auto onPointer(this auto &self, const auto &at, const auto &input,
@@ -3479,15 +3515,27 @@ struct Node {
              Reply &reply) {
     return defaultKey(self, at, input, reply);
   }
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  void onText(const auto &, const auto &, Reply &) {}
+#else
   void onText(this auto &, const auto &, const auto &, Reply &) {}
+#endif
   auto onSemantic(this auto &self, const auto &at, const auto &action,
                   Reply &reply) {
     return defaultSemantic(self, at, action, reply);
   }
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  [[nodiscard]] Semantics semantics() const { return {}; }
+#else
   [[nodiscard]] Semantics semantics(this const auto &) { return {}; }
+#endif
 
   // -- styling: the node's own declarations, colour and fonts
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  void applyNodeStyle(const Style &, bool) {}
+#else
   void applyNodeStyle(this auto &, const Style &, bool) {}
+#endif
 
   // -- the common state, reached from the node
   [[nodiscard]] NodeId id() const noexcept { return fState.id(); }
@@ -3934,6 +3982,11 @@ template <class = void> struct ProgramPaint {
 // The program's, where a node of type T is drawn: dependent on T, so that
 // what is found is the program's specialization, not this primary.
 template <class T> using PaintOf = typename ProgramPaint<std::conditional_t<sizeof(T) != 0, void, T>>::type;
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+template <class Hooks> struct SharedDrawNode;
+template <class T> struct DrawPaint { using type = PaintOf<T>; };
+template <class Hooks> struct DrawPaint<SharedDrawNode<Hooks>> { using type = Hooks; };
+#endif
 
 // What blurs what is drawn under it as it is drawn (a backdrop filter): each
 // such node's rect on the device, as it was last drawn, by its id. Whatever
@@ -4048,8 +4101,14 @@ void drawNode(T &node, Painting &painting, skia::SkCanvas *canvas, float inherit
   ++drawnCount();
   // What the program keeps while its subtree is drawn.
   // The program's paint, as the host handed it to the scene.
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  using Hooks = typename DrawPaint<T>::type;
+  auto &hooks = static_cast<Hooks &>(painting);
+  [[maybe_unused]] const typename Hooks::scope programScope{hooks, state};
+#else
   auto &hooks = static_cast<PaintOf<T> &>(painting);
   [[maybe_unused]] const typename PaintOf<T>::scope programScope{hooks, state};
+#endif
   const float alpha = inheritedAlpha * state.fAlpha;
   // The canvas kept and given back only where this moves or cuts it: most
   // nodes do neither, and a save and a restore for each was most of what
@@ -4138,8 +4197,15 @@ template <class N> void shiftSubtree(N &node, float dy) { shiftSubtree(node, 0.0
 // of its children, after placing it.
 // Draws a node and its subtree the way the scene does; a node that draws its
 // subtree another way calls this for what it does not do itself.
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+template <class T> void drawDefaultShared(T &node, Painting &painting, skia::SkCanvas *canvas, float alpha);
+#endif
 template <class T> void drawDefault(T &node, Painting &painting, skia::SkCanvas *canvas, float alpha) {
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  drawDefaultShared(node, painting, canvas, alpha);
+#else
   detail::drawNode(node, painting, canvas, alpha);
+#endif
 }
 
 // ---- the walks made once ----------------------------------------------------
@@ -5439,11 +5505,22 @@ public:
     EventEntries<TextHandler, TextEvent, Reply> fText;
     EventEntries<SemanticHandler, SemanticAction, Reply> fSemantic;
     bool (*fChildAt)(void *, std::uint32_t, void *context, AnyChildVisit visit);
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+    // Layout and the default draw algorithm need only these typed hooks;
+    // the surrounding algorithms do not depend on the node's subtree type.
+    void (*fMeasure)(void *, const skia::SkRect &);
+    void (*fLayoutChildren)(void *);
+    void (*fDrawSelf)(void *, Painting &, skia::SkCanvas *, float);
+#endif
   };
   [[nodiscard]] const Ops &ops() const noexcept { return *fOps; }
   [[nodiscard]] void *node() const noexcept { return fNode; }
 
 private:
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  static void layoutShared(void *node, const Ops *ops, const skia::SkRect &box);
+  static const Walks kDebugWalks;
+#endif
   template <class T> [[nodiscard]] static T &as(void *node) {
     return *static_cast<T *>(node);
   }
@@ -5556,7 +5633,11 @@ private:
     static constexpr const Walks *value = &kTypedWalks<T>;
   };
   template <class D> struct SharedWalksOf {
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+    static constexpr const Walks *value = &kDebugWalks;
+#else
     static constexpr const Walks *value = &kSharedWalks<D>;
+#endif
   };
   template <class T> [[nodiscard]] static constexpr const Walks *walksOf() {
     return std::conditional_t<kErasedWalks, SharedWalksOf<void>, TypedWalksOf<T>>::value;
@@ -5564,7 +5645,11 @@ private:
   template <class T>
   static constexpr Ops kOps{      +[](void *n) { delete static_cast<T *>(n); },
       +[](void *n) -> State & { return as<T>(n).fState; },
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+      +[](void *n, const skia::SkRect &box) { layoutShared(n, &kOps<T>, box); },
+#else
       +[](void *n, const skia::SkRect &box) { detail::layoutNode(as<T>(n), box); },
+#endif
       +[](void *n, Painting &painting, skia::SkCanvas *canvas, float alpha) { as<T>(n).draw(painting, canvas, alpha); },
       walksOf<T>(),
       +[]() -> const std::type_info & { return typeid(T); },
@@ -5593,6 +5678,14 @@ private:
       +[](void *n, std::uint32_t place, void *context, AnyChildVisit visit) -> bool {
         return childAt(as<T>(n), place, [&](auto &child) { visitAsAny(child, context, visit); });
       },
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+      +[](void *n, const skia::SkRect &box) { as<T>(n).measure(box); },
+      +[](void *n) { as<T>(n).layoutChildren(); },
+      +[](void *n, Painting &painting, skia::SkCanvas *canvas, float alpha) {
+        auto &hooks = static_cast<detail::PaintOf<T> &>(painting);
+        detail::drawSelfOf(as<T>(n), hooks, canvas, alpha);
+      },
+#endif
   };
 
 
@@ -5675,6 +5768,10 @@ public:
   State &fState;
 
   template <class F> void forEachChild(F &&f) { AnyNodeRef(fNode, fOps).forEachChild(f); }
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+  void measure(const skia::SkRect &box) { fOps->fMeasure(fNode, box); }
+  void layoutChildren() { fOps->fLayoutChildren(fNode); }
+#endif
   void update(double now) { fOps->fTick(fNode, now); }
   [[nodiscard]] bool settling() const { return fOps->fSettling(fNode); }
   void applyNodeStyle(const Style &style, bool active) { fOps->fApplyNodeStyle(fNode, style, active); }
@@ -5690,6 +5787,34 @@ public:
   void *fNode;
   const AnyNode::Ops *fOps;
 };
+
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+// Defined in the scene module, once. Previously kOps<T> made the whole
+// layout algorithm for every node in every walks_* subtree. Its geometry,
+// autosizing, placement and invalidation all use State and child refs; only
+// measure and layoutChildren require the node's original type.
+void AnyNode::layoutShared(void *node, const Ops *ops, const skia::SkRect &box) {
+  ErasedNode seen(node, ops);
+  detail::layoutNode(seen, box);
+}
+
+namespace detail {
+// Keep the paint type in the specialization: the application specializes
+// ProgramPaint and its scope/under/over hooks must still be selected where
+// the application's nodes are instantiated, rather than in skiff itself.
+template <class Hooks> struct SharedDrawNode : ErasedNode {
+  explicit SharedDrawNode(AnyNodeRef &node) : ErasedNode(node) {}
+  void drawSelf(Hooks &hooks, skia::SkCanvas *canvas, float alpha) {
+    fOps->fDrawSelf(fNode, hooks, canvas, alpha);
+  }
+};
+}
+template <class T> void drawDefaultShared(T &node, Painting &painting, skia::SkCanvas *canvas, float alpha) {
+  auto ref = AnyNodeRef::of(node);
+  detail::SharedDrawNode<detail::PaintOf<T>> seen(ref);
+  detail::drawNode(seen, painting, canvas, alpha);
+}
+#endif
 
 inline StyleSubject styleSubject(ErasedNode &node, float viewportWidth) {
   return node.fOps->fStyleSubject(node.fNode, viewportWidth);
@@ -5727,6 +5852,11 @@ template <class D, class Ops, class F> decltype(auto) walkErased(void *node, con
   ErasedNode erased(node, ops);
   return f(erased);
 }
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+// The erased walks do not depend on the importing application. Emit their
+// callbacks once in this module, rather than again in every walks_* unit.
+const AnyNode::Walks AnyNode::kDebugWalks = kSharedWalks<void>;
+#endif
 template <class T, class F> decltype(auto) walkOn(void *node, F &&f) {
   if constexpr (kErasedWalks) {
     ErasedNode erased(node, &AnyNode::opsOf<T>());
