@@ -125,6 +125,31 @@ TEST(Bind, RowsAreTheListsElementsAndShowThem) {
   EXPECT_FALSE(rows[1].parts.receipts.fOn);
 }
 
+template <class Held> struct HeldPage : scene::Node {
+  struct Parts { Held page; } parts;
+};
+
+template <class Variant>
+void checkHeldPage() {
+  Model m = twoAccounts();
+  HeldPage<Variant> page;
+  auto& active = page.parts.page.template emplace<Page>();
+  bind::Binding<Model> binding;
+  binding.refresh(page, m);
+  ASSERT_EQ(active.parts.accounts.fRows.size(), 2u);
+  EXPECT_EQ(active.parts.accounts.fRows[0].parts.name.fText, "A");
+  m.apply(model::put<AccountT>(std::string("@a:x.org"),
+                              AccountT{"@a:x.org", {"Changed"}, {false}}));
+  binding.refresh(page, m);
+  EXPECT_EQ(active.parts.accounts.fRows[0].parts.name.fText, "Changed");
+  EXPECT_FALSE(active.parts.accounts.fRows[0].parts.receipts.fOn);
+}
+
+TEST(Bind, PartsHoldingVariantPagesRefreshTheirActiveBindings) {
+  checkHeldPage<spl::variant<std::monostate, Page>>();
+  checkHeldPage<std::variant<std::monostate, Page>>();
+}
+
 TEST(Bind, AWholeListReplacementRefreshesRetainedRows) {
   Model m = twoAccounts();
   Page page;

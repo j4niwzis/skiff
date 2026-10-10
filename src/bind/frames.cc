@@ -150,6 +150,25 @@ template <class T, class... Seen> consteval bool walksOf(Rank<0>) {
 template <class T, class... Seen>
 struct Walks : std::bool_constant<walksOf<std::remove_cvref_t<T>, Seen...>(Rank<5>{})> {};
 
+// Held children are visited through their wrapper. A parts aggregate must
+// see the same children here, or it can prune an entire bound page.
+template <class T, class... Seen>
+struct Walks<std::optional<T>, Seen...> : Walks<T, Seen...> {};
+template <class T, class Allocator, class... Seen>
+struct Walks<std::vector<T, Allocator>, Seen...> : Walks<T, Seen...> {};
+template <class T, class D, class... Seen>
+struct Walks<std::unique_ptr<T, D>, Seen...> : Walks<T, Seen...> {};
+template <class T, class... Seen>
+struct Walks<std::shared_ptr<T>, Seen...> : Walks<T, Seen...> {};
+template <class T, class... Seen>
+struct Walks<std::reference_wrapper<T>, Seen...> : Walks<T, Seen...> {};
+template <class... T, class... Seen>
+struct Walks<std::tuple<T...>, Seen...> : AnyWalks<std::tuple<T...>, Seen...> {};
+template <class... T, class... Seen>
+struct Walks<std::variant<T...>, Seen...> : AnyWalks<std::tuple<T...>, Seen...> {};
+template <class... T, class... Seen>
+struct Walks<spl::variant<T...>, Seen...> : AnyWalks<std::tuple<T...>, Seen...> {};
+
 // Whether a Local is anywhere below a type: where a local change is looked
 // for. Said by the type (compose's nodes), found in a parts aggregate, else
 // -- a node naming its children itself -- taken to be, to be sure.

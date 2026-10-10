@@ -19,6 +19,11 @@ void visitNode(Op &op, N &node, const Here &here, const Frames &...frames);
 template <class Op, class Here, class... Frames>
 void visitHeld(Op &, std::monostate &, const Here &, const Frames &...) {}
 template <class Op, class... Ts, class Here, class... Frames>
+void visitHeld(Op &op, std::variant<Ts...> &held, const Here &here,
+               const Frames &...frames) {
+  std::visit([&](auto &one) { visitHeld(op, one, here, frames...); }, held);
+}
+template <class Op, class... Ts, class Here, class... Frames>
 void visitHeld(Op &op, spl::variant<Ts...> &held, const Here &here,
                const Frames &...frames) {
   spl::visit([&](auto &one) { visitHeld(op, one, here, frames...); }, held);
