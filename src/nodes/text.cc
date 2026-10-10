@@ -327,8 +327,11 @@ public:
                          link.plain.empty() ? std::string(":emoji:") : link.plain, true});
     return scene::clipboardFragment(fText.substr(first, last - first), std::move(atoms));
   }
+  [[nodiscard]] scene::ClipboardFragment selectedFragment() const {
+    return this->copiedRange(std::min(fAnchor, fCaret), std::max(fAnchor, fCaret));
+  }
   [[nodiscard]] std::string selected() const {
-    return this->copiedRange(std::min(fAnchor, fCaret), std::max(fAnchor, fCaret)).text;
+    return this->selectedFragment().text;
   }
   [[nodiscard]] bool acceptsInput() const { return fSelectable; }
   [[nodiscard]] bool showsFocus() const { return false; }

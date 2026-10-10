@@ -105,3 +105,18 @@ TEST(Images, AnimatedPngUsesFrameDurationsOffsetsAndBackgroundDisposal) {
   // A truncated frame must not read outside the encoded bytes.
   EXPECT_LE(skia::decodeFrames(png.data(), png.size() - 15).size(), 1u);
 }
+
+TEST(Text, SelectedFragmentKeepsInlineImageSources) {
+  skiff::nodes::BasicText<inline_images> text("Hi \u2003!", 13.0f, skia::SkColor{0});
+  text.setSelectable(true);
+  text.setLinks({{.first = 3, .last = 6, .target = "mxc://remote/neocat", .picture = true, .plain = ":neocat:"}}, skia::SkColor{0});
+  skiff::scene::Reply reply;
+  text.onKey(skiff::scene::phase::target{}, skiff::scene::key::down{skiff::scene::keys::kA,
+      skiff::scene::Modifiers{}.with<skiff::scene::modifier::control>()}, reply);
+  const auto selected = text.selectedFragment();
+  EXPECT_EQ(selected.text, "Hi :neocat:!");
+  ASSERT_EQ(selected.atoms.size(), 1u);
+  EXPECT_EQ(selected.atoms[0].target, "mxc://remote/neocat");
+  EXPECT_EQ(selected.atoms[0].first, 3u);
+  EXPECT_EQ(selected.atoms[0].last, 6u);
+}
