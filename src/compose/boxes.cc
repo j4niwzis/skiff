@@ -175,6 +175,7 @@ Box<Parts...> row(Parts... parts) {
 // in place: controls may refer to themselves, so a rendered temporary must
 // never be moved into the tree. Make returns the arguments, not a node.
 template <class Content, class Facts, class Make> struct Mounted : Specced {
+  using BindingChildren = std::tuple<Content>;
   Make fMake;
   std::optional<Content> fContent;
   std::optional<Facts> fLast;

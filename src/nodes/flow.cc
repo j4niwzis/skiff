@@ -627,6 +627,7 @@ bool reconcile(std::vector<Row> &rows, Items &&items, KeyOf keyOf,
 //   header.show(view_of(chat), [&](const HeaderView& v) { return Header(v); });
 template <class View, class Content> class Memo : public skiff::scene::Node {
 public:
+  using BindingChildren = std::tuple<Content>;
   // Made again, from the view, where the view is not the one it shows.
   template <class Make> bool show(const View &view, Make &&make) {
     if (fView && *fView == view) {

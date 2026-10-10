@@ -720,3 +720,17 @@ TEST(Compose, PointerHandlerRetainsClickOutputsAndReadsItsNode) {
   EXPECT_EQ(node.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 3}, reply), "event");
   EXPECT_FALSE(node.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 1}, reply).has_value());
 }
+
+TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
+  using local_t = decltype(local<Expanded>(bound<Expanded>(Chevron{})));
+  static_assert(bind::detail::kHasLocal<std::optional<local_t>>);
+  static_assert(bind::detail::kHasLocal<std::vector<local_t>>);
+  static_assert(bind::detail::kHasLocal<std::variant<int, local_t>>);
+  static_assert(bind::detail::kHasLocal<spl::variant<int, local_t>>);
+  using memo_t = nodes::Memo<int, local_t>;
+  static_assert(bind::detail::kHasLocal<memo_t>);
+  using mounted_t = Mounted<local_t, int, std::identity>;
+  static_assert(bind::detail::kHasLocal<mounted_t>);
+  static_assert(!bind::detail::kHasLocal<nodes::Memo<int, nodes::Text>>);
+  static_assert(!bind::detail::kHasLocal<std::vector<int>>);
+}

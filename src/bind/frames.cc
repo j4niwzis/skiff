@@ -175,6 +175,13 @@ template <class T, class... Seen>
 consteval bool hasLocalOf(Rank<3>) {
   return T::HasLocal::value;
 }
+// Dynamic containers name the child types their runtime walk can visit.
+// This lets the local refresh pass enter memoized and mounted content.
+template <class T, class... Seen>
+  requires(!requires { typename T::HasLocal; } && requires { typename T::BindingChildren; })
+consteval bool hasLocalOf(Rank<3>) {
+  return AnyHasLocal<typename T::BindingChildren, Seen..., T>::value;
+}
 template <class T, class... Seen>
   requires requires(T &t) { t.parts; }
 consteval bool hasLocalOf(Rank<2>) {
@@ -194,6 +201,15 @@ template <class T, class... Seen> consteval bool hasLocalOf(Rank<0>) {
 }
 template <class T, class... Seen>
 struct HasLocal : std::bool_constant<hasLocalOf<std::remove_cvref_t<T>, Seen...>(Rank<5>{})> {};
+
+template <class T, class... Seen>
+struct HasLocal<std::optional<T>, Seen...> : HasLocal<T, Seen...> {};
+template <class T, class Allocator, class... Seen>
+struct HasLocal<std::vector<T, Allocator>, Seen...> : HasLocal<T, Seen...> {};
+template <class... T, class... Seen>
+struct HasLocal<std::variant<T...>, Seen...> : AnyHasLocal<std::tuple<T...>, Seen...> {};
+template <class... T, class... Seen>
+struct HasLocal<spl::variant<T...>, Seen...> : AnyHasLocal<std::tuple<T...>, Seen...> {};
 
 } // namespace detail
 } // namespace skiff::bind
