@@ -265,7 +265,7 @@ private:
     std::string text;
     Value value;
   };
-  static constexpr std::size_t kGeneration = 8192;
+  static constexpr std::size_t kGeneration = 1024;
   Entry &insert(std::uint64_t key, Entry entry) {
     if (fNew.size() >= kGeneration) {
       fOld = std::exchange(fNew, {});
@@ -566,7 +566,7 @@ private:
     if (const auto found = words.find(word); found != words.end()) {
       return found->second;
     }
-    if (words.size() > 50000) {
+    if (words.size() >= 2048) {
       words.clear();
     }
     ShapedWord made;
@@ -589,7 +589,7 @@ private:
     return words.emplace(std::string(word), std::move(made)).first->second;
   }
   mutable std::unordered_map<const skia::SkTypeface *, WordsOfFace> fWords;
-  // A face as HarfBuzz reads it: its file's bytes, at its own units, with
+  // A face as HarfBuzz reads it: its shaping tables, at its own units, with
   // the variation the typeface is an instance of -- the weight of a clone.
   struct HarfBuzzFont {
     std::unique_ptr<hb_font_t, decltype(&hb_font_destroy)> font{nullptr, &hb_font_destroy};
@@ -599,23 +599,25 @@ private:
     if (const auto it = fHarfBuzz.find(&face); it != fHarfBuzz.end()) {
       return &it->second;
     }
-    int index = 0;
-    const auto stream = face.openStream(&index);
-    if (!stream) {
-      return nullptr;
-    }
-    // The font keeps the blob alive. Transfer the stream buffer to it rather
-    // than retaining a second full copy through HB_MEMORY_MODE_DUPLICATE.
-    if (stream->getLength() > std::numeric_limits<unsigned>::max())
-      return nullptr;
-    auto bytes = std::make_unique<std::vector<char>>(stream->getLength());
-    bytes->resize(stream->read(bytes->data(), bytes->size()));
-    const char* data = bytes->data();
-    const unsigned length = static_cast<unsigned>(bytes->size());
-    hb_blob_t *blob = hb_blob_create(data, length, HB_MEMORY_MODE_READONLY, bytes.release(),
-                                     [](void* owned) { delete static_cast<std::vector<char>*>(owned); });
-    hb_face_t *hbFace = hb_face_create(blob, static_cast<unsigned>(index));
-    hb_blob_destroy(blob);
+    // Shaping needs font tables, not a second copy of the entire font file
+    // (including large emoji bitmaps). Keep the typeface alive while HarfBuzz
+    // lazily requests the tables it actually uses.
+    face.ref();
+    hb_face_t *hbFace = hb_face_create_for_tables(
+        [](hb_face_t *, hb_tag_t tag, void *owner) -> hb_blob_t * {
+          const auto &typeface = *static_cast<const skia::SkTypeface *>(owner);
+          auto table = typeface.copyTableData(tag);
+          if (!table || table->size() > std::numeric_limits<unsigned>::max())
+            return hb_blob_get_empty();
+          const char *data = static_cast<const char *>(table->data());
+          const unsigned size = static_cast<unsigned>(table->size());
+          return hb_blob_create(data, size, HB_MEMORY_MODE_READONLY, table.release(),
+                                [](void *owned) { static_cast<skia::SkData *>(owned)->unref(); });
+        },
+        const_cast<skia::SkTypeface *>(&face),
+        [](void *owner) { static_cast<const skia::SkTypeface *>(owner)->unref(); });
+    hb_face_set_upem(hbFace, static_cast<unsigned>(std::max(1, face.getUnitsPerEm())));
+    hb_face_set_glyph_count(hbFace, static_cast<unsigned>(face.countGlyphs()));
     HarfBuzzFont made;
     made.unitsPerEm = std::max(1u, hb_face_get_upem(hbFace));
     made.font.reset(hb_font_create(hbFace));
@@ -638,7 +640,7 @@ private:
 #else
 private:
 #endif
-  static constexpr std::size_t kMaxCachedWidths = 8192;
+  static constexpr std::size_t kMaxCachedWidths = 2048;
 
   [[nodiscard]] static bool isAscii(std::string_view text) {
     for (const char c : text) {

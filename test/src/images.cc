@@ -23,7 +23,7 @@ std::string frame_data(std::string_view png) {
   return out;
 }
 
-TEST(Images, FontDataSurvivesStreamReleaseAndCacheInvalidation) {
+TEST(Images, FontTableLifetimeAndCacheInvalidation) {
   auto manager = skia::SkFontMgr_New_Custom_Directory("/usr/share/fonts");
   auto face = manager ? manager->matchFamilyStyle("DejaVu Sans", skia::SkFontStyle()) : nullptr;
   if (!face) GTEST_SKIP() << "Needs a font for shaping";
@@ -32,8 +32,9 @@ TEST(Images, FontDataSurvivesStreamReleaseAndCacheInvalidation) {
   skia::SkFont font(face, 16.0f);
   const float first = fonts.measure(font, "office");
   ASSERT_GT(first, 0.0f);
-  // A different run uses the cached face after harfBuzz() released its stream.
+  // The cached HarfBuzz face owns its table data independently.
   EXPECT_GT(fonts.measure(font, "affinity"), 0.0f);
+  EXPECT_GT(fonts.measure(font, "مرحبا café a\u0301"), 0.0f);
   fonts.invalidateCaches();
   EXPECT_FLOAT_EQ(fonts.measure(font, "office"), first);
   EXPECT_GT(fonts.measure(font, "affinity"), 0.0f);
