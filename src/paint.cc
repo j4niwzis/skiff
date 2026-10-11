@@ -604,10 +604,16 @@ private:
     if (!stream) {
       return nullptr;
     }
-    std::vector<char> bytes(stream->getLength());
-    bytes.resize(stream->read(bytes.data(), bytes.size()));
-    hb_blob_t *blob = hb_blob_create(bytes.data(), static_cast<unsigned>(bytes.size()), HB_MEMORY_MODE_DUPLICATE,
-                                     nullptr, nullptr);
+    // The font keeps the blob alive. Transfer the stream buffer to it rather
+    // than retaining a second full copy through HB_MEMORY_MODE_DUPLICATE.
+    if (stream->getLength() > std::numeric_limits<unsigned>::max())
+      return nullptr;
+    auto bytes = std::make_unique<std::vector<char>>(stream->getLength());
+    bytes->resize(stream->read(bytes->data(), bytes->size()));
+    const char* data = bytes->data();
+    const unsigned length = static_cast<unsigned>(bytes->size());
+    hb_blob_t *blob = hb_blob_create(data, length, HB_MEMORY_MODE_READONLY, bytes.release(),
+                                     [](void* owned) { delete static_cast<std::vector<char>*>(owned); });
     hb_face_t *hbFace = hb_face_create(blob, static_cast<unsigned>(index));
     hb_blob_destroy(blob);
     HarfBuzzFont made;
