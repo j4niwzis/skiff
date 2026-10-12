@@ -435,4 +435,136 @@ auto text_for(Compute compute, nodes::Text text) {
   return projected<Want>(std::move(compute), TextOf(std::move(text)));
 }
 
+// A list of sections, one under another in a view that scrolls, and the
+// strip of their tabs under it: a tab pressed brings its section to the
+// top of the view; the tab of the section at the top is lit, the strip
+// scrolled to show it. Made from what it reads -- a range of elements, as
+// listed is -- each element's tab made by `makeTab`, its section by
+// `makePart`: a picker's packs, an emoji panel's groups.
+template <class Element, class MakeTab, class MakePart> struct Sections : nodes::Stack {
+  using Tab = std::invoke_result_t<MakeTab &, const Element &>;
+  using Part = std::invoke_result_t<MakePart &, const Element &>;
+  // A tab's press: its section brought to the top.
+  struct Bring {
+    Sections *of = nullptr;
+    std::size_t at = 0;
+    scene::Taken operator()() const {
+      of->bring(at);
+      return {};
+    }
+  };
+  using TabButton = OnPress<Bring, Tab>;
+  using List = nodes::ScrollContainer<Many<Part>>;
+  using Strip = nodes::ScrollContainer<Many<TabButton>>;
+  using Walked = std::bool_constant<kAnyWalks<Part, Tab>>;
+  using HasLocal = std::bool_constant<bind::detail::kHasLocal<Part> || bind::detail::kHasLocal<Tab>>;
+  MakeTab fMakeTab;
+  MakePart fMakePart;
+  List fList;
+  Strip fStrip;
+  std::size_t fLit = 0;
+
+  Sections(Look look, Look parts, Look tabs, MakeTab makeTab, MakePart makePart)
+      : fMakeTab(std::move(makeTab)), fMakePart(std::move(makePart)), fList(Many<Part>(std::move(parts), {})),
+        fStrip(Many<TabButton>(std::move(tabs), {})) {
+    if (look.fHorizontal)
+      this->setHorizontal();
+    this->setGap(look.fGap);
+    this->fState.apply(look.fSpec);
+    this->fStack.justify = look.fJustify;
+    fList.apply({.fillX = true, .grow = scene::axes::kY});
+    std::get<0>(fList.fChildren).apply({.fillX = true, .autoSize = scene::axes::kY});
+  }
+  template <class Self, class F> void forEachChild(this Self &self, F &&f) {
+    f(self.fList);
+    f(self.fStrip);
+  }
+  [[nodiscard]] std::vector<Part> &parts() { return std::get<0>(fList.fChildren).fParts; }
+  [[nodiscard]] std::vector<TabButton> &tabs() { return std::get<0>(fStrip.fChildren).fParts; }
+
+  // The sections and their tabs made again; the view at its start.
+  template <std::ranges::input_range R> void read(const R &elements) {
+    parts() = elements | std::views::transform(std::ref(fMakePart)) | std::ranges::to<std::vector>();
+    tabs() = elements | std::views::enumerate | std::views::transform([&](const auto &one) {
+               const auto &[at, element] = one;
+               return TabButton(Bring{this, static_cast<std::size_t>(at)}, fMakeTab(element), {});
+             }) |
+             std::ranges::to<std::vector>();
+    fLit = 0;
+    fStrip.setVisible(tabs().size() > 1);
+    fList.invalidateLayout();
+    fStrip.invalidateLayout();
+    fList.scrollTo(0.0f);
+    fStrip.scrollToStart();
+  }
+  // A section brought to the top of the view.
+  void bring(std::size_t at) {
+    if (at >= parts().size() || parts()[at].bounds().isEmpty())
+      return;
+    fList.scrollTo(std::max(0.0f, fList.current() + (fList.toView(parts()[at].bounds()).fTop - fList.bounds().fTop)));
+  }
+  // The tab of the section at the top, lit.
+  void update(double) {
+    const float top = fList.bounds().fTop + 1.0f;
+    // The last of those whose top has reached the view's: they come in order.
+    const std::size_t lit = std::ranges::fold_left(
+        std::views::iota(std::size_t{0}, parts().size()) | std::views::filter([&](std::size_t at) {
+          return !parts()[at].bounds().isEmpty() && fList.toView(parts()[at].bounds()).fTop <= top;
+        }),
+        std::size_t{0}, [](std::size_t, std::size_t at) { return at; });
+    for (auto &&[at, tab] : std::views::enumerate(tabs()))
+      light(tab, static_cast<std::size_t>(at) == lit);
+    fLit = lit;
+  }
+
+private:
+  void light(TabButton &tab, bool on) {
+    if (on == tab.fState.selected())
+      return;
+    tab.fState.apply({.selected = on});
+    if (on && !tab.bounds().isEmpty()) {
+      const auto at = fStrip.toView(tab.bounds());
+      if (at.fTop < fStrip.bounds().fTop || at.fBottom > fStrip.bounds().fBottom)
+        fStrip.scrollTo(tab.bounds().fTop - fStrip.bounds().fTop);
+    }
+  }
+};
+template <class Element, class MakeTab, class MakePart>
+auto sections(Look look, Look parts, Look tabs, MakeTab makeTab, MakePart makePart) {
+  return Sections<Element, MakeTab, MakePart>(std::move(look), std::move(parts), std::move(tabs), std::move(makeTab),
+                                              std::move(makePart));
+}
+
+// The pointer resting on a node: `act(true)` once it has rested there `ms`,
+// `act(false)` as it leaves after that -- a preview shown while it rests,
+// as Telegram's pickers do. Frames are asked for only while it counts.
+template <class Act, class N> struct Resting : N {
+  using Walked = std::bool_constant<bind::detail::kWalks<N>>;
+  using HasLocal = std::bool_constant<bind::detail::kHasLocal<N>>;
+  double fMs = 0.0;
+  Act fAct;
+  std::optional<double> fSince;
+  bool fSaid = false;
+  Resting(double ms, Act act, N node) : N(std::move(node)), fMs(ms), fAct(std::move(act)) {}
+  [[nodiscard]] bool settling() const { return this->hovered() && !fSaid; }
+  [[nodiscard]] bool hoverChangesAppearance() const { return true; }
+  void update(double now) {
+    if (!this->hovered()) {
+      fSince.reset();
+      if (std::exchange(fSaid, false))
+        fAct(false);
+      return;
+    }
+    if (!fSince)
+      fSince = now;
+    if (!fSaid && now - *fSince >= fMs) {
+      fSaid = true;
+      fAct(true);
+    }
+  }
+};
+template <class Act, class N> Resting<Act, N> resting(double ms, Act act, N node) {
+  return Resting<Act, N>(ms, std::move(act), std::move(node));
+}
+
 } // namespace skiff::compose

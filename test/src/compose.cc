@@ -749,3 +749,36 @@ TEST(Compose, ListedIsMadeAgainFromWhatItReads) {
   ASSERT_EQ(list.fParts.size(), 1u);
   EXPECT_EQ(list.fParts[0].text(), "7");
 }
+
+TEST(Compose, SectionsMakeATabAndAPartForEachAndLightTheFirst) {
+  auto list = sections<int>(vbox(4.0f), vbox(0.0f), hbox(4.0f),
+      [](int n) { return nodes::Text("tab " + std::to_string(n), 13.0f, 0); },
+      [](int n) { return nodes::Text("part " + std::to_string(n), 13.0f, 0); });
+  list.read(std::vector<int>{1, 2, 3});
+  ASSERT_EQ(list.parts().size(), 3u);
+  ASSERT_EQ(list.tabs().size(), 3u);
+  EXPECT_EQ(list.parts()[2].text(), "part 3");
+  EXPECT_TRUE(list.fStrip.visible());
+  (void)list.tabs()[1].onPress();  // brings a part not laid out yet: nothing
+  list.update(0.0);
+  EXPECT_TRUE(list.tabs()[0].fState.selected());
+  EXPECT_FALSE(list.tabs()[1].fState.selected());
+  list.read(std::vector<int>{9});
+  EXPECT_FALSE(list.fStrip.visible());
+}
+
+TEST(Compose, RestingSaysWhenThePointerHasRestedAndWhenItLeaves) {
+  std::vector<bool> said;
+  auto node = resting(300.0, [&](bool on) { said.push_back(on); }, nodes::Text("x", 13.0f, 0));
+  node.fState.fHovered = true;
+  node.update(1000.0);
+  node.update(1200.0);
+  EXPECT_TRUE(said.empty());
+  EXPECT_TRUE(node.settling());
+  node.update(1300.0);
+  EXPECT_EQ(said, std::vector<bool>{true});
+  EXPECT_FALSE(node.settling());
+  node.fState.fHovered = false;
+  node.update(1400.0);
+  EXPECT_EQ(said, (std::vector<bool>{true, false}));
+}
