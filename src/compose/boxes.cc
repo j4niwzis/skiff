@@ -62,11 +62,26 @@ struct Specced : scene::Node {
 // type, which names all of them. One table serves every stack, and none of
 // the walks goes down a page's types: a page's parts nest as deep as they
 // like, and nothing is made for the nesting (skiff::scene::kSeenAsBase).
+// A part, as the walks reach it: where it is, and how what it holds is
+// handed on -- a node itself, or what an optional, a variant, a list holds
+// now, each through its own table.
+struct SeenPart {
+  void *fPart;
+  void (*fEach)(void *, void *, scene::AnyChildVisit);
+};
+template <class P> void eachSeen(void *part, void *context, scene::AnyChildVisit visit) {
+  scene::visitChild(*static_cast<P *>(part), [&](auto &child) { scene::visitAsAny(child, context, visit); });
+}
 struct SeenBox : nodes::Stack {
   // (Not a name a kind derived from a stack uses: Scoped's fSeen is its
   // revision, and a walk over `self` would find that.)
-  std::vector<scene::AnyNodeRef> fSeenParts;
-  template <class F> void forEachChild(F &&f) { f(fSeenParts); }
+  std::vector<SeenPart> fSeenParts;
+  template <class F> void forEachChild(F &&f) {
+    for (SeenPart &part : fSeenParts)
+      part.fEach(part.fPart, std::addressof(f), +[](void *context, scene::AnyNodeRef &child) {
+        (*static_cast<std::remove_reference_t<F> *>(context))(child);
+      });
+  }
 };
 #endif
 
@@ -108,7 +123,8 @@ template <class... Parts> struct Box
   }
   ~Box() = default;
   void see() {
-    this->fSeenParts = std::apply([](auto &...each) { return std::vector<scene::AnyNodeRef>{scene::AnyNodeRef::of(each)...}; },
+    this->fSeenParts = std::apply(
+        [](auto &...each) { return std::vector<SeenPart>{SeenPart{std::addressof(each), &eachSeen<std::remove_cvref_t<decltype(each)>>}...}; },
                              fParts);
   }
 #else
