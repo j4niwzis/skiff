@@ -3116,6 +3116,7 @@ template <class T> inline constexpr bool kTreatAsNode = false;
 // per holder; anything else is a node.
 template <class F> void visitChild(std::monostate &, F &&);
 template <class... Ts, class F> void visitChild(spl::variant<Ts...> &, F &&);
+template <class... Ts, class F> void visitChild(std::variant<Ts...> &, F &&);
 template <class T, class F> void visitChild(std::optional<T> &, F &&);
 template <class T, class D, class F>
 void visitChild(std::unique_ptr<T, D> &, F &&);
@@ -3151,6 +3152,11 @@ template <class V, class F>
   requires(one_of_several<V> && !std::derived_from<V, Node>)
 void visitChild(V &child, F &&f) {
   child.visit([&](auto &alternative) { visitChild(alternative, f); });
+}
+// A std::variant by std::visit: its visit member is C++26's, and a C++23
+// build has none.
+template <class... Ts, class F> void visitChild(std::variant<Ts...> &child, F &&f) {
+  std::visit([&](auto &alternative) { visitChild(alternative, f); }, child);
 }
 template <class T, class F> void visitChild(std::optional<T> &child, F &&f) {
   if (child) {
@@ -3201,6 +3207,7 @@ concept indexed_nodes = std::ranges::random_access_range<R> && std::ranges::size
                         std::derived_from<std::ranges::range_value_t<R>, Node>;
 template <class F> bool partAt(std::monostate &, std::uint32_t &, F &&);
 template <class... Ts, class F> bool partAt(spl::variant<Ts...> &, std::uint32_t &, F &&);
+template <class... Ts, class F> bool partAt(std::variant<Ts...> &, std::uint32_t &, F &&);
 template <class V, class F>
   requires(one_of_several<V> && !std::derived_from<V, Node>)
 bool partAt(V &, std::uint32_t &, F &&);
@@ -3228,6 +3235,9 @@ bool partAt(V &child, std::uint32_t &left, F &&f) {
   bool found = false;
   child.visit([&](auto &alternative) { found = partAt(alternative, left, f); });
   return found;
+}
+template <class... Ts, class F> bool partAt(std::variant<Ts...> &child, std::uint32_t &left, F &&f) {
+  return std::visit([&](auto &alternative) { return partAt(alternative, left, f); }, child);
 }
 template <class T, class F> bool partAt(std::optional<T> &child, std::uint32_t &left, F &&f) {
   return child && partAt(*child, left, f);
@@ -5505,6 +5515,12 @@ struct SemanticHandler {
     handled(node, NoCarry{}, [&] { return node.onSemantic(when, event, reply); });
   }
 };
+// What binds a node -- a part of a model shown, a scope, a Local, a list's
+// rows, a press answered -- for a debug build's walks made at run time: none,
+// unless the binding layer (skiff.bind) says so, by an overload of this for
+// the node's type found by ADL. Seen through a node's table.
+constexpr const void *skiffBindTable(const void *) { return nullptr; }
+
 class AnyNode {
 public:
   AnyNode() = default;
@@ -5615,6 +5631,8 @@ public:
     void (*fLayoutChildren)(void *);
     void (*fDrawSelf)(void *, Painting &, skia::SkCanvas *, float);
 #endif
+    // What binds it (skiffBindTable), for the binding's walks at run time.
+    const void *fBind;
   };
   [[nodiscard]] const Ops &ops() const noexcept { return *fOps; }
   [[nodiscard]] void *node() const noexcept { return fNode; }
@@ -5789,6 +5807,7 @@ private:
         detail::drawSelfOf(as<T>(n), hooks, canvas, alpha);
       },
 #endif
+      skiffBindTable(static_cast<T *>(nullptr)),
   };
 
 
@@ -5846,6 +5865,8 @@ public:
   [[nodiscard]] void *node() const noexcept { return fNode; }
   // The node's own type, for what names it.
   [[nodiscard]] const std::type_info &type() const { return fOps->fType(); }
+  // What binds it, as the binding layer said: nothing for most nodes.
+  [[nodiscard]] const void *bindTable() const noexcept { return fOps->fBind; }
   // Its children, each seen the same way: eachChild over a ref, as over any
   // node -- for a walk that goes down on its own, as flex-shrink's does.
   template <class F> void forEachChild(F &&f) {

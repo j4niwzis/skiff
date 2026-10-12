@@ -279,15 +279,15 @@ struct Want {
   std::optional<std::size_t> fMember;  // a field's
 };
 template <class T> struct WantOfT {
-  static Want make() { return {keyOf<T>(), std::nullopt}; }
+  static constexpr Want make() { return {keyOf<T>(), std::nullopt}; }
 };
 template <auto M> struct WantOfT<Field<M>> {
-  static Want make() {
+  static constexpr Want make() {
     using C = typename model::detail::MemberPointer<decltype(M)>::Class;
     return {keyOf<C>(), model::detail::kIndexOfMember<M>};
   }
 };
-template <class T> [[nodiscard]] Want wantOf() { return WantOfT<T>::make(); }
+template <class T> [[nodiscard]] constexpr Want wantOf() { return WantOfT<T>::make(); }
 
 // Every place below a shape a type is at -- not looked for again below one
 // found -- as the static search finds them.

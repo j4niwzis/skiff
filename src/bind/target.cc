@@ -8,6 +8,7 @@ import skiff.aggregate;
 import skiff.model;
 import skiff.scene;
 import :ops;
+import :runtime;
 
 export namespace skiff::bind {
 namespace detail {
@@ -283,9 +284,15 @@ private:
 // moved read it again, those whose part is gone told so, every Each's rows
 // made the list's elements.
 template <class M, class N> void refresh(N &node, const M &model) {
+#ifdef SKIFF_ERASED_WALKS
+  // Outside a release build, the walk made once (skiff.bind:runtime).
+  rt::Refresh walk(rt::AnyModel::of(model));
+  walk.walk(scene::AnyNodeRef::of(node));
+#else
   detail::Refreshing<M> op{model};
   detail::visitNode(op, node,
                     model::Place<typename M::RootType, model::Path<>>{});
+#endif
 }
 
 // A message given to a component from outside it -- send<Clear>(field),
@@ -308,21 +315,26 @@ public:
     if (fShown && fRevision == model.revision() && fEpoch == localEpoch())
       return;
     auto changes = model.takeChanges();
+#ifdef SKIFF_ERASED_WALKS
+    // Outside a release build, the walk made once (skiff.bind:runtime):
+    // whole the first time, after an edit of nothing tracked, or where a
+    // Local's state moved; else only along the places that changed.
+    const auto places = model.takePlacesChanged();
+    const bool whole = !fShown || !std::get<0>(changes).empty() || fEpoch != localEpoch();
+    rt::Refresh walk(rt::AnyModel::of(model), whole ? nullptr : &places);
+    walk.walk(scene::AnyNodeRef::of(root));
+#else
     if (!fShown || !std::get<0>(changes).empty()) {  // an edit of nothing tracked
       bind::refresh(root, model);
     } else {
-#ifdef SKIFF_ERASED_WALKS
-      detail::ChangedTargeting<M, decltype(changes)> op{model, changes};
-      detail::visitNode(op, root, model::Place<typename M::RootType, model::Path<>>{});
-#else
       targeted(root, model, changes,
                std::make_index_sequence<std::tuple_size_v<decltype(changes)>>{});
-#endif
       if (fEpoch != localEpoch()) {
         detail::LocalPass<M> op{model};
         detail::visitNode(op, root, model::Place<typename M::RootType, model::Path<>>{});
       }
     }
+#endif
     fShown = true;
     fRevision = model.revision();
     fEpoch = localEpoch();
