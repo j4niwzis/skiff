@@ -70,13 +70,16 @@ template <class... T> struct UniqueOf<model::Types<T...>> {
 };
 
 template <class H> struct OnOne {};
-template <class H> struct OnTwo {};
+template <class H, class Place> struct OnTwo {};
 template <class H> struct ApplyOne {};
 template <class H> constexpr bool probeOnOne() {
   return requires(const H &h) { h.on(Probe<OnOne<H>>{}); };
 }
-template <class H> constexpr bool probeOnTwo() {
-  return requires(const H &h) { h.on(Probe<OnTwo<H>>{}, Any{}); };
+// With what a handler is told besides: its place, or its Local's state --
+// the type it will be given, so that a handler generic over it is made
+// with that, not with something it cannot use.
+template <class H, class Place> constexpr bool probeOnTwo() {
+  return requires(const H &h, const Place &where) { h.on(Probe<OnTwo<H, Place>>{}, where); };
 }
 template <class H> constexpr bool probeApplyOne() {
   return requires(H &h) { h.apply(Probe<ApplyOne<H>>{}); };
@@ -89,10 +92,21 @@ template <class Tag, bool Probed> struct Read {
 
 // The event types handlers take: those of an on(event), and of an
 // on(event, where), together, each once.
-template <class H>
+template <class H, class Place = loophole::Any>
 using OnEvents = typename loophole::UniqueOf<typename model::detail::Concat<
     typename loophole::Read<loophole::OnOne<H>, loophole::probeOnOne<H>()>::type,
-    typename loophole::Read<loophole::OnTwo<H>, loophole::probeOnTwo<H>()>::type>::type>::type;
+    typename loophole::Read<loophole::OnTwo<H, Place>, loophole::probeOnTwo<H, Place>()>::type>::type>::type;
+// The event types an on(event) takes, alone: what a model's reactions take
+// as events (their on(Changed<T>, at) take two).
+template <class H>
+using OnOneEvents = typename loophole::Read<loophole::OnOne<H>, loophole::probeOnOne<H>()>::type;
+// Whether a list has a type.
+template <class T, class L> inline constexpr bool kIn = false;
+template <class T, class... L>
+inline constexpr bool kIn<T, model::Types<L...>> = [] {
+  struct All : std::type_identity<L>... {};
+  return std::derived_from<All, std::type_identity<T>>;
+}();
 // The request types a part takes: those of an apply(request).
 template <class H>
 using Applied = typename loophole::Read<loophole::ApplyOne<H>, loophole::probeApplyOne<H>()>::type;

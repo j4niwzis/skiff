@@ -17,6 +17,7 @@ export module skiff.model:schema;
 import std;
 import skiff.aggregate;
 import :core;
+import :places;
 
 export namespace skiff::model::rt {
 
@@ -523,6 +524,23 @@ struct EndEdit {
   walked.fShape = shape;
   return walked;
 }
+
+// A change of a part, erased: the part's type, the change held, and how it
+// is made -- as a static edit makes it: assigned where it gives a new value,
+// else made in place; and the tracked parts in what it made stamped.
+struct Change {
+  TypeKey fPart = nullptr;
+  std::shared_ptr<const void> fFn;
+  void (*fApply)(void *, const void *, Revision) = nullptr;
+  template <class T, class F> static Change of(F fn) {
+    return {keyOf<T>(), std::make_shared<const F>(std::move(fn)), +[](void *part, const void *held, Revision now) {
+              T &made = *static_cast<T *>(part);
+              const F &change = *static_cast<const F *>(held);
+              model::detail::change(change, made);
+              model::detail::stamp(made, now, model::detail::kReplaces<F, T>);
+            }};
+  }
+};
 
 // ---- static paths, as runtime places ---------------------------------------------
 

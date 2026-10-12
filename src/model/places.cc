@@ -54,6 +54,27 @@ template <class P, template <class...> class V, class... Ts>
 struct AllTrackedIn<P, V<Ts...>>
     : AllTrackedAlts<P, Types<Ts...>, std::index_sequence_for<Ts...>> {};
 
+// Every list type a type holds, at any depth: what an erased change's
+// taken parts are told by.
+template <class T> struct KeyedListsIn {
+  using type = Types<>;
+};
+template <class T, class Members> struct KeyedListsOfMembers;
+template <class T, class... M> struct KeyedListsOfMembers<T, Types<M...>> {
+  using type = typename Concat<typename KeyedListsIn<M>::type...>::type;
+};
+template <Decomposable T> struct KeyedListsIn<T> : KeyedListsOfMembers<T, MemberTypes<T>> {};
+template <class T> struct KeyedListsIn<Tracked<T>> : KeyedListsIn<T> {};
+template <class K, class T> struct KeyedListsIn<Keyed<K, T>> {
+  using type = typename Concat<Types<Keyed<K, T>>, typename KeyedListsIn<T>::type>::type;
+};
+template <class T> struct KeyedListsIn<std::optional<T>> : KeyedListsIn<T> {};
+template <template <class...> class V, class... Ts>
+  requires VariantLike<V<Ts...>>
+struct KeyedListsIn<V<Ts...>> {
+  using type = typename Concat<typename KeyedListsIn<Ts>::type...>::type;
+};
+
 template <class L> struct ChangesOfList;
 template <class... P> struct ChangesOfList<Types<P...>> {
   using type = std::tuple<std::vector<KeysOf<P>>...>;

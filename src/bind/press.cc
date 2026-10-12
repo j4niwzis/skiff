@@ -261,6 +261,9 @@ template <class M, class Sink> struct Answering : Pressing<M, Sink> {
 };
 }  // namespace detail
 
+#ifndef SKIFF_ERASED_WALKS
+// (Outside a release build, answer and press are skiff.bind:entry's: made
+// once, at run time.)
 // What a handler returned, kept outside a release build (the routing erased
 // carries nothing down): delivered along its path, sent up the frames there.
 template <class M, class N, class S = detail::NoSink>
@@ -287,6 +290,7 @@ bool press(N &root, M &model, const scene::Path &path, S *sink = nullptr) {
   model.endBatch();
   return op.fReached && !op.fMissed;
 }
+#endif
 
 
 // ---- answered where it is made: a release build's routing ------------------

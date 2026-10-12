@@ -18,6 +18,8 @@ import skiff.scene;
 import :kinds;
 import :frames;
 import :walk;
+import :takes;
+import :press;
 
 export namespace skiff::bind::rt {
 namespace mrt = model::rt;
@@ -32,13 +34,178 @@ struct AnyModel {
   const void *fRootValue = nullptr;  // its root, as it is now
   mrt::Seen (*fLook)(const void *, const mrt::Place &) = nullptr;
   model::Revision (*fRevision)(const void *) = nullptr;
+  // Where it may be changed (a press's model, a Local's state): the same
+  // model, and how an erased change is made in it.
+  void *fEditable = nullptr;
+  bool (*fApply)(void *, const mrt::Place &, const mrt::Change &) = nullptr;
+  // Its reactions' own events (an on(event) of theirs), taken: whether they
+  // took it.
+  bool (*fReact)(void *, mrt::TypeKey, const void *) = nullptr;
   template <class M> static AnyModel of(const M &m) {
     return {std::addressof(m), &mrt::shapeOf<typename M::RootType>(), mrt::keyOf<M>(), std::addressof(m.root()),
             +[](const void *self, const mrt::Place &place) { return static_cast<const M *>(self)->lookAt(place); },
             +[](const void *self) { return static_cast<const M *>(self)->revision(); }};
   }
+  template <class M> static AnyModel editable(M &m) {
+    AnyModel made = of(std::as_const(m));
+    made.fEditable = std::addressof(m);
+    made.fApply = +[](void *self, const mrt::Place &place, const mrt::Change &change) {
+      return static_cast<M *>(self)->applyErased(place, change);
+    };
+    made.fReact = &reactWith<M>;
+    return made;
+  }
+  template <class M> static bool reactWith(void *self, mrt::TypeKey type, const void *event) {
+    return reactEach(*static_cast<M *>(self), type, event, takes::OnOneEvents<typename M::ReactionsType>{});
+  }
+  template <class M, class... E> static bool reactEach(M &model, mrt::TypeKey type, const void *event, model::Types<E...>) {
+    return ((type == mrt::keyOf<E>() && (model.send(*static_cast<const E *>(event)), true)) || ...);
+  }
+  bool react(mrt::TypeKey type, const void *event) const {
+    return fEditable != nullptr && fReact(fEditable, type, event);
+  }
+  bool apply(const mrt::Place &place, const mrt::Change &change) const {
+    return fEditable != nullptr && fApply(fEditable, place, change);
+  }
   [[nodiscard]] mrt::Seen look(const mrt::Place &place) const { return fLook(fModel, place); }
   [[nodiscard]] model::Revision revision() const { return fRevision(fModel); }
+};
+
+// ---- what a press and a handler answer, erased ----------------------------------------
+
+// An event sent, held: its type and itself.
+struct Sent {
+  mrt::TypeKey fType = nullptr;
+  std::shared_ptr<const void> fEvent;
+  template <class E> static Sent of(E event) { return {mrt::keyOf<E>(), std::make_shared<const E>(std::move(event))}; }
+};
+// A change of the pressed node's own part.
+struct OwnEdit {
+  mrt::Change fChange;
+  std::optional<mrt::Want> fWant;  // a bound node's part; else where it is
+};
+// A change of the one Want below where it is answered, with the keys the
+// way there needs (model::Over).
+struct OverEdit {
+  mrt::Want fWant;
+  std::vector<mrt::AnyKey> fKeys;
+  mrt::Change fChange;
+};
+// An event passed on, up, from the frame that took it (model::Up).
+struct UpSent {
+  Sent fEvent;
+};
+// A change of the pressed node's own part that is another model's.
+struct Missed {};
+using Answer = std::variant<OwnEdit, Sent, OverEdit, UpSent, Missed>;
+using Answers = std::vector<Answer>;
+
+// The part an Over changes: the Want's own type, a field's member's.
+template <class Want> struct OverValueT {
+  using type = Want;
+};
+template <auto M> struct OverValueT<model::Field<M>> {
+  using type = typename model::detail::MemberPointer<decltype(M)>::Type;
+};
+template <class Want> using OverValue = typename OverValueT<Want>::type;
+
+// Answers, as their types say them, each made erased where it is answered.
+namespace answers {
+inline void add(Answers &, model::Nothing) {}
+inline void add(Answers &, scene::Taken) {}
+template <class... A> void add(Answers &out, const std::tuple<A...> &all);
+template <class E> void add(Answers &out, const std::optional<E> &maybe);
+template <class E> void add(Answers &out, const std::vector<E> &all);
+template <class... E> void add(Answers &out, const std::variant<E...> &one);
+template <class... E> void add(Answers &out, const spl::variant<E...> &one);
+template <class E> void add(Answers &out, const model::Up<E> &up);
+template <class E> void add(Answers &out, const model::Up<std::optional<E>> &up);
+template <class Want, class C, class... Keys> void add(Answers &out, const model::Over<Want, C, Keys...> &over);
+template <class E> void add(Answers &out, const E &event) { out.emplace_back(Sent::of(event)); }
+
+template <class... A> void add(Answers &out, const std::tuple<A...> &all) {
+  std::apply([&](const auto &...each) { (add(out, each), ...); }, all);
+}
+template <class E> void add(Answers &out, const std::optional<E> &maybe) {
+  if (maybe)
+    add(out, *maybe);
+}
+template <class E> void add(Answers &out, const std::vector<E> &all) {
+  std::ranges::for_each(all, [&](const E &each) { add(out, each); });
+}
+template <class... E> void add(Answers &out, const std::variant<E...> &one) {
+  std::visit([&](const auto &each) { add(out, each); }, one);
+}
+template <class... E> void add(Answers &out, const spl::variant<E...> &one) {
+  spl::visit([&](const auto &each) { add(out, each); }, one);
+}
+template <class E> void add(Answers &out, const model::Up<E> &up) { out.emplace_back(UpSent{Sent::of(up.fEvent)}); }
+template <class E> void add(Answers &out, const model::Up<std::optional<E>> &up) {
+  if (up.fEvent)
+    out.emplace_back(UpSent{Sent::of(*up.fEvent)});
+}
+template <class Want, class C, class... Keys> void add(Answers &out, const model::Over<Want, C, Keys...> &over) {
+  out.emplace_back(OverEdit{mrt::wantOf<Want>(),
+                            std::apply([](const auto &...k) { return std::vector<mrt::AnyKey>{mrt::AnyKey(k)...}; }, over.fKeys),
+                            mrt::Change::of<OverValue<Want>, C>(over.fChange)});
+}
+} // namespace answers
+
+// Where a scope's handlers are told an event: its place, as a key is read
+// off it (key<K>(here)).
+struct Here {
+  const mrt::Place &fPlace;
+  template <class K>
+    requires(!std::integral<K>)
+  const K &key() const {
+    for (const mrt::AnyKey &each : fPlace.fKeys)
+      if (const K *found = each.as<K>())
+        return *found;
+    throw std::logic_error("skiff::bind: no key of this type on the way to this place");
+  }
+};
+
+// A frame's handler of one event type: told the event, it answers.
+struct HandlerEntry {
+  mrt::TypeKey fEvent;
+  // (handlers or the Local, the event, where, what is answered)
+  void (*fTake)(void *, const void *, const Here &, Answers &);
+};
+template <class E, class T> void scopeTakes(void *n, const void *e, const Here &here, Answers &out) {
+  const auto &handlers = detail::asScoped(*static_cast<T *>(n)).fHandlers;
+  const E &event = *static_cast<const E *>(e);
+  if constexpr (requires { handlers.on(event, here); })
+    answers::add(out, handlers.on(event, here));
+  else
+    answers::add(out, handlers.on(event));
+}
+template <class T, class Events> struct ScopeHandlers;
+template <class T, class... E> struct ScopeHandlers<T, model::Types<E...>> {
+  static constexpr std::array<HandlerEntry, sizeof...(E)> kEntries{HandlerEntry{mrt::keyOf<E>(), &scopeTakes<E, T>}...};
+};
+template <class E, class T> void localTakes(void *n, const void *e, const Here &, Answers &out) {
+  auto &local = detail::asLocal(*static_cast<T *>(n));
+  using L = std::remove_reference_t<decltype(local)>;
+  const E &event = *static_cast<const E *>(e);
+  if constexpr (requires { local.fHandlers.on(event, *local.fModel.template look<typename L::LocalOf>()); })
+    answers::add(out, local.fHandlers.on(event, *local.fModel.template look<typename L::LocalOf>()));
+  else
+    answers::add(out, local.fHandlers.on(event));
+}
+template <class T, class Events> struct LocalHandlers;
+template <class T, class... E> struct LocalHandlers<T, model::Types<E...>> {
+  static constexpr std::array<HandlerEntry, sizeof...(E)> kEntries{HandlerEntry{mrt::keyOf<E>(), &localTakes<E, T>}...};
+};
+[[nodiscard]] inline const HandlerEntry *entryFor(std::span<const HandlerEntry> entries, mrt::TypeKey event) {
+  const auto found = std::ranges::find(entries, event, &HandlerEntry::fEvent);
+  return found == entries.end() ? nullptr : &*found;
+}
+
+// What a pressed node answers -- its own part changed, events sent -- and,
+// where it keeps an answer of its handler's (Answer), that answer.
+struct PressPart {
+  void (*fPress)(void *, Answers &);
+  bool (*fKept)(void *, const scene::HostWork::KeptAnswer &, Answers &);
 };
 
 // ---- what a node binds: its type's table -------------------------------------------
@@ -66,6 +233,8 @@ struct BoundPart {
 // A scope: the part it is a scope of, the keys of the way there, what it
 // last saw.
 struct ScopedPart {
+  const HandlerEntry *fOn;
+  std::size_t fOnCount;
   mrt::Want fWithin;
   std::vector<mrt::AnyKey> (*fKeys)(void *);
   model::Revision &(*fSeen)(void *);
@@ -75,6 +244,8 @@ struct ScopedPart {
 // A Local: its state's model, and whether nothing outside it is seen from
 // within.
 struct LocalPart {
+  const HandlerEntry *fOn;
+  std::size_t fOnCount;
   AnyModel (*fModel)(void *);
   // What its state logged, let go: shown by the walk that comes upon it.
   void (*fForget)(void *);
@@ -102,6 +273,7 @@ struct Table {
   const LocalPart *fLocal = nullptr;
   const EachPart *fEach = nullptr;
   const ItselfPart *fItself = nullptr;
+  const PressPart *fPress = nullptr;
 };
 
 namespace made {
@@ -144,7 +316,10 @@ constexpr const BoundPart *bound() {
 template <class T> struct ScopedOf {
   using S = std::remove_reference_t<decltype(detail::asScoped(std::declval<T &>()))>;
   using Within = decltype(detail::scopeOfOf(std::declval<S &>()));
+  using H = decltype(detail::handlersOf(std::declval<S &>()));
+  using On = ScopeHandlers<T, takes::OnEvents<H, Here>>;
   static constexpr ScopedPart kPart{
+      On::kEntries.data(), On::kEntries.size(),
       mrt::wantOf<Within>(),
       +[](void *n) {
         return std::apply([](const auto &...keys) { return std::vector<mrt::AnyKey>{mrt::AnyKey(keys)...}; },
@@ -162,7 +337,9 @@ constexpr const ScopedPart *scoped() {
 
 template <class T> struct LocalOf {
   using L = std::remove_reference_t<decltype(detail::asLocal(std::declval<T &>()))>;
+  using On = LocalHandlers<T, takes::OnEvents<decltype(std::declval<L &>().fHandlers), typename L::LocalOf>>;
   static constexpr LocalPart kPart{
+      On::kEntries.data(), On::kEntries.size(),
       +[](void *n) { return AnyModel::of(detail::asLocal(*static_cast<T *>(n)).fModel); },
       +[](void *n) { (void)detail::asLocal(*static_cast<T *>(n)).fModel.takeChanges(); }, L::kHidden};
 };
@@ -315,7 +492,68 @@ constexpr const ItselfPart *itself() {
   return &OwnRefreshOf<T>::kPart;
 }
 
-template <class T> inline constexpr Table kTable{bound<T>(), scoped<T>(), local<T>(), each<T>(), itself<T>()};
+// What a pressed node's own change changes: a bound node's part; else, a
+// value set, the part of its type where the node is.
+template <class T, class C> struct OwnValueT {};
+template <class T, class C>
+  requires IsBound<T>
+struct OwnValueT<T, C> {
+  using type = typename BoundOf<T>::V;
+};
+template <class T, class V>
+  requires(!IsBound<T>)
+struct OwnValueT<T, model::SetTo<V>> {
+  using type = V;
+};
+template <class T> struct PressOf {
+  static std::optional<mrt::Want> wanted() {
+    if constexpr (IsBound<T>)
+      return BoundOf<T>::kPart.fWant;
+    else
+      return std::nullopt;
+  }
+  template <class A> static void own(Answers &out, const A &answer) { answers::add(out, answer); }
+  template <class A> static void own(Answers &out, const std::optional<A> &answer) {
+    if (answer)
+      own(out, *answer);
+  }
+  template <class C> static void own(Answers &out, const Own<C> &answer) {
+    if constexpr (requires { typename OwnValueT<T, C>::type; })
+      out.emplace_back(OwnEdit{mrt::Change::of<typename OwnValueT<T, C>::type, C>(answer.fChange), wanted()});
+    else
+      out.emplace_back(Missed{});
+  }
+  static void press(void *n, Answers &out) {
+    T &node = *static_cast<T *>(n);
+    if constexpr (detail::PressesNothing<T>)
+      node.onPress();
+    else if constexpr (detail::Presses<T>)
+      own(out, node.onPress());
+  }
+  static bool kept(void *n, const scene::HostWork::KeptAnswer &answer, Answers &out) {
+    (void)n;
+    if constexpr (requires { typename T::Answer; }) {
+      if (answer.type != &scene::kTypeKey<typename T::Answer>)
+        return false;
+      own(out, *static_cast<const typename T::Answer *>(answer.answer.get()));
+      return true;
+    } else {
+      return false;
+    }
+  }
+  static constexpr PressPart kPart{&press, &kept};
+};
+template <class T>
+concept AnswersPress = detail::Presses<T> || detail::PressesNothing<T> || requires { typename T::Answer; };
+template <class T> constexpr const PressPart *pressed() { return nullptr; }
+template <class T>
+  requires AnswersPress<T>
+constexpr const PressPart *pressed() {
+  return &PressOf<T>::kPart;
+}
+
+template <class T>
+inline constexpr Table kTable{bound<T>(), scoped<T>(), local<T>(), each<T>(), itself<T>(), pressed<T>()};
 } // namespace made
 
 // ---- the walk ------------------------------------------------------------------------
@@ -491,13 +729,284 @@ private:
   }
 };
 
+// ---- requests: applied by the parts that take them -------------------------------------
+
+// A program's parts, as the last of the frames around a press: an event no
+// frame nor the model's reactions take goes to the first part whose apply()
+// takes its type (takes::Applied). Statically, in a release build -- this
+// is the press's sink there -- and through a table made from the same
+// parts at run time outside one.
+template <class... P> struct Parts {
+  std::tuple<P *...> fParts;
+  template <class E>
+    requires(takes::kIn<E, takes::Applied<P>> || ...)
+  void take(const E &event) const {
+    (void)((takes::kIn<E, takes::Applied<P>> && (std::get<P *>(fParts)->apply(event), true)) || ...);
+  }
+};
+template <class... P> Parts<P...> parts(P &...each) { return {{std::addressof(each)...}}; }
+
+// One part's apply() of one request type, erased.
+struct Served {
+  mrt::TypeKey fType;
+  void *fOwner;
+  void (*fTake)(void *, const void *);
+};
+template <class Part, class... R> void servedOne(std::vector<Served> &out, Part *part, model::Types<R...>) {
+  (out.push_back(Served{mrt::keyOf<R>(), part, +[](void *owner, const void *request) {
+     static_cast<Part *>(owner)->apply(*static_cast<const R *>(request));
+   }}),
+   ...);
+}
+// The table of a press's parts; none for a sink of another kind.
+template <class... P> std::vector<Served> servedBy(const Parts<P...> *parts) {
+  std::vector<Served> out;
+  if (parts != nullptr)
+    std::apply([&](auto *...each) { (servedOne(out, each, takes::Applied<std::remove_pointer_t<decltype(each)>>{}), ...); },
+               parts->fParts);
+  return out;
+}
+inline std::vector<Served> servedBy(const void *) { return {}; }
+
+// ---- a press, at run time ---------------------------------------------------------------
+
+// The frames around a pressed node, innermost first: a scope's place and
+// handlers, a Local's state and handlers.
+struct ScopeAt {
+  mrt::Place fPlace;
+  std::span<const HandlerEntry> fOn;
+  void *fHandlers;
+};
+struct LocalAt {
+  AnyModel fModel;
+  std::span<const HandlerEntry> fOn;
+  void *fNode;
+  bool fHidden;
+};
+struct PressFrame {
+  std::variant<ScopeAt, LocalAt> fKind;
+  const PressFrame *fOuter;
+};
+
+// A press, or a handler's kept answer, delivered down its path to its node,
+// and what it answers done there and sent up the frames: as the static
+// press does it.
+class Pressing {
+public:
+  Pressing(AnyModel model, std::vector<Served> parts) : fModel(model), fParts(std::move(parts)) {}
+  [[nodiscard]] bool reached() const { return fReached; }
+  [[nodiscard]] bool missed() const { return fMissed; }
+
+  void press(scene::AnyNodeRef root, const scene::Path &path) {
+    descend(root, path, 0, mrt::Place{}, nullptr, [&](scene::AnyNodeRef node, const mrt::Place &here, const PressFrame *frames) {
+      const auto *table = static_cast<const Table *>(node.bindTable());
+      if (table == nullptr || table->fPress == nullptr)
+        return;
+      Answers out;
+      table->fPress->fPress(node.node(), out);
+      done(out, here, frames);
+    });
+  }
+  void answer(scene::AnyNodeRef root, const scene::HostWork::KeptAnswer &kept) {
+    descend(root, kept.path, 0, mrt::Place{}, nullptr, [&](scene::AnyNodeRef node, const mrt::Place &here, const PressFrame *frames) {
+      const auto *table = static_cast<const Table *>(node.bindTable());
+      if (table == nullptr || table->fPress == nullptr)
+        return;
+      Answers out;
+      if (table->fPress->fKept(node.node(), kept, out))
+        done(out, here, frames);
+    });
+  }
+
+private:
+  AnyModel fModel;
+  std::vector<Served> fParts;
+  bool fReached = false;
+  bool fMissed = false;
+
+  // A part's way below a place, where it is in this model once.
+  std::optional<mrt::Place> below(const mrt::Place &here, const mrt::Want &want, std::vector<mrt::AnyKey> keys = {}) const {
+    const mrt::Shape *at = mrt::shapeAt(*fModel.fRoot, here.fSteps);
+    if (at == nullptr)
+      return std::nullopt;
+    const auto way = mrt::pathTo(*at, want);
+    if (!way)
+      return std::nullopt;
+    mrt::Place place = here;
+    place.fSteps.append_range(*way);
+    place.fKeys.append_range(std::move(keys));
+    return place;
+  }
+  bool owns(const mrt::Want &want) const { return !mrt::pathsTo(*fModel.fRoot, want).empty(); }
+
+  template <class End>
+  void descend(scene::AnyNodeRef node, const scene::Path &path, std::size_t at, const mrt::Place &here, const PressFrame *frames,
+               const End &end) {
+    const auto *table = static_cast<const Table *>(node.bindTable());
+    std::optional<mrt::Place> inner;
+    std::optional<PressFrame> scope;
+    if (table != nullptr && table->fScoped != nullptr && owns(table->fScoped->fWithin)) {
+      inner = below(here, table->fScoped->fWithin, table->fScoped->fKeys(node.node()));
+      if (!inner)
+        return;
+      // (Its handlers reached through the node, which holds them.)
+      scope.emplace(PressFrame{ScopeAt{*inner, {table->fScoped->fOn, table->fScoped->fOnCount}, node.node()}, frames});
+    }
+    const mrt::Place &place = inner ? *inner : here;
+    const PressFrame *around = scope ? &*scope : frames;
+    std::optional<PressFrame> local;
+    if (table != nullptr && table->fLocal != nullptr) {
+      local.emplace(PressFrame{LocalAt{table->fLocal->fModel(node.node()), {table->fLocal->fOn, table->fLocal->fOnCount},
+                                       node.node(), table->fLocal->fHidden},
+                               around});
+      around = &*local;
+    }
+    if (at == path.size()) {
+      fReached = true;
+      end(node, place, around);
+      return;
+    }
+    if (table != nullptr && table->fEach != nullptr && owns(table->fEach->fList)) {
+      const std::size_t i = path[at];
+      if (i >= table->fEach->fCount(node.node()))
+        return;
+      auto list = below(place, table->fEach->fList);
+      if (!list)
+        return;
+      list->fSteps.push_back(mrt::step::at{});
+      list->fKeys.push_back(table->fEach->fKeyAt(node.node(), i));
+      descend(table->fEach->fRow(node.node(), i), path, at + 1, *list, around, end);
+      return;
+    }
+    struct Context {
+      Pressing *fSelf;
+      const scene::Path *fPath;
+      std::size_t fAt;
+      const mrt::Place *fPlace;
+      const PressFrame *fFrames;
+      const End *fEnd;
+    } context{this, &path, at, &place, around, &end};
+    (void)node.ops().fChildAt(node.node(), path[at], &context, +[](void *c, scene::AnyNodeRef &child) {
+      auto &go = *static_cast<Context *>(c);
+      go.fSelf->descend(child, *go.fPath, go.fAt + 1, *go.fPlace, go.fFrames, *go.fEnd);
+    });
+  }
+
+  // What was answered, done: own changes where the part is, events up the
+  // frames, edits where their part is found.
+  void done(const Answers &out, const mrt::Place &here, const PressFrame *frames) {
+    for (const Answer &each : out)
+      std::visit([&](const auto &one) { this->take(one, here, frames); }, each);
+  }
+  void take(const OwnEdit &edit, const mrt::Place &here, const PressFrame *frames) {
+    if (!edit.fWant) {
+      if (!fModel.apply(here, edit.fChange))
+        fMissed = true;
+      return;
+    }
+    // A Local's state, where it has the part.
+    for (const PressFrame *frame = frames; frame != nullptr; frame = frame->fOuter)
+      if (std::visit([&](const auto &one) { return this->ownInLocal(one, edit); }, frame->fKind))
+        return;
+    const auto place = owns(*edit.fWant) ? below(here, *edit.fWant) : std::nullopt;
+    if (!place || !fModel.apply(*place, edit.fChange))
+      fMissed = true;
+  }
+  bool ownInLocal(const ScopeAt &, const OwnEdit &) { return false; }
+  bool ownInLocal(const LocalAt &local, const OwnEdit &edit) {
+    const auto way = mrt::pathTo(*local.fModel.fRoot, *edit.fWant);
+    if (!way)
+      return false;
+    (void)local.fModel.apply(mrt::Place{*way, {}}, edit.fChange);
+    ++localEpoch();
+    return true;
+  }
+  void take(const Sent &event, const mrt::Place &, const PressFrame *frames) { route(event, frames); }
+  void take(const UpSent &up, const mrt::Place &, const PressFrame *frames) { route(up.fEvent, frames); }
+  void take(const OverEdit &over, const mrt::Place &, const PressFrame *frames) { edit(over, frames); }
+  void take(Missed, const mrt::Place &, const PressFrame *) { fMissed = true; }
+
+  // An event sent from within frames: taken by the first with a handler for
+  // it, whose answer is done there; else applied by the part that serves
+  // its type.
+  void route(const Sent &event, const PressFrame *frames) {
+    for (const PressFrame *frame = frames; frame != nullptr; frame = frame->fOuter) {
+      const auto [entries, held, where] = std::visit(
+          [](const auto &one) {
+            return std::tuple<std::span<const HandlerEntry>, void *, const mrt::Place *>{one.fOn, Pressing::ownerOf(one),
+                                                                                       Pressing::placeOf(one)};
+          },
+          frame->fKind);
+      if (const HandlerEntry *entry = entryFor(entries, event.fType)) {
+        static const mrt::Place nowhere{};
+        Answers out;
+        entry->fTake(held, event.fEvent.get(), Here{where != nullptr ? *where : nowhere}, out);
+        answered(out, frame);
+        return;
+      }
+    }
+    // The model's reactions, then the parts.
+    if (fModel.react(event.fType, event.fEvent.get()))
+      return;
+    const auto found = std::ranges::find(fParts, event.fType, &Served::fType);
+    if (found == fParts.end()) {
+      std::println(std::cerr, "[skiff::bind] nothing takes an event of this type: no frame around it, nor a part applying it");
+      return;
+    }
+    found->fTake(found->fOwner, event.fEvent.get());
+  }
+  static void *ownerOf(const ScopeAt &scope) { return scope.fHandlers; }
+  static void *ownerOf(const LocalAt &local) { return local.fNode; }
+  static const mrt::Place *placeOf(const ScopeAt &scope) { return &scope.fPlace; }
+  static const mrt::Place *placeOf(const LocalAt &) { return nullptr; }
+
+  // A handler's answer, done at its frame: events passed up from the frames
+  // above it, edits where their part is found from it.
+  void answered(const Answers &out, const PressFrame *frame) {
+    for (const Answer &each : out)
+      std::visit([&](const auto &one) { this->answeredOne(one, frame); }, each);
+  }
+  void answeredOne(const Sent &event, const PressFrame *frame) { route(event, frame->fOuter); }
+  void answeredOne(const UpSent &up, const PressFrame *frame) { route(up.fEvent, frame->fOuter); }
+  void answeredOne(const OverEdit &over, const PressFrame *frame) { edit(over, frame); }
+  void answeredOne(const OwnEdit &, const PressFrame *) {}
+  void answeredOne(Missed, const PressFrame *) {}
+  // An edit of the one Want below the innermost frame where it is found
+  // once; else in the whole model.
+  void edit(const OverEdit &over, const PressFrame *frames) {
+    for (const PressFrame *frame = frames; frame != nullptr; frame = frame->fOuter)
+      if (std::visit([&](const auto &one) { return this->editAt(one, over); }, frame->fKind))
+        return;
+    if (auto place = below(mrt::Place{}, over.fWant, over.fKeys))
+      (void)fModel.apply(*place, over.fChange);
+  }
+  // Made at a frame, where its part is there: whether the search stops.
+  bool editAt(const ScopeAt &scope, const OverEdit &over) {
+    auto place = below(scope.fPlace, over.fWant, over.fKeys);
+    if (!place)
+      return false;
+    (void)fModel.apply(*place, over.fChange);
+    return true;
+  }
+  bool editAt(const LocalAt &local, const OverEdit &over) {
+    if (const auto way = mrt::pathTo(*local.fModel.fRoot, over.fWant)) {
+      (void)local.fModel.apply(mrt::Place{*way, over.fKeys}, over.fChange);
+      ++localEpoch();
+      return true;
+    }
+    if (local.fHidden)
+      std::println(std::cerr, "[skiff::bind] a hidden state's handler edits only that state, and this part is not in it");
+    return local.fHidden;
+  }
+};
+
 } // namespace skiff::bind::rt
 
 // The scene's hook: a node's binding table, where it binds anything.
 export namespace skiff::bind {
 template <class T>
   requires(IsBound<T> || IsScoped<T> || IsLocal<T> || IsEach<T> || rt::made::IsDerivedNode<T> ||
-           requires { typename rt::made::RefreshesFrom<T>::type; })
+           requires { typename rt::made::RefreshesFrom<T>::type; } || rt::made::AnswersPress<T>)
 constexpr const void *skiffBindTable(T *) {
   return &rt::made::kTable<T>;
 }

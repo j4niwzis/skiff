@@ -67,6 +67,30 @@ public:
       endBatch();
     return there;
   }
+  // An erased change at a runtime place (rt::Change): made as applyAt makes
+  // a typed one -- what a debug build's press and handlers answer with.
+  bool applyErased(const rt::Place &place, const rt::Change &change) {
+    const bool own = !fInBatch;
+    if (own)
+      beginBatch();
+    ++fRevision;
+    auto walked = rt::walkToEdit(rt::shapeOf<Root>(), std::addressof(fRoot), place);
+    const bool there = walked && walked->fShape->fType == change.fPart;
+    if (there) {
+      fTargets.push_back(walked->fPart);
+      change.fApply(walked->fPart, change.fFn.get(), fRevision);
+      if (const auto list = takenOf().find(change.fPart); list != takenOf().end())
+        list->second(*this, walked->fPart);
+      std::ranges::for_each(walked->fRevisions, [&](Revision *each) { *each = fRevision; });
+      fTouched.append_range(walked->fTouched);
+      if (walked->fRevisions.empty())
+        fUntrackedEdit = true;
+    }
+    if (own)
+      endBatch();
+    return there;
+  }
+
   // What moved since they were last taken, as runtime places: the same
   // changes as changes(), each its place -- what the runtime walks follow.
   // Asked for once, logged from then on.
@@ -401,6 +425,22 @@ private:
         fOutbox.take(fReactions.on(MemberChanged<C, I>{}, detail::ownerOf(part, owner)));
     }
     return false;
+  }
+
+  // For an erased change: each list type the root holds, and how what was
+  // taken from one is told (taken), by the list's type.
+  using TakenTable = std::vector<std::pair<rt::TypeKey, void (*)(Model &, void *)>>;
+  template <class... L> static TakenTable takenTableOf(Types<L...>) {
+    return {{rt::keyOf<L>(), +[](Model &m, void *list) { m.taken(*static_cast<L *>(list)); }}...};
+  }
+  struct TakenLookup {
+    TakenTable fTable;
+    auto find(rt::TypeKey type) const { return std::ranges::find(fTable, type, &TakenTable::value_type::first); }
+    auto end() const { return fTable.end(); }
+  };
+  static const TakenLookup &takenOf() {
+    static const TakenLookup made{takenTableOf(typename detail::KeyedListsIn<Root>::type{})};
+    return made;
   }
 
   // What a change took from a list, however it took it: its reactions
