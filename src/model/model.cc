@@ -5,6 +5,7 @@ export module skiff.model:model;
 import std;
 import skiff.aggregate;
 import :effects;
+import :schema;
 
 export namespace skiff::model {
 // A model, its reactions, and the effects they asked for.
@@ -34,6 +35,45 @@ public:
   // each one -- what a targeted refresh goes straight to.
   constexpr const Changes<Root> &changes() const { return fChanges; }
   constexpr Changes<Root> takeChanges() { return std::exchange(fChanges, {}); }
+
+  // ---- the same, at run time: a debug build's binding (skiff.model:schema)
+  //
+  // A part at a runtime place, as look() sees it at a static one.
+  rt::Seen lookAt(const rt::Place &place) const {
+    return rt::look(rt::shapeOf<Root>(), std::addressof(fRoot), fRevision, place);
+  }
+  // An edit at a runtime place of a part of type T, as apply() makes one at
+  // a static place: the part changed, the revisions on its way moved, its
+  // reactions told. False: it was not there, or not a T.
+  template <class T, class F> bool applyAt(const rt::Place &place, const F &change) {
+    const bool own = !fInBatch;
+    if (own)
+      beginBatch();
+    ++fRevision;
+    auto walked = rt::walkToEdit(rt::shapeOf<Root>(), std::addressof(fRoot), place);
+    const bool there = walked && walked->fShape->fType == rt::keyOf<T>();
+    if (there) {
+      T &part = *static_cast<T *>(walked->fPart);
+      fTargets.push_back(std::addressof(part));
+      detail::change(change, part);
+      detail::stamp(part, fRevision, detail::kReplaces<F, T>);
+      taken(part);
+      std::ranges::for_each(walked->fRevisions, [&](Revision *each) { *each = fRevision; });
+      fTouched.append_range(walked->fTouched);
+      if (walked->fRevisions.empty())
+        fUntrackedEdit = true;
+    }
+    if (own)
+      endBatch();
+    return there;
+  }
+  // What moved since they were last taken, as runtime places: the same
+  // changes as changes(), each its place -- what the runtime walks follow.
+  // Asked for once, logged from then on.
+  std::vector<rt::Place> takePlacesChanged() {
+    fLogsPlaces = true;
+    return std::exchange(fPlacesChanged, {});
+  }
 
   // A part as it is now, and its revision; nothing where a key on its way
   // is not in its list.
@@ -172,6 +212,12 @@ private:
   template <class P, class Keys> constexpr void logged(const Keys &keys) {
     std::get<kTrackedIndex<Root, P>>(fChanges).push_back(
         std::apply([](const auto &...k) { return KeysOf<P>(k...); }, keys));
+    // As a runtime place too, once the runtime walks have asked for them (a
+    // constant expression has none to log for).
+    if !consteval {
+      if (fLogsPlaces)
+        fPlacesChanged.push_back(rt::placeOf<P>(keys));
+    }
   }
   constexpr bool target(const void *part) const {
     return std::ranges::contains(fTargets, part);
@@ -444,6 +490,8 @@ private:
   bool fInBatch = false;
   Revision fBatchStart = 0;
   std::vector<const void *> fTouched;
+  std::vector<rt::Place> fPlacesChanged;
+  bool fLogsPlaces = false;
 };
 
 // Edits from other threads -- a network's, a store's -- kept until the

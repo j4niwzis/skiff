@@ -35,4 +35,5 @@ export module skiff.model;
 export import :core;
 export import :places;
 export import :effects;
+export import :schema;
 export import :model;
