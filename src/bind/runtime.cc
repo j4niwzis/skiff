@@ -810,6 +810,15 @@ template <class S, class... E> void takenBy(std::vector<Served> &out, S *sink, m
    }}),
    ...);
 }
+// A sink that says itself what it takes, and how (servedTable()): a program
+// whose requests go to its parts by its own routing.
+template <class S>
+  requires requires(S &sink) {
+    { sink.servedTable() } -> std::convertible_to<std::vector<Served>>;
+  }
+std::vector<Served> servedBy(S *sink) {
+  return sink != nullptr ? sink->servedTable() : std::vector<Served>{};
+}
 // Any other sink: by what its take() takes.
 template <class S> std::vector<Served> servedBy(S *sink) {
   std::vector<Served> out;

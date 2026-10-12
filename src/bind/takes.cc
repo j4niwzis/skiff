@@ -73,6 +73,10 @@ template <class H> struct OnOne {};
 template <class H, class Place> struct OnTwo {};
 template <class H> struct ApplyOne {};
 template <class H> struct TakeOne {};
+template <class H, class Second> struct ApplyTwo {};
+template <class H, class Second> constexpr bool probeApplyTwo() {
+  return requires(H &h, const Second &second) { h.apply(Probe<ApplyTwo<H, Second>>{}, second); };
+}
 template <class H> struct OnOneMutable {};
 template <class H> constexpr bool probeOnOneMutable() {
   return requires(H &h) { h.on(Probe<OnOneMutable<H>>{}); };
@@ -122,6 +126,10 @@ using OnOwnEvents = typename loophole::Read<loophole::OnOneMutable<H>, loophole:
 // The event types a sink takes: those of a take(event).
 template <class H>
 using Taken = typename loophole::Read<loophole::TakeOne<H>, loophole::probeTakeOne<H>()>::type;
+// The request types a part takes with what it is given besides (a program's
+// taker of what it asks in turn): those of an apply(request, second).
+template <class H, class Second>
+using AppliedWith = typename loophole::Read<loophole::ApplyTwo<H, Second>, loophole::probeApplyTwo<H, Second>()>::type;
 // The request types a part takes: those of an apply(request).
 template <class H>
 using Applied = typename loophole::Read<loophole::ApplyOne<H>, loophole::probeApplyOne<H>()>::type;
