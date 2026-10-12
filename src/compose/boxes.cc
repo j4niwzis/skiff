@@ -490,6 +490,25 @@ template <class Element> struct Wrapped {
 };
 template <class Element> Wrapped<Element> wrapped(Look view, Look row) { return {std::move(view), std::move(row)}; }
 
+// All of them in one row, as it is laid out -- each as wide as it says,
+// growing to fill it where it says so: a panel's category row.
+template <class Element, class Button> struct RowStrip : Many<Button> {
+  explicit RowStrip(Look look) : Many<Button>(std::move(look), {}) {}
+  void put(const std::vector<Element> &, std::vector<Button> made) {
+    this->fParts = std::move(made);
+    this->invalidateLayout();
+  }
+  void light(std::size_t at) {
+    for (auto &&[index, tab] : std::views::enumerate(this->fParts))
+      tab.fState.apply({.selected = static_cast<std::size_t>(index) == at});
+  }
+};
+template <class Element> struct InRow {
+  Look fLook;
+  template <class Button> RowStrip<Element, Button> operator()(std::type_identity<Button>) const { return RowStrip<Element, Button>(fLook); }
+};
+template <class Element> InRow<Element> in_row(Look look) { return {std::move(look)}; }
+
 // As many as its width holds, a page of them at a time, between the arrows
 // that page back and on -- each arrow off where there is no page that way --
 // paged to the one lit; shown where there is any.
@@ -509,11 +528,13 @@ template <class Element, class Button, class MakeArrow> struct PagedStrip : node
   using HasLocal = std::bool_constant<bind::detail::kHasLocal<Button> || bind::detail::kHasLocal<Arrow>>;
   MakeArrow fMakeArrow;
   float fTabWidth = 30.0f, fArrowsWidth = 60.0f;
+  std::string fBackLabel, fOnLabel;
   std::optional<ArrowButton> fBack, fOn;
   Many<Button> fRow;
   std::size_t fFirst = 0, fHolds = 1;
-  PagedStrip(Look look, Look row, float tabWidth, float arrowsWidth, MakeArrow makeArrow)
-      : fMakeArrow(std::move(makeArrow)), fTabWidth(tabWidth), fArrowsWidth(arrowsWidth), fRow(std::move(row), {}) {
+  PagedStrip(Look look, Look row, float tabWidth, float arrowsWidth, MakeArrow makeArrow, std::string backLabel, std::string onLabel)
+      : fMakeArrow(std::move(makeArrow)), fTabWidth(tabWidth), fArrowsWidth(arrowsWidth), fBackLabel(std::move(backLabel)),
+        fOnLabel(std::move(onLabel)), fRow(std::move(row), {}) {
     this->setHorizontal();
     this->setGap(look.fGap);
     this->fState.apply(look.fSpec);
@@ -530,8 +551,8 @@ template <class Element, class Button, class MakeArrow> struct PagedStrip : node
   void put(const std::vector<Element> &, std::vector<Button> made) {
     // The arrows made where it is kept: they point at it.
     if (!fBack) {
-      fBack.emplace(Page{this, false}, fMakeArrow(false), std::string("Previous page"));
-      fOn.emplace(Page{this, true}, fMakeArrow(true), std::string("Next page"));
+      fBack.emplace(Page{this, false}, fMakeArrow(false), fBackLabel);
+      fOn.emplace(Page{this, true}, fMakeArrow(true), fOnLabel);
     }
     buttons() = std::move(made);
     fFirst = 0;
@@ -571,13 +592,15 @@ template <class Element, class MakeArrow> struct Paged {
   Look fLook, fRow;
   float fTabWidth, fArrowsWidth;
   MakeArrow fMakeArrow;
+  std::string fBackLabel, fOnLabel;
   template <class Button> PagedStrip<Element, Button, MakeArrow> operator()(std::type_identity<Button>) const {
-    return {fLook, fRow, fTabWidth, fArrowsWidth, fMakeArrow};
+    return {fLook, fRow, fTabWidth, fArrowsWidth, fMakeArrow, fBackLabel, fOnLabel};
   }
 };
 template <class Element, class MakeArrow>
-Paged<Element, MakeArrow> paged(Look look, Look row, float tabWidth, float arrowsWidth, MakeArrow makeArrow) {
-  return {std::move(look), std::move(row), tabWidth, arrowsWidth, std::move(makeArrow)};
+Paged<Element, MakeArrow> paged(Look look, Look row, float tabWidth, float arrowsWidth, MakeArrow makeArrow,
+                                std::string backLabel = "Previous page", std::string onLabel = "Next page") {
+  return {std::move(look), std::move(row), tabWidth, arrowsWidth, std::move(makeArrow), std::move(backLabel), std::move(onLabel)};
 }
 
 // Two strips one over the other, each tab in the first or the second as its

@@ -776,15 +776,15 @@ TEST(Compose, SplitStripsPutEachTabWhereItsElementSaysAndPagedOnesPage) {
   const auto text = [](std::string what) { return [what](int n) { return nodes::Text(what + std::to_string(n), 13.0f, 0); }; };
   const auto arrow = [](bool next) { return nodes::Text(next ? ">" : "<", 13.0f, 0); };
   auto list = sections<int>(vbox(4.0f), vbox(0.0f), text("tab "), text("part "),
-      split<int>(vbox(0.0f), [](int n) { return n >= 10; }, wrapped<int>(vbox(0.0f), hbox(0.0f)),
+      split<int>(vbox(0.0f), [](int n) { return n >= 10; }, in_row<int>(hbox(0.0f)),
                  paged<int>(hbox(0.0f), hbox(0.0f), 30.0f, 60.0f, arrow)));
   list.read(SectionsShown<int>{{1, 2, 10, 11, 12}, {1, 2, 10, 11, 12}, true});
-  ASSERT_EQ(list.fStrip.fFirst.buttons().size(), 2u);
+  ASSERT_EQ(list.fStrip.fFirst.fParts.size(), 2u);
   ASSERT_EQ(list.fStrip.fThen.buttons().size(), 3u);
   EXPECT_TRUE(list.fStrip.fThen.fBack.has_value());
   list.fStrip.light(3);  // the second of the packs
   EXPECT_TRUE(list.fStrip.fThen.buttons()[1].fState.selected());
-  EXPECT_FALSE(list.fStrip.fFirst.buttons()[0].fState.selected());
+  EXPECT_FALSE(list.fStrip.fFirst.fParts[0].fState.selected());
   list.fStrip.fThen.fHolds = 2;
   list.fStrip.fThen.page(true);
   EXPECT_EQ(list.fStrip.fThen.fFirst, 2u);
