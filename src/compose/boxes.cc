@@ -4,6 +4,7 @@ export module skiff.compose:boxes;
 
 import std;
 import splice;
+import skia;
 import skiff.scene;
 import skiff.nodes;
 import skiff.model;
@@ -435,38 +436,240 @@ auto text_for(Compute compute, nodes::Text text) {
   return projected<Want>(std::move(compute), TextOf(std::move(text)));
 }
 
-// A list of sections, one under another in a view that scrolls, and the
-// strip of their tabs under it: a tab pressed brings its section to the
-// top of the view; the tab of the section at the top is lit, the strip
-// scrolled to show it. Made from what it reads -- a range of elements, as
-// listed is -- each element's tab made by `makeTab`, its section by
-// `makePart`: a picker's packs, an emoji panel's groups.
-template <class Element, class MakeTab, class MakePart> struct Sections : nodes::Stack {
-  using Tab = std::invoke_result_t<MakeTab &, const Element &>;
-  using Part = std::invoke_result_t<MakePart &, const Element &>;
-  // A tab's press: its section brought to the top.
-  struct Bring {
-    Sections *of = nullptr;
-    std::size_t at = 0;
+// What sections show: their parts, one under another, the tabs of every
+// one there is -- the same, unless what is shown is a search's results,
+// when the tabs stay every group's and none is lit -- and whether the tab of
+// the part at the top is lit.
+template <class Element> struct SectionsShown {
+  std::vector<Element> parts;
+  std::vector<Element> tabs;
+  bool lit = true;
+};
+
+// The strips sections put their tabs in, made for the tabs' type by the
+// maker sections are given. A strip takes the tabs, each with its element,
+// lights one, and is the node they are shown in.
+//
+// All of them in rows that wrap, in a view of its own height that scrolls to
+// the one lit; shown where there is more than one.
+template <class Element, class Button> struct WrappedStrip : nodes::Stack {
+  using Walked = std::bool_constant<kAnyWalks<Button>>;
+  using HasLocal = std::bool_constant<bind::detail::kHasLocal<Button>>;
+  nodes::ScrollContainer<Many<Button>> fView;
+  WrappedStrip(Look view, Look row) : fView(Many<Button>(std::move(row), {})) {
+    this->fState.apply(view.fSpec);
+    std::get<0>(fView.fChildren).fStack.wrap = true;
+    fView.apply({.fill = true});
+  }
+  template <class Self, class F> void forEachChild(this Self &self, F &&f) { f(self.fView); }
+  [[nodiscard]] std::vector<Button> &buttons() { return std::get<0>(fView.fChildren).fParts; }
+  void put(const std::vector<Element> &, std::vector<Button> made) {
+    buttons() = std::move(made);
+    this->setVisible(buttons().size() > 1);
+    fView.invalidateLayout();
+    fView.scrollToStart();
+  }
+  // Lit, or none (an index past them all).
+  void light(std::size_t at) {
+    for (auto &&[index, tab] : std::views::enumerate(buttons())) {
+      const bool on = static_cast<std::size_t>(index) == at;
+      if (on == tab.fState.selected())
+        continue;
+      tab.fState.apply({.selected = on});
+      if (on && !tab.bounds().isEmpty()) {
+        const auto shown = fView.toView(tab.bounds());
+        if (shown.fTop < fView.bounds().fTop || shown.fBottom > fView.bounds().fBottom)
+          fView.scrollTo(tab.bounds().fTop - fView.bounds().fTop);
+      }
+    }
+  }
+};
+template <class Element> struct Wrapped {
+  Look fView, fRow;
+  template <class Button> WrappedStrip<Element, Button> operator()(std::type_identity<Button>) const { return {fView, fRow}; }
+};
+template <class Element> Wrapped<Element> wrapped(Look view, Look row) { return {std::move(view), std::move(row)}; }
+
+// As many as its width holds, a page of them at a time, between the arrows
+// that page back and on -- each arrow off where there is no page that way --
+// paged to the one lit; shown where there is any.
+template <class Element, class Button, class MakeArrow> struct PagedStrip : nodes::Stack {
+  using Arrow = std::invoke_result_t<MakeArrow &, bool>;
+  // An arrow's press: the page before, or the next.
+  struct Page {
+    PagedStrip *of = nullptr;
+    bool next = false;
     scene::Taken operator()() const {
-      of->bring(at);
+      of->page(next);
       return {};
     }
   };
+  using ArrowButton = OnPress<Page, Arrow>;
+  using Walked = std::bool_constant<kAnyWalks<Button, Arrow>>;
+  using HasLocal = std::bool_constant<bind::detail::kHasLocal<Button> || bind::detail::kHasLocal<Arrow>>;
+  MakeArrow fMakeArrow;
+  float fTabWidth = 30.0f, fArrowsWidth = 60.0f;
+  std::optional<ArrowButton> fBack, fOn;
+  Many<Button> fRow;
+  std::size_t fFirst = 0, fHolds = 1;
+  PagedStrip(Look look, Look row, float tabWidth, float arrowsWidth, MakeArrow makeArrow)
+      : fMakeArrow(std::move(makeArrow)), fTabWidth(tabWidth), fArrowsWidth(arrowsWidth), fRow(std::move(row), {}) {
+    this->setHorizontal();
+    this->setGap(look.fGap);
+    this->fState.apply(look.fSpec);
+    this->fStack.justify = look.fJustify;
+  }
+  template <class Self, class F> void forEachChild(this Self &self, F &&f) {
+    if (self.fBack)
+      f(*self.fBack);
+    f(self.fRow);
+    if (self.fOn)
+      f(*self.fOn);
+  }
+  [[nodiscard]] std::vector<Button> &buttons() { return fRow.fParts; }
+  void put(const std::vector<Element> &, std::vector<Button> made) {
+    // The arrows made where it is kept: they point at it.
+    if (!fBack) {
+      fBack.emplace(Page{this, false}, fMakeArrow(false), std::string("Previous page"));
+      fOn.emplace(Page{this, true}, fMakeArrow(true), std::string("Next page"));
+    }
+    buttons() = std::move(made);
+    fFirst = 0;
+    this->setVisible(!buttons().empty());
+    this->invalidateLayout();
+  }
+  void page(bool next) {
+    if (next && fFirst + fHolds < buttons().size())
+      fFirst += fHolds;
+    else if (!next)
+      fFirst = fFirst > fHolds ? fFirst - fHolds : 0;
+    this->fState.relayoutQuietly();
+  }
+  void light(std::size_t at) {
+    for (auto &&[index, tab] : std::views::enumerate(buttons())) {
+      const bool on = static_cast<std::size_t>(index) == at;
+      if (on && !tab.fState.selected() && !tab.visible()) {
+        fFirst = static_cast<std::size_t>(index) / fHolds * fHolds;
+        this->fState.relayoutQuietly();
+      }
+      tab.fState.apply({.selected = on});
+    }
+  }
+  void layoutChildren() {
+    fHolds = static_cast<std::size_t>(std::max(1.0f, std::floor((this->fState.contentBox().width() - fArrowsWidth) / fTabWidth)));
+    fFirst = buttons().empty() ? 0 : std::min(fFirst / fHolds, (buttons().size() - 1) / fHolds) * fHolds;
+    for (auto &&[index, tab] : std::views::enumerate(buttons()))
+      tab.setVisible(static_cast<std::size_t>(index) >= fFirst && static_cast<std::size_t>(index) < fFirst + fHolds);
+    if (fBack) {
+      fBack->apply({.disabled = fFirst == 0});
+      fOn->apply({.disabled = fFirst + fHolds >= buttons().size()});
+    }
+    this->nodes::Stack::layoutChildren();
+  }
+};
+template <class Element, class MakeArrow> struct Paged {
+  Look fLook, fRow;
+  float fTabWidth, fArrowsWidth;
+  MakeArrow fMakeArrow;
+  template <class Button> PagedStrip<Element, Button, MakeArrow> operator()(std::type_identity<Button>) const {
+    return {fLook, fRow, fTabWidth, fArrowsWidth, fMakeArrow};
+  }
+};
+template <class Element, class MakeArrow>
+Paged<Element, MakeArrow> paged(Look look, Look row, float tabWidth, float arrowsWidth, MakeArrow makeArrow) {
+  return {std::move(look), std::move(row), tabWidth, arrowsWidth, std::move(makeArrow)};
+}
+
+// Two strips one over the other, each tab in the first or the second as its
+// element says (`second(element)`): an emoji panel's groups over its packs.
+template <class Element, class Button, class Second, class First, class Then> struct SplitStrip : nodes::Stack {
+  using Walked = std::bool_constant<kAnyWalks<First, Then>>;
+  using HasLocal = std::bool_constant<bind::detail::kHasLocal<First> || bind::detail::kHasLocal<Then>>;
+  Second fSecond;
+  First fFirst;
+  Then fThen;
+  // Where each tab went: in the second, and its place there.
+  std::vector<std::pair<bool, std::size_t>> fWhere;
+  SplitStrip(Look look, Second second, First first, Then then)
+      : fSecond(std::move(second)), fFirst(std::move(first)), fThen(std::move(then)) {
+    this->setGap(look.fGap);
+    this->fState.apply(look.fSpec);
+  }
+  template <class Self, class F> void forEachChild(this Self &self, F &&f) {
+    f(self.fFirst);
+    f(self.fThen);
+  }
+  void put(const std::vector<Element> &elements, std::vector<Button> made) {
+    std::vector<Element> firstElements, thenElements;
+    std::vector<Button> firstMade, thenMade;
+    fWhere.clear();
+    for (auto &&[element, button] : std::views::zip(elements, made)) {
+      const bool second = fSecond(element);
+      fWhere.emplace_back(second, second ? thenMade.size() : firstMade.size());
+      (second ? thenElements : firstElements).push_back(element);
+      (second ? thenMade : firstMade).push_back(std::move(button));
+    }
+    fFirst.put(firstElements, std::move(firstMade));
+    fThen.put(thenElements, std::move(thenMade));
+  }
+  void light(std::size_t at) {
+    const auto none = std::numeric_limits<std::size_t>::max();
+    const bool known = at < fWhere.size();
+    fFirst.light(known && !fWhere[at].first ? fWhere[at].second : none);
+    fThen.light(known && fWhere[at].first ? fWhere[at].second : none);
+  }
+};
+template <class Element, class Second, class MakeFirst, class MakeThen> struct Split {
+  Look fLook;
+  Second fSecond;
+  MakeFirst fMakeFirst;
+  MakeThen fMakeThen;
+  template <class Button> auto operator()(std::type_identity<Button> button) const {
+    using First = decltype(fMakeFirst(button));
+    using Then = decltype(fMakeThen(button));
+    return SplitStrip<Element, Button, Second, First, Then>(fLook, fSecond, fMakeFirst(button), fMakeThen(button));
+  }
+};
+template <class Element, class Second, class MakeFirst, class MakeThen>
+Split<Element, Second, MakeFirst, MakeThen> split(Look look, Second second, MakeFirst first, MakeThen then) {
+  return {std::move(look), std::move(second), std::move(first), std::move(then)};
+}
+
+// A list of sections, one under another in a view that scrolls, and a strip
+// of their tabs: a tab pressed asks its owner what that does first --
+// leaving a search, say -- and brings its section to the top of the view,
+// once it is laid out; the tab of the section at the top is lit, where what
+// is shown says so. Made from what it reads (SectionsShown), each element's tab
+// made by `makeTab`, its section by `makePart`, the strip by `makeStrip`:
+// a picker's packs, an emoji panel's groups.
+template <class Element, class MakeTab, class MakePart, class MakeStrip, class OnTab> struct Sections : nodes::Stack {
+  using Tab = std::invoke_result_t<MakeTab &, const Element &>;
+  using Part = std::invoke_result_t<MakePart &, const Element &>;
+  // A tab's press: what its owner says, and its section brought.
+  struct Bring {
+    Sections *of = nullptr;
+    std::size_t at = 0;
+    std::invoke_result_t<const OnTab &, std::size_t> operator()() const {
+      of->fBringing = at;
+      return std::invoke(of->fOnTab, at);
+    }
+  };
   using TabButton = OnPress<Bring, Tab>;
+  using Strip = std::invoke_result_t<const MakeStrip &, std::type_identity<TabButton>>;
   using List = nodes::ScrollContainer<Many<Part>>;
-  using Strip = nodes::ScrollContainer<Many<TabButton>>;
   using Walked = std::bool_constant<kAnyWalks<Part, Tab>>;
   using HasLocal = std::bool_constant<bind::detail::kHasLocal<Part> || bind::detail::kHasLocal<Tab>>;
   MakeTab fMakeTab;
   MakePart fMakePart;
+  OnTab fOnTab;
   List fList;
   Strip fStrip;
-  std::size_t fLit = 0;
+  bool fLit = true;
+  std::optional<std::size_t> fBringing;
 
-  Sections(Look look, Look parts, Look tabs, MakeTab makeTab, MakePart makePart)
-      : fMakeTab(std::move(makeTab)), fMakePart(std::move(makePart)), fList(Many<Part>(std::move(parts), {})),
-        fStrip(Many<TabButton>(std::move(tabs), {})) {
+  Sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip &makeStrip, OnTab onTab)
+      : fMakeTab(std::move(makeTab)), fMakePart(std::move(makePart)), fOnTab(std::move(onTab)),
+        fList(Many<Part>(std::move(parts), {})), fStrip(makeStrip(std::type_identity<TabButton>{})) {
     if (look.fHorizontal)
       this->setHorizontal();
     this->setGap(look.fGap);
@@ -480,22 +683,19 @@ template <class Element, class MakeTab, class MakePart> struct Sections : nodes:
     f(self.fStrip);
   }
   [[nodiscard]] std::vector<Part> &parts() { return std::get<0>(fList.fChildren).fParts; }
-  [[nodiscard]] std::vector<TabButton> &tabs() { return std::get<0>(fStrip.fChildren).fParts; }
 
-  // The sections and their tabs made again; the view at its start.
-  template <std::ranges::input_range R> void read(const R &elements) {
-    parts() = elements | std::views::transform(std::ref(fMakePart)) | std::ranges::to<std::vector>();
-    tabs() = elements | std::views::enumerate | std::views::transform([&](const auto &one) {
-               const auto &[at, element] = one;
-               return TabButton(Bring{this, static_cast<std::size_t>(at)}, fMakeTab(element), {});
-             }) |
-             std::ranges::to<std::vector>();
-    fLit = 0;
-    fStrip.setVisible(tabs().size() > 1);
+  // The parts made again, the view at its start; the tabs too, where they
+  // are others.
+  void read(const SectionsShown<Element> &shown) {
+    parts() = shown.parts | std::views::transform(std::ref(fMakePart)) | std::ranges::to<std::vector>();
+    fStrip.put(shown.tabs, shown.tabs | std::views::enumerate | std::views::transform([&](const auto &one) {
+                             const auto &[at, element] = one;
+                             return TabButton(Bring{this, static_cast<std::size_t>(at)}, fMakeTab(element), {});
+                           }) |
+                               std::ranges::to<std::vector>());
+    fLit = shown.lit;
     fList.invalidateLayout();
-    fStrip.invalidateLayout();
     fList.scrollTo(0.0f);
-    fStrip.scrollToStart();
   }
   // A section brought to the top of the view.
   void bring(std::size_t at) {
@@ -503,8 +703,12 @@ template <class Element, class MakeTab, class MakePart> struct Sections : nodes:
       return;
     fList.scrollTo(std::max(0.0f, fList.current() + (fList.toView(parts()[at].bounds()).fTop - fList.bounds().fTop)));
   }
-  // The tab of the section at the top, lit.
+  // The section a tab asked for, brought once it is laid out; the tab of
+  // the section at the top lit.
+  [[nodiscard]] bool settling() const { return fBringing.has_value(); }
   void update(double) {
+    if (fBringing && fBringing < parts().size() && !parts()[*fBringing].bounds().isEmpty())
+      bring(*std::exchange(fBringing, std::nullopt));
     const float top = fList.bounds().fTop + 1.0f;
     // The last of those whose top has reached the view's: they come in order.
     const std::size_t lit = std::ranges::fold_left(
@@ -512,27 +716,61 @@ template <class Element, class MakeTab, class MakePart> struct Sections : nodes:
           return !parts()[at].bounds().isEmpty() && fList.toView(parts()[at].bounds()).fTop <= top;
         }),
         std::size_t{0}, [](std::size_t, std::size_t at) { return at; });
-    for (auto &&[at, tab] : std::views::enumerate(tabs()))
-      light(tab, static_cast<std::size_t>(at) == lit);
-    fLit = lit;
+    fStrip.light(fLit ? lit : std::numeric_limits<std::size_t>::max());
+  }
+};
+// A tab's press, where it asks nothing of its owner first.
+struct OnlyBrings {
+  scene::Taken operator()(std::size_t) const { return {}; }
+};
+template <class Element, class MakeTab, class MakePart, class MakeStrip, class OnTab = OnlyBrings>
+auto sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip &makeStrip, OnTab onTab = {}) {
+  return Sections<Element, MakeTab, MakePart, MakeStrip, OnTab>(std::move(look), std::move(parts), std::move(makeTab),
+                                                                std::move(makePart), makeStrip, std::move(onTab));
+}
+
+// Placed at a point of the window a part of the model says -- in window
+// coordinates, as what asked for it saw them -- out of its parent's flow,
+// kept inside its parent's box; shown where there is one: a popover over
+// the cell it is for.
+template <class N> struct PlacedAt : N {
+  std::optional<skia::SkPoint> fAt;
+  explicit PlacedAt(N node) : N(std::move(node)) {
+    this->fState.apply({.place = scene::anchor::kTopLeft});
+    this->setVisible(false);
+  }
+  void read(const std::optional<skia::SkPoint> &at) {
+    fAt = at;
+    this->setVisible(at.has_value());
+    this->invalidateLayout();
+  }
+  // Where it is laid out, set from where it is drawn: its parent's box, as
+  // its layout last gave it, and the shift of all above it.
+  [[nodiscard]] bool settling() const { return fAt.has_value() && !placed(); }
+  void update(double) {
+    if (!fAt || placed())
+      return;
+    const skia::SkRect box = this->fState.fLastConstraint;
+    const auto shift = scene::work::drawnOffset(this->fState.fId);
+    const skia::SkRect &self = this->fState.fBounds;
+    const float x = std::clamp(fAt->fX - shift.x, box.fLeft, std::max(box.fLeft, box.fRight - self.width()));
+    const float y = std::clamp(fAt->fY - shift.y, box.fTop, std::max(box.fTop, box.fBottom - self.height()));
+    this->setPosition(x - box.fLeft, y - box.fTop);
   }
 
 private:
-  void light(TabButton &tab, bool on) {
-    if (on == tab.fState.selected())
-      return;
-    tab.fState.apply({.selected = on});
-    if (on && !tab.bounds().isEmpty()) {
-      const auto at = fStrip.toView(tab.bounds());
-      if (at.fTop < fStrip.bounds().fTop || at.fBottom > fStrip.bounds().fBottom)
-        fStrip.scrollTo(tab.bounds().fTop - fStrip.bounds().fTop);
-    }
+  [[nodiscard]] bool placed() const {
+    const skia::SkRect box = this->fState.fLastConstraint;
+    if (box.isEmpty() || this->fState.fBounds.isEmpty())
+      return false;
+    const auto shift = scene::work::drawnOffset(this->fState.fId);
+    const float x = std::clamp(fAt->fX - shift.x, box.fLeft, std::max(box.fLeft, box.fRight - this->fState.fBounds.width()));
+    const float y = std::clamp(fAt->fY - shift.y, box.fTop, std::max(box.fTop, box.fBottom - this->fState.fBounds.height()));
+    return std::abs(this->fState.fBounds.fLeft - x) < 0.5f && std::abs(this->fState.fBounds.fTop - y) < 0.5f;
   }
 };
-template <class Element, class MakeTab, class MakePart>
-auto sections(Look look, Look parts, Look tabs, MakeTab makeTab, MakePart makePart) {
-  return Sections<Element, MakeTab, MakePart>(std::move(look), std::move(parts), std::move(tabs), std::move(makeTab),
-                                              std::move(makePart));
+template <class Want, class Compute, class N> auto placed_at(Compute compute, N node) {
+  return projected<Want>(std::move(compute), PlacedAt<N>(std::move(node)));
 }
 
 // The pointer resting on a node: `act(true)` once it has rested there `ms`,

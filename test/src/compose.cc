@@ -1,4 +1,5 @@
 import std;
+import skia;
 import splice;
 import gtest;
 import skiff.scene;
@@ -751,20 +752,53 @@ TEST(Compose, ListedIsMadeAgainFromWhatItReads) {
 }
 
 TEST(Compose, SectionsMakeATabAndAPartForEachAndLightTheFirst) {
-  auto list = sections<int>(vbox(4.0f), vbox(0.0f), hbox(4.0f),
-      [](int n) { return nodes::Text("tab " + std::to_string(n), 13.0f, 0); },
-      [](int n) { return nodes::Text("part " + std::to_string(n), 13.0f, 0); });
-  list.read(std::vector<int>{1, 2, 3});
+  const auto text = [](std::string what) { return [what](int n) { return nodes::Text(what + std::to_string(n), 13.0f, 0); }; };
+  auto list = sections<int>(vbox(4.0f), vbox(0.0f), text("tab "), text("part "), wrapped<int>(vbox(0.0f), hbox(4.0f)));
+  list.read(SectionsShown<int>{{1, 2, 3}, {1, 2, 3}, true});
   ASSERT_EQ(list.parts().size(), 3u);
-  ASSERT_EQ(list.tabs().size(), 3u);
+  ASSERT_EQ(list.fStrip.buttons().size(), 3u);
   EXPECT_EQ(list.parts()[2].text(), "part 3");
   EXPECT_TRUE(list.fStrip.visible());
-  (void)list.tabs()[1].onPress();  // brings a part not laid out yet: nothing
+  (void)list.fStrip.buttons()[1].onPress();  // brought once it is laid out
+  EXPECT_TRUE(list.settling());
   list.update(0.0);
-  EXPECT_TRUE(list.tabs()[0].fState.selected());
-  EXPECT_FALSE(list.tabs()[1].fState.selected());
-  list.read(std::vector<int>{9});
-  EXPECT_FALSE(list.fStrip.visible());
+  EXPECT_TRUE(list.fStrip.buttons()[0].fState.selected());
+  EXPECT_FALSE(list.fStrip.buttons()[1].fState.selected());
+  // A search's results: every tab still there, none lit.
+  list.read(SectionsShown<int>{{9}, {1, 2, 3}, false});
+  EXPECT_EQ(list.parts().size(), 1u);
+  EXPECT_EQ(list.fStrip.buttons().size(), 3u);
+  list.update(0.0);
+  EXPECT_FALSE(list.fStrip.buttons()[0].fState.selected());
+}
+
+TEST(Compose, SplitStripsPutEachTabWhereItsElementSaysAndPagedOnesPage) {
+  const auto text = [](std::string what) { return [what](int n) { return nodes::Text(what + std::to_string(n), 13.0f, 0); }; };
+  const auto arrow = [](bool next) { return nodes::Text(next ? ">" : "<", 13.0f, 0); };
+  auto list = sections<int>(vbox(4.0f), vbox(0.0f), text("tab "), text("part "),
+      split<int>(vbox(0.0f), [](int n) { return n >= 10; }, wrapped<int>(vbox(0.0f), hbox(0.0f)),
+                 paged<int>(hbox(0.0f), hbox(0.0f), 30.0f, 60.0f, arrow)));
+  list.read(SectionsShown<int>{{1, 2, 10, 11, 12}, {1, 2, 10, 11, 12}, true});
+  ASSERT_EQ(list.fStrip.fFirst.buttons().size(), 2u);
+  ASSERT_EQ(list.fStrip.fThen.buttons().size(), 3u);
+  EXPECT_TRUE(list.fStrip.fThen.fBack.has_value());
+  list.fStrip.light(3);  // the second of the packs
+  EXPECT_TRUE(list.fStrip.fThen.buttons()[1].fState.selected());
+  EXPECT_FALSE(list.fStrip.fFirst.buttons()[0].fState.selected());
+  list.fStrip.fThen.fHolds = 2;
+  list.fStrip.fThen.page(true);
+  EXPECT_EQ(list.fStrip.fThen.fFirst, 2u);
+  list.fStrip.fThen.page(false);
+  EXPECT_EQ(list.fStrip.fThen.fFirst, 0u);
+}
+
+TEST(Compose, PlacedAtIsShownWhereThereIsAPoint) {
+  auto node = PlacedAt<nodes::Text>(nodes::Text("tones", 13.0f, 0));
+  EXPECT_FALSE(node.visible());
+  node.read(std::optional<skia::SkPoint>(skia::SkPoint{10.0f, 20.0f}));
+  EXPECT_TRUE(node.visible());
+  node.read(std::nullopt);
+  EXPECT_FALSE(node.visible());
 }
 
 TEST(Compose, RestingSaysWhenThePointerHasRestedAndWhenItLeaves) {
