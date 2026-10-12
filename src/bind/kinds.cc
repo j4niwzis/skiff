@@ -24,10 +24,29 @@ inline std::uint64_t &localEpoch() {
   return epoch;
 }
 
+// The value a node bound to Want reads: the part's own type, a field's
+// member's.
+template <class Want> struct BoundValueT {
+  using type = Want;
+};
+template <auto M> struct BoundValueT<model::Field<M>> {
+  using type = typename model::detail::MemberPointer<decltype(M)>::Type;
+};
+// A node's read of a value, where it has one.
+template <class N, class V> void readErased(void *node, const void *value) {
+  if constexpr (requires(N &n, const V &v) { n.read(v); })
+    static_cast<N *>(node)->read(*static_cast<const V *>(value));
+}
+
 // A node shown the one Want where it is found; what it changes of it, its
 // answers to presses say (Own<change>).
 template <class Want, class Base>
 struct Bound : Base {
+  // Its read, made where the node is made, for the runtime walks (outside a
+  // release build): a read may make a whole subtree -- a mount's content, a
+  // list's rows -- which is that unit's to make, not the one that makes the
+  // walks' table of the node.
+  void (*fReadErased)(void *, const void *) = &readErased<Bound, typename BoundValueT<Want>::type>;
   using BoundTo = Want;
   // Keep the wrapped node's overloads at this wrapper's level. Node's
   // deduced-this defaults otherwise beat inherited event handlers.
@@ -123,6 +142,37 @@ struct Each : Container {
   Make fMake{};
   std::vector<Key> fKeys;
   std::vector<Row> fRows;
+  // Its rows made to be a list's elements, made where the node is made, for
+  // the runtime walks (outside a release build): making rows makes their
+  // whole subtrees, which is that unit's to make.
+  void (*fRowsErased)(void *, const void *, model::Revision) = &rowsErased;
+  static void rowsErased(void *self, const void *seenList, model::Revision revision) {
+    auto &list = *static_cast<Each *>(self);
+    const auto &seen = *static_cast<const model::Keyed<Key, T> *>(seenList);
+    if (list.fShown && list.fSeen == revision)
+      return;
+    list.fSeen = revision;
+    list.fShown = true;
+    if (seen.size() == list.fKeys.size() && std::ranges::equal(seen.keys(), list.fKeys))
+      return;
+    std::vector<Key> keys;
+    std::vector<Row> rows;
+    keys.reserve(seen.size());
+    rows.reserve(seen.size());
+    for (std::size_t i = 0; i < seen.size(); ++i) {
+      const Key &key = seen.keyAt(i);
+      keys.push_back(key);
+      const auto was = std::ranges::find(list.fKeys, key);
+      if (was != list.fKeys.end())
+        rows.push_back(std::move(list.fRows[static_cast<std::size_t>(was - list.fKeys.begin())]));
+      else
+        rows.push_back(list.fMake(seen.valueAt(i)));
+    }
+    list.fKeys = std::move(keys);
+    list.fRows = std::move(rows);
+    list.indexRows();
+    list.invalidateLayout();
+  }
   // The rows by key, sorted: where a targeted refresh finds the one row a
   // change is in.
   std::vector<std::pair<Key, std::size_t>> fRowIndex;

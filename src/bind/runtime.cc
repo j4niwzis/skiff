@@ -311,7 +311,11 @@ template <class T> struct BoundOf {
   static constexpr BoundPart kPart{
       mrt::wantOf<Want>(),
       mrt::keyOf<V>(),
-      +[](void *n, const void *value) { detail::read(*static_cast<T *>(n), *static_cast<const V *>(value)); },
+      // (Through the read the node was made with: nothing of it made here.)
+      +[](void *n, const void *value) {
+        auto &bound = detail::asBound(*static_cast<T *>(n));
+        bound.fReadErased(std::addressof(bound), value);
+      },
       +[](void *n) { detail::gone(*static_cast<T *>(n)); },
       +[](void *n) -> model::Revision & { return detail::asBound(*static_cast<T *>(n)).fSeen; },
       +[](void *n) -> bool & { return detail::asBound(*static_cast<T *>(n)).fShown; },
@@ -364,38 +368,11 @@ template <class T> struct EachOf {
   using Key = decltype(detail::keyOf(std::declval<E &>()));
   using Element = decltype(detail::elementOf(std::declval<E &>()));
   using List = model::Keyed<Key, Element>;
-  // The rows made to be the list's elements, in its order: a row kept for
-  // a key still there, made for one new to it, gone with one gone -- as the
-  // static refresh makes them.
+  // The rows made to be the list's elements: through the row-making the
+  // node was made with, nothing of the rows made here.
   static void rows(void *n, const void *seenList, model::Revision revision) {
     auto &list = detail::asEach(*static_cast<T *>(n));
-    const List &seen = *static_cast<const List *>(seenList);
-    if (list.fShown && list.fSeen == revision)
-      return;
-    list.fSeen = revision;
-    list.fShown = true;
-    const bool same = seen.size() == list.fKeys.size() &&
-                      std::ranges::equal(seen.keys(), list.fKeys);
-    if (same)
-      return;
-    using Row = typename decltype(list.fRows)::value_type;
-    std::vector<Key> keys;
-    std::vector<Row> rows;
-    keys.reserve(seen.size());
-    rows.reserve(seen.size());
-    for (std::size_t i = 0; i < seen.size(); ++i) {
-      const Key &key = seen.keyAt(i);
-      keys.push_back(key);
-      const auto was = std::ranges::find(list.fKeys, key);
-      if (was != list.fKeys.end())
-        rows.push_back(std::move(list.fRows[static_cast<std::size_t>(was - list.fKeys.begin())]));
-      else
-        rows.push_back(list.fMake(seen.valueAt(i)));
-    }
-    list.fKeys = std::move(keys);
-    list.fRows = std::move(rows);
-    list.indexRows();
-    list.invalidateLayout();
+    list.fRowsErased(std::addressof(list), seenList, revision);
   }
   static constexpr EachPart kPart{
       mrt::wantOf<List>(),
