@@ -92,6 +92,9 @@ public:
   // again. Every one coming into a list -- and each let go by its cache and
   // come back -- laid the list out again in the middle of a scroll.
   void keepBox(bool kept = true) { fBoxKept = kept; }
+  // Where its picture comes from, as it was given: what a program asks
+  // for, where it fetches what the picture shows.
+  [[nodiscard]] const Source &source() const { return fSource; }
 
   [[nodiscard]] const skia::Sp<skia::SkImage> *image() const {
     const skia::Sp<skia::SkImage> *found = fSource();
