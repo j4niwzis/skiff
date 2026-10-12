@@ -328,8 +328,17 @@ public:
   using Base::onKey;
   using Base::onText;
   using Base::onSemantic;
-  explicit ErasedImage(Source source, Fit how = fit::cover{}) : Base(AnyImageSource(std::move(source)), how) {}
-  void setSource(Source source) { Base::setSource(AnyImageSource(std::move(source))); }
+  explicit ErasedImage(Source source, Fit how = fit::cover{}) : Base(AnyImageSource(source), how), fTyped(std::move(source)) {}
+  void setSource(Source source) {
+    Base::setSource(AnyImageSource(source));
+    fTyped = std::move(source);
+  }
+  // Where its picture comes from, as its own type: the same in every build
+  // -- the erased one is the drawing's, not the program's to read.
+  [[nodiscard]] const Source &source() const { return fTyped; }
+
+private:
+  Source fTyped;
 };
 
 // A picture: made for its source in a release build, over an erased one
