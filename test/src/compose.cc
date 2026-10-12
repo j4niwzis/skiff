@@ -725,6 +725,7 @@ TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
   using local_t = decltype(local<Expanded>(bound<Expanded>(Chevron{})));
   static_assert(bind::detail::kHasLocal<std::optional<local_t>>);
   static_assert(bind::detail::kHasLocal<std::vector<local_t>>);
+  static_assert(bind::detail::kHasLocal<std::unique_ptr<local_t>>);
   static_assert(bind::detail::kHasLocal<std::variant<int, local_t>>);
   static_assert(bind::detail::kHasLocal<spl::variant<int, local_t>>);
   using memo_t = nodes::Memo<int, local_t>;
@@ -733,4 +734,5 @@ TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
   static_assert(bind::detail::kHasLocal<mounted_t>);
   static_assert(!bind::detail::kHasLocal<nodes::Memo<int, nodes::Text>>);
   static_assert(!bind::detail::kHasLocal<std::vector<int>>);
+  static_assert(!bind::detail::kHasLocal<std::unique_ptr<nodes::Text>>);
 }

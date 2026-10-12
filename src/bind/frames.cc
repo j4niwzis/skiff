@@ -225,6 +225,8 @@ template <class T, class... Seen>
 struct HasLocal<std::optional<T>, Seen...> : HasLocal<T, Seen...> {};
 template <class T, class Allocator, class... Seen>
 struct HasLocal<std::vector<T, Allocator>, Seen...> : HasLocal<T, Seen...> {};
+template <class T, class D, class... Seen>
+struct HasLocal<std::unique_ptr<T, D>, Seen...> : HasLocal<T, Seen...> {};
 template <class... T, class... Seen>
 struct HasLocal<std::variant<T...>, Seen...> : AnyHasLocal<std::tuple<T...>, Seen...> {};
 template <class... T, class... Seen>
