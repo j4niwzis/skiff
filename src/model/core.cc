@@ -218,21 +218,45 @@ template <class Key, class T> struct Keyed {
   }
   // Many at once, at the end, in their order: the index made once.
   template <std::ranges::input_range R> constexpr void putAll(R &&elements) {
-    // Include keys inserted earlier in this range in subsequent lookups.
-    // The list's sorted index is rebuilt only after all the puts.
-    auto positions = std::ranges::to<std::map<Key, std::size_t>>(fIndex);
+    // Those already there found in the index, which does not change until
+    // the end; those new put at the end, and their keys sorted once after: a
+    // key new twice keeps its first place and the last value. O(n log n),
+    // and nothing a constant expression cannot make -- the list's tests are
+    // one (a std::map is not).
+    std::vector<std::pair<Key, std::size_t>> added;
     for (auto &&element : elements) {
       auto &&[key, value] = element;
-      const auto [at, added] = positions.try_emplace(key, fItems.size());
-      if (!added)
+      const auto at = std::ranges::lower_bound(fIndex, key, std::ranges::less{},
+                                               &std::pair<Key, std::size_t>::first);
+      if (at != fIndex.end() && at->first == key) {
         fItems[at->second].second.mut().fValue = std::forward_like<decltype(element)>(value);
-      else {
+      } else {
+        added.emplace_back(key, fItems.size());
         fItems.emplace_back(key, Shared<Tracked<T>>(
                                      Tracked<T>{std::forward_like<decltype(element)>(value)}));
         fReshaped = true;
       }
       fFresh.push_back(key);
     }
+    // A key new more than once: its later ones' values to its first, and
+    // their places gone.
+    // By key, then by place: each key's first place first (std::ranges::
+    // stable_sort is not one a constant expression can call).
+    std::ranges::sort(added);
+    std::vector<bool> again(fItems.size(), false);
+    std::size_t first = 0;
+    for (std::size_t i = 1; i < added.size(); ++i) {
+      if (added[i].first != added[first].first) {
+        first = i;
+        continue;
+      }
+      fItems[added[first].second].second = std::move(fItems[added[i].second].second);
+      again[added[i].second] = true;
+    }
+    if (std::ranges::contains(again, true))
+      fItems = std::views::zip(fItems, again) | std::views::filter([](const auto &one) { return !std::get<1>(one); }) |
+               std::views::transform([](auto &&one) { return std::move(std::get<0>(one)); }) |
+               std::ranges::to<std::vector>();
     reindex();
   }
   // An element taken away; whether it was there.

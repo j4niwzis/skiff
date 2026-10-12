@@ -2343,13 +2343,18 @@ public:
   [[nodiscard]] bool disabled() const noexcept { return fDisabled; }
 
   // -- runtime changes
+  // Moved, nothing else: its subtree goes where it is put at the next
+  // layout, as it is -- not measured and laid out again, as arrange() has a
+  // flow's moves.
   void setPosition(float x, float y) {
     if (x == fX && y == fY) {
       return;
     }
     fX = x;
     fY = y;
-    this->invalidateLayout();
+    fPlacementDirty = true;
+    fDamaged = true;
+    work::mark(fId);
   }
   void setSize(float width, float height) {
     if (width == fWidth && height == fHeight) {

@@ -150,7 +150,7 @@ TEST(Picker, APickIsTheDialogsOwnAndItsResultBecomesAnInvite) {
   binding.refresh(page, m);
   auto &rows = std::get<0>(listOf(page).fParts).fRows;
   EXPECT_TRUE(bind::press(page, m, rowAt(1)));  // Bob
-  EXPECT_EQ(dialogOf(page).fState.look<Selected>()->value, std::optional<std::string>("b"));
+  EXPECT_EQ(dialogOf(page).fModel.template look<Selected>()->value, std::optional<std::string>("b"));
   EXPECT_FALSE(m.look(model::placeOf<Invited, Root>(std::string("b")))->value);
   EXPECT_EQ(m.outbox().size(), 0u);
   EXPECT_TRUE(bind::press(page, m, kDone));
