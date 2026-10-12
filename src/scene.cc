@@ -5844,6 +5844,11 @@ template <class T> [[nodiscard]] const AnyNode::Ops *tableOf() noexcept {
 // A node seen through the table of its walks, and not owned: what every walk
 // takes for a child it does not know the type of -- an AnyNode's, or,
 // outside a release build (kErasedWalks), any child at all.
+// A node type the walks see as another, its base, outside a release build:
+// one table for every stack of parts, whatever its parts (compose's Box),
+// rather than one made for each. Said by specializing this for the type.
+template <class T> inline constexpr bool kSeenAsBase = false;
+
 class AnyNodeRef {
 public:
   AnyNodeRef(void *node, const AnyNode::Ops *ops) noexcept : fNode(node), fOps(ops) {}
@@ -5853,8 +5858,12 @@ public:
   template <class T>
     requires std::derived_from<T, Node>
   [[nodiscard]] static AnyNodeRef of(T &node) {
-    static const AnyNode::Ops *volatile table = tableOf<T>();
-    return AnyNodeRef(&node, table);
+    if constexpr (kSeenAsBase<T>) {
+      return of(static_cast<typename T::SeenAs &>(node));
+    } else {
+      static const AnyNode::Ops *volatile table = tableOf<T>();
+      return AnyNodeRef(&node, table);
+    }
   }
   // The node, when it is a T.
   template <class T> [[nodiscard]] T *get() noexcept {

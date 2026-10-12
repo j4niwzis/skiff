@@ -56,8 +56,28 @@ struct Specced : scene::Node {
   explicit Specced(scene::Spec spec) { this->fState.apply(spec); }
 };
 
+#ifdef SKIFF_ERASED_WALKS
+// Outside a release build, what the walks see of a stack: its parts, each
+// through its own table, taken where the stack is made -- not the stack's
+// type, which names all of them. One table serves every stack, and none of
+// the walks goes down a page's types: a page's parts nest as deep as they
+// like, and nothing is made for the nesting (skiff::scene::kSeenAsBase).
+struct SeenBox : nodes::Stack {
+  // (Not a name a kind derived from a stack uses: Scoped's fSeen is its
+  // revision, and a walk over `self` would find that.)
+  std::vector<scene::AnyNodeRef> fSeenParts;
+  template <class F> void forEachChild(F &&f) { f(fSeenParts); }
+};
+#endif
+
 // A stack of its parts, in order.
-template <class... Parts> struct Box : nodes::Stack {
+template <class... Parts> struct Box
+#ifdef SKIFF_ERASED_WALKS
+    : SeenBox
+#else
+    : nodes::Stack
+#endif
+{
   using Walked = std::bool_constant<kAnyWalks<Parts...>>;
   using HasLocal = std::bool_constant<(bind::detail::kHasLocal<Parts> || ...)>;
   std::tuple<Parts...> fParts;
@@ -67,10 +87,36 @@ template <class... Parts> struct Box : nodes::Stack {
     this->setGap(look.fGap);
     this->fState.apply(look.fSpec);
     this->fStack.justify = look.fJustify;
+    see();
   }
+#ifdef SKIFF_ERASED_WALKS
+  using SeenAs = SeenBox;
+  // Its parts seen again wherever they now are: moved or copied with it.
+  Box(const Box &other) : SeenBox(other), fParts(other.fParts) { see(); }
+  Box(Box &&other) noexcept : SeenBox(std::move(other)), fParts(std::move(other.fParts)) { see(); }
+  Box &operator=(const Box &other) {
+    SeenBox::operator=(other);
+    fParts = other.fParts;
+    see();
+    return *this;
+  }
+  Box &operator=(Box &&other) noexcept {
+    SeenBox::operator=(std::move(other));
+    fParts = std::move(other.fParts);
+    see();
+    return *this;
+  }
+  ~Box() = default;
+  void see() {
+    this->fSeenParts = std::apply([](auto &...each) { return std::vector<scene::AnyNodeRef>{scene::AnyNodeRef::of(each)...}; },
+                             fParts);
+  }
+#else
+  void see() {}
   template <class Self, class F> void forEachChild(this Self &self, F &&f) {
     std::apply([&](auto &...each) { (f(each), ...); }, self.fParts);
   }
+#endif
 };
 
 // A stack of a list of parts, as many as there are: made from them, in
@@ -169,6 +215,13 @@ N styled(scene::Spec spec, N node) {
   return node;
 }
 
+} // namespace skiff::compose
+#ifdef SKIFF_ERASED_WALKS
+export namespace skiff::scene {
+template <class... Parts> inline constexpr bool kSeenAsBase<compose::Box<Parts...>> = true;
+} // namespace skiff::scene
+#endif
+export namespace skiff::compose {
 template <class... Parts> Box<Parts...> column(Look look, Parts... parts) {
   look.fHorizontal = false;
   return Box<Parts...>(std::move(look), std::move(parts)...);
