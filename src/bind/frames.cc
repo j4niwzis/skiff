@@ -228,6 +228,8 @@ struct HasLocal<std::vector<T, Allocator>, Seen...> : HasLocal<T, Seen...> {};
 template <class T, class D, class... Seen>
 struct HasLocal<std::unique_ptr<T, D>, Seen...> : HasLocal<T, Seen...> {};
 template <class... T, class... Seen>
+struct HasLocal<std::tuple<T...>, Seen...> : AnyHasLocal<std::tuple<T...>, Seen...> {};
+template <class... T, class... Seen>
 struct HasLocal<std::variant<T...>, Seen...> : AnyHasLocal<std::tuple<T...>, Seen...> {};
 template <class... T, class... Seen>
 struct HasLocal<spl::variant<T...>, Seen...> : AnyHasLocal<std::tuple<T...>, Seen...> {};
