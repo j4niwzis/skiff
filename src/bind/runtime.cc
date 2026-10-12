@@ -266,6 +266,15 @@ struct EachPart {
 struct ItselfPart {
   void (*fRefresh)(void *, const AnyModel &);
 };
+// A pipe: where what its first end sends goes first -- its second end: a
+// Local's handlers, or its own on() -- and which child its first end is.
+struct PipePart {
+  void *(*fFrom)(void *);
+  void *(*fTo)(void *);
+  const HandlerEntry *fOn;  // the second end's, where it is no Local
+  std::size_t fOnCount;
+  const LocalPart *fLocal;  // the second end's, where it is one
+};
 // All a node binds; most bind nothing and have no table.
 struct Table {
   const BoundPart *fBound = nullptr;
@@ -274,6 +283,7 @@ struct Table {
   const EachPart *fEach = nullptr;
   const ItselfPart *fItself = nullptr;
   const PressPart *fPress = nullptr;
+  const PipePart *fPipe = nullptr;
 };
 
 namespace made {
@@ -340,7 +350,7 @@ template <class T> struct LocalOf {
   using On = LocalHandlers<T, takes::OnEvents<decltype(std::declval<L &>().fHandlers), typename L::LocalOf>>;
   static constexpr LocalPart kPart{
       On::kEntries.data(), On::kEntries.size(),
-      +[](void *n) { return AnyModel::of(detail::asLocal(*static_cast<T *>(n)).fModel); },
+      +[](void *n) { return AnyModel::editable(detail::asLocal(*static_cast<T *>(n)).fModel); },
       +[](void *n) { (void)detail::asLocal(*static_cast<T *>(n)).fModel.takeChanges(); }, L::kHidden};
 };
 template <class T>
@@ -552,8 +562,36 @@ constexpr const PressPart *pressed() {
   return &PressOf<T>::kPart;
 }
 
+template <class E, class To> void pipeTakes(void *to, const void *e, const Here &, Answers &) {
+  // What the end's on() answers is its own: nothing goes on from it.
+  (void)static_cast<To *>(to)->on(*static_cast<const E *>(e));
+}
+template <class To, class Events> struct PipeHandlers;
+template <class To, class... E> struct PipeHandlers<To, model::Types<E...>> {
+  static constexpr std::array<HandlerEntry, sizeof...(E)> kEntries{HandlerEntry{mrt::keyOf<E>(), &pipeTakes<E, To>}...};
+};
+template <class T> struct PipeOf {
+  using From = std::remove_cvref_t<decltype(std::declval<T &>().fPipe.from)>;
+  using To = std::remove_cvref_t<decltype(std::declval<T &>().fPipe.to)>;
+  using On = PipeHandlers<To, takes::OnOwnEvents<To>>;
+  static constexpr PipePart kPart{+[](void *n) -> void * { return std::addressof(static_cast<T *>(n)->fPipe.from); },
+                                  +[](void *n) -> void * { return std::addressof(static_cast<T *>(n)->fPipe.to); },
+                                  On::kEntries.data(), On::kEntries.size(), local<To>()};
+};
 template <class T>
-inline constexpr Table kTable{bound<T>(), scoped<T>(), local<T>(), each<T>(), itself<T>(), pressed<T>()};
+concept IsPipeNode = !IsEach<T> && requires(T &n) {
+  n.fPipe.from;
+  n.fPipe.to;
+};
+template <class T> constexpr const PipePart *piped() { return nullptr; }
+template <class T>
+  requires IsPipeNode<T>
+constexpr const PipePart *piped() {
+  return &PipeOf<T>::kPart;
+}
+
+template <class T>
+inline constexpr Table kTable{bound<T>(), scoped<T>(), local<T>(), each<T>(), itself<T>(), pressed<T>(), piped<T>()};
 } // namespace made
 
 // ---- the walk ------------------------------------------------------------------------
@@ -766,7 +804,19 @@ template <class... P> std::vector<Served> servedBy(const Parts<P...> *parts) {
                parts->fParts);
   return out;
 }
-inline std::vector<Served> servedBy(const void *) { return {}; }
+template <class S, class... E> void takenBy(std::vector<Served> &out, S *sink, model::Types<E...>) {
+  (out.push_back(Served{mrt::keyOf<E>(), sink, +[](void *owner, const void *event) {
+     static_cast<S *>(owner)->take(*static_cast<const E *>(event));
+   }}),
+   ...);
+}
+// Any other sink: by what its take() takes.
+template <class S> std::vector<Served> servedBy(S *sink) {
+  std::vector<Served> out;
+  if (sink != nullptr)
+    takenBy(out, sink, takes::Taken<S>{});
+  return out;
+}
 
 // ---- a press, at run time ---------------------------------------------------------------
 
@@ -783,8 +833,14 @@ struct LocalAt {
   void *fNode;
   bool fHidden;
 };
+// A pipe's second end, where what its first end sends goes first.
+struct PipeAt {
+  std::span<const HandlerEntry> fOn;
+  void *fTo;
+  const LocalPart *fLocal;
+};
 struct PressFrame {
-  std::variant<ScopeAt, LocalAt> fKind;
+  std::variant<ScopeAt, LocalAt, PipeAt> fKind;
   const PressFrame *fOuter;
 };
 
@@ -878,17 +934,25 @@ private:
       descend(table->fEach->fRow(node.node(), i), path, at + 1, *list, around, end);
       return;
     }
+    std::optional<PressFrame> pipe;
+    if (table != nullptr && table->fPipe != nullptr)
+      pipe.emplace(PressFrame{PipeAt{{table->fPipe->fOn, table->fPipe->fOnCount}, table->fPipe->fTo(node.node()), table->fPipe->fLocal},
+                              around});
     struct Context {
       Pressing *fSelf;
       const scene::Path *fPath;
       std::size_t fAt;
       const mrt::Place *fPlace;
       const PressFrame *fFrames;
+      const PressFrame *fPiped;  // its first end's frames: the pipe's
+      void *fFrom;
       const End *fEnd;
-    } context{this, &path, at, &place, around, &end};
+    } context{this, &path, at, &place, around, pipe ? &*pipe : nullptr,
+              pipe ? table->fPipe->fFrom(node.node()) : nullptr, &end};
     (void)node.ops().fChildAt(node.node(), path[at], &context, +[](void *c, scene::AnyNodeRef &child) {
       auto &go = *static_cast<Context *>(c);
-      go.fSelf->descend(child, *go.fPath, go.fAt + 1, *go.fPlace, go.fFrames, *go.fEnd);
+      const bool first = go.fPiped != nullptr && child.node() == go.fFrom;
+      go.fSelf->descend(child, *go.fPath, go.fAt + 1, *go.fPlace, first ? go.fPiped : go.fFrames, *go.fEnd);
     });
   }
 
@@ -912,6 +976,18 @@ private:
     if (!place || !fModel.apply(*place, edit.fChange))
       fMissed = true;
   }
+  bool intoLocalEnd(const ScopeAt &, const Sent &, const PressFrame *) { return false; }
+  bool intoLocalEnd(const LocalAt &, const Sent &, const PressFrame *) { return false; }
+  bool intoLocalEnd(const PipeAt &pipe, const Sent &event, const PressFrame *frame) {
+    if (pipe.fLocal == nullptr)
+      return false;
+    const PressFrame local{LocalAt{pipe.fLocal->fModel(pipe.fTo), {pipe.fLocal->fOn, pipe.fLocal->fOnCount}, pipe.fTo,
+                                   pipe.fLocal->fHidden},
+                           frame->fOuter};
+    route(event, &local);
+    return true;
+  }
+  bool ownInLocal(const PipeAt &, const OwnEdit &) { return false; }
   bool ownInLocal(const ScopeAt &, const OwnEdit &) { return false; }
   bool ownInLocal(const LocalAt &local, const OwnEdit &edit) {
     const auto way = mrt::pathTo(*local.fModel.fRoot, *edit.fWant);
@@ -931,6 +1007,10 @@ private:
   // its type.
   void route(const Sent &event, const PressFrame *frames) {
     for (const PressFrame *frame = frames; frame != nullptr; frame = frame->fOuter) {
+      // A pipe whose second end is a Local: taken there, as a frame of its
+      // own around what is outside the pipe.
+      if (std::visit([&](const auto &one) { return this->intoLocalEnd(one, event, frame); }, frame->fKind))
+        return;
       const auto [entries, held, where] = std::visit(
           [](const auto &one) {
             return std::tuple<std::span<const HandlerEntry>, void *, const mrt::Place *>{one.fOn, Pressing::ownerOf(one),
@@ -955,6 +1035,8 @@ private:
     }
     found->fTake(found->fOwner, event.fEvent.get());
   }
+  static void *ownerOf(const PipeAt &pipe) { return pipe.fTo; }
+  static const mrt::Place *placeOf(const PipeAt &) { return nullptr; }
   static void *ownerOf(const ScopeAt &scope) { return scope.fHandlers; }
   static void *ownerOf(const LocalAt &local) { return local.fNode; }
   static const mrt::Place *placeOf(const ScopeAt &scope) { return &scope.fPlace; }
@@ -981,6 +1063,7 @@ private:
       (void)fModel.apply(*place, over.fChange);
   }
   // Made at a frame, where its part is there: whether the search stops.
+  bool editAt(const PipeAt &, const OverEdit &) { return false; }
   bool editAt(const ScopeAt &scope, const OverEdit &over) {
     auto place = below(scope.fPlace, over.fWant, over.fKeys);
     if (!place)
@@ -1002,12 +1085,16 @@ private:
 
 } // namespace skiff::bind::rt
 
-// The scene's hook: a node's binding table, where it binds anything.
-export namespace skiff::bind {
+// The scene's hook: a node's binding table, where it binds anything. In the
+// scene's namespace, which every node's is associated with (Node is its
+// base): found by ADL wherever skiff.bind is imported, for a node of any
+// namespace -- a program's own, pressed, as much as skiff's kinds.
+export namespace skiff::scene {
 template <class T>
-  requires(IsBound<T> || IsScoped<T> || IsLocal<T> || IsEach<T> || rt::made::IsDerivedNode<T> ||
-           requires { typename rt::made::RefreshesFrom<T>::type; } || rt::made::AnswersPress<T>)
+  requires(bind::IsBound<T> || bind::IsScoped<T> || bind::IsLocal<T> || bind::IsEach<T> ||
+           bind::rt::made::IsDerivedNode<T> || requires { typename bind::rt::made::RefreshesFrom<T>::type; } ||
+           bind::rt::made::AnswersPress<T> || bind::rt::made::IsPipeNode<T>)
 constexpr const void *skiffBindTable(T *) {
-  return &rt::made::kTable<T>;
+  return &bind::rt::made::kTable<T>;
 }
-} // namespace skiff::bind
+} // namespace skiff::scene

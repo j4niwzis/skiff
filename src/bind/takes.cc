@@ -72,6 +72,14 @@ template <class... T> struct UniqueOf<model::Types<T...>> {
 template <class H> struct OnOne {};
 template <class H, class Place> struct OnTwo {};
 template <class H> struct ApplyOne {};
+template <class H> struct TakeOne {};
+template <class H> struct OnOneMutable {};
+template <class H> constexpr bool probeOnOneMutable() {
+  return requires(H &h) { h.on(Probe<OnOneMutable<H>>{}); };
+}
+template <class H> constexpr bool probeTakeOne() {
+  return requires(H &h) { h.take(Probe<TakeOne<H>>{}); };
+}
 template <class H> constexpr bool probeOnOne() {
   return requires(const H &h) { h.on(Probe<OnOne<H>>{}); };
 }
@@ -107,6 +115,13 @@ inline constexpr bool kIn<T, model::Types<L...>> = [] {
   struct All : std::type_identity<L>... {};
   return std::derived_from<All, std::type_identity<T>>;
 }();
+// The event types a node's own on(event) takes, which may change it: what
+// a pipe's second end is given.
+template <class H>
+using OnOwnEvents = typename loophole::Read<loophole::OnOneMutable<H>, loophole::probeOnOneMutable<H>()>::type;
+// The event types a sink takes: those of a take(event).
+template <class H>
+using Taken = typename loophole::Read<loophole::TakeOne<H>, loophole::probeTakeOne<H>()>::type;
 // The request types a part takes: those of an apply(request).
 template <class H>
 using Applied = typename loophole::Read<loophole::ApplyOne<H>, loophole::probeApplyOne<H>()>::type;
