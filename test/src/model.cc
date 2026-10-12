@@ -6,6 +6,10 @@ import skiff.model;
 
 // The model's rules, held while it is compiled: every check below is a
 // static_assert over a constexpr model. The test only says they held.
+// (Not where the model runs on its runtime layer, outside a release build:
+// nothing of that is a constant expression. skiff.model:schema's tests hold
+// that layer to these same rules.)
+#ifndef SKIFF_RUNTIME_MODEL
 
 using namespace skiff::model;
 
@@ -641,3 +645,4 @@ TEST(Model, AnInboxTakesEditsFromOtherThreads) {
   EXPECT_EQ(inbox.applyTo(m), 3u);
   EXPECT_FALSE(m.look(placeOf<ReadReceipts, Root>(std::string("@me:a.org")))->on);
 }
+#endif

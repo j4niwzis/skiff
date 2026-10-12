@@ -67,6 +67,12 @@ public:
       endBatch();
     return there;
   }
+  // A runtime look as a typed one.
+  template <class T> static Seen<T> seenAs(const rt::Seen &seen) {
+    if (!seen || seen.fShape->fType != rt::keyOf<T>())
+      return {};
+    return {static_cast<const T *>(seen.fValue), seen.fRevision, seen.fTracked};
+  }
   // An erased change at a runtime place (rt::Change): made as applyAt makes
   // a typed one -- what a debug build's press and handlers answer with.
   bool applyErased(const rt::Place &place, const rt::Change &change) {
@@ -103,21 +109,39 @@ public:
   // is not in its list.
   template <class P, class K>
   constexpr Seen<TypeAt<Root, P>> look(const Place<Root, P, K> &place) const {
+#ifdef SKIFF_RUNTIME_MODEL
+    // Outside a release build, along the runtime layer: nothing made for
+    // the path but its steps.
+    return seenAs<TypeAt<Root, P>>(lookAt(rt::placeOf<P>(place.fKeys)));
+#else
     Looking<TypeAt<Root, P>> v{.fRevision = fRevision};
     detail::NoOwner none;
     if (!detail::walk<0>(fRoot, place.fKeys, v, none, P{}))
       return {};
     return {v.fFound, v.fRevision, v.fTracked};
+#endif
   }
   // (Want a type, or a Field<&C::m>: what is seen is the part's own type.)
   template <class Want> constexpr auto look() const {
+#ifdef SKIFF_RUNTIME_MODEL
+    // Found by the runtime search, once: no search over the root's type.
+    static const std::optional<rt::Steps> way = rt::pathTo(rt::shapeOf<Root>(), rt::wantOf<Want>());
+    using T = typename rt::ValueOfT<Want>::type;
+    return way ? seenAs<T>(lookAt(rt::Place{*way, {}})) : Seen<T>{};
+#else
     return look(placeOf<Want, Root>());
+#endif
   }
 
   // An edit made: the part changed, the revisions on its way moved, and the
   // reactions to every part it went through asked. False: it was not there.
   template <class P, class F, class K>
   constexpr bool apply(const Edit<Root, P, F, K> &e) {
+#ifdef SKIFF_RUNTIME_MODEL
+    // Outside a release build, made by the runtime layer: the change made
+    // for its part's type, nothing for the path but its steps.
+    return applyErased(rt::placeOf<P>(e.fPlace.fKeys), rt::Change::of<TypeAt<Root, P>, F>(e.fChange));
+#else
     const bool own = !fInBatch;
     if (own)
       beginBatch();
@@ -130,11 +154,21 @@ public:
     if (own)
       endBatch();
     return there;
+#endif
   }
   // A change of the one Want in the whole model.
   template <class Want, class F, class... Keys>
   constexpr bool apply(const Over<Want, F, Keys...> &o) {
+#ifdef SKIFF_RUNTIME_MODEL
+    // Found by the runtime search, once; made by the runtime layer.
+    static const std::optional<rt::Steps> way = rt::pathTo(rt::shapeOf<Root>(), rt::wantOf<Want>());
+    if (!way)
+      return false;
+    return applyErased(rt::Place{*way, std::apply([](const auto &...k) { return std::vector<rt::AnyKey>{rt::AnyKey(k)...}; }, o.fKeys)},
+                       rt::Change::of<typename rt::ValueOfT<Want>::type, F>(o.fChange));
+#else
     return apply(edit(Place<Root, Path<>>{}, o));
+#endif
   }
   // Several, as one batch: each applied in turn. And all or none: only
   // where every one's part is there.

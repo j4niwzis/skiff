@@ -289,6 +289,11 @@ target_link_libraries(${PROJECT_NAME} PUBLIC skiff_model)
 option(SKIFF_ERASE_WALKS "Outside a release build, walk every child through an AnyNode" ON)
 target_compile_definitions(${PROJECT_NAME} PUBLIC
   $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<NOT:$<CONFIG:Release>>>:SKIFF_ERASED_WALKS>)
+# And outside a release build, the model's edits and looks go through its
+# runtime layer (skiff.model:schema): nothing made for each place's path.
+option(SKIFF_RUNTIME_MODEL "Outside a release build, edit and look at a model through its runtime layer" ON)
+target_compile_definitions(skiff_model PUBLIC
+  $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<BOOL:${SKIFF_RUNTIME_MODEL}>,$<NOT:$<CONFIG:Release>>>:SKIFF_RUNTIME_MODEL>)
 option(SKIFF_SHARE_DEBUG_ALGORITHMS "In Debug, share layout and drawing code between erased node types" ON)
 target_compile_definitions(${PROJECT_NAME} PUBLIC
   $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<BOOL:${SKIFF_SHARE_DEBUG_ALGORITHMS}>,$<CONFIG:Debug>>:SKIFF_SHARED_DEBUG_ALGORITHMS>)

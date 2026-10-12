@@ -289,6 +289,13 @@ template <auto M> struct WantOfT<Field<M>> {
   }
 };
 template <class T> [[nodiscard]] constexpr Want wantOf() { return WantOfT<T>::make(); }
+// The type of what is wanted: its own, a field's member's.
+template <class T> struct ValueOfT {
+  using type = T;
+};
+template <auto M> struct ValueOfT<Field<M>> {
+  using type = typename model::detail::MemberPointer<decltype(M)>::Type;
+};
 
 // Every place below a shape a type is at -- not looked for again below one
 // found -- as the static search finds them.
