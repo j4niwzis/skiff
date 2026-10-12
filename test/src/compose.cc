@@ -738,3 +738,14 @@ TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
   static_assert(!bind::detail::kHasLocal<std::unique_ptr<nodes::Text>>);
   static_assert(!bind::detail::kHasLocal<std::tuple<int, nodes::Text>>);
 }
+
+TEST(Compose, ListedIsMadeAgainFromWhatItReads) {
+  auto list = listed<int>(vbox(2.0f), [](int n) { return nodes::Text(std::to_string(n), 13.0f, 0); });
+  EXPECT_TRUE(list.fParts.empty());
+  list.read(std::vector<int>{1, 2, 3});
+  ASSERT_EQ(list.fParts.size(), 3u);
+  EXPECT_EQ(list.fParts[1].text(), "2");
+  list.read(std::vector<int>{7});
+  ASSERT_EQ(list.fParts.size(), 1u);
+  EXPECT_EQ(list.fParts[0].text(), "7");
+}

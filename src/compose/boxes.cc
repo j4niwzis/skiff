@@ -89,6 +89,22 @@ template <class N> struct Many : nodes::Stack {
 };
 template <class N> Many<N> many(Look look, std::vector<N> parts) { return Many<N>(std::move(look), std::move(parts)); }
 
+// A stack of a list's parts made from what it reads -- a value projected
+// from the model or a Local's state, a search's results -- each element made
+// into a part by `make`, all of them made again at each read.
+template <class Make, class N> struct Listed : Many<N> {
+  Make fMake;
+  Listed(Look look, Make make) : Many<N>(std::move(look), {}), fMake(std::move(make)) {}
+  template <std::ranges::input_range R> void read(const R &items) {
+    this->fParts = items | std::views::transform(std::ref(fMake)) | std::ranges::to<std::vector>();
+    this->invalidateLayout();
+    this->markDamaged();
+  }
+};
+template <class Element, class Make> auto listed(Look look, Make make) {
+  return Listed<Make, std::invoke_result_t<Make &, const Element &>>(std::move(look), std::move(make));
+}
+
 // A node shown, or there but hidden.
 template <class N>
   requires std::derived_from<N, scene::Node>
