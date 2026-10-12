@@ -1198,6 +1198,30 @@ TEST(Layout, AFillingChildDoesNotWidenAContentSizedBox) {
   EXPECT_FLOAT_EQ(filled.parts.filling.bounds().width(), 40.0f);
 }
 
+// A box sized by what it holds holds its children's margins too: the first
+// one's above it, the last one's below -- else what follows the box is put
+// over the end of the last.
+struct Margined : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> first = make<Box>({.width = 40.0f, .height = 10.0f, .margin = {10.0f, 0.0f, 10.0f, 0.0f}}, kCard);
+    Box<> second = make<Box>({.width = 40.0f, .height = 10.0f, .margin = {10.0f, 0.0f, 10.0f, 0.0f}}, kCard);
+  } parts;
+};
+struct HoldsMargined : Node {
+  struct parts_t {
+    Margined margined = make<Margined>({.width = 100.0f, .autoSize = axes::kY});
+  } parts;
+};
+
+TEST(Layout, AContentSizedBoxHoldsItsChildrensMargins) {
+  Scene<HoldsMargined> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  const auto &margined = scene.root().parts.margined;
+  EXPECT_FLOAT_EQ(margined.parts.first.bounds().fTop - 10.0f, margined.bounds().fTop);
+  EXPECT_FLOAT_EQ(margined.parts.second.bounds().fBottom + 10.0f, margined.bounds().fBottom);
+}
+
 // A row of a set width holding more than it has room for: the last child
 // sticks out, and the layout says so -- once -- in overflows(). A row
 // sized by its content holds the same children without a word.

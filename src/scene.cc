@@ -3802,8 +3802,14 @@ template <class Axis, class T> [[nodiscard]] skia::SkRect flowBounds(T &node) {
   skia::SkRect content = skia::SkRect::MakeEmpty();
   eachChild(node, [&](auto &child) {
     const State &state = stateOf(child);
+    // With its margin: the room a flow gives a child is its box and its
+    // margin. Its box alone, a column that began with a margined title or
+    // ended with a margined slider came out short by as much, and what
+    // followed it was put over its end.
     if (state.fVisible && !state.fOutOfFlow && !state.fRelativeSizeAxes.template has<Axis>()) {
-      content = joined(content, state.fBounds);
+      const Margin &m = state.fMargin;
+      content = joined(content, skia::SkRect::MakeLTRB(state.fBounds.fLeft - m.fLeft, state.fBounds.fTop - m.fTop,
+                                                       state.fBounds.fRight + m.fRight, state.fBounds.fBottom + m.fBottom));
     }
   });
   return content;
