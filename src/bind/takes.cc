@@ -25,13 +25,24 @@ template <class Tag, std::size_t N> struct Slot {
 template <class Tag, std::size_t N, class T> struct Fill {
   friend constexpr auto taken(Slot<Tag, N>) { return std::type_identity<T>{}; }
 };
-// How many slots of a tag are filled: the first with nothing in it. Each
-// call made anew (its lambda), so nothing of an earlier count is kept.
-template <class Tag, std::size_t N = 0, auto = [] {}> consteval std::size_t filled() {
-  if constexpr (requires { taken(Slot<Tag, N>{}); })
-    return filled<Tag, N + 1, [] {}>();
+// How many slots of a tag are filled: the first with nothing in it -- the
+// slots fill in order, so found by halving [Lo, Hi): slot Lo - 1 filled,
+// slot Hi not. Each call made anew (its lambda), so nothing of an earlier
+// count is kept. (Counted one by one, each type put went through every
+// slot before it: a program's few hundred requests were tens of
+// thousands of steps.)
+template <class Tag, std::size_t Lo, std::size_t Hi, auto = [] {}> consteval std::size_t firstFree() {
+  if constexpr (Lo == Hi)
+    return Lo;
+  else if constexpr (requires { taken(Slot<Tag, (Lo + Hi) / 2>{}); })
+    return firstFree<Tag, (Lo + Hi) / 2 + 1, Hi, [] {}>();
   else
-    return N;
+    return firstFree<Tag, Lo, (Lo + Hi) / 2, [] {}>();
+}
+// More slots than any overload set has types.
+inline constexpr std::size_t kSlots = 1 << 14;
+template <class Tag, std::size_t = 0, auto = [] {}> consteval std::size_t filled() {
+  return firstFree<Tag, 0, kSlots, [] {}>();
 }
 // A type put in the next slot.
 template <class Tag, class T, auto = [] {}> consteval std::size_t put() {
