@@ -816,3 +816,18 @@ TEST(Compose, RestingSaysWhenThePointerHasRestedAndWhenItLeaves) {
   node.update(1400.0);
   EXPECT_EQ(said, (std::vector<bool>{true, false}));
 }
+
+// A node shown only while what it reads says so, holding a text made from
+// the same part: hidden by the first refresh where it says no.
+TEST(Compose, AShownIfHidesWhereItsReadSaysSo) {
+  struct Count { int n = 0; };
+  struct Root { model::Tracked<Count> count; };
+  model::Model<Root, bind::NoReactions> model{Root{}};
+  auto node = shown_if<Count>([](const Count &now) { return now.n > 0; },
+                              row(text_of<Count>([](const Count &now) { return std::to_string(now.n); },
+                                                 nodes::Text("", 12.0f, 0u))));
+  bind::Binding<decltype(model)> binding;
+  binding.refresh(node, model);
+  EXPECT_FALSE(node.visible());
+  EXPECT_EQ(std::get<0>(node.fParts).text(), "0");
+}

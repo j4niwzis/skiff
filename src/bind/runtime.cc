@@ -24,6 +24,14 @@ import :press;
 export namespace skiff::bind::rt {
 namespace mrt = model::rt;
 
+// Where SKIFF_TRACE_BIND is set: what each runtime walk does, on stderr --
+// a node read, a value derived, a scope or list passed by -- to find where
+// a tree and its model part ways.
+inline bool tracing() {
+  static const bool on = std::getenv("SKIFF_TRACE_BIND") != nullptr;
+  return on;
+}
+
 // ---- a model, erased ------------------------------------------------------------
 
 // What the walks ask of a model: its shape, a part at a place, its revision.
@@ -435,6 +443,8 @@ template <class T> struct DerivedOf {
       return;
     const model::Revision now = std::ranges::fold_left(
         seen, model::Revision{0}, [](model::Revision most, const mrt::Seen &one) { return std::max(most, one.fRevision); });
+    if (tracing())
+      std::println(std::cerr, "[bind] derived {} at {} (seen {}, shown {})", typeid(D).name(), now, node.fSeen, node.fShown);
     if (node.fShown && now == node.fSeen)
       return;
     node.fSeen = now;
@@ -589,7 +599,11 @@ public:
   explicit Refresh(AnyModel model, const std::vector<mrt::Place> *changed = nullptr)
       : fModel(model), fChanged(changed) {}
 
-  void walk(scene::AnyNodeRef node) { this->node(node, mrt::Place{}, nullptr); }
+  void walk(scene::AnyNodeRef node) {
+    if (tracing())
+      std::println(std::cerr, "[bind] refresh {} over {}", fChanged ? "targeted" : "whole", node.type().name());
+    this->node(node, mrt::Place{}, nullptr);
+  }
 
 private:
   AnyModel fModel;
@@ -643,6 +657,8 @@ private:
       inner = below(here, table->fScoped->fWithin, table->fScoped->fKeys(node.node()));
       if (!inner)
         return;
+      if (tracing())
+        std::println(std::cerr, "[bind] scope {} entered", node.type().name());
       if (fChanged == nullptr) {
         const auto seen = fModel.look(*inner);
         const model::Revision now = seen ? seen.fRevision : fModel.revision();
@@ -705,6 +721,8 @@ private:
   }
   void show(scene::AnyNodeRef node, const BoundPart &part, const mrt::Seen &seen) {
     void *n = node.node();
+    if (tracing())
+      std::println(std::cerr, "[bind] bound {} {} at {}", node.type().name(), seen ? "seen" : "gone", seen.fRevision);
     if (!seen || seen.fShape->fType != part.fValue) {
       if (!std::exchange(part.fIsGone(n), true))
         part.fGone(n);
@@ -1071,16 +1089,15 @@ private:
 
 } // namespace skiff::bind::rt
 
-// The scene's hook: a node's binding table, where it binds anything. In the
-// scene's namespace, which every node's is associated with (Node is its
-// base): found by ADL wherever skiff.bind is imported, for a node of any
-// namespace -- a program's own, pressed, as much as skiff's kinds.
+// The scene's hook: a node's binding table, where it binds anything -- a
+// partial specialization of the scene's BindTableOf, which counts wherever
+// this module is reachable.
 export namespace skiff::scene {
 template <class T>
   requires(bind::IsBound<T> || bind::IsScoped<T> || bind::IsLocal<T> || bind::IsEach<T> ||
            bind::rt::made::IsDerivedNode<T> || requires { typename bind::rt::made::RefreshesFrom<T>::type; } ||
            bind::rt::made::AnswersPress<T> || bind::rt::made::IsPipeNode<T>)
-constexpr const void *skiffBindTable(T *) {
-  return &bind::rt::made::kTable<T>;
-}
+struct BindTableOf<T> {
+  static constexpr const void *value = &bind::rt::made::kTable<T>;
+};
 } // namespace skiff::scene

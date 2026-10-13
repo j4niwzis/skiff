@@ -5517,9 +5517,15 @@ struct SemanticHandler {
 };
 // What binds a node -- a part of a model shown, a scope, a Local, a list's
 // rows, a press answered -- for a debug build's walks made at run time: none,
-// unless the binding layer (skiff.bind) says so, by an overload of this for
-// the node's type found by ADL. Seen through a node's table.
-constexpr const void *skiffBindTable(const void *) { return nullptr; }
+// unless the binding layer (skiff.bind) says so, by a partial
+// specialization of this for the node's kinds. A specialization, not an
+// overload found by ADL: a specialization counts wherever the binding layer
+// is reachable -- imported anywhere below -- where an overload had to be
+// visible, and a node's table made in a unit that did not see it had none,
+// the same table made elsewhere had one, and the linker kept either.
+template <class T> struct BindTableOf {
+  static constexpr const void *value = nullptr;
+};
 
 class AnyNode {
 public:
@@ -5807,7 +5813,7 @@ private:
         detail::drawSelfOf(as<T>(n), hooks, canvas, alpha);
       },
 #endif
-      skiffBindTable(static_cast<T *>(nullptr)),
+      BindTableOf<T>::value,
   };
 
 
