@@ -851,6 +851,70 @@ struct SelfReading : scene::Node {
                                                   bind::refreshFromRoot<SelfReading, OtherRoot, &SelfReading::refresh_other>());
 };
 } // namespace
+namespace {
+// As a program's window reads its models: refresh() overloaded, one a
+// template over the model's reactions -- which the runtime walks cannot
+// pick, so it lists them.
+struct OverloadedReading : scene::Node {
+  int fByModel = 0, fByRoot = 0;
+  void refresh(const ItsModel &) { ++fByModel; }
+  template <class M> void refresh(const M &model) { refresh_other(model.root()); }
+  void refresh_other(const OtherRoot &) { ++fByRoot; }
+  bind::Refreshes<2> fRefreshes = bind::refreshes(bind::refreshFrom<OverloadedReading, ItsModel>(),
+                                                  bind::refreshFromRoot<OverloadedReading, OtherRoot, &OverloadedReading::refresh_other>());
+};
+// One made around it, its own address not the lister's.
+struct Ahead {
+  long fBytes[4] = {};
+};
+struct WrappedReading : Ahead, OverloadedReading {};
+struct OverloadedUnlisted : scene::Node {
+  void refresh(const ItsModel &) {}
+  void refresh(const OtherModel &) {}
+};
+struct ButtonNamedRefresh {
+  int refresh;
+};
+} // namespace
+#ifdef SKIFF_ERASED_WALKS
+// One the walks would pass by is refused; listed, or one refresh, or no
+// node at all, it is not.
+static_assert(bind::rt::made::RefreshUnseen<OverloadedUnlisted>);
+static_assert(!bind::rt::made::RefreshUnseen<OverloadedReading>);
+static_assert(!bind::rt::made::RefreshUnseen<SelfReading>);
+static_assert(!bind::rt::made::RefreshUnseen<ButtonNamedRefresh>);
+#endif
+namespace {
+// The root of the tree, and a part deep in boxes: read by each model, each
+// time it moves.
+TEST(Compose, AnOverloadedReaderIsRefreshedAsRootAndAsAPart) {
+  ItsModel its{ItsRoot{}};
+  OtherModel other{OtherRoot{}};
+  OverloadedReading root;
+  bind::Binding<ItsModel> first;
+  bind::Binding<OtherModel> second;
+  first.refresh(root, its);
+  second.refresh(root, other);
+  EXPECT_EQ(root.fByModel, 1);
+  EXPECT_EQ(root.fByRoot, 1);
+  auto tree = column(row(OverloadedReading{}), nodes::Box<>(0u));
+  auto moved = std::move(tree);
+  bind::Binding<ItsModel> third;
+  bind::Binding<OtherModel> fourth;
+  third.refresh(moved, its);
+  fourth.refresh(moved, other);
+  const auto &part = std::get<0>(std::get<0>(moved.fParts).fParts);
+  EXPECT_EQ(part.fByModel, 1);
+  EXPECT_EQ(part.fByRoot, 1);
+  WrappedReading wrapped;
+  bind::Binding<ItsModel> fifth;
+  bind::Binding<OtherModel> sixth;
+  fifth.refresh(wrapped, its);
+  sixth.refresh(wrapped, other);
+  EXPECT_EQ(wrapped.fByModel, 1);
+  EXPECT_EQ(wrapped.fByRoot, 1);
+}
+} // namespace
 TEST(Compose, ANodeReadingTwoModelsItselfIsRefreshedByEach) {
   ItsModel its{ItsRoot{}};
   OtherModel other{OtherRoot{}};

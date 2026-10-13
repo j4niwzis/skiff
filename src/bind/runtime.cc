@@ -444,7 +444,7 @@ template <class T> struct DerivedOf {
     const model::Revision now = std::ranges::fold_left(
         seen, model::Revision{0}, [](model::Revision most, const mrt::Seen &one) { return std::max(most, one.fRevision); });
     if (tracing())
-      std::println(std::cerr, "[bind] derived {} at {} (seen {}, shown {})", typeid(D).name(), now, node.fSeen, node.fShown);
+      std::println(std::cerr, "[bind] derived {} @{} at {} (seen {}, shown {})", typeid(D).name(), static_cast<const void *>(std::addressof(node)), now, node.fSeen, node.fShown);
     if (node.fShown && now == node.fSeen)
       return;
     node.fSeen = now;
@@ -468,15 +468,40 @@ template <class T> struct OwnRefreshOf {
 };
 // A node that says which models it refreshes from (fRefreshes): through
 // what it was made with.
+// The class a member is declared in.
+template <class P> struct MemberOwnerT {};
+template <class M, class C> struct MemberOwnerT<M C::*> {
+  using type = C;
+};
 template <class T> struct ListedRefreshOf {
+  // The node as the class that lists them, which its entries are made for:
+  // the node may be one made around it (a Bound of it), its own address
+  // another.
+  using Owner = typename MemberOwnerT<decltype(&T::fRefreshes)>::type;
   static constexpr ItselfPart kPart{+[](void *n, const AnyModel &model) {
-    for (const RefreshEntry &entry : static_cast<T *>(n)->fRefreshes.fEntries)
+    Owner &owner = *static_cast<T *>(n);
+    for (const RefreshEntry &entry : owner.fRefreshes.fEntries)
       if (entry.fByRoot ? entry.fType == model.fRoot->fType : entry.fType == model.fType)
-        entry.fRefresh(n, entry.fByRoot ? model.fRootValue : model.fModel);
+        entry.fRefresh(std::addressof(owner), entry.fByRoot ? model.fRootValue : model.fModel);
   }};
 };
 template <class T>
 concept ListsRefreshes = requires(T &t) { t.fRefreshes.fEntries; };
+// Whether a node has anything named refresh -- one, an overload set, a
+// template: its name made ambiguous with a probe's own, where it has.
+struct RefreshNameProbe {
+  int refresh;
+};
+template <class T> struct RefreshNameOf : T, RefreshNameProbe {};
+template <class T>
+concept NamesRefresh = std::derived_from<T, scene::Node> && !std::is_final_v<T> && !requires { &RefreshNameOf<T>::refresh; };
+// A node that reads the model itself where the walks cannot see how: its
+// refresh overloaded or a template, and no list of its refreshes. The
+// static walks call it; these would pass it by, and it would never be
+// read -- refused here, not found broken on the screen.
+template <class T>
+concept RefreshUnseen = NamesRefresh<T> && !IsDerivedNode<T> && !ListsRefreshes<T> &&
+                        !requires { typename RefreshesFrom<T>::type; };
 template <class T> constexpr const ItselfPart *itself() { return nullptr; }
 template <class T>
   requires ListsRefreshes<T>
@@ -582,8 +607,14 @@ constexpr const PipePart *piped() {
   return &PipeOf<T>::kPart;
 }
 
+template <class T> struct TableOf {
+  static_assert(!RefreshUnseen<T>,
+                "skiff::bind: this node's refresh() is overloaded or a template, which the runtime walks cannot "
+                "call by themselves: list what it reads from as a member, fRefreshes = refreshes(refreshFrom<...>(), ...)");
+  static constexpr Table value{bound<T>(), scoped<T>(), local<T>(), each<T>(), itself<T>(), pressed<T>(), piped<T>()};
+};
 template <class T>
-inline constexpr Table kTable{bound<T>(), scoped<T>(), local<T>(), each<T>(), itself<T>(), pressed<T>(), piped<T>()};
+inline constexpr const Table &kTable = TableOf<T>::value;
 } // namespace made
 
 // ---- the walk ------------------------------------------------------------------------
@@ -727,7 +758,8 @@ private:
   void show(scene::AnyNodeRef node, const BoundPart &part, const mrt::Seen &seen) {
     void *n = node.node();
     if (tracing())
-      std::println(std::cerr, "[bind] bound {} {} at {}", node.type().name(), seen ? "seen" : "gone", seen.fRevision);
+      std::println(std::cerr, "[bind] bound {} @{} {} at {} (seen {}, shown {})", node.type().name(), n, seen ? "seen" : "gone",
+                   seen.fRevision, part.fSeen(n), part.fShown(n));
     if (!seen || seen.fShape->fType != part.fValue) {
       if (!std::exchange(part.fIsGone(n), true))
         part.fGone(n);
@@ -740,6 +772,8 @@ private:
     part.fIsGone(n) = false;
     if (!seen.fTracked)
       ++untrackedReads();
+    if (tracing())
+      std::println(std::cerr, "[bind] read @{}", n);
     part.fRead(n, seen.fValue);
   }
 
@@ -1101,7 +1135,8 @@ export namespace skiff::scene {
 template <class T>
   requires(bind::IsBound<T> || bind::IsScoped<T> || bind::IsLocal<T> || bind::IsEach<T> ||
            bind::rt::made::IsDerivedNode<T> || requires { typename bind::rt::made::RefreshesFrom<T>::type; } ||
-           bind::rt::made::AnswersPress<T> || bind::rt::made::IsPipeNode<T> || bind::rt::made::ListsRefreshes<T>)
+           bind::rt::made::AnswersPress<T> || bind::rt::made::IsPipeNode<T> || bind::rt::made::ListsRefreshes<T> ||
+           bind::rt::made::RefreshUnseen<T>)
 struct BindTableOf<T> {
   static constexpr const void *value = &bind::rt::made::kTable<T>;
 };
