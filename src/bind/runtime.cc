@@ -466,14 +466,30 @@ template <class T> struct OwnRefreshOf {
       static_cast<T *>(n)->refresh(*static_cast<const M *>(model.fModel));
   }};
 };
+// A node that says which models it refreshes from (fRefreshes): through
+// what it was made with.
+template <class T> struct ListedRefreshOf {
+  static constexpr ItselfPart kPart{+[](void *n, const AnyModel &model) {
+    for (const RefreshEntry &entry : static_cast<T *>(n)->fRefreshes.fEntries)
+      if (entry.fByRoot ? entry.fType == model.fRoot->fType : entry.fType == model.fType)
+        entry.fRefresh(n, entry.fByRoot ? model.fRootValue : model.fModel);
+  }};
+};
+template <class T>
+concept ListsRefreshes = requires(T &t) { t.fRefreshes.fEntries; };
 template <class T> constexpr const ItselfPart *itself() { return nullptr; }
 template <class T>
-  requires IsDerivedNode<T>
+  requires ListsRefreshes<T>
+constexpr const ItselfPart *itself() {
+  return &ListedRefreshOf<T>::kPart;
+}
+template <class T>
+  requires(IsDerivedNode<T> && !ListsRefreshes<T>)
 constexpr const ItselfPart *itself() {
   return &DerivedOf<T>::kPart;
 }
 template <class T>
-  requires(!IsDerivedNode<T> && requires { typename RefreshesFrom<T>::type; })
+  requires(!IsDerivedNode<T> && !ListsRefreshes<T> && requires { typename RefreshesFrom<T>::type; })
 constexpr const ItselfPart *itself() {
   return &OwnRefreshOf<T>::kPart;
 }
@@ -1085,7 +1101,7 @@ export namespace skiff::scene {
 template <class T>
   requires(bind::IsBound<T> || bind::IsScoped<T> || bind::IsLocal<T> || bind::IsEach<T> ||
            bind::rt::made::IsDerivedNode<T> || requires { typename bind::rt::made::RefreshesFrom<T>::type; } ||
-           bind::rt::made::AnswersPress<T> || bind::rt::made::IsPipeNode<T>)
+           bind::rt::made::AnswersPress<T> || bind::rt::made::IsPipeNode<T> || bind::rt::made::ListsRefreshes<T>)
 struct BindTableOf<T> {
   static constexpr const void *value = &bind::rt::made::kTable<T>;
 };

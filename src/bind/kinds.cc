@@ -72,6 +72,28 @@ struct Bound : Base {
 // from the root: computed again only where one of the parts it reads
 // (Reads, each found once in the root) has moved since, and read as a
 // bound node reads its part.
+// A node that reads the model itself -- refresh(const M &) -- says which
+// models, and how, as a member set as it is made (outside a release build,
+// for the runtime walks): `Refreshes<N> fRefreshes = refreshes(
+// refreshFrom<Self, chats_model>(), refreshFromRoot<Self, kept_root,
+// &Self::refresh_kept>())`. The walks' table of the node then calls through
+// it, and nothing of the node's refresh is made where the table is.
+struct RefreshEntry {
+  model::rt::TypeKey fType;  // the model's type, or its root's
+  bool fByRoot;
+  void (*fRefresh)(void *, const void *);
+};
+template <std::size_t N> struct Refreshes {
+  std::array<RefreshEntry, N> fEntries;
+};
+template <class Self, class M> constexpr RefreshEntry refreshFrom() {
+  return {model::rt::keyOf<M>(), false, +[](void *node, const void *m) { static_cast<Self *>(node)->refresh(*static_cast<const M *>(m)); }};
+}
+template <class Self, class Root, void (Self::*Refresh)(const Root &)> constexpr RefreshEntry refreshFromRoot() {
+  return {model::rt::keyOf<Root>(), true, +[](void *node, const void *root) { (static_cast<Self *>(node)->*Refresh)(*static_cast<const Root *>(root)); }};
+}
+template <class... E> constexpr Refreshes<sizeof...(E)> refreshes(E... entries) { return {{entries...}}; }
+
 // The one argument a callable's own operator() takes: what it computes
 // from, where it says (a generic one does not).
 template <class F> struct OnlyArgumentOf {};

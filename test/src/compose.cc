@@ -831,3 +831,34 @@ TEST(Compose, AShownIfHidesWhereItsReadSaysSo) {
   EXPECT_FALSE(node.visible());
   EXPECT_EQ(std::get<0>(node.fParts).text(), "0");
 }
+
+// A node that reads the model itself, from more than one model: refreshed
+// through what it lists, by the model's type or its root's.
+namespace {
+struct ItsRoot {
+  model::Tracked<int> n;
+};
+struct OtherRoot {
+  model::Tracked<long> m;
+};
+using ItsModel = model::Model<ItsRoot, bind::NoReactions>;
+using OtherModel = model::Model<OtherRoot, bind::NoReactions>;
+struct SelfReading : scene::Node {
+  int fByModel = 0, fByRoot = 0;
+  void refresh(const ItsModel &) { ++fByModel; }
+  void refresh_other(const OtherRoot &) { ++fByRoot; }
+  bind::Refreshes<2> fRefreshes = bind::refreshes(bind::refreshFrom<SelfReading, ItsModel>(),
+                                                  bind::refreshFromRoot<SelfReading, OtherRoot, &SelfReading::refresh_other>());
+};
+} // namespace
+TEST(Compose, ANodeReadingTwoModelsItselfIsRefreshedByEach) {
+  ItsModel its{ItsRoot{}};
+  OtherModel other{OtherRoot{}};
+  SelfReading node;
+  bind::Binding<ItsModel> first;
+  bind::Binding<OtherModel> second;
+  first.refresh(node, its);
+  second.refresh(node, other);
+  EXPECT_EQ(node.fByModel, 1);
+  EXPECT_EQ(node.fByRoot, 1);
+}
