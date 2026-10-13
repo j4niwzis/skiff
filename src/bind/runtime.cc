@@ -449,22 +449,11 @@ template <class T> struct DerivedOf {
       return;
     node.fSeen = now;
     node.fShown = true;
-    using Reads = std::tuple<ValueOf<R>...>;
-    if constexpr (requires(B &b, const C &c) { b.read(c(std::declval<const ValueOf<R> &>()...)); })
-      [&]<std::size_t... I>(std::index_sequence<I...>) {
-        node.read(node.fCompute(*static_cast<const std::tuple_element_t<I, Reads> *>(seen[I].fValue)...));
-      }(std::index_sequence_for<R...>{});
-    else
-      fromRoot(node, model);
-  }
-  // Computed from the whole root: where the compute names its root's type,
-  // and this model's root is of it.
-  template <class C, class B, class... R> static void fromRoot(Derived<C, B, R...> &node, const AnyModel &model) {
-    if constexpr (requires { typename ArgumentOf<C>::type; }) {
-      using Root = typename ArgumentOf<C>::type;
-      if (model.fRoot->fType == mrt::keyOf<Root>())
-        node.read(node.fCompute(*static_cast<const Root *>(model.fRootValue)));
-    }
+    // Computed and read through what the node was made with: nothing of
+    // its compute or read made here.
+    std::array<const void *, sizeof...(R)> values{};
+    std::ranges::transform(seen, values.begin(), &mrt::Seen::fValue);
+    node.fComputeErased(std::addressof(node), values.data(), model.fRootValue, model.fRoot->fType);
   }
   static constexpr ItselfPart kPart{+[](void *n, const AnyModel &model) {
     refresh(static_cast<D &>(*static_cast<T *>(n)), model);

@@ -72,9 +72,41 @@ struct Bound : Base {
 // from the root: computed again only where one of the parts it reads
 // (Reads, each found once in the root) has moved since, and read as a
 // bound node reads its part.
+// The one argument a callable's own operator() takes: what it computes
+// from, where it says (a generic one does not).
+template <class F> struct OnlyArgumentOf {};
+template <class F>
+  requires requires { &F::operator(); }
+struct OnlyArgumentOf<F> : OnlyArgumentOf<decltype(&F::operator())> {};
+template <class C, class R, class A> struct OnlyArgumentOf<R (C::*)(A) const> {
+  using type = std::remove_cvref_t<A>;
+};
+template <class C, class R, class A> struct OnlyArgumentOf<R (C::*)(A)> {
+  using type = std::remove_cvref_t<A>;
+};
+
 template <class Compute, class Base, class... Reads>
 struct Derived : Base {
   using Computes = Compute;
+  // Its compute and read, made where the node is made, for the runtime walks
+  // (outside a release build): given the parts' values, or the model's root
+  // and its type, computed and read -- a read may make a whole subtree (a
+  // mount's content), which is that unit's to make, not the one that makes
+  // the walks' table of the node.
+  void (*fComputeErased)(void *, const void *const *, const void *, model::rt::TypeKey) = &computeErased;
+  static void computeErased(void *self, const void *const *values, const void *root, model::rt::TypeKey rootType) {
+    auto &derived = *static_cast<Derived *>(self);
+    using Values = std::tuple<typename BoundValueT<Reads>::type...>;
+    if constexpr (requires(Base &b, const Compute &c) { b.read(c(std::declval<const typename BoundValueT<Reads>::type &>()...)); }) {
+      [&]<std::size_t... I>(std::index_sequence<I...>) {
+        derived.read(derived.fCompute(*static_cast<const std::tuple_element_t<I, Values> *>(values[I])...));
+      }(std::index_sequence_for<Reads...>{});
+    } else if constexpr (requires { typename OnlyArgumentOf<Compute>::type; }) {
+      using Root = typename OnlyArgumentOf<Compute>::type;
+      if (rootType == model::rt::keyOf<Root>())
+        derived.read(derived.fCompute(*static_cast<const Root *>(root)));
+    }
+  }
   Derived() = default;
   explicit Derived(Base base, Compute compute = {}) : Base(std::move(base)), fCompute(std::move(compute)) {}
   Compute fCompute{};
