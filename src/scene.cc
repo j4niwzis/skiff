@@ -5468,6 +5468,74 @@ template <class N> struct SemanticProbe : N {
   using N::onSemantic;
   NotOwnHandler onSemantic(this auto &, const auto &, const auto &, Reply &) { return {}; }
 };
+// Where Node's defaults do anything -- as defaultPointer, defaultKey and
+// defaultSemantic above say, each event its overload at the target: a
+// press, a release, a cancel, a wheel; a key down; a focus, an activation.
+// In every other phase, and for every other event, they do nothing.
+template <class P, class E> consteval bool defaultActs(P, std::type_identity<E>) { return false; }
+consteval bool defaultActs(phase::target, std::type_identity<pointer::down>) { return true; }
+consteval bool defaultActs(phase::target, std::type_identity<pointer::up>) { return true; }
+consteval bool defaultActs(phase::target, std::type_identity<pointer::cancel>) { return true; }
+consteval bool defaultActs(phase::target, std::type_identity<pointer::scroll>) { return true; }
+consteval bool defaultActs(phase::target, std::type_identity<key::down>) { return true; }
+consteval bool defaultActs(phase::target, std::type_identity<semantic_action::focus>) { return true; }
+consteval bool defaultActs(phase::target, std::type_identity<semantic_action::activate>) { return true; }
+// Whether a node has handlers of its own of a family at all -- asked once,
+// before any is asked of a phase and an event: its handlers offered
+// stand-ins that convert to anything, beside the stand-in for Node's
+// default. A handler of its own that names its phase or its event asks
+// for a conversion to it, which marks a slot (a friend defined where it is
+// asked for: unusable until then, its return type not yet deduced).
+// Nothing marked: nothing of its own takes any event of the family, and
+// nothing more is asked of it -- most nodes.
+template <class Tag> struct Touched {
+  friend constexpr auto touched(Touched);
+};
+template <class Tag> struct Touch {
+  friend constexpr auto touched(Touched<Tag>) { return true; }
+};
+template <class Tag> struct ConvertsToAny;
+// Marked only for a conversion to another type: binding the stand-in to a
+// reference of its own type may ask for one to itself.
+template <class Tag, class T> struct MarkFor {
+  static constexpr std::size_t value = sizeof(Touch<Tag>);
+};
+template <class Tag> struct MarkFor<Tag, ConvertsToAny<Tag>> {
+  static constexpr std::size_t value = 0;
+};
+template <class Tag> struct MarkFor<Tag, const ConvertsToAny<Tag>> {
+  static constexpr std::size_t value = 0;
+};
+template <class Tag> struct ConvertsToAny {
+  template <class T, std::size_t = MarkFor<Tag, T>::value> operator T &() const;
+  template <class T, std::size_t = MarkFor<Tag, T>::value> operator T &&() const;
+};
+// Two types no handler names: what a handler of Node's own generic form is
+// found for.
+struct NoPhase {};
+struct NoEvent {};
+template <class Tag, bool Offered, auto = [] {}>
+inline constexpr bool kTouched = requires { touched(Touched<Tag>{}); };
+template <class Handler, class N> struct FamilyTag {};
+template <class Handler, class N>
+inline constexpr bool kOffered = requires(typename Handler::template Probe<N> &p, typename Handler::ReplyType &r) {
+  Handler::ask(p, ConvertsToAny<FamilyTag<Handler, N>>{}, ConvertsToAny<FamilyTag<Handler, N>>{}, r);
+};
+template <class Handler, class N>
+struct TouchedOwn : std::bool_constant<kTouched<FamilyTag<Handler, N>, kOffered<Handler, N>>> {};
+// A handler of its own of Node's generic form -- which the stand-in hides
+// as it hides Node's -- told apart by the function its name finds for two
+// types no handler names: not Node's.
+template <class Handler, class N> struct GenericOwn : std::bool_constant<Handler::template kGenericOwn<N>> {};
+template <class Handler, class N>
+  requires std::is_final_v<N>
+struct GenericOwn<Handler, N> : std::true_type {};
+// Its own for this phase and event, asked only of a node with any.
+template <class Handler, class N, class P, class E> struct OwnFor : std::bool_constant<Handler::template kOwn<N, P, E>> {};
+template <class Handler, class N, class P, class E>
+inline constexpr bool kCalledFor =
+    defaultActs(P{}, std::type_identity<E>{}) ||
+    std::disjunction_v<GenericOwn<Handler, N>, std::conjunction<TouchedOwn<Handler, N>, OwnFor<Handler, N, P, E>>>;
 // (A final type cannot be looked into so: taken to handle everything.)
 template <class N, class P, class E> inline constexpr bool kOwnPointer = true;
 template <class N, class P, class E>
@@ -5489,18 +5557,6 @@ template <class N, class P, class E>
   requires(!std::is_final_v<N>)
 inline constexpr bool kOwnSemantic<N, P, E> = !notOwn(std::type_identity<decltype(std::declval<SemanticProbe<N> &>().onSemantic(
     std::declval<const P &>(), std::declval<const E &>(), std::declval<Reply &>()))>{});
-// Where Node's defaults do anything -- as defaultPointer, defaultKey and
-// defaultSemantic above say, each event its overload at the target: a
-// press, a release, a cancel, a wheel; a key down; a focus, an activation.
-// In every other phase, and for every other event, they do nothing.
-template <class P, class E> consteval bool defaultActs(P, std::type_identity<E>) { return false; }
-consteval bool defaultActs(phase::target, std::type_identity<pointer::down>) { return true; }
-consteval bool defaultActs(phase::target, std::type_identity<pointer::up>) { return true; }
-consteval bool defaultActs(phase::target, std::type_identity<pointer::cancel>) { return true; }
-consteval bool defaultActs(phase::target, std::type_identity<pointer::scroll>) { return true; }
-consteval bool defaultActs(phase::target, std::type_identity<key::down>) { return true; }
-consteval bool defaultActs(phase::target, std::type_identity<semantic_action::focus>) { return true; }
-consteval bool defaultActs(phase::target, std::type_identity<semantic_action::activate>) { return true; }
 #endif
 template <class Handler, class... Es, class R> struct EventEntries<Handler, spl::variant<Es...>, R> {
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
@@ -5567,7 +5623,15 @@ struct PointerHandler {
     handled(node, NoCarry{}, [&] { return node.onPointer(when, event, reply); });
   }
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
-  template <class N, class P, class E> static constexpr bool kCalls = defaultActs(P{}, std::type_identity<E>{}) || kOwnPointer<N, P, E>;
+  template <class N> using Probe = PointerProbe<N>;
+  using ReplyType = PointerReply;
+  template <class N, class P, class E>
+  static auto ask(N &node, const P &when, const E &event, PointerReply &reply) -> decltype(node.onPointer(when, event, reply));
+  template <class N, class P, class E> static constexpr bool kOwn = kOwnPointer<N, P, E>;
+  template <class N, class P, class E> static constexpr bool kCalls = kCalledFor<PointerHandler, N, P, E>;
+  template <class N>
+  static constexpr bool kGenericOwn =
+      !requires { requires(&N::template onPointer<N, NoPhase, NoEvent> == &Node::template onPointer<N, NoPhase, NoEvent>); };
 #endif
 };
 struct KeyHandler {
@@ -5575,7 +5639,15 @@ struct KeyHandler {
     handled(node, NoCarry{}, [&] { return node.onKey(when, event, reply); });
   }
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
-  template <class N, class P, class E> static constexpr bool kCalls = defaultActs(P{}, std::type_identity<E>{}) || kOwnKey<N, P, E>;
+  template <class N> using Probe = KeyProbe<N>;
+  using ReplyType = Reply;
+  template <class N, class P, class E>
+  static auto ask(N &node, const P &when, const E &event, Reply &reply) -> decltype(node.onKey(when, event, reply));
+  template <class N, class P, class E> static constexpr bool kOwn = kOwnKey<N, P, E>;
+  template <class N, class P, class E> static constexpr bool kCalls = kCalledFor<KeyHandler, N, P, E>;
+  template <class N>
+  static constexpr bool kGenericOwn =
+      !requires { requires(&N::template onKey<N, NoPhase, NoEvent> == &Node::template onKey<N, NoPhase, NoEvent>); };
 #endif
 };
 struct TextHandler {
@@ -5583,8 +5655,15 @@ struct TextHandler {
     handled(node, NoCarry{}, [&] { return node.onText(when, event, reply); });
   }
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
-  // Node's text default does nothing in any phase.
-  template <class N, class P, class E> static constexpr bool kCalls = kOwnText<N, P, E>;
+  template <class N> using Probe = TextProbe<N>;
+  using ReplyType = Reply;
+  template <class N, class P, class E>
+  static auto ask(N &node, const P &when, const E &event, Reply &reply) -> decltype(node.onText(when, event, reply));
+  template <class N, class P, class E> static constexpr bool kOwn = kOwnText<N, P, E>;
+  template <class N, class P, class E> static constexpr bool kCalls = kCalledFor<TextHandler, N, P, E>;
+  template <class N>
+  static constexpr bool kGenericOwn =
+      !requires { requires(&N::template onText<NoPhase, NoEvent> == &Node::template onText<NoPhase, NoEvent>); };
 #endif
 };
 struct SemanticHandler {
@@ -5592,7 +5671,15 @@ struct SemanticHandler {
     handled(node, NoCarry{}, [&] { return node.onSemantic(when, event, reply); });
   }
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
-  template <class N, class P, class E> static constexpr bool kCalls = defaultActs(P{}, std::type_identity<E>{}) || kOwnSemantic<N, P, E>;
+  template <class N> using Probe = SemanticProbe<N>;
+  using ReplyType = Reply;
+  template <class N, class P, class E>
+  static auto ask(N &node, const P &when, const E &event, Reply &reply) -> decltype(node.onSemantic(when, event, reply));
+  template <class N, class P, class E> static constexpr bool kOwn = kOwnSemantic<N, P, E>;
+  template <class N, class P, class E> static constexpr bool kCalls = kCalledFor<SemanticHandler, N, P, E>;
+  template <class N>
+  static constexpr bool kGenericOwn =
+      !requires { requires(&N::template onSemantic<N, NoPhase, NoEvent> == &Node::template onSemantic<N, NoPhase, NoEvent>); };
 #endif
 };
 // What binds a node -- a part of a model shown, a scope, a Local, a list's
