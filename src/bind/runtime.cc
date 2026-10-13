@@ -429,45 +429,77 @@ template <class C, class A> struct RefreshesFrom<void (C::*)(A)> {
   using type = std::remove_cvref_t<A>;
 };
 
+// A Derived's refresh, made once: what each type gives it is the parts it
+// reads, the root its compute takes where it reads none, and where its
+// state and its compute are -- nothing of the walk made again for each.
+struct DerivedState {
+  model::Revision &fSeen;
+  bool &fShown;
+  void (*fCompute)(void *, const void *const *, const void *, mrt::TypeKey);
+};
+struct DerivedPart {
+  const mrt::Want *fReads;
+  std::size_t fCount;
+  // Where it reads no part: the root its compute takes (none: never).
+  mrt::TypeKey fRoot;
+  DerivedState (*fState)(void *);
+  const char *(*fName)();
+};
+void refreshDerived(void *node, const DerivedPart &part, const AnyModel &model) {
+  // Computed from the whole root where it reads no part: only by the
+  // model whose root its compute takes -- another model's walk would mark
+  // it shown, computing nothing, and its own would then pass it by.
+  if (part.fCount == 0 && (part.fRoot == nullptr || model.fRoot->fType != part.fRoot))
+    return;
+  // Its parts, each where it is in this model -- not this model's where
+  // any is not in it -- and their newest revision.
+  std::vector<const void *> values;
+  values.reserve(part.fCount);
+  model::Revision now = 0;
+  for (const mrt::Want &want : std::span(part.fReads, part.fCount)) {
+    const auto way = mrt::pathTo(*model.fRoot, want);
+    if (!way)
+      return;
+    const mrt::Seen seen = model.look(mrt::Place{*way, {}});
+    if (!seen)
+      return;
+    now = std::max(now, seen.fRevision);
+    values.push_back(seen.fValue);
+  }
+  const DerivedState state = part.fState(node);
+  if (tracing())
+    std::println(std::cerr, "[bind] derived {} @{} at {} (seen {}, shown {})", part.fName(), node, now, state.fSeen, state.fShown);
+  if (state.fShown && now == state.fSeen)
+    return;
+  state.fSeen = now;
+  state.fShown = true;
+  // Computed and read through what the node was made with: nothing of its
+  // compute or read made here.
+  state.fCompute(node, values.data(), model.fRootValue, model.fRoot->fType);
+}
+// The root a compute takes, where it says: none for a generic one.
+template <class C> constexpr mrt::TypeKey rootTakenBy() { return nullptr; }
+template <class C>
+  requires requires { typename OnlyArgumentOf<C>::type; }
+constexpr mrt::TypeKey rootTakenBy() {
+  return mrt::keyOf<typename OnlyArgumentOf<C>::type>();
+}
+template <class D> struct DerivedReads;
+template <class C, class B, class... R> struct DerivedReads<Derived<C, B, R...>> {
+  static constexpr std::array<mrt::Want, sizeof...(R)> kReads{mrt::wantOf<R>()...};
+  static constexpr mrt::TypeKey kRoot = rootTakenBy<C>();
+};
 template <class T> struct DerivedOf {
   using D = typename decltype(derivedOf(std::declval<const T &>()))::type;
-  template <class C, class B, class... R> static void refresh(Derived<C, B, R...> &node, const AnyModel &model) {
-    // Computed from the whole root where it reads no part: only by the
-    // model whose root its compute takes -- another model's walk would mark
-    // it shown, computing nothing, and its own would then pass it by.
-    if constexpr (sizeof...(R) == 0) {
-      if constexpr (requires { typename OnlyArgumentOf<C>::type; }) {
-        if (model.fRoot->fType != mrt::keyOf<typename OnlyArgumentOf<C>::type>())
-          return;
-      } else {
-        return;
-      }
-    }
-    // Its parts, each where it is in this model -- not this model's where
-    // any is not in it -- and their newest revision.
-    const std::array<std::optional<mrt::Steps>, sizeof...(R)> ways{mrt::pathTo(*model.fRoot, mrt::wantOf<R>())...};
-    if (std::ranges::any_of(ways, [](const auto &way) { return !way.has_value(); }))
-      return;
-    std::array<mrt::Seen, sizeof...(R)> seen{};
-    std::ranges::transform(ways, seen.begin(), [&](const auto &way) { return model.look(mrt::Place{*way, {}}); });
-    if (std::ranges::any_of(seen, [](const mrt::Seen &one) { return !one; }))
-      return;
-    const model::Revision now = std::ranges::fold_left(
-        seen, model::Revision{0}, [](model::Revision most, const mrt::Seen &one) { return std::max(most, one.fRevision); });
-    if (tracing())
-      std::println(std::cerr, "[bind] derived {} @{} at {} (seen {}, shown {})", typeid(D).name(), static_cast<const void *>(std::addressof(node)), now, node.fSeen, node.fShown);
-    if (node.fShown && now == node.fSeen)
-      return;
-    node.fSeen = now;
-    node.fShown = true;
-    // Computed and read through what the node was made with: nothing of
-    // its compute or read made here.
-    std::array<const void *, sizeof...(R)> values{};
-    std::ranges::transform(seen, values.begin(), &mrt::Seen::fValue);
-    node.fComputeErased(std::addressof(node), values.data(), model.fRootValue, model.fRoot->fType);
-  }
+  static constexpr DerivedPart kDerived{
+      DerivedReads<D>::kReads.data(), DerivedReads<D>::kReads.size(), DerivedReads<D>::kRoot,
+      +[](void *n) {
+        D &node = *static_cast<D *>(n);
+        return DerivedState{node.fSeen, node.fShown, node.fComputeErased};
+      },
+      +[]() { return typeid(D).name(); }};
   static constexpr ItselfPart kPart{+[](void *n, const AnyModel &model) {
-    refresh(static_cast<D &>(*static_cast<T *>(n)), model);
+    refreshDerived(std::addressof(static_cast<D &>(*static_cast<T *>(n))), kDerived, model);
   }};
 };
 template <class T> struct OwnRefreshOf {
