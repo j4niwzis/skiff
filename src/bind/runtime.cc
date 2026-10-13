@@ -432,6 +432,17 @@ template <class C, class A> struct RefreshesFrom<void (C::*)(A)> {
 template <class T> struct DerivedOf {
   using D = typename decltype(derivedOf(std::declval<const T &>()))::type;
   template <class C, class B, class... R> static void refresh(Derived<C, B, R...> &node, const AnyModel &model) {
+    // Computed from the whole root where it reads no part: only by the
+    // model whose root its compute takes -- another model's walk would mark
+    // it shown, computing nothing, and its own would then pass it by.
+    if constexpr (sizeof...(R) == 0) {
+      if constexpr (requires { typename OnlyArgumentOf<C>::type; }) {
+        if (model.fRoot->fType != mrt::keyOf<typename OnlyArgumentOf<C>::type>())
+          return;
+      } else {
+        return;
+      }
+    }
     // Its parts, each where it is in this model -- not this model's where
     // any is not in it -- and their newest revision.
     const std::array<std::optional<mrt::Steps>, sizeof...(R)> ways{mrt::pathTo(*model.fRoot, mrt::wantOf<R>())...};
