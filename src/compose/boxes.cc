@@ -89,7 +89,7 @@ template <class Part> void handOn(void *part, void *context, scene::AnyChildVisi
   scene::visitChild(*static_cast<Part *>(part), [&](auto &child) { scene::visitAsAny(child, context, visit); });
 }
 // Outside a release build, every stack of parts (Box), whatever its parts,
-// as one type the walks know: one table, made once, here (opsElsewhere
+// as one type the walks know: one table for all of them (see kSeenAsBase
 // below). It goes over its parts as data -- the list a box makes of them as
 // it is made -- so its table names none of their types: a table does not
 // make the tables of what is under it, nor they theirs, down the tree. A
@@ -262,12 +262,13 @@ N styled(scene::Spec spec, N node) {
 
 } // namespace skiff::compose
 
-// Every box, outside a release build, walked as one type; its table made
-// here once, and called from wherever a tree is walked.
+// Every box, outside a release build, walked as one type. Its table is made
+// in the program, not here: its drawing takes the program's paint hooks
+// (scene::detail::ProgramPaint, which the program specializes), and a table
+// made here had them before the program said them. It is small -- it names
+// no part's type -- so made in each unit that walks one.
 namespace skiff::scene {
 template <class... Parts> inline constexpr bool kSeenAsBase<compose::Box<Parts...>> = kErasedWalks;
-template <> inline constexpr bool kOpsElsewhere<compose::ErasedStack> = true;
-template <> const AnyNode::Ops &opsElsewhere<compose::ErasedStack>() noexcept { return AnyNode::opsOf<compose::ErasedStack>(); }
 } // namespace skiff::scene
 
 export namespace skiff::compose {
