@@ -500,7 +500,17 @@ public:
     this->invalidateLayout();
   }
 
-  void layoutChildren() { detail::Flowing<Flow>{*this, fOptions}.layout(); }
+  // Outside a release build, laid out by the one flow every stack is (see
+  // Stack::layoutChildren), through its table: a flow of a row type is not a
+  // layout algorithm made again for that type.
+  void layoutChildren() {
+    if constexpr (skiff::scene::kErasedWalks) {
+      skiff::scene::AnyNodeRef seen = skiff::scene::AnyNodeRef::of(*this);
+      detail::Flowing<skiff::scene::AnyNodeRef>{seen, fOptions}.layout();
+    } else {
+      detail::Flowing<Flow>{*this, fOptions}.layout();
+    }
+  }
 
   std::tuple<Children...> fChildren;
 
