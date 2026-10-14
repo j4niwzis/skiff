@@ -9,6 +9,7 @@ import skiff.scene;
 import skiff.nodes;
 import skiff.model;
 import skiff.bind;
+import skiff.paint;
 
 export namespace skiff::compose {
 
@@ -834,6 +835,104 @@ template <class Act, class N> struct Resting : N {
 };
 template <class Act, class N> Resting<Act, N> resting(double ms, Act act, N node) {
   return Resting<Act, N>(ms, std::move(act), std::move(node));
+}
+
+// Pages in a view that scrolls, one up at a time, chosen by what it reads:
+// a page made by `show` from the facts -- which says whether it is another
+// page than the one up -- comes in sliding from the side `side` says and
+// fading in; the same page made again is made where it was scrolled to, at
+// the next frame, without a slide. The header `pin` finds in a page stays at
+// the top while the rest scrolls, drawn over it. Esc on a page goes where
+// `back` says, if anywhere: a settings box's pages, whose home Esc closes.
+//
+//   page_view<Facts, Page>(show, same, side, pin, back, first_page, spec)
+template <class Facts, class Page, class Show, class Same, class Side, class Pin, class Back> struct PageView : Specced {
+  Show fShow;
+  Same fSame;
+  Side fSide;
+  Pin fPin;
+  Back fBack;
+  nodes::ScrollContainer<Page> fScroll;
+  paint::Tween fSwap{1.0f, 200.0f, paint::movement::subtle{}};
+  float fFrom = 1.0f;
+  std::optional<float> fOffsetDue;
+  std::optional<Facts> fShown, fDue;
+  PageView(Show show, Same same, Side side, Pin pin, Back back, Page first, scene::Spec spec)
+      : Specced(spec), fShow(std::move(show)), fSame(std::move(same)), fSide(std::move(side)), fPin(std::move(pin)), fBack(std::move(back)),
+        fScroll(std::move(first)) {
+    fScroll.apply({.fill = true});
+    fScroll.setCopiesOnScroll(false);
+    fit();
+  }
+  template <class Self, class F> void forEachChild(this Self &self, F &&f) { f(self.fScroll); }
+  [[nodiscard]] Page &page() { return std::get<0>(fScroll.fChildren); }
+  // The facts it shows now: another page slid in, the same one made again
+  // in place at the next frame.
+  void read(const Facts &now) {
+    if (fShown && fSame(*fShown, now)) {
+      fDue = now;
+      scene::work::mark(this->fState.fId);
+      return;
+    }
+    fShow(page(), now);
+    fShown = now;
+    fDue.reset();
+    fFrom = fSide(now);
+    fit();
+    keepOffset(0.0f);
+    fSwap.jump(0.0f);
+    fSwap.setTarget(1.0f);
+    this->invalidateLayout();
+  }
+  // Where it is scrolled to, and kept there as it is laid out again.
+  [[nodiscard]] float offset() const { return fScroll.current(); }
+  void keepOffset(float at) {
+    fOffsetDue = at;
+    this->invalidateLayout();
+  }
+  // Esc: the page's way back, where it has one; false where it has none.
+  bool stepBack() { return fBack(page()); }
+  [[nodiscard]] bool settling() const { return fSwap.moving() || fDue.has_value(); }
+  [[nodiscard]] bool wantsTick() const { return settling(); }
+  void update(double nowMs) {
+    if (auto due = std::exchange(fDue, std::nullopt)) {
+      const float at = fScroll.current();
+      fShow(page(), *due);
+      fShown = std::move(due);
+      fit();
+      keepOffset(at);
+    }
+    if (fSwap.step(nowMs))
+      this->invalidateLayout();
+  }
+  void draw(scene::Painting &painting, skia::SkCanvas *canvas, float alpha) {
+    if (scene::Node *header = fPin(page()))
+      header->fState.setShift(0.0f, -fScroll.contentsShift());
+    scene::drawDefault(*this, painting, canvas, alpha);
+  }
+  void layoutChildren() {
+    const skia::SkRect box = this->fState.contentBox();
+    // The offset kept through measuring and the box's resizing: a view
+    // otherwise follows its end when a short page becomes one that scrolls.
+    if (auto at = std::exchange(fOffsetDue, std::nullopt);
+        at || fScroll.bounds().width() != box.width() || fScroll.bounds().height() != box.height())
+      fScroll.setCurrent(at.value_or(fScroll.current()));
+    fScroll.fState.arrange(0.0f, 0.0f);
+    const float value = fSwap.value();
+    fScroll.fState.setAlpha(value);
+    scene::layout(fScroll, skia::SkRect::MakeXYWH(box.fLeft + (1.0f - value) * 32.0f * fFrom, box.fTop, box.width(), box.height()));
+  }
+
+ private:
+  // A page fills the view across, as tall as what it holds.
+  void fit() {
+    spl::visit([](auto &one) { one.fState.apply({.relativeSize = scene::axes::kX, .autoSize = scene::axes::kY}); }, page());
+  }
+};
+template <class Facts, class Page, class Show, class Same, class Side, class Pin, class Back>
+PageView<Facts, Page, Show, Same, Side, Pin, Back> page_view(Show show, Same same, Side side, Pin pin, Back back, Page first,
+                                                            scene::Spec spec = {}) {
+  return {std::move(show), std::move(same), std::move(side), std::move(pin), std::move(back), std::move(first), std::move(spec)};
 }
 
 } // namespace skiff::compose
