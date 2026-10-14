@@ -5445,6 +5445,11 @@ template <class T, class F> decltype(auto) walkOn(void *node, F &&f);
 template <class D, class Ops, class F> decltype(auto) walkErased(void *node, const Ops *ops, F &&f);
 template <class Handler, class Event, class R> struct EventEntries;
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+// Node's default for a phase and an event, on any node seen through its
+// table: one function for every type -- a node with no handler of its own
+// of a family is given the same row as every other (EventEntries::of).
+template <class Handler, class P, class E, class R>
+void sharedDefault(void *node, const void *ops, const void *event, R &reply);
 // Whether a node handles an event in a phase itself, or Node's default is
 // all it has there: its handlers looked up beside a stand-in for the
 // default, of the default's own form, which hides Node's -- the stand-in
@@ -5527,6 +5532,10 @@ struct TouchedOwn : std::bool_constant<kTouched<FamilyTag<Handler, N>, kOffered<
 // as it hides Node's -- told apart by the function its name finds for two
 // types no handler names: not Node's.
 template <class Handler, class N> struct GenericOwn : std::bool_constant<Handler::template kGenericOwn<N>> {};
+// A node's own onScroll -- which the default for a wheel calls -- told apart
+// from Node's by the function its name finds (a final type: taken to have one).
+template <class N>
+inline constexpr bool kOwnScroll = std::is_final_v<N> || !requires { requires(&N::onScroll == &Node::onScroll); };
 template <class Handler, class N>
   requires std::is_final_v<N>
 struct GenericOwn<Handler, N> : std::true_type {};
@@ -5560,7 +5569,8 @@ inline constexpr bool kOwnSemantic<N, P, E> = !notOwn(std::type_identity<decltyp
 #endif
 template <class Handler, class... Es, class R> struct EventEntries<Handler, spl::variant<Es...>, R> {
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
-  using Entry = void (*)(void *, const void *, R &);
+  // The node, its table, the event, the reply.
+  using Entry = void (*)(void *, const void *, const void *, R &);
   using Row = std::array<Entry, sizeof...(Es)>;
 #else
   using Row = std::tuple<void (*)(void *, const Es &, R &)...>;
@@ -5568,17 +5578,25 @@ template <class Handler, class... Es, class R> struct EventEntries<Handler, spl:
   std::array<Row, 3> fRows;
 
   template <class T> [[nodiscard]] static constexpr EventEntries of() {
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+    // Most nodes handle nothing of a family themselves: asked once whether
+    // this one does, and if not, the row every such node has -- Node's
+    // defaults, made once -- and nothing asked of each phase and event.
+    if constexpr (!Handler::template kAnyOwn<T>) {
+      return defaults();
+    } else
+#endif
     return {{rowOf<T, phase::capture>(), rowOf<T, phase::target>(), rowOf<T, phase::bubble>()}};
   }
   template <class P>
-  void deliver(void *node, P when, const spl::variant<Es...> &input, R &reply) const {
+  void deliver(void *node, [[maybe_unused]] const void *ops, P when, const spl::variant<Es...> &input, R &reply) const {
     const Row &row = fRows[indexOf(when)];
     spl::visit(
         [&](const auto &event) {
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
           // None: nothing of the node's own, and a default that does nothing.
           if (const Entry entry = row[eventIndex<std::remove_cvref_t<decltype(event)>>()])
-            entry(node, &event, reply);
+            entry(node, ops, &event, reply);
 #else
           using Entry = void (*)(void *, const std::remove_cvref_t<decltype(event)> &, R &);
           std::get<Entry>(row)(node, event, reply);
@@ -5602,8 +5620,15 @@ private:
   template <class T, class P> [[nodiscard]] static constexpr Row rowOf() {
     return Row{entryOf<T, P, Es>(std::bool_constant<Handler::template kCalls<T, P, Es>>{})...};
   }
+  // The one row of every node with nothing of its own of the family.
+  template <class P> [[nodiscard]] static constexpr Row defaultRow() {
+    return Row{(defaultActs(P{}, std::type_identity<Es>{}) ? &sharedDefault<Handler, P, Es, R> : nullptr)...};
+  }
+  [[nodiscard]] static constexpr EventEntries defaults() {
+    return {{defaultRow<phase::capture>(), defaultRow<phase::target>(), defaultRow<phase::bubble>()}};
+  }
   template <class T, class P, class E> [[nodiscard]] static constexpr Entry entryOf(std::true_type) {
-    return +[](void *node, const void *event, R &reply) {
+    return +[](void *node, const void *, const void *event, R &reply) {
       Handler{}(*static_cast<T *>(node), P{}, *static_cast<const E *>(event), reply);
     };
   }
@@ -5624,6 +5649,11 @@ struct PointerHandler {
   }
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
   template <class N> using Probe = PointerProbe<N>;
+  template <class N>
+  static constexpr bool kAnyOwn = GenericOwn<PointerHandler, N>::value || TouchedOwn<PointerHandler, N>::value || kOwnScroll<N>;
+  template <class N, class P, class E> static void defaults(N &node, const P &when, const E &event, PointerReply &reply) {
+    defaultPointer(node, when, event, reply);
+  }
   using ReplyType = PointerReply;
   template <class N, class P, class E>
   static auto ask(N &node, const P &when, const E &event, PointerReply &reply) -> decltype(node.onPointer(when, event, reply));
@@ -5640,6 +5670,11 @@ struct KeyHandler {
   }
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
   template <class N> using Probe = KeyProbe<N>;
+  template <class N>
+  static constexpr bool kAnyOwn = GenericOwn<KeyHandler, N>::value || TouchedOwn<KeyHandler, N>::value;
+  template <class N, class P, class E> static void defaults(N &node, const P &when, const E &event, Reply &reply) {
+    defaultKey(node, when, event, reply);
+  }
   using ReplyType = Reply;
   template <class N, class P, class E>
   static auto ask(N &node, const P &when, const E &event, Reply &reply) -> decltype(node.onKey(when, event, reply));
@@ -5656,6 +5691,9 @@ struct TextHandler {
   }
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
   template <class N> using Probe = TextProbe<N>;
+  template <class N>
+  static constexpr bool kAnyOwn = GenericOwn<TextHandler, N>::value || TouchedOwn<TextHandler, N>::value;
+  template <class N, class P, class E> static void defaults(N &, const P &, const E &, Reply &) {}
   using ReplyType = Reply;
   template <class N, class P, class E>
   static auto ask(N &node, const P &when, const E &event, Reply &reply) -> decltype(node.onText(when, event, reply));
@@ -5672,6 +5710,11 @@ struct SemanticHandler {
   }
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
   template <class N> using Probe = SemanticProbe<N>;
+  template <class N>
+  static constexpr bool kAnyOwn = GenericOwn<SemanticHandler, N>::value || TouchedOwn<SemanticHandler, N>::value;
+  template <class N, class P, class E> static void defaults(N &node, const P &when, const E &event, Reply &reply) {
+    defaultSemantic(node, when, event, reply);
+  }
   using ReplyType = Reply;
   template <class N, class P, class E>
   static auto ask(N &node, const P &when, const E &event, Reply &reply) -> decltype(node.onSemantic(when, event, reply));
@@ -6089,6 +6132,8 @@ public:
   [[nodiscard]] Semantics semantics() const { return fOps->fSemantics(fNode); }
   void onFocusChanged(bool focused) { fOps->fOnFocusChanged(fNode, focused); }
   [[nodiscard]] bool onClick(float x, float y) { return fOps->fOnClick(fNode, x, y); }
+  // Node's: only a node without one of its own has its defaults run seen so.
+  [[nodiscard]] bool onScroll(float) { return false; }
 
   void *fNode;
   const AnyNode::Ops *fOps;
@@ -6137,23 +6182,30 @@ inline double ownWakeAt(const ErasedNode &node) { return node.fOps->fOwnWakeAt(n
 inline void damageForHover(ErasedNode &node) { node.fOps->fHoverDamage(node.fNode); }
 template <class When>
 void pointerTo(ErasedNode &node, const When &when, const PointerEvent &input, PointerReply &reply) {
-  node.fOps->fPointer.deliver(node.fNode, when, input, reply);
+  node.fOps->fPointer.deliver(node.fNode, node.fOps, when, input, reply);
 }
 template <class When>
 void KeyDelivery::operator()(ErasedNode &node, const When &when, const KeyEvent &input, Reply &reply) const {
-  node.fOps->fKey.deliver(node.fNode, when, input, reply);
+  node.fOps->fKey.deliver(node.fNode, node.fOps, when, input, reply);
 }
 template <class When>
 void TextDelivery::operator()(ErasedNode &node, const When &when, const TextEvent &input, Reply &reply) const {
-  node.fOps->fText.deliver(node.fNode, when, input, reply);
+  node.fOps->fText.deliver(node.fNode, node.fOps, when, input, reply);
 }
 template <class When>
 void SemanticDelivery::operator()(ErasedNode &node, const When &when, const SemanticAction &input,
                                   Reply &reply) const {
-  node.fOps->fSemantic.deliver(node.fNode, when, input, reply);
+  node.fOps->fSemantic.deliver(node.fNode, node.fOps, when, input, reply);
 }
 } // namespace walk
 
+#ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
+template <class Handler, class P, class E, class R>
+void sharedDefault(void *node, const void *ops, const void *event, R &reply) {
+  ErasedNode seen(node, static_cast<const AnyNode::Ops *>(ops));
+  Handler::defaults(seen, P{}, *static_cast<const E *>(event), reply);
+}
+#endif
 template <class D, class Ops, class F> decltype(auto) walkErased(void *node, const Ops *ops, F &&f) {
   ErasedNode erased(node, ops);
   return f(erased);
