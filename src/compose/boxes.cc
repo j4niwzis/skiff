@@ -78,15 +78,41 @@ struct Specced : scene::Node {
 };
 
 
+// A part of a stack as the walks see a child: where it is, and how what it
+// holds is handed on -- a function made for the part's type where the
+// stack is made, each node it holds seen through its own table.
+struct SeenPart {
+  void *fAt;
+  void (*fVisit)(void *part, void *context, scene::AnyChildVisit visit);
+};
+template <class Part> void handOn(void *part, void *context, scene::AnyChildVisit visit) {
+  scene::visitChild(*static_cast<Part *>(part), [&](auto &child) { scene::visitAsAny(child, context, visit); });
+}
+// Outside a release build, every stack of parts (Box), whatever its parts,
+// as one type the walks know: one table, made once, here (opsElsewhere
+// below). It goes over its parts as data -- the list a box makes of them as
+// it is made -- so its table names none of their types: a table does not
+// make the tables of what is under it, nor they theirs, down the tree. A
+// box made makes its own parts' tables only, each its type's own, the same
+// one wherever it is made (a box's: this one).
+struct ErasedStack : nodes::Stack {
+  std::vector<SeenPart> fSeen;
+  template <class F> void forEachChild(F &&f) const {
+    for (const SeenPart &part : fSeen)
+      part.fVisit(part.fAt, std::addressof(f), +[](void *context, scene::AnyNodeRef &child) {
+        (*static_cast<std::remove_reference_t<F> *>(context))(child);
+      });
+  }
+};
+
 // A stack of its parts, in order.
-// Outside a release build too, its own table: what it holds is walked
-// through that, made where the tree is walked -- not taken as it is made,
-// where the tables of every part were made in each unit that made a page,
-// or only deduced a builder's type (decltype of one), as the program's
-// types were completed: one such unit held the whole window's tables.
-template <class... Parts> struct Box : nodes::Stack {
+// Outside a release build, seen as an ErasedStack: its parts listed as it is
+// made, moved or copied -- the list pointing at its own parts.
+template <class... Parts> struct Box : std::conditional_t<scene::kErasedWalks, ErasedStack, nodes::Stack> {
+  using Base = std::conditional_t<scene::kErasedWalks, ErasedStack, nodes::Stack>;
   using Walked = std::bool_constant<kAnyWalks<Parts...>>;
   using HasLocal = std::bool_constant<(bind::detail::kHasLocal<Parts> || ...)>;
+  using SeenAs = ErasedStack;
   std::tuple<Parts...> fParts;
   explicit Box(Look look, Parts... parts) : fParts(std::move(parts)...) {
     if (look.fHorizontal)
@@ -94,9 +120,47 @@ template <class... Parts> struct Box : nodes::Stack {
     this->setGap(look.fGap);
     this->fState.apply(look.fSpec);
     this->fStack.justify = look.fJustify;
+    this->see();
   }
+  // (Outside a release build its list is made again, which allocates.)
+  Box(Box &&other) noexcept(!scene::kErasedWalks && std::is_nothrow_move_constructible_v<std::tuple<Parts...>>)
+      : Box::Base(std::move(other)), fParts(std::move(other.fParts)) {
+    this->see();
+  }
+  Box(const Box &other)
+    requires(std::copy_constructible<Parts> && ...)
+      : Box::Base(other), fParts(other.fParts) {
+    this->see();
+  }
+  Box &operator=(Box &&other) noexcept(!scene::kErasedWalks && std::is_nothrow_move_assignable_v<std::tuple<Parts...>>) {
+    Box::Base::operator=(std::move(other));
+    fParts = std::move(other.fParts);
+    this->see();
+    return *this;
+  }
+  Box &operator=(const Box &other)
+    requires(std::copyable<Parts> && ...)
+  {
+    Box::Base::operator=(other);
+    fParts = other.fParts;
+    this->see();
+    return *this;
+  }
+  // Its parts walked as they are in a release build; outside it, as listed
+  // (for a node made from a box, which has a table of its own).
   template <class Self, class F> void forEachChild(this Self &self, F &&f) {
-    std::apply([&](auto &...each) { (f(each), ...); }, self.fParts);
+    if constexpr (scene::kErasedWalks)
+      self.ErasedStack::forEachChild(f);
+    else
+      std::apply([&](auto &...each) { (f(each), ...); }, self.fParts);
+  }
+
+private:
+  void see() {
+    if constexpr (scene::kErasedWalks)
+      this->fSeen = std::apply(
+          [](auto &...each) { return std::vector<SeenPart>{SeenPart{std::addressof(each), &handOn<std::remove_cvref_t<decltype(each)>>}...}; },
+          fParts);
   }
 };
 
@@ -197,6 +261,15 @@ N styled(scene::Spec spec, N node) {
 }
 
 } // namespace skiff::compose
+
+// Every box, outside a release build, walked as one type; its table made
+// here once, and called from wherever a tree is walked.
+namespace skiff::scene {
+template <class... Parts> inline constexpr bool kSeenAsBase<compose::Box<Parts...>> = kErasedWalks;
+template <> inline constexpr bool kOpsElsewhere<compose::ErasedStack> = true;
+template <> const AnyNode::Ops &opsElsewhere<compose::ErasedStack>() noexcept { return AnyNode::opsOf<compose::ErasedStack>(); }
+} // namespace skiff::scene
+
 export namespace skiff::compose {
 template <class... Parts> Box<Parts...> column(Look look, Parts... parts) {
   look.fHorizontal = false;
