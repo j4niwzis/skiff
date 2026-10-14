@@ -51,6 +51,22 @@ struct Stacked : nodes::Stack {
   }
 };
 
+// One of the nodes Shown may be (a variant of them), in a column as wide as
+// where it is put and as tall as it is: a node a program's plugin or
+// protocol makes of its own, held where it is put. The node is parts.shown;
+// made from one of its alternatives, or in place as one of them.
+template <class Shown> struct Holding : Stacked {
+  struct parts_t {
+    Shown shown;
+  } parts;
+  template <class Made>
+    requires std::constructible_from<Shown, Made>
+  explicit Holding(Made made) : Stacked(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY})), parts{.shown = Shown(std::move(made))} {}
+  template <class Node, class... Args>
+  explicit Holding(std::in_place_type_t<Node> which, Args &&...args)
+      : Stacked(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY})), parts{.shown = Shown(which, std::forward<Args>(args)...)} {}
+};
+
 // A node of its own drawing or input, its parts placed in it by their own
 // specs: its spec said where it is made.
 struct Specced : scene::Node {
