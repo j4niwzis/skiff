@@ -156,6 +156,25 @@ struct Held : Stacked {
     self.invalidateLayout();
   }
   template <class Self> void setVisible(this Self &self, bool on) { self.apply({.visible = on}); }
+  // The rest of what a node is told by hand: Held itself passes it to its
+  // node, a wrapper takes it itself -- never Held's own state, which no walk
+  // sees.
+  void setPosition(this Held &self, float x, float y) { self.apply({.x = x, .y = y}); }
+  void setSize(this Held &self, float width, float height) { self.apply({.width = width, .height = height}); }
+  void setPadding(this Held &self, scene::Margin padding) { self.apply({.padding = padding}); }
+  void setMargin(this Held &self, scene::Margin margin) { self.apply({.margin = margin}); }
+  void setScale(this Held &self, float scale) { self.apply({.scale = scale}); }
+  void setAlpha(this Held &self, float alpha) { self.apply({.alpha = alpha}); }
+  void markDamaged(this Held &self) { self.parts.held.state().markDamaged(); }
+  void invalidateLayout(this Held &self) { self.parts.held.state().invalidateLayout(); }
+  template <class Self> void setPosition(this Self &self, float x, float y) { self.fState.setPosition(x, y); }
+  template <class Self> void setSize(this Self &self, float width, float height) { self.fState.setSize(width, height); }
+  template <class Self> void setPadding(this Self &self, scene::Margin padding) { self.fState.setPadding(padding); }
+  template <class Self> void setMargin(this Self &self, scene::Margin margin) { self.fState.setMargin(margin); }
+  template <class Self> void setScale(this Self &self, float scale) { self.fState.setScale(scale); }
+  template <class Self> void setAlpha(this Self &self, float alpha) { self.fState.setAlpha(alpha); }
+  template <class Self> void markDamaged(this Self &self) { self.fState.markDamaged(); }
+  template <class Self> void invalidateLayout(this Self &self) { self.fState.invalidateLayout(); }
   // What is asked of it as a node: Held itself is not in the tree, so the
   // node it holds answers -- as the walks see it; a wrapper answers itself.
   [[nodiscard]] const scene::State &state(this const Held &self) { return self.parts.held.ref().state(); }
