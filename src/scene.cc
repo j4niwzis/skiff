@@ -6453,6 +6453,8 @@ public:
     work::walkingFull() = work::disabled() || fWalkedGeneration != fWalkGeneration;
     work::pending().insert(fRoot.fState.fId);
   }
+  // The window's box, as it was last laid out in.
+  [[nodiscard]] const skia::SkRect &viewport() const noexcept { return fViewport; }
   bool layoutIfNeeded(const skia::SkRect &viewport) {
     scrollMoves().clear();
     this->beginWalks();

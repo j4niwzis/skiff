@@ -541,6 +541,39 @@ template <class Want, class Make, class N> auto asking_for(Make make, N node) {
   return bind::Bound<Want, AskingFor<Want, Make, N>>(AskingFor<Want, Make, N>(std::move(make), std::move(node)));
 }
 
+// A flick across a node -- more across than up or down, past `reach` --
+// answered as `act(towards_left)` makes of it: a page on, or back.
+template <class Act, class N> struct Flicked : N {
+  using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Act &, bool>>())>;
+  using Out = Union<OutOf<N>, model::Types<Answer>>;
+  Act fAct;
+  float fReach;
+  std::optional<skia::SkPoint> fFrom;
+  Flicked(float reach, Act act, N node) : N(std::move(node)), fAct(std::move(act)), fReach(reach) {}
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  using N::onPointer;
+  void onPointer(scene::phase::capture, const scene::pointer::down &press, scene::PointerReply &) {
+    fFrom.reset();
+    if (press.button <= 1)
+      fFrom = skia::SkPoint{press.x, press.y};
+  }
+  std::optional<Answer> onPointer(scene::phase::capture, const scene::pointer::up &lift, scene::PointerReply &reply) {
+    const auto from = std::exchange(fFrom, std::nullopt);
+    if (!from)
+      return std::nullopt;
+    const float dx = lift.x - from->fX, dy = lift.y - from->fY;
+    if (std::abs(dx) < fReach || std::abs(dy) > std::abs(dx) * 0.5f)
+      return std::nullopt;
+    auto answer = std::invoke(fAct, dx < 0.0f);
+    if (answer)
+      reply.handle();
+    return answer;
+  }
+};
+template <class Act, class N> Flicked<Act, N> flicked(float reach, Act act, N node) {
+  return Flicked<Act, N>(reach, std::move(act), std::move(node));
+}
+
 // A node swiped to the left to do something with it -- a message answered,
 // as Telegram's: a press that moves left at once -- more across than up or
 // down, within a quarter of a second, nothing holding the pointer yet --
