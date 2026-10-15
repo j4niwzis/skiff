@@ -574,6 +574,40 @@ template <class Act, class N> Flicked<Act, N> flicked(float reach, Act act, N no
   return Flicked<Act, N>(reach, std::move(act), std::move(node));
 }
 
+// A node shown for a moment each time what it reads moves on -- a number,
+// newer each time: "Copied", said and gone. Unseen until then.
+template <class N> struct Fading : N {
+  paint::Tween fFade{0.0f, 300.0f};
+  double fHold = 0.0, fUntil = 0.0;
+  std::optional<std::uint64_t> fSeen;
+  Fading(double hold, N node) : N(std::move(node)), fHold(hold) { this->apply({.alpha = 0.0f}); }
+  void read(std::uint64_t now) {
+    const bool anew = fSeen && *fSeen != now;
+    fSeen = now;
+    if (!anew)
+      return;
+    fFade.jump(1.0f);
+    fUntil = 0.0;
+    this->apply({.alpha = 1.0f});
+    scene::work::mark(this->fState.fId);
+  }
+  [[nodiscard]] bool settling() const { return fFade.value() > 0.0f; }
+  [[nodiscard]] bool wantsTick() const { return settling(); }
+  void update(double nowMs) {
+    if (fFade.value() <= 0.0f)
+      return;
+    if (fUntil == 0.0)
+      fUntil = nowMs + fHold;
+    if (nowMs >= fUntil && fFade.target() != 0.0f)
+      fFade.setTarget(0.0f);
+    if (fFade.step(nowMs))
+      this->apply({.alpha = fFade.value()});
+  }
+};
+template <class Want, class Compute, class N> auto fading_for(Compute compute, double hold, N node) {
+  return projected<Want>(std::move(compute), Fading<N>(hold, std::move(node)));
+}
+
 // A node swiped to the left to do something with it -- a message answered,
 // as Telegram's: a press that moves left at once -- more across than up or
 // down, within a quarter of a second, nothing holding the pointer yet --
