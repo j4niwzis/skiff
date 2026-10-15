@@ -1817,6 +1817,13 @@ inline std::vector<NodeId> &moving() {
   static std::vector<NodeId> kept;
   return kept;
 }
+// The node that asked for the keys as it read what it shows (a field the
+// model says is to be typed into): given them by its scene at the next
+// layout, where it is focusable then. 0: none asked.
+inline NodeId &focusWanted() {
+  static NodeId kept = 0;
+  return kept;
+}
 // The nodes made since the last tick: where one is not come to by a tick
 // that goes only where things changed, it looks everywhere.
 inline std::vector<NodeId> &births() {
@@ -6495,6 +6502,9 @@ public:
   bool layoutIfNeeded(const skia::SkRect &viewport) {
     scrollMoves().clear();
     this->beginWalks();
+    // The keys, where a node asked for them as it read the model.
+    if (const NodeId wanted = std::exchange(work::focusWanted(), 0); wanted != 0)
+      this->focus(wanted);
     const bool viewportChanged = viewport != fViewport;
     if (viewportChanged) {
       work::walkingFull() = true;

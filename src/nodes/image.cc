@@ -43,10 +43,16 @@ public:
       return source.wakeAt();
     else
       return std::numeric_limits<double>::infinity();
+  }), fWant([source] {
+    if constexpr (requires { source.want(); })
+      source.want();
   }) {}
   [[nodiscard]] const skia::Sp<skia::SkImage> *operator()() const { return fGet(); }
   [[nodiscard]] bool animated() const { return fAnimated(); }
   [[nodiscard]] double wakeAt() const { return fWakeAt(); }
+  // Drawn without its picture: told to the source, where it keeps what is
+  // wanted (want()).
+  void want() const { fWant(); }
   // Waited on by `id`, where the source says who waits: whether it does.
   [[nodiscard]] bool wait(skiff::scene::NodeId id) const {
     if (!fWait)
@@ -69,6 +75,7 @@ private:
   std::function<void(skiff::scene::NodeId)> fWait;
   std::function<bool()> fAnimated;
   std::function<double()> fWakeAt;
+  std::function<void()> fWant;
 };
 
 namespace internal {
@@ -152,6 +159,7 @@ public:
   void drawSelf(skia::SkCanvas *canvas, float alpha) {
     const skia::Sp<skia::SkImage> *found = this->image();
     if (!found) {
+      this->wantFrom(fSource);
       // Let go by its cache: waited for again, till it is back.
       if (fHad) {
         fHad = false;
@@ -300,6 +308,15 @@ private:
   }
   bool waitOn(const AnyImageSource &source) { return source.wait(fState.fId); }
   bool waitOn(const auto &) { return false; }  // asked at every frame instead
+  // Drawn without its picture: the source told, where it keeps a list of
+  // what is wanted for the program to fetch (want()) -- what is in view
+  // and not there, found by drawing it, not by a walk of the program's.
+  template <class S>
+    requires requires(const S &source) { source.want(); }
+  void wantFrom(const S &source) {
+    source.want();
+  }
+  void wantFrom(const auto &) {}
 
   Source fSource;
   Fit fFit;

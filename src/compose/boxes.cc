@@ -627,16 +627,35 @@ template <class E, class N> auto onClick(E event, N node, std::string label = {}
 }
 
 // Compute a typed answer at press time, for actions whose data can change
-// while the node remains mounted.
+// while the node remains mounted -- asked with nothing, or with where the
+// node pressed is laid out (its own bounds): a popup opened beside the
+// button that opens it.
+template <class Make>
+struct PressMade : std::type_identity<std::invoke_result_t<Make &>> {};
+template <class Make>
+  requires(!std::invocable<Make &> && std::invocable<Make &, const skia::SkRect &>)
+struct PressMade<Make> : std::type_identity<std::invoke_result_t<Make &, const skia::SkRect &>> {};
+template <class Make>
+concept MakesPress = (std::invocable<Make &> || std::invocable<Make &, const skia::SkRect &>) &&
+                     !std::is_void_v<typename PressMade<Make>::type>;
 template <class Make, class N> struct OnPress : OnClick<model::Nothing, N> {
-  using Out = model::Types<std::invoke_result_t<Make&>>;
+  using Out = model::Types<typename PressMade<Make>::type>;
   Make fMake;
   OnPress(Make make, N node, std::string label)
       : OnClick<model::Nothing, N>({}, std::move(node), std::move(label)), fMake(std::move(make)) {}
-  auto onPress() { return std::invoke(fMake); }
+  auto onPress()
+    requires std::invocable<Make &>
+  {
+    return std::invoke(fMake);
+  }
+  auto onPress()
+    requires(!std::invocable<Make &>)
+  {
+    return std::invoke(fMake, std::as_const(this->fState.fBounds));
+  }
 };
 template <class Make, class N>
-  requires std::invocable<Make&> && (!std::is_void_v<std::invoke_result_t<Make&>>)
+  requires MakesPress<Make>
 auto onPress(Make make, N node, std::string label = {}) {
   return erased(OnPress<Make, N>(std::move(make), std::move(node), std::move(label)));
 }
@@ -805,6 +824,23 @@ template <class Apply, class N> struct Applied : N {
 template <class Want, class Compute, class Apply, class N>
 auto applied(Compute compute, Apply apply, N node) {
   return projected<Want>(std::move(compute), Applied<Apply, N>(std::move(apply), std::move(node)));
+}
+// A field given the keys as the model says: each new request -- a count the
+// model raises for it, `compute(value)` -- asks its scene to focus it at its
+// next layout; 0 asks nothing. A field made again (the window remade in
+// another theme) takes the keys back where the last request was its own.
+template <class N> struct FocusedBy : N {
+  std::uint64_t fSeen = 0;
+  explicit FocusedBy(N node) : N(std::move(node)) {}
+  void read(std::uint64_t asked) {
+    if (asked != 0 && asked != fSeen)
+      scene::work::focusWanted() = this->fState.fId;
+    fSeen = asked;
+  }
+};
+template <class Want, class Compute, class N>
+auto focused_by(Compute compute, N node) {
+  return projected<Want>(std::move(compute), FocusedBy<N>(std::move(node)));
 }
 template <class N> struct SpecOf : N {
   explicit SpecOf(N node) : N(std::move(node)) {}
