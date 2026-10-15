@@ -32,3 +32,4 @@ export import :boxes;
 export import :wiring;
 export import :processes;
 export import :reorder;
+export import :views;
