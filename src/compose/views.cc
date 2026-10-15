@@ -42,7 +42,7 @@ template <class M, class Told, class Compute, class N> struct WithModel : N {
   }
 };
 template <class M, class Told, class Compute, class N> auto with_model(Compute compute, N node) {
-  return WithModel<M, Told, Compute, N>(std::move(compute), std::move(node));
+  return erased(WithModel<M, Told, Compute, N>(std::move(compute), std::move(node)));
 }
 
 // The plate around a focusable field follows that field's focus. The
@@ -58,7 +58,7 @@ template <class N> struct FocusFrame : Box<N> {
   }
 };
 template <class N> auto focus_frame(Look look, N field) {
-  return FocusFrame<N>(std::move(look), std::move(field));
+  return erased(FocusFrame<N>(std::move(look), std::move(field)));
 }
 
 // Observe a press before its target handles it, for example to dismiss a
@@ -88,7 +88,7 @@ template <class E, class Ask, class N>
     { node.onPointer(scene::phase::target{}, press, reply) } -> std::same_as<void>;
   }
 auto onCapture(Ask ask, N node) {
-  return OnCapture<E, Ask, N>(std::move(ask), std::move(node));
+  return erased(OnCapture<E, Ask, N>(std::move(ask), std::move(node)));
 }
 
 // Known-height rows retain the full scroll extent while only the viewport
@@ -164,7 +164,7 @@ template <class Item, class Height, class N> struct VirtualRows : N {
 };
 template <class Item, class Height, class N>
 auto virtual_rows(Height height, N node, VirtualRowsOptions options = {}) {
-  return VirtualRows<Item, Height, N>(std::move(height), options, std::move(node));
+  return erased(VirtualRows<Item, Height, N>(std::move(height), options, std::move(node)));
 }
 
 // One pane at a time, as a phone shows them: which is up, and whether the
@@ -255,7 +255,7 @@ template <class Fading, class Under, class Over> struct FrozenUnder : Box<Under,
   }
 };
 template <class Fading, class Under, class Over> auto frozen_under(Look look, Under under, Over over) {
-  return FrozenUnder<Fading, Under, Over>(std::move(look), std::move(under), std::move(over));
+  return erased(FrozenUnder<Fading, Under, Over>(std::move(look), std::move(under), std::move(over)));
 }
 
 // A tap off a popup -- pressed and let go a few pixels apart at most, off
@@ -280,7 +280,7 @@ template <class Card, class Make, class N> struct TappedOff : N {
   }
 };
 template <class Card, class Make, class N> auto tapped_off(Card card, Make make, N node) {
-  return TappedOff<Card, Make, N>(std::move(card), std::move(make), std::move(node));
+  return erased(TappedOff<Card, Make, N>(std::move(card), std::move(make), std::move(node)));
 }
 
 // Each list has its own offset. setCurrent retains the requested offset
@@ -310,7 +310,7 @@ template <class Key, class N> struct RememberedScroll : Box<N> {
   }
 };
 template <class Key, class N> auto remembered_scroll(N node) {
-  return RememberedScroll<Key, N>(std::move(node));
+  return erased(RememberedScroll<Key, N>(std::move(node)));
 }
 
 // Search results start at their top for each new result generation. A
@@ -325,7 +325,7 @@ template <class Key, class N> struct RestartedScroll : N {
   }
 };
 template <class Key, class N> auto restarted_scroll(N node) {
-  return RestartedScroll<Key, N>(std::move(node));
+  return erased(RestartedScroll<Key, N>(std::move(node)));
 }
 
 // A column can fill a narrow window or retain its requested width within
@@ -355,6 +355,6 @@ template <class N> struct ClampedWidth : N {
   }
 };
 template <class N> auto clamped_width(WidthLimit limit, N node) {
-  return ClampedWidth<N>(limit, std::move(node));
+  return erased(ClampedWidth<N>(limit, std::move(node)));
 }
 } // namespace skiff::compose

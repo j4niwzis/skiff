@@ -3103,6 +3103,10 @@ private:
 class AnyNode;
 class AnyNodeRef;
 struct Node;
+// A node type that is not itself in the tree, outside a release build: what
+// it holds is, in its place -- seen through, by its seenThrough() (an
+// AnyNode&). Said by specializing this for the type (compose's Held).
+template <class T> inline constexpr bool kSeenThrough = false;
 
 // A node type that is also a range -- it has begin() and end() -- is walked
 // as a range of children unless it says it is a node:
@@ -5743,8 +5747,15 @@ public:
   template <class T>
     requires std::derived_from<std::remove_cvref_t<T>, Node>
   AnyNode(T &&node) // NOLINT: converting, as std::function's is
-      : fNode(new std::remove_cvref_t<T>(std::forward<T>(node))),
-        fOps(&opsOf<std::remove_cvref_t<T>>()) {}
+  {
+    if constexpr (kSeenThrough<std::remove_cvref_t<T>>) {
+      // What it holds, held here in its place.
+      *this = std::move(node.seenThrough());
+    } else {
+      fNode = new std::remove_cvref_t<T>(std::forward<T>(node));
+      fOps = &opsOf<std::remove_cvref_t<T>>();
+    }
+  }
 
   AnyNode(const AnyNode &) = delete;
   AnyNode &operator=(const AnyNode &) = delete;
@@ -6074,7 +6085,9 @@ public:
   template <class T>
     requires std::derived_from<T, Node>
   [[nodiscard]] static AnyNodeRef of(T &node) {
-    if constexpr (kSeenAsBase<T>) {
+    if constexpr (kSeenThrough<T>) {
+      return node.seenThrough().ref();
+    } else if constexpr (kSeenAsBase<T>) {
       return of(static_cast<typename T::SeenAs &>(node));
     } else {
       static const AnyNode::Ops *volatile table = tableOf<T>();
@@ -6391,26 +6404,42 @@ public:
   template <class... Args>
   explicit Scene(std::in_place_t, Args &&...args)
       : fRoot(std::forward<Args>(args)...) {
-    work::roots().insert(fRoot.fState.fId);
+    work::roots().insert(this->rootState().fId);
   }
   // Explicit class instantiation also instantiates this constructor.
   // An immovable root must use the in-place overload instead.
   explicit Scene(Root root)
     requires std::move_constructible<Root>
-      : fRoot(std::move(root)) { work::roots().insert(fRoot.fState.fId); }
+      : fRoot(std::move(root)) { work::roots().insert(this->rootState().fId); }
   Scene(const Scene &) = delete;
   Scene &operator=(const Scene &) = delete;
 
   [[nodiscard]] Root &root() noexcept { return fRoot; }
+  // The root as the walks see it: outside a release build, through its
+  // table -- and through what it holds, where it is only a holder (Held).
+  [[nodiscard]] decltype(auto) walked() noexcept {
+    if constexpr (kErasedWalks) {
+      fSeen.emplace(AnyNodeRef::of(fRoot));
+      return (*fSeen);
+    } else {
+      return (fRoot);
+    }
+  }
+  [[nodiscard]] State &rootState() noexcept {
+    if constexpr (kErasedWalks)
+      return this->walked().state();
+    else
+      return fRoot.fState;
+  }
   [[nodiscard]] const Root &root() const noexcept { return fRoot; }
-  [[nodiscard]] State &state() noexcept { return fRoot.fState; }
+  [[nodiscard]] State &state() noexcept { return this->rootState(); }
 
   template <class Theme> void setStyleSheet() {
-    fRoot.fState.template setStyleSheet<Theme>();
+    this->rootState().template setStyleSheet<Theme>();
     this->restyleDirty();
   }
   void clearStyleSheet() {
-    fRoot.fState.clearStyleSheet();
+    this->rootState().clearStyleSheet();
     this->restyleDirty();
   }
 
@@ -6422,7 +6451,7 @@ public:
     const bool full = work::disabled() || fWalkedGeneration != work::fullGeneration();
     work::tickingFull() = full;
     UpdateContext context{nowMs, fViewport.width(), false};
-    walk::update(fRoot, context, {}, nullptr, false);
+    walk::update(this->walked(), context, {}, nullptr, false);
     fTickAnimating = context.fAnimating;
     auto &born = work::births();
     const bool lost = std::ranges::any_of(born, [](NodeId id) {
@@ -6433,7 +6462,7 @@ public:
     if (!full && lost) {
       work::tickingFull() = true;
       UpdateContext again{nowMs, fViewport.width(), false};
-      walk::update(fRoot, again, {}, nullptr, false);
+      walk::update(this->walked(), again, {}, nullptr, false);
       fTickAnimating = fTickAnimating || again.fAnimating;
       work::births().clear();
     }
@@ -6441,7 +6470,7 @@ public:
     auto &pressed = hostWork().pressed;
     std::ranges::for_each(std::exchange(hostWork().due, {}), [&](const State *one) {
       Path way;
-      if (walk::findPath(fRoot, one->fId, way))
+      if (walk::findPath(this->walked(), one->fId, way))
         pressed.push_back(std::move(way));
     });
   }
@@ -6451,7 +6480,7 @@ public:
   void beginWalks() {
     fWalkGeneration = work::fullGeneration();
     work::walkingFull() = work::disabled() || fWalkedGeneration != fWalkGeneration;
-    work::pending().insert(fRoot.fState.fId);
+    work::pending().insert(this->rootState().fId);
   }
   // The window's box, as it was last laid out in.
   [[nodiscard]] const skia::SkRect &viewport() const noexcept { return fViewport; }
@@ -6467,9 +6496,9 @@ public:
       // Width-constrained selectors are media queries: resolved before
       // layout, so their declarations take part in this pass.
       UpdateContext context{fNowMs, viewport.width(), false, false};
-      walk::update(fRoot, context, {}, nullptr, true);
+      walk::update(this->walked(), context, {}, nullptr, true);
     }
-    const bool dirty = walk::markDirty(fRoot);
+    const bool dirty = walk::markDirty(this->walked());
     if (!dirty && !viewportChanged) {
       return false;
     }
@@ -6485,7 +6514,7 @@ public:
     // Where the field typed into is, for the host to tell the system.
     hostWork().typingAt.reset();
     if (hostWork().typing && fFocus != 0) {
-      if (const std::optional<NodeInfo> about = walk::info(fRoot, fFocus)) {
+      if (const std::optional<NodeInfo> about = walk::info(this->walked(), fFocus)) {
         hostWork().typingAt = about->fDrawn;
       }
     }
@@ -6494,12 +6523,12 @@ public:
     work::damageOffset() = {};
     work::damageClip().reset();
     ++work::frameNumber();
-    skia::SkRect damage = walk::collectDamage(fRoot, true);
+    skia::SkRect damage = walk::collectDamage(this->walked(), true);
     // Walked as this frame asked: what was marked is done.
     if (work::walkingFull()) {
       fWalkedGeneration = fWalkGeneration;
     }
-    work::pending().erase(fRoot.fState.fId);
+    work::pending().erase(this->rootState().fId);
     work::settle();
     // What the tick found still moving, marked for the next: after the
     // damage walk, which would clear it.
@@ -6508,7 +6537,7 @@ public:
         work::mark(id);
       }
     }
-    const skia::SkRect &bounds = fRoot.fState.fBounds;
+    const skia::SkRect &bounds = this->rootState().fBounds;
     if (!bounds.isEmpty() && !damage.isEmpty() && !damage.intersect(bounds)) {
       damage = skia::SkRect::MakeEmpty();
     }
@@ -6517,7 +6546,7 @@ public:
     for (const ScrollMove &move : moves) {
       bool passed = false;
       skia::SkRect over = skia::SkRect::MakeEmpty();
-      walk::damageOver(fRoot, move.node, move.rect, passed, over);
+      walk::damageOver(this->walked(), move.node, move.rect, passed, over);
       if (!over.isEmpty() && over.intersect(move.rect)) {
         damage = joined(damage, over);
         damageFound().push_back(over);
@@ -6533,16 +6562,16 @@ public:
     }
     // Another frame where anything the tick came to still moves, or the
     // walk down the ticking set finds one.
-    return {std::move(moves), damage, fTickAnimating || walk::animating(fRoot), walk::wakeAt(fRoot),
+    return {std::move(moves), damage, fTickAnimating || walk::animating(this->walked()), walk::wakeAt(this->walked()),
             fewRects(std::move(pieces))};
   }
   [[nodiscard]] bool hasFrameWork() {
     if (!work::disabled() && fWalkedGeneration == work::fullGeneration() && work::pending().empty()) {
-      return walk::animating(fRoot);
+      return walk::animating(this->walked());
     }
     work::walkingFull() = true;
-    return walk::markDirty(fRoot) || walk::hasDamage(fRoot) ||
-           walk::animating(fRoot);
+    return walk::markDirty(this->walked()) || walk::hasDamage(this->walked()) ||
+           walk::animating(this->walked());
   }
 
   // -- input
@@ -6558,21 +6587,21 @@ public:
     Path path;
     bool found = false;
     if (fCapture != 0) {
-      found = walk::findPath(fRoot, fCapture, path);
+      found = walk::findPath(this->walked(), fCapture, path);
       if (!found) {
         fCapture = 0; // it went away
       }
     }
     if (!found && ending && fDown != 0) {
       path.clear();
-      found = walk::findPath(fRoot, fDown, path);
+      found = walk::findPath(this->walked(), fDown, path);
       if (!found) {
         fDown = 0;
       }
     }
     if (!found) {
       path.clear();
-      found = walk::hitPath(fRoot, at.fX, at.fY, path);
+      found = walk::hitPath(this->walked(), at.fX, at.fY, path);
     }
     const bool press = spl::visit(
         spl::overloaded{[](const pointer::down &) { return true; },
@@ -6587,7 +6616,7 @@ public:
       }
       return false;
     }
-    const NodeId target = walk::idAt(fRoot, path, 0);
+    const NodeId target = walk::idAt(this->walked(), path, 0);
     if (press) {
       fDown = target;
     }
@@ -6596,14 +6625,14 @@ public:
     reply.fCaptured = fCapture != 0;
     Routed routed;
     const auto carried = startCarry(fRoot);
-    walk::routePointer(fRoot, path, 0, input, reply, routed, false, carried);
+    walk::routePointer(this->walked(), path, 0, input, reply, routed, false, carried);
     // A click the target did not take: to the nodes above it, in turn.
     if (reply.fClickAbove) {
       // Said by the target where it is laid out; the walk down from the root
       // takes the point where it is on the screen: the target's and its
       // ancestors' shifts put back -- a click in a scrolled list moved twice.
       const work::Offset shifted = work::drawnOffset(target);
-      (void)walk::clickPath(fRoot, path, 0, reply.fClickAbove->fX + shifted.x, reply.fClickAbove->fY + shifted.y, carried);
+      (void)walk::clickPath(this->walked(), path, 0, reply.fClickAbove->fX + shifted.x, reply.fClickAbove->fY + shifted.y, carried);
     }
 
     if (routed.fReleaseRequest || ending) {
@@ -6616,11 +6645,11 @@ public:
       const NodeId before = fCapture != 0 ? fCapture : fDown;
       if (before != 0 && before != routed.fCaptureRequest) {
         Path down;
-        if (walk::findPath(fRoot, before, down)) {
+        if (walk::findPath(this->walked(), before, down)) {
           PointerReply cancelled;
           cancelled.fTarget = before;
           Routed ignored;
-          walk::routePointer(fRoot, down, 0,
+          walk::routePointer(this->walked(), down, 0,
                              PointerEvent{pointer::cancel{at.fX, at.fY}},
                              cancelled, ignored, true);
         }
@@ -6650,10 +6679,10 @@ public:
   // input, then of each node above it until one takes it.
   bool click(float x, float y) {
     Path path;
-    if (!walk::hitPath(fRoot, x, y, path)) {
+    if (!walk::hitPath(this->walked(), x, y, path)) {
       return false;
     }
-    const bool taken = walk::clickPath(fRoot, path, 0, x, y, startCarry(fRoot));
+    const bool taken = walk::clickPath(this->walked(), path, 0, x, y, startCarry(fRoot));
     this->notePress(path);
     this->restyleDirty();
     return taken;
@@ -6684,7 +6713,7 @@ public:
     }
     Reply reply;
     reply.fTarget = fFocus;
-    walk::routeKey(fRoot, path, 0, input, reply, startCarry(fRoot));
+    walk::routeKey(this->walked(), path, 0, input, reply, startCarry(fRoot));
     if (reply.fMoveFocus) {
       focusVisible() = true;
       this->focusNextWithin(reply.fFocusScope, *reply.fMoveFocus);
@@ -6701,22 +6730,22 @@ public:
     }
     Reply reply;
     reply.fTarget = fFocus;
-    walk::routeText(fRoot, path, 0, input, reply, startCarry(fRoot));
+    walk::routeText(this->walked(), path, 0, input, reply, startCarry(fRoot));
     this->notePress(path);
     this->restyleDirty();
     return reply.fHandled;
   }
 
   bool dispatchSemantic(NodeId id, const SemanticAction &action) {
-    const std::optional<NodeInfo> about = walk::info(fRoot, id);
+    const std::optional<NodeInfo> about = walk::info(this->walked(), id);
     Path path;
     if (!about || !about->fVisible || about->fDisabled ||
-        !walk::findPath(fRoot, id, path)) {
+        !walk::findPath(this->walked(), id, path)) {
       return false;
     }
     Reply reply;
     reply.fTarget = id;
-    walk::routeSemantic(fRoot, path, 0, action, reply, startCarry(fRoot));
+    walk::routeSemantic(this->walked(), path, 0, action, reply, startCarry(fRoot));
     if (reply.fRequestFocus) {
       this->focus(id);
     }
@@ -6727,7 +6756,7 @@ public:
 
   [[nodiscard]] std::vector<Semantics> semanticsTree() {
     std::vector<Semantics> out;
-    walk::collectSemantics(fRoot, out, -1, fFocus);
+    walk::collectSemantics(this->walked(), out, -1, fFocus);
     return out;
   }
 
@@ -6736,13 +6765,13 @@ public:
   [[nodiscard]] Cursor cursor() {
     Path path;
     if (fCapture != 0) {
-      if (!walk::findPath(fRoot, fCapture, path)) {
+      if (!walk::findPath(this->walked(), fCapture, path)) {
         return cursor::arrow{};
       }
-    } else if (!fHoverSeen || !walk::hitPath(fRoot, fHoverX, fHoverY, path)) {
+    } else if (!fHoverSeen || !walk::hitPath(this->walked(), fHoverX, fHoverY, path)) {
       return cursor::arrow{};
     }
-    if (const std::optional<Cursor> shape = walk::cursorOnPath(fRoot, path, 0)) {
+    if (const std::optional<Cursor> shape = walk::cursorOnPath(this->walked(), path, 0)) {
       return *shape;
     }
     return cursor::arrow{};
@@ -6752,7 +6781,7 @@ public:
   void focus(NodeId id) {
     std::optional<NodeInfo> now;
     if (id != 0) {
-      now = walk::info(fRoot, id);
+      now = walk::info(this->walked(), id);
       if (!now || !now->fFocusable || now->fDisabled || !now->fVisible) {
         id = 0;
         now.reset();
@@ -6765,10 +6794,10 @@ public:
     fFocus = id;
     hostWork().typing = now && now->fTakesText;
     if (previous != 0) {
-      (void)walk::focusChanged(fRoot, previous, false, {}, fViewport.width());
+      (void)walk::focusChanged(this->walked(), previous, false, {}, fViewport.width());
     }
     if (id != 0) {
-      (void)walk::focusChanged(fRoot, id, true, {}, fViewport.width());
+      (void)walk::focusChanged(this->walked(), id, true, {}, fViewport.width());
     }
     this->restyleDirty();
   }
@@ -6781,13 +6810,13 @@ public:
   [[nodiscard]] bool focusedTakesText() {
     const NodeId id = this->focusedId();
     const std::optional<NodeInfo> about =
-        id != 0 ? walk::info(fRoot, id) : std::nullopt;
+        id != 0 ? walk::info(this->walked(), id) : std::nullopt;
     return about && about->fTakesText;
   }
   [[nodiscard]] NodeId capturedId() {
     if (fCapture != 0) {
       Path ignored;
-      if (!walk::findPath(fRoot, fCapture, ignored)) {
+      if (!walk::findPath(this->walked(), fCapture, ignored)) {
         fCapture = 0;
       }
     }
@@ -6796,20 +6825,20 @@ public:
 
   [[nodiscard]] std::vector<NodeId> focusableIds() {
     std::vector<NodeId> out;
-    walk::collectFocusable(fRoot, out);
+    walk::collectFocusable(this->walked(), out);
     return out;
   }
 
   // As focusNext, among the focusable nodes inside `scope` only.
   void focusNextWithin(NodeId scope, bool backwards) {
     Path inside;
-    if (!walk::findPath(fRoot, scope, inside)) {
+    if (!walk::findPath(this->walked(), scope, inside)) {
       return;
     }
     std::vector<NodeId> nodes;
     for (const NodeId id : this->focusableIds()) {
       Path path;
-      if (id != scope && walk::findPath(fRoot, id, path) &&
+      if (id != scope && walk::findPath(this->walked(), id, path) &&
           // path begins with inside (std::ranges::starts_with, which the
           // libstdc++ C++23 builds use does not have yet)
           std::ranges::mismatch(inside, path).in1 == inside.end()) {
@@ -6854,7 +6883,7 @@ public:
     fHoverX = x;
     fHoverY = y;
     fHoverSeen = true;
-    walk::hover(fRoot, x, y, true, {}, fViewport.width(), false);
+    walk::hover(this->walked(), x, y, true, {}, fViewport.width(), false);
     this->restyleDirty();
   }
 
@@ -6866,7 +6895,7 @@ private:
   void restyleDirty() {
     work::walkingFull() = work::disabled() || fWalkedGeneration != work::fullGeneration();
     UpdateContext context{fNowMs, fViewport.width(), false, false};
-    walk::update(fRoot, context, {}, nullptr, false);
+    walk::update(this->walked(), context, {}, nullptr, false);
   }
 
   // A press the dispatch along `path` was answered by (pressLater): kept, by
@@ -6879,12 +6908,12 @@ private:
       return;
     }
     Path way = path;
-    while (!way.empty() && walk::idAt(fRoot, way, 0) != pressed->fId) {
+    while (!way.empty() && walk::idAt(this->walked(), way, 0) != pressed->fId) {
       way.pop_back();
     }
     // Not on the way the event went -- a node pressed on another's behalf,
     // a page's back arrow for Esc: found where it is.
-    if (walk::idAt(fRoot, way, 0) != pressed->fId && !walk::findPath(fRoot, pressed->fId, way)) {
+    if (walk::idAt(this->walked(), way, 0) != pressed->fId && !walk::findPath(this->walked(), pressed->fId, way)) {
       return;
     }
     auto &all = hostWork().pressed;
@@ -6896,9 +6925,9 @@ private:
     if (fFocus == 0) {
       return false;
     }
-    const std::optional<NodeInfo> about = walk::info(fRoot, fFocus);
+    const std::optional<NodeInfo> about = walk::info(this->walked(), fFocus);
     if (!about || about->fDisabled || !about->fVisible ||
-        !walk::findPath(fRoot, fFocus, path)) {
+        !walk::findPath(this->walked(), fFocus, path)) {
       this->focus(0);
       return false;
     }
@@ -6906,6 +6935,8 @@ private:
   }
 
   Root fRoot;
+  // The root as last seen by walked(): a reference to it, or to what it holds.
+  std::optional<AnyNodeRef> fSeen;
   // The full walks' count this scene last walked everything at, and the one
   // its current frame goes by.
   std::uint64_t fWalkedGeneration = 0;

@@ -92,15 +92,26 @@ template <class Out_> struct Erased : Stacked {
 // What every combinator returns outside a release build: the node it made,
 // held through its table, so that no composed type exists there -- the
 // table is made where the combinator is called, over children that are
-// held already. Transparent: to what holds it, it is the node it holds. The
-// node's placement is the holder's (where it stands, its margin, how it is
-// aligned, what bounds its size); its size is the node's own, followed axis
-// by axis -- relative to the parent, the holder is and the node fills it;
-// growing, the holder grows and the node fills it; any other way, the
-// holder is as big as the node. A spec given later goes the same way.
+// held already.
+//
+// Held is not in the tree: the walks see through it (kSeenThrough) to the
+// node it holds -- its state, its place, its size, its answers, as they are
+// now, whatever the node does to them itself (hides itself, slides in).
+//
+// A wrapper laid over held content in turn -- onClick over a column, a
+// wrapper a combinator makes over what another one returned -- is a node of
+// its own, with that content its only child: its base is Held (Self below),
+// and it stands where its content stood. As it is erased, the content's
+// placement is folded into it (where it stands, its margin, how it is
+// aligned, what bounds its size, how it is drawn as a whole); its size is
+// the content's own, followed axis by axis -- relative to the parent, the
+// wrapper is and the content fills it; growing, the wrapper grows and the
+// content fills it; any other way, the wrapper is as big as the content. A
+// spec given it later goes the same way.
 struct Held : Stacked {
-  // The node's size as it says it, kept apart from the holder's following
-  // of it: a node made to fill its holder is still the size it was made.
+  // The content's size as it says it, kept apart from the wrapper's
+  // following of it: content made to fill its wrapper is still the size it
+  // was made.
   struct own_t {
     float width = 0.0f;
     float height = 0.0f;
@@ -113,25 +124,76 @@ struct Held : Stacked {
   template <class N>
     requires(std::derived_from<std::remove_cvref_t<N>, scene::Node> && !std::same_as<std::remove_cvref_t<N>, Held>)
   explicit Held(N &&node) : Stacked(vbox(0.0f)) {
-    this->adopt(node.fState);
+    using T = std::remove_cvref_t<N>;
+    // A wrapper over held content, finished: its content's placement its own.
+    if constexpr (std::derived_from<T, Held>)
+      node.adopt();
+    fApply = +[](void *held, const scene::Spec &spec) { static_cast<T *>(held)->apply(spec); };
     parts.held = scene::AnyNode(std::forward<N>(node));
   }
   [[nodiscard]] scene::AnyNode &held() noexcept { return parts.held; }
+  [[nodiscard]] scene::AnyNode &seenThrough() noexcept { return parts.held; }
 
-  // A spec split as it is erased: placement to the holder, the rest to the
-  // node, its size followed again.
-  void apply(const scene::Spec &spec) {
+  // A spec: held, all of it to the node held, as that node takes one; a
+  // wrapper over held content, split -- placement to the wrapper, the rest
+  // to the content, its size followed again.
+  template <class Self> void apply(this Self &self, const scene::Spec &spec) {
+    if constexpr (std::same_as<Self, Held>) {
+      self.fApply(self.parts.held.ref().node(), spec);
+    } else {
+      scene::State &node = self.parts.held.state();
+      // Its own size back first, so the spec and the following start from
+      // what it says, not from how it was last made to fill the wrapper.
+      self.restore(node);
+      self.fApply(self.parts.held.ref().node(), nodeSide(spec));
+      self.fState.apply(placement(spec));
+      self.followSize(node);
+      self.invalidateLayout();
+    }
+  }
+  template <class Self> void setVisible(this Self &self, bool on) { self.apply({.visible = on}); }
+
+  // The content's placement folded into this wrapper's, and left at rest
+  // in it: what the wrapper said of its own is kept, and how both are drawn
+  // as a whole -- faded, scaled, shifted -- is what both together made.
+  void adopt() {
+    scene::State &mine = this->fState;
     scene::State &node = parts.held.state();
-    // Its own size back first, so the spec and the following start from
-    // what it says, not from how it was last made to fill the holder.
-    this->restore(node);
-    node.apply(nodeSide(spec));
-    this->fState.apply(placement(spec));
+    const auto take = [](auto &own, auto &theirs, const auto &rest) {
+      const std::remove_cvref_t<decltype(own)> atRest = rest;
+      if (own == atRest)
+        own = theirs;
+      theirs = atRest;
+    };
+    take(mine.fAnchor, node.fAnchor, scene::anchor::kTopLeft);
+    take(mine.fOrigin, node.fOrigin, scene::anchor::kTopLeft);
+    mine.fX += std::exchange(node.fX, 0.0f);
+    mine.fY += std::exchange(node.fY, 0.0f);
+    mine.fOutOfFlow = mine.fOutOfFlow || std::exchange(node.fOutOfFlow, false);
+    if (mine.fMargin == scene::Margin{})
+      mine.fMargin = node.fMargin;
+    node.fMargin = {};
+    if (!mine.fAlignSelf)
+      mine.fAlignSelf = node.fAlignSelf;
+    node.fAlignSelf.reset();
+    mine.fDepth += std::exchange(node.fDepth, 0.0f);
+    take(mine.fMinWidth, node.fMinWidth, 0.0f);
+    take(mine.fMaxWidth, node.fMaxWidth, 0.0f);
+    take(mine.fMinHeight, node.fMinHeight, 0.0f);
+    take(mine.fMaxHeight, node.fMaxHeight, 0.0f);
+    mine.fVisible = mine.fVisible && std::exchange(node.fVisible, true);
+    mine.fAlpha *= std::exchange(node.fAlpha, 1.0f);
+    mine.fScale *= std::exchange(node.fScale, 1.0f);
+    mine.fShiftX += std::exchange(node.fShiftX, 0.0f);
+    mine.fShiftY += std::exchange(node.fShiftY, 0.0f);
+    mine.fGrowAxes = mine.fGrowAxes | node.fGrowAxes;
+    mine.fShrinkAxes = mine.fShrinkAxes | node.fShrinkAxes;
     this->followSize(node);
-    this->invalidateLayout();
   }
 
 private:
+  // How the node held takes a spec, as its own type does.
+  void (*fApply)(void *, const scene::Spec &) = nullptr;
   // Not a part: nothing walks it.
   own_t fOwn;
   [[nodiscard]] static scene::Spec placement(const scene::Spec &spec) {
@@ -162,32 +224,6 @@ private:
     spec.shiftY.reset();
     spec.visible.reset();
     return spec;
-  }
-  // The node's placement taken over, and left at rest in the holder.
-  void adopt(scene::State &node) {
-    scene::State &mine = this->fState;
-    mine.fAnchor = std::exchange(node.fAnchor, scene::anchor::kTopLeft);
-    mine.fOrigin = std::exchange(node.fOrigin, scene::anchor::kTopLeft);
-    mine.fX = std::exchange(node.fX, 0.0f);
-    mine.fY = std::exchange(node.fY, 0.0f);
-    mine.fOutOfFlow = std::exchange(node.fOutOfFlow, false);
-    mine.fMargin = std::exchange(node.fMargin, scene::Margin{});
-    mine.fAlignSelf = std::exchange(node.fAlignSelf, std::nullopt);
-    mine.fDepth = std::exchange(node.fDepth, 0.0f);
-    mine.fMinWidth = std::exchange(node.fMinWidth, 0.0f);
-    mine.fMaxWidth = std::exchange(node.fMaxWidth, 0.0f);
-    mine.fMinHeight = std::exchange(node.fMinHeight, 0.0f);
-    mine.fMaxHeight = std::exchange(node.fMaxHeight, 0.0f);
-    mine.fVisible = std::exchange(node.fVisible, true);
-    // How it is drawn as a whole -- faded, scaled, shifted -- the holder's
-    // too: a later spec of them replaces them, not multiplies them in.
-    mine.fAlpha = std::exchange(node.fAlpha, 1.0f);
-    mine.fScale = std::exchange(node.fScale, 1.0f);
-    mine.fShiftX = std::exchange(node.fShiftX, 0.0f);
-    mine.fShiftY = std::exchange(node.fShiftY, 0.0f);
-    mine.fGrowAxes = node.fGrowAxes;
-    mine.fShrinkAxes = node.fShrinkAxes;
-    this->followSize(node);
   }
   void restore(scene::State &node) const {
     node.fWidth = fOwn.width;
@@ -221,10 +257,15 @@ private:
     }
   }
 };
+} // namespace skiff::compose
+namespace skiff::scene {
+template <> inline constexpr bool kSeenThrough<compose::Held> = true;
+} // namespace skiff::scene
+export namespace skiff::compose {
 // A node as a combinator returns it: itself in a release build; held,
 // outside one.
 template <class N> auto erased(N node) {
-  if constexpr (scene::kErasedWalks)
+  if constexpr (scene::kErasedWalks && !std::same_as<N, Held>)
     return Held(std::move(node));
   else
     return node;
@@ -276,7 +317,7 @@ template <class N> struct Many : nodes::Stack {
   }
   template <class Self, class F> void forEachChild(this Self &self, F &&f) { std::ranges::for_each(self.fParts, f); }
 };
-template <class N> Many<N> many(Look look, std::vector<N> parts) { return Many<N>(std::move(look), std::move(parts)); }
+template <class N> auto many(Look look, std::vector<N> parts) { return erased(Many<N>(std::move(look), std::move(parts))); }
 
 // A stack of a list's parts made from what it reads -- a value projected
 // from the model or a Local's state, a search's results -- each element made
@@ -291,7 +332,7 @@ template <class Make, class N> struct Listed : Many<N> {
   }
 };
 template <class Element, class Make> auto listed(Look look, Make make) {
-  return Listed<Make, std::invoke_result_t<Make &, const Element &>>(std::move(look), std::move(make));
+  return erased(Listed<Make, std::invoke_result_t<Make &, const Element &>>(std::move(look), std::move(make)));
 }
 
 // A node shown, or there but hidden.
@@ -314,8 +355,8 @@ template <class N> struct Ticking : N {
       return fTick;
   }
 };
-template <class N> Ticking<N> keep_ticking(bool on, N node) {
-  return Ticking<N>(on, std::move(node));
+template <class N> auto keep_ticking(bool on, N node) {
+  return erased(Ticking<N>(on, std::move(node)));
 }
 
 // A subtree whose drawing can be replayed until it is damaged.
@@ -376,23 +417,23 @@ namespace skiff::scene {
 } // namespace skiff::scene
 
 export namespace skiff::compose {
-template <class... Parts> Box<Parts...> column(Look look, Parts... parts) {
+template <class... Parts> auto column(Look look, Parts... parts) {
   look.fHorizontal = false;
-  return Box<Parts...>(std::move(look), std::move(parts)...);
+  return erased(Box<Parts...>(std::move(look), std::move(parts)...));
 }
 template <class... Parts>
   requires(std::derived_from<Parts, scene::Node> && ...)
-Box<Parts...> column(Parts... parts) {
-  return Box<Parts...>(vbox(), std::move(parts)...);
+auto column(Parts... parts) {
+  return erased(Box<Parts...>(vbox(), std::move(parts)...));
 }
-template <class... Parts> Box<Parts...> row(Look look, Parts... parts) {
+template <class... Parts> auto row(Look look, Parts... parts) {
   look.fHorizontal = true;
-  return Box<Parts...>(std::move(look), std::move(parts)...);
+  return erased(Box<Parts...>(std::move(look), std::move(parts)...));
 }
 template <class... Parts>
   requires(std::derived_from<Parts, scene::Node> && ...)
-Box<Parts...> row(Parts... parts) {
-  return Box<Parts...>(hbox(), std::move(parts)...);
+auto row(Parts... parts) {
+  return erased(Box<Parts...>(hbox(), std::move(parts)...));
 }
 
 // A subtree whose presence and constructor arguments are model data. Made
@@ -439,48 +480,48 @@ template <class Content, class Facts, class Make> struct Mounted : Specced {
   const Content *shown() const { return fContent ? &*fContent : nullptr; }
 };
 template <class Content, class Facts, class Make>
-Mounted<Content, Facts, Make> mount(Make make, scene::Spec spec = {},
+auto mount(Make make, scene::Spec spec = {},
                                     bool floats = false) {
-  return Mounted<Content, Facts, Make>(std::move(make), std::move(spec),
-                                       floats);
+  return erased(Mounted<Content, Facts, Make>(std::move(make), std::move(spec),
+                                       floats));
 }
 template <class Content, class Facts, class Make>
-Mounted<Content, Facts, Make> mount_now(Make make, const Facts &first, scene::Spec spec = {}) {
-  return Mounted<Content, Facts, Make>(std::move(make), first, std::move(spec));
+auto mount_now(Make make, const Facts &first, scene::Spec spec = {}) {
+  return erased(Mounted<Content, Facts, Make>(std::move(make), first, std::move(spec)));
 }
 
 // ---- the model's kinds, around a node ------------------------------------
 
 template <class Want, class N>
   requires std::move_constructible<N>
-bind::Bound<Want, N> bound(N node) {
-  return bind::Bound<Want, N>(std::move(node));
+auto bound(N node) {
+  return erased(bind::Bound<Want, N>(std::move(node)));
 }
 // A node shown what Compute makes of the model, as the parts it reads move.
 template <class... Reads, class Compute, class N>
-bind::Derived<Compute, N, Reads...> derived(Compute compute, N node) {
-  return bind::Derived<Compute, N, Reads...>(std::move(node), std::move(compute));
+auto derived(Compute compute, N node) {
+  return erased(bind::Derived<Compute, N, Reads...>(std::move(node), std::move(compute)));
 }
 template <class Within, class Handlers, class N, class... Keys>
-bind::Scoped<Within, Handlers, N, Keys...> scoped(Handlers handlers, N node,
+auto scoped(Handlers handlers, N node,
                                                   Keys... keys) {
-  return bind::Scoped<Within, Handlers, N, Keys...>(
-      std::move(handlers), std::move(node), std::move(keys)...);
+  return erased(bind::Scoped<Within, Handlers, N, Keys...>(
+      std::move(handlers), std::move(node), std::move(keys)...));
 }
-template <class T, class N> bind::Local<T, bind::NoHandlers, N> local(N node, T initial = {}) {
-  return bind::Local<T, bind::NoHandlers, N>({}, std::move(node), std::move(initial));
+template <class T, class N> auto local(N node, T initial = {}) {
+  return erased(bind::Local<T, bind::NoHandlers, N>({}, std::move(node), std::move(initial)));
 }
 template <class T, class Handlers, class N>
   requires std::derived_from<N, scene::Node>
-bind::Local<T, Handlers, N> local(Handlers handlers, N node, T initial = {}) {
-  return bind::Local<T, Handlers, N>(std::move(handlers), std::move(node),
-                                     std::move(initial));
+auto local(Handlers handlers, N node, T initial = {}) {
+  return erased(bind::Local<T, Handlers, N>(std::move(handlers), std::move(node),
+                                     std::move(initial)));
 }
 template <class T, class Handlers, class N>
-bind::Local<T, Handlers, N, true> hidden(Handlers handlers, N node,
+auto hidden(Handlers handlers, N node,
                                          T initial = {}) {
-  return bind::Local<T, Handlers, N, true>(std::move(handlers),
-                                           std::move(node), std::move(initial));
+  return erased(bind::Local<T, Handlers, N, true>(std::move(handlers),
+                                           std::move(node), std::move(initial)));
 }
 
 // A row made by a callable, from the element or from nothing.
@@ -504,8 +545,8 @@ template <class Key, class T, class F>
 auto each(F make, Look look = vbox()) {
   using Row = RowOf<T, F>;
   using Container = Box<>;
-  return bind::Each<Key, T, Row, Container, MakeRow<T, F>>(
-      MakeRow<T, F>{std::move(make)}, Container(std::move(look)));
+  return erased(bind::Each<Key, T, Row, Container, MakeRow<T, F>>(
+      MakeRow<T, F>{std::move(make)}, Container(std::move(look))));
 }
 
 // Handlers written where they are used: handle<Removed>([](auto &here) { ... })
@@ -564,8 +605,8 @@ template <class E, class N> struct OnClick : N {
     return result;
   }
 };
-template <class E, class N> OnClick<E, N> onClick(E event, N node, std::string label = {}) {
-  return OnClick<E, N>(std::move(event), std::move(node), std::move(label));
+template <class E, class N> auto onClick(E event, N node, std::string label = {}) {
+  return erased(OnClick<E, N>(std::move(event), std::move(node), std::move(label)));
 }
 
 // Compute a typed answer at press time, for actions whose data can change
@@ -579,8 +620,8 @@ template <class Make, class N> struct OnPress : OnClick<model::Nothing, N> {
 };
 template <class Make, class N>
   requires std::invocable<Make&> && (!std::is_void_v<std::invoke_result_t<Make&>>)
-OnPress<Make, N> onPress(Make make, N node, std::string label = {}) {
-  return OnPress<Make, N>(std::move(make), std::move(node), std::move(label));
+auto onPress(Make make, N node, std::string label = {}) {
+  return erased(OnPress<Make, N>(std::move(make), std::move(node), std::move(label)));
 }
 
 // What a node says of itself to assistive technology beyond its own
@@ -610,14 +651,14 @@ template <class N> struct Said : N {
 };
 // A control named for assistive technology, and what it is for: a
 // checkbox beside its words.
-template <class N> Said<N> named(std::string label, std::string hint, N node) {
+template <class N> auto named(std::string label, std::string hint, N node) {
   Said<N> out(std::nullopt, false, std::move(node));
   out.fLabel = std::move(label);
   out.fHint = std::move(hint);
-  return out;
+  return erased(std::move(out));
 }
-template <class N> Said<N> said(std::optional<scene::SemanticRole> role, bool chosen, N node) {
-  return Said<N>(std::move(role), chosen, std::move(node));
+template <class N> auto said(std::optional<scene::SemanticRole> role, bool chosen, N node) {
+  return erased(Said<N>(std::move(role), chosen, std::move(node)));
 }
 template <class Want, class Compute, class N> auto chosen_for(Compute compute, std::optional<scene::SemanticRole> role, N node) {
   return projected<Want>(std::move(compute), Said<N>(std::move(role), false, std::move(node)));
@@ -639,8 +680,8 @@ template <class E, class N, class K> struct OnKey : N {
     return fEvent;
   }
 };
-template <class K, class E, class N> OnKey<E, N, K> onKey(K key, E event, N node) {
-  return OnKey<E, N, K>(key, std::move(event), std::move(node));
+template <class K, class E, class N> auto onKey(K key, E event, N node) {
+  return erased(OnKey<E, N, K>(key, std::move(event), std::move(node)));
 }
 
 // Answers the keys `ask(press)` makes something of -- Enter and Shift+Enter
@@ -660,7 +701,7 @@ template <class Ask, class N> struct OnKeys : N {
     return answer;
   }
 };
-template <class Ask, class N> OnKeys<Ask, N> onKeys(Ask ask, N node) { return OnKeys<Ask, N>(std::move(ask), std::move(node)); }
+template <class Ask, class N> auto onKeys(Ask ask, N node) { return erased(OnKeys<Ask, N>(std::move(ask), std::move(node))); }
 
 // What a node shows, read from the model: a text made from the parts it
 // reads (Reads), and a node shown or hidden as they say -- never set by
@@ -669,15 +710,15 @@ struct TextOf : nodes::Text {
   explicit TextOf(nodes::Text text) : nodes::Text(std::move(text)) {}
   void read(const std::string &now) { this->setText(now); }
 };
-template <class... Reads, class Compute> bind::Derived<Compute, TextOf, Reads...> text_of(Compute compute, nodes::Text text) {
-  return bind::Derived<Compute, TextOf, Reads...>(TextOf(std::move(text)), std::move(compute));
+template <class... Reads, class Compute> auto text_of(Compute compute, nodes::Text text) {
+  return erased(bind::Derived<Compute, TextOf, Reads...>(TextOf(std::move(text)), std::move(compute)));
 }
 template <class N> struct ShownBy : N {
   explicit ShownBy(N node) : N(std::move(node)) {}
   void read(bool on) { this->setVisible(on); }
 };
-template <class... Reads, class Compute, class N> bind::Derived<Compute, ShownBy<N>, Reads...> shown_if(Compute compute, N node) {
-  return bind::Derived<Compute, ShownBy<N>, Reads...>(ShownBy<N>(std::move(node)), std::move(compute));
+template <class... Reads, class Compute, class N> auto shown_if(Compute compute, N node) {
+  return erased(bind::Derived<Compute, ShownBy<N>, Reads...>(ShownBy<N>(std::move(node)), std::move(compute)));
 }
 
 // Project a bound part into the value a node reads. Unlike derived, this
@@ -1087,8 +1128,8 @@ struct OnlyBrings {
 };
 template <class Element, class MakeTab, class MakePart, class MakeStrip, class OnTab = OnlyBrings>
 auto sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip &makeStrip, OnTab onTab = {}) {
-  return Sections<Element, MakeTab, MakePart, MakeStrip, OnTab>(std::move(look), std::move(parts), std::move(makeTab),
-                                                                std::move(makePart), makeStrip, std::move(onTab));
+  return erased(Sections<Element, MakeTab, MakePart, MakeStrip, OnTab>(std::move(look), std::move(parts), std::move(makeTab),
+                                                                std::move(makePart), makeStrip, std::move(onTab)));
 }
 
 // A picture sized as a chat sizes one: its own size, or its picture's own
@@ -1130,8 +1171,8 @@ template <class Ratio, class N> struct Fitted : N {
     this->fState.fHeight = std::floor(h);
   }
 };
-template <class Ratio, class N> Fitted<Ratio, N> fitted(Fit fit, Ratio ratio, N node) {
-  return Fitted<Ratio, N>(fit, std::move(ratio), std::move(node));
+template <class Ratio, class N> auto fitted(Fit fit, Ratio ratio, N node) {
+  return erased(Fitted<Ratio, N>(fit, std::move(ratio), std::move(node)));
 }
 
 // A picture and what turns over it while it comes: the second shown while
@@ -1147,8 +1188,8 @@ template <class Picture, class Loader> struct WhileComing : Box<Picture, Loader>
       loader.setVisible(coming);
   }
 };
-template <class Picture, class Loader> WhileComing<Picture, Loader> while_coming(Look look, Picture picture, Loader loader) {
-  return WhileComing<Picture, Loader>(std::move(look), std::move(picture), std::move(loader));
+template <class Picture, class Loader> auto while_coming(Look look, Picture picture, Loader loader) {
+  return erased(WhileComing<Picture, Loader>(std::move(look), std::move(picture), std::move(loader)));
 }
 
 // Laid out at most as wide as its room, its natural width `wide`: narrower,
@@ -1166,8 +1207,8 @@ template <class Fit_, class N> struct Shrunk : N {
     std::invoke(fFit, static_cast<N &>(*this), share);
   }
 };
-template <class Fit_, class N> Shrunk<Fit_, N> shrunk(float wide, float gap, Fit_ fit, N node) {
-  return Shrunk<Fit_, N>(wide, gap, std::move(fit), std::move(node));
+template <class Fit_, class N> auto shrunk(float wide, float gap, Fit_ fit, N node) {
+  return erased(Shrunk<Fit_, N>(wide, gap, std::move(fit), std::move(node)));
 }
 
 // Placed at a point of the window a part of the model says -- in window
@@ -1378,9 +1419,9 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
   }
 };
 template <class Facts, class Page, class Show, class Same, class Side, class Pin, class Back>
-PageView<Facts, Page, Show, Same, Side, Pin, Back> page_view(Show show, Same same, Side side, Pin pin, Back back, Page first,
+auto page_view(Show show, Same same, Side side, Pin pin, Back back, Page first,
                                                             scene::Spec spec = {}) {
-  return {std::move(show), std::move(same), std::move(side), std::move(pin), std::move(back), std::move(first), std::move(spec)};
+  return erased(PageView<Facts, Page, Show, Same, Side, Pin, Back>{std::move(show), std::move(same), std::move(side), std::move(pin), std::move(back), std::move(first), std::move(spec)});
 }
 
 } // namespace skiff::compose

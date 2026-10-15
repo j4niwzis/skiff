@@ -269,6 +269,6 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
 };
 template <class Key, class View, class Make, class Surface, class Lanes>
 auto reorder_bars(Surface surface, Make make, Lanes lanes, skia::SkColor highlight = 0) {
-  return ReorderBars<Key, View, Make, Surface, Lanes>(std::move(surface), std::move(make), std::move(lanes), highlight);
+  return erased(ReorderBars<Key, View, Make, Surface, Lanes>(std::move(surface), std::move(make), std::move(lanes), highlight));
 }
 } // namespace skiff::compose
