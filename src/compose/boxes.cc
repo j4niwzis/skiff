@@ -89,6 +89,120 @@ template <class Out_> struct Erased : Stacked {
   [[nodiscard]] scene::AnyNode &shown() noexcept { return parts.shown; }
 };
 
+// What every combinator returns outside a release build: the node it made,
+// held through its table, so that no composed type exists there -- the
+// table is made where the combinator is called, over children that are
+// held already. Transparent: to what holds it, it is the node it holds. The
+// node's placement is the holder's (where it stands, its margin, how it is
+// aligned, what bounds its size); its size is the node's own, followed axis
+// by axis -- relative to the parent, the holder is and the node fills it;
+// growing, the holder grows and the node fills it; any other way, the
+// holder is as big as the node. A spec given later goes the same way.
+struct Held : Stacked {
+  struct parts_t {
+    scene::AnyNode held;
+  } parts;
+  template <class N>
+    requires(std::derived_from<std::remove_cvref_t<N>, scene::Node> && !std::same_as<std::remove_cvref_t<N>, Held>)
+  explicit Held(N &&node) : Stacked(vbox(0.0f)) {
+    this->adopt(node.fState);
+    parts.held = scene::AnyNode(std::forward<N>(node));
+  }
+  [[nodiscard]] scene::AnyNode &held() noexcept { return parts.held; }
+
+  // A spec split as it is erased: placement to the holder, the rest to the
+  // node, its size followed again.
+  void apply(const scene::Spec &spec) {
+    scene::State &node = parts.held.state();
+    node.apply(nodeSide(spec));
+    this->fState.apply(placement(spec));
+    this->followSize(node);
+    this->invalidateLayout();
+  }
+
+private:
+  [[nodiscard]] static scene::Spec placement(const scene::Spec &spec) {
+    return {.place = spec.place, .anchor = spec.anchor, .origin = spec.origin, .x = spec.x, .y = spec.y,
+            .grow = spec.grow, .shrink = spec.shrink, .minWidth = spec.minWidth, .maxWidth = spec.maxWidth,
+            .minHeight = spec.minHeight, .maxHeight = spec.maxHeight, .alignSelf = spec.alignSelf, .depth = spec.depth,
+            .margin = spec.margin, .scale = spec.scale, .alpha = spec.alpha, .shiftX = spec.shiftX, .shiftY = spec.shiftY,
+            .visible = spec.visible};
+  }
+  [[nodiscard]] static scene::Spec nodeSide(scene::Spec spec) {
+    spec.place.reset();
+    spec.anchor.reset();
+    spec.origin.reset();
+    spec.x.reset();
+    spec.y.reset();
+    spec.grow.reset();
+    spec.shrink.reset();
+    spec.minWidth.reset();
+    spec.maxWidth.reset();
+    spec.minHeight.reset();
+    spec.maxHeight.reset();
+    spec.alignSelf.reset();
+    spec.depth.reset();
+    spec.margin = {};
+    spec.scale.reset();
+    spec.alpha.reset();
+    spec.shiftX.reset();
+    spec.shiftY.reset();
+    spec.visible.reset();
+    return spec;
+  }
+  // The node's placement taken over, and left at rest in the holder.
+  void adopt(scene::State &node) {
+    scene::State &mine = this->fState;
+    mine.fAnchor = std::exchange(node.fAnchor, scene::anchor::kTopLeft);
+    mine.fOrigin = std::exchange(node.fOrigin, scene::anchor::kTopLeft);
+    mine.fX = std::exchange(node.fX, 0.0f);
+    mine.fY = std::exchange(node.fY, 0.0f);
+    mine.fOutOfFlow = std::exchange(node.fOutOfFlow, false);
+    mine.fMargin = std::exchange(node.fMargin, scene::Margin{});
+    mine.fAlignSelf = std::exchange(node.fAlignSelf, std::nullopt);
+    mine.fDepth = std::exchange(node.fDepth, 0.0f);
+    mine.fMinWidth = std::exchange(node.fMinWidth, 0.0f);
+    mine.fMaxWidth = std::exchange(node.fMaxWidth, 0.0f);
+    mine.fMinHeight = std::exchange(node.fMinHeight, 0.0f);
+    mine.fMaxHeight = std::exchange(node.fMaxHeight, 0.0f);
+    mine.fVisible = std::exchange(node.fVisible, true);
+    mine.fGrowAxes = node.fGrowAxes;
+    mine.fShrinkAxes = node.fShrinkAxes;
+    this->followSize(node);
+  }
+  // The holder's size, axis by axis, as the node's says.
+  void followSize(scene::State &node) {
+    this->followAxis<scene::axis::x>(node, node.fWidth, this->fState.fWidth);
+    this->followAxis<scene::axis::y>(node, node.fHeight, this->fState.fHeight);
+  }
+  template <class Axis> void followAxis(scene::State &node, float &nodeSize, float &mySize) {
+    scene::State &mine = this->fState;
+    if (node.fRelativeSizeAxes.template has<Axis>()) {
+      mine.fRelativeSizeAxes = mine.fRelativeSizeAxes.template with<Axis>();
+      mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<Axis>();
+      mySize = nodeSize;
+      nodeSize = 1.0f;
+    } else if (mine.fGrowAxes.template has<Axis>() || node.fGrowAxes.template has<Axis>()) {
+      mine.fGrowAxes = mine.fGrowAxes.template with<Axis>();
+      mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<Axis>();
+      node.fGrowAxes = node.fGrowAxes.template without<Axis>();
+      node.fRelativeSizeAxes = node.fRelativeSizeAxes.template with<Axis>();
+      nodeSize = 1.0f;
+    } else {
+      mine.fRelativeSizeAxes = mine.fRelativeSizeAxes.template without<Axis>();
+      mine.fAutoSizeAxes = mine.fAutoSizeAxes.template with<Axis>();
+    }
+  }
+};
+// A node as a combinator returns it: itself in a release build; held,
+// outside one.
+template <class N> auto erased(N node) {
+  if constexpr (scene::kErasedWalks)
+    return Held(std::move(node));
+  else
+    return node;
+}
+
 // A node of its own drawing or input, its parts placed in it by their own
 // specs: its spec said where it is made.
 struct Specced : scene::Node {
