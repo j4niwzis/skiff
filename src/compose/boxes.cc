@@ -178,6 +178,10 @@ struct Held : Stacked {
   // in it: what the wrapper said of its own is kept, and how both are drawn
   // as a whole -- faded, scaled, shifted -- is what both together made.
   void adopt() {
+    // Once: a wrapper made over held content and then erased is adopted as
+    // it is made, not again as it is held.
+    if (std::exchange(fAdopted, true))
+      return;
     scene::State &mine = this->fState;
     scene::State &node = parts.held.state();
     const auto take = [](auto &own, auto &theirs, const auto &rest) {
@@ -221,6 +225,8 @@ private:
   own_t fOwn;
   // Shown, as the wrapper itself says.
   bool fShown = true;
+  // Its content's placement folded in already.
+  bool fAdopted = false;
   [[nodiscard]] static scene::Spec placement(const scene::Spec &spec) {
     return {.place = spec.place, .anchor = spec.anchor, .origin = spec.origin, .x = spec.x, .y = spec.y,
             .grow = spec.grow, .shrink = spec.shrink, .minWidth = spec.minWidth, .maxWidth = spec.maxWidth,
@@ -296,9 +302,13 @@ template <class N> [[nodiscard]] scene::State &state_of(N &node) { return node.f
 // A node marked where it is made -- Tag says what it is, and what it
 // carries (a link's address) -- for what holds it to find it by its mark,
 // as the walks see it (scene::findNode): never named by where it is.
+// Over held content, made where it is needed (a mark, an alternative of
+// several kinds in one variant), a wrapper takes its content's place at once.
+inline void adopted(Held &over) { over.adopt(); }
+template <class N> void adopted(N &) {}
 template <class Tag, class N> struct Marked : N {
   Tag fTag;
-  explicit Marked(N node, Tag tag = {}) : N(std::move(node)), fTag(std::move(tag)) {}
+  explicit Marked(N node, Tag tag = {}) : N(std::move(node)), fTag(std::move(tag)) { adopted(static_cast<N &>(*this)); }
 };
 template <class Tag, class N> auto marked(Tag tag, N node) { return erased(Marked<Tag, N>(std::move(node), std::move(tag))); }
 
