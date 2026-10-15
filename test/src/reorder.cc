@@ -1,9 +1,12 @@
 import std;
+import splice;
 import skia;
 import skiff.scene;
 import skiff.nodes.flow;
 import skiff.nodes.scroll;
 import skiff.compose;
+import skiff.model;
+import skiff.bind;
 import gtest;
 
 #include "gtest/gtest-macros.h"
@@ -12,6 +15,15 @@ namespace {
 namespace c = skiff::compose;
 namespace scene = skiff::scene;
 using bar = c::ReorderBar;
+struct bar_visibility { bool side = true; };
+struct visibility_root { skiff::model::Tracked<bar_visibility> visible; };
+using visibility_model = skiff::model::Model<visibility_root, skiff::bind::NoReactions>;
+template <class T> std::optional<T> event_as(const auto& event) {
+  if (!event) return std::nullopt;
+  return spl::visit(spl::overloaded{
+      [](const T& value) { return std::optional<T>(value); },
+      [](const auto&) { return std::optional<T>{}; }}, *event);
+}
 inline auto make_icon(int, int, bool) {
   return c::column(c::vbox(0.0f, {.width = 40.0f, .height = 40.0f}));
 }
@@ -22,7 +34,9 @@ auto fixture() {
   rows across(make_row), down(make_row);
   across.read(std::vector<std::pair<int, int>>{{1, 1}, {2, 2}, {3, 3}});
   down.read(std::vector<std::pair<int, int>>{{4, 4}, {5, 5}});
-  auto surface = c::column(c::vbox(), c::side_scroll(std::move(across), true), skiff::nodes::ScrollContainer<rows>(std::move(down)));
+  auto surface = c::column(c::vbox(), c::side_scroll(std::move(across), true),
+      c::shown_for<bar_visibility>([](const bar_visibility& now) { return now.side; },
+          skiff::nodes::ScrollContainer<rows>(std::move(down))));
   auto& top = std::get<0>(surface.fParts);
   auto& side = std::get<1>(surface.fParts);
   top.fState.fBounds = skia::SkRect::MakeXYWH(0.0f, 0.0f, 100.0f, 40.0f);
@@ -52,13 +66,17 @@ TEST(ReorderBars, HeldCrossBarDropAnswersKeysAndRestoresTheGhost) {
   EXPECT_TRUE(down.fDeferClick);
   node.fDrag->pressed -= std::chrono::milliseconds(300);
   scene::PointerReply move;
-  node.onPointer(scene::phase::capture{}, scene::pointer::move{220.0f, 180.0f}, move);
+  const auto dragging = event_as<c::ItemsDragging>(
+      node.onPointer(scene::phase::capture{}, scene::pointer::move{220.0f, 180.0f}, move));
+  ASSERT_TRUE(dragging);
+  EXPECT_TRUE(dragging->on);
   EXPECT_TRUE(move.fCapturePointer);
   EXPECT_TRUE(move.fSuppressHover);
   ASSERT_TRUE(node.ghost());
   EXPECT_FALSE(std::get<0>(node.surface().fParts).line().fRows[0].fRow.visible());
   scene::PointerReply up;
-  const auto placed = node.onPointer(scene::phase::capture{}, scene::pointer::up{220.0f, 180.0f, 1}, up);
+  const auto placed = event_as<c::ItemsPlaced<int>>(
+      node.onPointer(scene::phase::capture{}, scene::pointer::up{220.0f, 180.0f, 1}, up));
   ASSERT_TRUE(placed);
   EXPECT_EQ(placed->from, bar::horizontal);
   EXPECT_EQ(placed->to, bar::vertical);
@@ -93,15 +111,32 @@ TEST(ReorderBars, QuickMovesScrollAndNeverPlaceItems) {
 
 TEST(ReorderBars, CancelRestoresHiddenDropTargetAndSource) {
   auto node = fixture();
-  std::get<1>(node.surface().fParts).setVisible(false);
+  visibility_model model(visibility_root{});
+  skiff::bind::Binding<visibility_model> binding;
+  model.apply(skiff::model::over<bar_visibility>(skiff::model::setTo(bar_visibility{false})));
+  binding.refresh(node, model);
+  EXPECT_FALSE(std::get<1>(node.surface().fParts).visible());
   scene::PointerReply down;
   node.onPointer(scene::phase::capture{}, scene::pointer::down{20.0f, 20.0f, 1}, down);
   node.fDrag->pressed -= std::chrono::milliseconds(300);
   scene::PointerReply move;
-  node.onPointer(scene::phase::capture{}, scene::pointer::move{60.0f, 80.0f}, move);
+  const auto dragging = event_as<c::ItemsDragging>(
+      node.onPointer(scene::phase::capture{}, scene::pointer::move{60.0f, 80.0f}, move));
+  ASSERT_TRUE(dragging);
+  EXPECT_TRUE(dragging->on);
+  EXPECT_FALSE(std::get<1>(node.surface().fParts).visible());
+  model.apply(skiff::model::over<bar_visibility>(skiff::model::setTo(bar_visibility{dragging->on})));
+  binding.refresh(node, model);
+  binding.refresh(node, model);
   EXPECT_TRUE(std::get<1>(node.surface().fParts).visible());
   scene::PointerReply cancel;
-  node.onPointer(scene::phase::capture{}, scene::pointer::cancel{}, cancel);
+  const auto stopped = event_as<c::ItemsDragging>(
+      node.onPointer(scene::phase::capture{}, scene::pointer::cancel{}, cancel));
+  ASSERT_TRUE(stopped);
+  EXPECT_FALSE(stopped->on);
+  EXPECT_TRUE(std::get<1>(node.surface().fParts).visible());
+  model.apply(skiff::model::over<bar_visibility>(skiff::model::setTo(bar_visibility{stopped->on})));
+  binding.refresh(node, model);
   EXPECT_FALSE(node.fDrag);
   EXPECT_FALSE(node.ghost());
   EXPECT_FALSE(std::get<1>(node.surface().fParts).visible());
