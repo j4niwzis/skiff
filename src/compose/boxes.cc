@@ -268,6 +268,11 @@ template <class Content, class Facts, class Make> struct Mounted : Specced {
     this->fState.setFloats(floats);
     this->setVisible(false);
   }
+  // Made at once, from its first facts: there before anything reads them.
+  Mounted(Make make, const Facts &first, scene::Spec spec = {}, bool floats = false)
+      : Mounted(std::move(make), std::move(spec), floats) {
+    this->read(std::optional<Facts>(first));
+  }
   void read(const std::optional<Facts> &now) {
     if constexpr (requires { fLast == now; })
       if (fRead && fLast == now)
@@ -297,6 +302,10 @@ Mounted<Content, Facts, Make> mount(Make make, scene::Spec spec = {},
                                     bool floats = false) {
   return Mounted<Content, Facts, Make>(std::move(make), std::move(spec),
                                        floats);
+}
+template <class Content, class Facts, class Make>
+Mounted<Content, Facts, Make> mount_now(Make make, const Facts &first, scene::Spec spec = {}) {
+  return Mounted<Content, Facts, Make>(std::move(make), first, std::move(spec));
 }
 
 // ---- the model's kinds, around a node ------------------------------------
