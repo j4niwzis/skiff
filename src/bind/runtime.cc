@@ -235,6 +235,7 @@ struct BoundPart {
   void (*fRead)(void *, const void *);
   void (*fGone)(void *);
   model::Revision &(*fSeen)(void *);
+  const void *&(*fSource)(void *);
   bool &(*fShown)(void *);
   bool &(*fIsGone)(void *);
 };
@@ -326,6 +327,7 @@ template <class T> struct BoundOf {
       },
       +[](void *n) { detail::gone(*static_cast<T *>(n)); },
       +[](void *n) -> model::Revision & { return detail::asBound(*static_cast<T *>(n)).fSeen; },
+      +[](void *n) -> const void *& { return detail::asBound(*static_cast<T *>(n)).fSource; },
       +[](void *n) -> bool & { return detail::asBound(*static_cast<T *>(n)).fShown; },
       +[](void *n) -> bool & { return detail::asBound(*static_cast<T *>(n)).fGone; }};
 };
@@ -808,9 +810,10 @@ private:
         part.fGone(n);
       return;
     }
-    if (part.fShown(n) && !part.fIsGone(n) && part.fSeen(n) == seen.fRevision)
+    if (part.fShown(n) && !part.fIsGone(n) && part.fSeen(n) == seen.fRevision && part.fSource(n) == seen.fValue)
       return;
     part.fSeen(n) = seen.fRevision;
+    part.fSource(n) = seen.fValue;
     part.fShown(n) = true;
     part.fIsGone(n) = false;
     if (!seen.fTracked)

@@ -63,6 +63,9 @@ struct Bound : Base {
     requires std::constructible_from<Base, Args...>
   explicit Bound(std::in_place_t, Args &&...args) : Base(std::forward<Args>(args)...) {}
   model::Revision fSeen = 0;
+  // Equal revisions in two keyed parts do not mean they are the same
+  // value. Keep its identity too when a scope is moved to another key.
+  const void *fSource = nullptr;
   bool fShown = false;
   bool fGone = false;
 };

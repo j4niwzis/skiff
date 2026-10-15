@@ -27,9 +27,10 @@ template <class M> struct Refreshing {
         gone(node);
       return;
     }
-    if (shown.fShown && !shown.fGone && shown.fSeen == seen.fRevision)
+    if (shown.fShown && !shown.fGone && shown.fSeen == seen.fRevision && shown.fSource == seen.fValue)
       return;
     shown.fSeen = seen.fRevision;
+    shown.fSource = seen.fValue;
     shown.fShown = true;
     shown.fGone = false;
     if (!seen.fTracked)
