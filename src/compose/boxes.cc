@@ -138,26 +138,34 @@ struct Held : Stacked {
   [[nodiscard]] scene::AnyNode &held() noexcept { return parts.held; }
   [[nodiscard]] scene::AnyNode &seenThrough() noexcept { return parts.held; }
 
-  // A spec: held, all of it to the node held, as that node takes one; a
-  // wrapper over held content, split -- placement to the wrapper, the rest
-  // to the content, its size followed again.
+  // A spec: held, all of it to the node held, as that node takes one
+  // (this overload, Held itself); a wrapper over held content, split --
+  // placement to the wrapper, the rest to the content, its size followed
+  // again (the one below, for any type derived from it).
+  void apply(this Held &self, const scene::Spec &spec) { self.fApply(self.parts.held.ref().node(), spec); }
   template <class Self> void apply(this Self &self, const scene::Spec &spec) {
-    if constexpr (std::same_as<Self, Held>) {
-      self.fApply(self.parts.held.ref().node(), spec);
-    } else {
-      scene::State &node = self.parts.held.state();
-      // Its own size back first, so the spec and the following start from
-      // what it says, not from how it was last made to fill the wrapper.
-      self.restore(node);
-      self.fApply(self.parts.held.ref().node(), nodeSide(spec));
-      self.fState.apply(placement(spec));
-      if (spec.visible)
-        self.fShown = *spec.visible;
-      self.followSize(node);
-      self.invalidateLayout();
-    }
+    scene::State &node = self.parts.held.state();
+    // Its own size back first, so the spec and the following start from
+    // what it says, not from how it was last made to fill the wrapper.
+    self.restore(node);
+    self.fApply(self.parts.held.ref().node(), nodeSide(spec));
+    self.fState.apply(placement(spec));
+    if (spec.visible)
+      self.fShown = *spec.visible;
+    self.followSize(node);
+    self.invalidateLayout();
   }
   template <class Self> void setVisible(this Self &self, bool on) { self.apply({.visible = on}); }
+  // What is asked of it as a node: Held itself is not in the tree, so the
+  // node it holds answers -- as the walks see it; a wrapper answers itself.
+  [[nodiscard]] const scene::State &state(this const Held &self) { return self.parts.held.ref().state(); }
+  template <class Self> [[nodiscard]] const scene::State &state(this const Self &self) { return self.fState; }
+  [[nodiscard]] bool visible(this const Held &self) { return self.state().visible(); }
+  template <class Self> [[nodiscard]] bool visible(this const Self &self) { return self.fState.visible(); }
+  [[nodiscard]] const skia::SkRect &bounds(this const Held &self) { return self.state().bounds(); }
+  template <class Self> [[nodiscard]] const skia::SkRect &bounds(this const Self &self) { return self.fState.bounds(); }
+  [[nodiscard]] scene::NodeId id(this const Held &self) { return self.state().id(); }
+  template <class Self> [[nodiscard]] scene::NodeId id(this const Self &self) { return self.fState.id(); }
   // A wrapper as the walks see it: shown while it says it is and its
   // content is -- content that hides itself later (a mount emptied, a part
   // shown as the model says) hides the wrapper with it.
