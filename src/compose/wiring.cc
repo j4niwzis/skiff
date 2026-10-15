@@ -211,6 +211,74 @@ template <class Act, class N> Resting<Act, N> resting(double ms, Act act, N node
   return Resting<Act, N>(ms, std::move(act), std::move(node));
 }
 
+// A node that, while what it reads says so -- a list whose rows are being
+// selected -- takes the main button's press itself, before anything in it
+// sees it, and answers what `act` makes of it (the row selected or let
+// go); else its presses are all its own. As wide as its room, as tall as
+// the node: a list's row. Read through projected (seized_for).
+template <class Act, class N> struct Seizing : Box<N> {
+  using Out = Union<OutOf<N>, model::Types<std::remove_cvref_t<std::invoke_result_t<Act &>>>>;
+  Act fAct;
+  bool fOn = false, fHeld = false;
+  Seizing(Act act, N node) : Box<N>(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(node)), fAct(std::move(act)) {}
+  void read(bool on) { fOn = on; }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  using nodes::Stack::onPointer;
+  void onPointer(scene::phase::capture, const scene::pointer::down &press, scene::PointerReply &reply) {
+    if (!fOn || press.button > 1)
+      return;
+    fHeld = true;
+    reply.capturePointer();
+    reply.handle();
+  }
+  void onPointer(scene::phase::capture, const scene::pointer::up &, scene::PointerReply &reply) {
+    if (!std::exchange(fHeld, false))
+      return;
+    scene::pressLater(this->fState);
+    reply.releasePointer();
+    reply.handle();
+  }
+  void onPointer(scene::phase::capture, const scene::pointer::cancel &, scene::PointerReply &reply) {
+    if (std::exchange(fHeld, false))
+      reply.releasePointer();
+  }
+  auto onPress() { return std::invoke(fAct); }
+};
+template <class Want, class Take, class Act, class N> auto seized_for(Take take, Act act, N node) {
+  return projected<Want>(std::move(take), Seizing<Act, N>(std::move(act), std::move(node)));
+}
+
+// A right press on a node -- a long press, on a phone -- answered by what
+// `ask(node, x, y)` makes of where it was: a message's menu, from what is
+// selected in it and the link pressed. Nothing asked, not taken.
+template <class Ask, class N> struct OnRightPressAt : N {
+  using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Ask &, N &, float, float>>())>;
+  using Out = Union<OutOf<N>, model::Types<Answer>>;
+  Ask fAsk;
+  OnRightPressAt(Ask ask, N node) : N(std::move(node)), fAsk(std::move(ask)) {}
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  using N::onPointer;
+  std::optional<Answer> onPointer(scene::phase::bubble, const scene::pointer::down &press, scene::PointerReply &reply) {
+    return this->asked(press, reply);
+  }
+  std::optional<Answer> onPointer(scene::phase::target, const scene::pointer::down &press, scene::PointerReply &reply) {
+    return this->asked(press, reply);
+  }
+
+private:
+  std::optional<Answer> asked(const scene::pointer::down &press, scene::PointerReply &reply) {
+    if (press.button != 3)
+      return std::nullopt;
+    auto answer = std::invoke(fAsk, static_cast<N &>(*this), press.x, press.y);
+    if (answer)
+      reply.handle();
+    return answer;
+  }
+};
+template <class Ask, class N> OnRightPressAt<Ask, N> onRightPressAt(Ask ask, N node) {
+  return OnRightPressAt<Ask, N>(std::move(ask), std::move(node));
+}
+
 // A node swiped to the left to do something with it -- a message answered,
 // as Telegram's: a press that moves left at once -- more across than up or
 // down, within a quarter of a second, nothing holding the pointer yet --
