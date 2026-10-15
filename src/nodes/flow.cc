@@ -690,9 +690,10 @@ template <class Key, class View, class Row> class KeptRow : public skiff::scene:
 public:
   using BindingChildren = std::tuple<Row>;
   template <class Item, class Make>
-  KeptRow(const Item &item, Make &make)
+  KeptRow(const Item &item, Make &make,
+          skiff::scene::Spec spec = {.fillX = true, .autoSize = skiff::scene::axes::kY})
       : fKey(std::get<0>(item)), fView(std::get<1>(item)), fRow(std::invoke(make, item)) {
-    fState.apply({.fillX = true, .autoSize = skiff::scene::axes::kY});
+    fState.apply(spec);
   }
   void forEachChild(auto &&f) { f(fRow); }
   Key fKey;
@@ -713,15 +714,18 @@ public:
   using Kept = KeptRow<Key, View, Row>;
   using BindingChildren = std::tuple<Kept>;
   MemoRows() = default;
-  explicit MemoRows(Make make, Container container = {})
-      : Container(std::move(container)), fMake(std::move(make)) {}
+  // A vertical list fills across by default. Horizontal items and wrapped
+  // tabs can instead keep their natural size through their wrapper.
+  explicit MemoRows(Make make, Container container = {},
+                    skiff::scene::Spec rowSpec = {.fillX = true, .autoSize = skiff::scene::axes::kY})
+      : Container(std::move(container)), fMake(std::move(make)), fRowSpec(std::move(rowSpec)) {}
   // Items: a key, its view, and the rest, in the order they are listed.
   template <std::ranges::input_range Items> bool read(Items &&items) {
     const bool changed = reconcile(
         fRows, std::forward<Items>(items),
         [](const auto &item) -> const Key & { return std::get<0>(item); },
         [](const Kept &row) -> const Key & { return row.fKey; },
-        [this](const auto &item) { return Kept(item, fMake); },
+        [this](const auto &item) { return Kept(item, fMake, fRowSpec); },
         [](const Kept &row, const auto &item) { return row.fView == std::get<1>(item); });
     if (changed) {
       this->invalidateLayout();
@@ -732,6 +736,7 @@ public:
   [[nodiscard]] std::size_t size() const noexcept { return fRows.size(); }
   std::vector<Kept> fRows;
   Make fMake{};
+  skiff::scene::Spec fRowSpec{.fillX = true, .autoSize = skiff::scene::axes::kY};
 };
 
 // A vertical flow and a horizontal one, as they are usually written.
