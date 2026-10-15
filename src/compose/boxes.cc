@@ -99,6 +99,14 @@ template <class Out_> struct Erased : Stacked {
 // growing, the holder grows and the node fills it; any other way, the
 // holder is as big as the node. A spec given later goes the same way.
 struct Held : Stacked {
+  // The node's size as it says it, kept apart from the holder's following
+  // of it: a node made to fill its holder is still the size it was made.
+  struct own_t {
+    float width = 0.0f;
+    float height = 0.0f;
+    decltype(scene::State::fRelativeSizeAxes) relative{};
+    decltype(scene::State::fAutoSizeAxes) autoSize{};
+  };
   struct parts_t {
     scene::AnyNode held;
   } parts;
@@ -114,20 +122,18 @@ struct Held : Stacked {
   // node, its size followed again.
   void apply(const scene::Spec &spec) {
     scene::State &node = parts.held.state();
+    // Its own size back first, so the spec and the following start from
+    // what it says, not from how it was last made to fill the holder.
+    this->restore(node);
     node.apply(nodeSide(spec));
     this->fState.apply(placement(spec));
-    // Followed again only on the axes the spec sizes: the node fills the
-    // holder already where it was relative, and a spec of its padding alone
-    // took the holder for the parent's whole width.
-    const bool sized = spec.relativeSize || spec.autoSize || spec.grow || spec.fill;
-    if (sized || spec.width || spec.fillX)
-      this->followAxis<scene::axis::x>(node, node.fWidth, this->fState.fWidth);
-    if (sized || spec.height || spec.fillY)
-      this->followAxis<scene::axis::y>(node, node.fHeight, this->fState.fHeight);
+    this->followSize(node);
     this->invalidateLayout();
   }
 
 private:
+  // Not a part: nothing walks it.
+  own_t fOwn;
   [[nodiscard]] static scene::Spec placement(const scene::Spec &spec) {
     return {.place = spec.place, .anchor = spec.anchor, .origin = spec.origin, .x = spec.x, .y = spec.y,
             .grow = spec.grow, .shrink = spec.shrink, .minWidth = spec.minWidth, .maxWidth = spec.maxWidth,
@@ -183,8 +189,16 @@ private:
     mine.fShrinkAxes = node.fShrinkAxes;
     this->followSize(node);
   }
+  void restore(scene::State &node) const {
+    node.fWidth = fOwn.width;
+    node.fHeight = fOwn.height;
+    node.fRelativeSizeAxes = fOwn.relative;
+    node.fAutoSizeAxes = fOwn.autoSize;
+  }
   // The holder's size, axis by axis, as the node's says.
   void followSize(scene::State &node) {
+    fOwn = {.width = node.fWidth, .height = node.fHeight, .relative = node.fRelativeSizeAxes,
+                 .autoSize = node.fAutoSizeAxes};
     this->followAxis<scene::axis::x>(node, node.fWidth, this->fState.fWidth);
     this->followAxis<scene::axis::y>(node, node.fHeight, this->fState.fHeight);
   }
