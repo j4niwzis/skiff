@@ -461,7 +461,11 @@ public:
   using Edge = ListEdge<Tag>;
   using Answer = std::variant<Aimed, Edge>;
   using Out = Union<OutOf<Rows>, model::Types<Answer>>;
-  explicit WindowList(Make make) : nodes::ScrollContainer<Rows>(Rows(std::move(make))) {}
+  // Its rows a column as wide as the view and as tall as they are: the
+  // scroll's extent theirs.
+  explicit WindowList(Make make) : nodes::ScrollContainer<Rows>(Rows(std::move(make))) {
+    rows().fState.apply({.fillX = true, .autoSize = scene::axes::kY});
+  }
   [[nodiscard]] Rows &rows() { return std::get<0>(this->fChildren); }
   [[nodiscard]] const Rows &rows() const { return std::get<0>(this->fChildren); }
   // A row by its key, where it is made.
@@ -589,6 +593,7 @@ WindowList<Key, View, Row, Make, Locate, Tag> window_list(Make make) {
 //   index(const M &, const Told &, const Key &) -> std::optional<std::size_t>
 //   items(const M &, const Told &, std::size_t from, std::size_t to,
 //         const std::optional<Key> &newest) -> std::vector<Item>
+//   counts(const M &, const Told &, std::size_t) -> bool   one come while away, counted
 //     (newest: the newest it showed of this list -- those after it have just
 //     come, where it was at the end)
 //
@@ -623,14 +628,29 @@ public:
     const bool aimed = told.aim.key && (!fTold || told.aim.number != fTold->aim.number);
     if (fTold && *fTold == told)
       return;
-    fTold = told;
     if (another) {
+      // Where the list left was scrolled to, and its window: kept for it --
+      // at its end, it comes back at its end.
+      if (fTold && fTold->of)
+        fLeft.insert_or_assign(*fTold->of, Left{this->atEnd(40.0f) ? std::nullopt : this->topRow(), fFrom, fTo, fToEnd});
       fFrom.reset();
       fTo.reset();
       fToEnd = true;
       fShownLast.reset();
       fShownEnd = false;
+      fUnseen = 0;
+      fRestore.reset();
+      if (told.of)
+        if (const auto kept = fLeft.find(*told.of); kept != fLeft.end()) {
+          fFrom = kept->second.from;
+          fTo = kept->second.to;
+          fToEnd = kept->second.toEnd;
+          fRestore = kept->second.at;
+        }
+      fOpened = true;
+      fCountWas.reset();
     }
+    fTold = told;
     fSeen.reset();
     fAimNew = aimed;
     this->show();
@@ -641,12 +661,23 @@ public:
     fModel = &model;
     this->show();
   }
+  // Slid; the row at the top of the view where it was left, put back there
+  // once laid out; back at the end, nothing more has come unseen.
   void update(double nowMs) {
     List::update(nowMs);
     if (std::exchange(fSlide, false)) {
       fSeen.reset();
       this->show();
     }
+    if (fRestore)
+      if (const auto *kept = this->row(fRestore->first); !kept)
+        fRestore.reset();
+      else if (!kept->bounds().isEmpty()) {
+        const float top = this->toView(kept->bounds()).fTop - this->bounds().fTop;
+        this->setCurrent(std::max(0.0f, this->current() + top - std::exchange(fRestore, std::nullopt)->second));
+      }
+    if (fUnseen && this->atEnd(40.0f))
+      fUnseen = 0;
   }
   std::optional<typename List::Answer> onPress() {
     auto asked = List::onPress();
@@ -722,6 +753,13 @@ private:
     const std::optional<Key> newest = fToEnd && fShownEnd ? fShownLast : std::nullopt;
     fShownLast = to > 0 ? std::optional<Key>(Source::key(*fModel, *fTold, to - 1)) : std::nullopt;
     fShownEnd = fToEnd;
+    // What came while the reader was away from the end: counted, where the
+    // source counts it (Source::counts) -- what the way down says.
+    const bool atEnd = this->atEnd(40.0f);
+    const std::size_t count = Source::count(*fModel, *fTold);
+    if (fCountWas && !atEnd && count > *fCountWas)
+      fUnseen += static_cast<std::size_t>(std::ranges::count_if(std::views::iota(*fCountWas, count), [&](std::size_t i) { return Source::counts(*fModel, *fTold, i); }));
+    fCountWas = count;
     WindowShown<Item, Key> shown{.items = Source::items(*fModel, *fTold, from, to, newest),
                                  // At the top: the window slides, or the history is asked for.
                                  .more_above = true,
@@ -730,8 +768,56 @@ private:
                                  .aim_number = fTold->aim.number,
                                  .aim_top = fTold->aim.top,
                                  .aim_line = fTold->aim.line};
+    const bool opened = fOpened;
     List::read(shown);
+    // Opened: where it was left, else at its end -- unless it aims elsewhere.
+    // At its end, it follows what comes: glided only to a newer item.
+    if (opened) {
+      fOpened = false;
+      if (!fRestore && !fTold->aim.key)
+        this->scrollToEnd(false);
+    } else if (atEnd && fToEnd && !fTold->aim.key && newest && fShownLast != newest) {
+      // Followed at its end by the scroll itself; a newer item glided to.
+      this->scrollToEnd();
+    }
+    if (atEnd)
+      fUnseen = 0;
   }
+public:
+  // The reader away from the end, and how many have come meanwhile.
+  [[nodiscard]] bool away() const { return !this->atEnd(40.0f) || !fToEnd; }
+  [[nodiscard]] std::size_t unseen() const { return fUnseen; }
+  // Back to the end: its newest made, the view glided down.
+  void toEnd() {
+    fFrom.reset();
+    fTo.reset();
+    fToEnd = true;
+    fUnseen = 0;
+    fSeen.reset();
+    this->show();
+    this->scrollToEnd();
+  }
+
+private:
+  // The first row seen at the view's top, and how far under the top it is.
+  [[nodiscard]] std::optional<std::pair<Key, float>> topRow() {
+    const skia::SkRect view = this->bounds();
+    for (auto &one : this->rows().fRows)
+      if (!one.bounds().isEmpty())
+        if (const skia::SkRect box = this->toView(one.bounds()); box.fBottom > view.fTop)
+          return std::pair{one.fKey, box.fTop - view.fTop};
+    return std::nullopt;
+  }
+  struct Left {
+    std::optional<std::pair<Key, float>> at;
+    std::optional<Key> from, to;
+    bool toEnd = true;
+  };
+  std::map<typename decltype(Told::of)::value_type, Left> fLeft;
+  std::optional<std::pair<Key, float>> fRestore;
+  std::optional<std::size_t> fCountWas;
+  bool fOpened = false;
+  std::size_t fUnseen = 0;
   WindowSizes fSizes;
   const M *fModel = nullptr;
   std::optional<Told> fTold;
@@ -740,6 +826,31 @@ private:
   std::optional<Key> fShownLast;
   std::optional<model::Revision> fSeen;
 };
+
+// A list with its way down over it -- Telegram's "↓": shown while the
+// reader is away from its end, told how many have come meanwhile
+// (`show(button, unseen)`); pressed, back to the end.
+template <class List, class Button, class Show> struct WithWayDown : Box<List, Button> {
+  Show fShow;
+  std::optional<std::pair<bool, std::size_t>> fShown;
+  WithWayDown(Look look, List list, Button button, Show show)
+      : Box<List, Button>(std::move(look), std::move(list), std::move(button)), fShow(std::move(show)) {}
+  [[nodiscard]] List &list() { return std::get<0>(this->fParts); }
+  [[nodiscard]] bool wantsTick() const { return true; }
+  void update(double) {
+    auto &[list, button] = this->fParts;
+    const std::pair now{list.away(), list.unseen()};
+    if (fShown == now)
+      return;
+    fShown = now;
+    button.setVisible(now.first);
+    std::invoke(fShow, button, now.second);
+    this->markDamaged();
+  }
+};
+template <class List, class Button, class Show> WithWayDown<List, Button, Show> with_way_down(Look look, List list, Button button, Show show) {
+  return WithWayDown<List, Button, Show>(std::move(look), std::move(list), std::move(button), std::move(show));
+}
 
 // A row longer than its room, moved sideways -- by a finger or a mouse
 // dragged along it, flicked to glide on, or a sideways wheel -- and cut to
