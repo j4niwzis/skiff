@@ -556,6 +556,27 @@ auto projected(Compute compute, N node) {
   return bound<Want>(
       Projected<Compute, N>(std::move(compute), std::move(node)));
 }
+// And as a part of the model says they do: `ask(now, press)` with the part
+// as last read -- in the phase given: on their way down (capture), before a
+// field under it takes them, or on their way up (bubble).
+template <class Phase, class K, class Ask, class N> struct KeysFor : N {
+  using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Ask &, const K &, const scene::key::down &>>())>;
+  Ask fAsk;
+  K fNow{};
+  KeysFor(Ask ask, N node) : N(std::move(node)), fAsk(std::move(ask)) {}
+  void read(const K &now) { fNow = now; }
+  using N::onKey;
+  std::optional<Answer> onKey(Phase, const scene::key::down &press, scene::Reply &reply) {
+    auto answer = std::invoke(fAsk, std::as_const(fNow), press);
+    if (answer)
+      reply.handle();
+    return answer;
+  }
+};
+template <class Want, class Phase, class Compute, class Ask, class N> auto keys_for(Compute compute, Ask ask, N node) {
+  using K = std::remove_cvref_t<std::invoke_result_t<Compute &, const typename bind::BoundValueT<Want>::type &>>;
+  return projected<Want>(std::move(compute), KeysFor<Phase, K, Ask, N>(std::move(ask), std::move(node)));
+}
 // Visibility projected from a bound part, including a scope or local model.
 template <class Want, class Compute, class N>
 auto shown_for(Compute compute, N node) {
