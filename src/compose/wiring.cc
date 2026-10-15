@@ -573,27 +573,30 @@ WindowList<Key, View, Row, Make, Locate> window_list(Make make) {
 }
 
 // A window_list whose list is read where it is kept -- in the model it is
-// bound to, through Source, a type with static members:
+// bound to (M), through Source, a type with static members -- and told by
+// another (the program's shown model) which list, how, and what to aim at:
 //
-//   using Of = ...;                                   what list it shows (a chat)
-//   revision(const M &, const Of &) -> model::Revision  moved when the list did
-//   count(const M &, const Of &) -> std::size_t
-//   key(const M &, const Of &, std::size_t) -> Key
-//   index(const M &, const Of &, const Key &) -> std::optional<std::size_t>
-//   item(const M &, const Of &, std::size_t) -> Item   a row's item: its key, its view...
+//   using Told = ...;  what it is told: of (which list, optional), aim
+//                      (WindowAim<Key>), and whatever else its items need
+//                      (a chat's settings); compared to see it changed
+//   revision(const M &, const Told &) -> model::Revision  moved when the list did
+//   count(const M &, const Told &) -> std::size_t
+//   key(const M &, const Told &, std::size_t) -> Key
+//   index(const M &, const Told &, const Key &) -> std::optional<std::size_t>
+//   items(const M &, const Told &, std::size_t from, std::size_t to) -> std::vector<Item>
 //
-// Only its window's items are made; its window -- kept by the keys at its
-// ends, so that what comes in above does not move it -- slides as the view
-// nears an edge, and is made around what it is told to aim at. Which list,
-// and what to aim at, it reads from what the program shows (WindowTold).
-// Past the list's ends -- history not here yet -- it asks (ListEdge), as a
-// window_list does.
-template <class Key> struct WindowTold {
-  std::optional<Key> aim;
-  std::uint64_t aim_number = 0;
-  std::optional<float> aim_top;
-  std::optional<std::string> aim_line;
-  friend bool operator==(const WindowTold &, const WindowTold &) = default;
+// Only its window's items are made, all at once -- what one row needs of its
+// neighbours (a run, who has read up to it) worked out once; its window --
+// kept by the keys at its ends, so that what comes in above does not move it
+// -- slides as the view nears an edge, and is made around what it is told to
+// aim at. Past the list's ends -- history not here yet -- it asks
+// (ListEdge), as a window_list does.
+template <class Key> struct WindowAim {
+  std::optional<Key> key;
+  std::uint64_t number = 0;
+  std::optional<float> top;
+  std::optional<std::string> line;
+  friend bool operator==(const WindowAim &, const WindowAim &) = default;
 };
 struct WindowSizes {
   std::size_t first = 80, most = 240, step = 16;
@@ -603,22 +606,21 @@ class WindowFrom : public WindowList<Key, View, Row, Make, Locate> {
   using List = WindowList<Key, View, Row, Make, Locate>;
 
 public:
-  using Of = typename Source::Of;
+  using Told = typename Source::Told;
   WindowFrom(Make make, WindowSizes sizes = {}) : List(std::move(make)), fSizes(sizes) {}
-  // The list it shows, and what it is told to aim at.
-  void read(const std::pair<std::optional<Of>, WindowTold<Key>> &told) {
-    if (told.first != fOf) {
-      fOf = told.first;
+  void read(const Told &told) {
+    const bool another = !fTold || fTold->of != told.of;
+    const bool aimed = told.aim.key && (!fTold || told.aim.number != fTold->aim.number);
+    if (fTold && *fTold == told)
+      return;
+    fTold = told;
+    if (another) {
       fFrom.reset();
       fTo.reset();
       fToEnd = true;
-      fSeen = ~model::Revision{0};
     }
-    if (told.second.aim && told.second.aim_number != fAimNumber) {
-      fAimNumber = told.second.aim_number;
-      fAimed = told.second;
-      fSeen = ~model::Revision{0};  // made around it, at the next refresh
-    }
+    fSeen.reset();
+    fAimNew = aimed;
     this->show();
   }
   // The model it is bound to, moved: its window made again where its list
@@ -629,9 +631,8 @@ public:
   }
   void update(double nowMs) {
     List::update(nowMs);
-    if (fSlide) {
-      fSlide = false;
-      fSeen = ~model::Revision{0};
+    if (std::exchange(fSlide, false)) {
+      fSeen.reset();
       this->show();
     }
   }
@@ -647,11 +648,12 @@ public:
   }
 
 private:
+  [[nodiscard]] bool ready() const { return fModel && fTold && fTold->of; }
   bool slides(bool older) {
-    if (!fModel || !fOf)
+    if (!ready())
       return false;
     auto [from, to] = this->window();
-    const std::size_t count = Source::count(*fModel, *fOf);
+    const std::size_t count = Source::count(*fModel, *fTold);
     if (older && from > 0) {
       from = from > fSizes.step ? from - fSizes.step : 0;
       to = std::min(to, from + fSizes.most);
@@ -667,64 +669,60 @@ private:
     return true;
   }
   [[nodiscard]] std::pair<std::size_t, std::size_t> window() const {
-    const std::size_t count = Source::count(*fModel, *fOf);
+    const std::size_t count = Source::count(*fModel, *fTold);
     std::size_t to = count;
     if (!fToEnd && fTo)
-      if (const auto at = Source::index(*fModel, *fOf, *fTo))
+      if (const auto at = Source::index(*fModel, *fTold, *fTo))
         to = *at + 1;
     std::size_t from = to > fSizes.first ? to - fSizes.first : 0;
     if (fFrom)
-      if (const auto at = Source::index(*fModel, *fOf, *fFrom); at && *at <= to)
+      if (const auto at = Source::index(*fModel, *fTold, *fFrom); at && *at <= to)
         from = *at;
     if (to - from > fSizes.most)
       from = to - fSizes.most;
     return {from, to};
   }
   void keep(std::size_t from, std::size_t to) {
-    const std::size_t count = Source::count(*fModel, *fOf);
+    const std::size_t count = Source::count(*fModel, *fTold);
     to = std::min(to, count);
     from = std::min(from, to);
-    fFrom = from < count ? std::optional<Key>(Source::key(*fModel, *fOf, from)) : std::nullopt;
-    fTo = to > 0 ? std::optional<Key>(Source::key(*fModel, *fOf, to - 1)) : std::nullopt;
+    fFrom = from < count ? std::optional<Key>(Source::key(*fModel, *fTold, from)) : std::nullopt;
+    fTo = to > 0 ? std::optional<Key>(Source::key(*fModel, *fTold, to - 1)) : std::nullopt;
     fToEnd = to == count;
   }
   void show() {
-    if (!fModel || !fOf)
+    if (!ready())
       return;
-    const model::Revision now = Source::revision(*fModel, *fOf);
-    if (now == fSeen)
+    const model::Revision now = Source::revision(*fModel, *fTold);
+    if (fSeen == now)
       return;
     fSeen = now;
-    // Aimed at: its window made around it, where it is held and not made.
-    if (fAimed)
-      if (const auto at = Source::index(*fModel, *fOf, *fAimed->aim)) {
+    // Aimed at anew: its window made around it, where it is held and not made.
+    if (std::exchange(fAimNew, false))
+      if (const auto at = Source::index(*fModel, *fTold, *fTold->aim.key)) {
         const auto [from, to] = this->window();
         if (*at < from || *at >= to)
           this->keep(*at > fSizes.first / 2 ? *at - fSizes.first / 2 : 0, *at + fSizes.first / 2);
       }
     const auto [from, to] = this->window();
     this->keep(from, to);
-    WindowShown<decltype(Source::item(*fModel, *fOf, 0)), Key> shown;
-    shown.items = std::views::iota(from, to) | std::views::transform([&](std::size_t i) { return Source::item(*fModel, *fOf, i); }) |
-                  std::ranges::to<std::vector>();
-    shown.more_above = true;  // at the top: the window slides, or the history is asked for
-    shown.more_below = !fToEnd;
-    if (fAimed) {
-      shown.aim = fAimed->aim;
-      shown.aim_number = fAimNumber;
-      shown.aim_top = fAimed->aim_top;
-      shown.aim_line = fAimed->aim_line;
-    }
+    using Item = typename decltype(Source::items(*fModel, *fTold, 0, 0))::value_type;
+    WindowShown<Item, Key> shown{.items = Source::items(*fModel, *fTold, from, to),
+                                 // At the top: the window slides, or the history is asked for.
+                                 .more_above = true,
+                                 .more_below = !fToEnd,
+                                 .aim = fTold->aim.key,
+                                 .aim_number = fTold->aim.number,
+                                 .aim_top = fTold->aim.top,
+                                 .aim_line = fTold->aim.line};
     List::read(shown);
   }
   WindowSizes fSizes;
   const M *fModel = nullptr;
-  std::optional<Of> fOf;
+  std::optional<Told> fTold;
   std::optional<Key> fFrom, fTo;
-  bool fToEnd = true, fSlide = false;
-  model::Revision fSeen = ~model::Revision{0};
-  std::uint64_t fAimNumber = 0;
-  std::optional<WindowTold<Key>> fAimed;
+  bool fToEnd = true, fSlide = false, fAimNew = false;
+  std::optional<model::Revision> fSeen;
 };
 
 // A row longer than its room, moved sideways -- by a finger or a mouse
