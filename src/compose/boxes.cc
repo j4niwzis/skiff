@@ -439,6 +439,8 @@ OnPress<Make, N> onPress(Make make, N node, std::string label = {}) {
 template <class N> struct Said : N {
   std::optional<scene::SemanticRole> fRole;
   bool fChosen = false;
+  // A name and a hint it is read out with, where its own say none.
+  std::string fLabel, fHint;
   Said(std::optional<scene::SemanticRole> role, bool chosen, N node) : N(std::move(node)), fRole(std::move(role)), fChosen(chosen) {}
   void read(bool chosen) { fChosen = chosen; }
   scene::Semantics semantics() const {
@@ -447,10 +449,22 @@ template <class N> struct Said : N {
       out = N::semantics();
     if (fRole)
       out.fRole = *fRole;
+    if (!fLabel.empty())
+      out.fLabel = fLabel;
+    if (!fHint.empty())
+      out.fHint = fHint;
     out.fSelected = out.fSelected || fChosen;
     return out;
   }
 };
+// A control named for assistive technology, and what it is for: a
+// checkbox beside its words.
+template <class N> Said<N> named(std::string label, std::string hint, N node) {
+  Said<N> out(std::nullopt, false, std::move(node));
+  out.fLabel = std::move(label);
+  out.fHint = std::move(hint);
+  return out;
+}
 template <class N> Said<N> said(std::optional<scene::SemanticRole> role, bool chosen, N node) {
   return Said<N>(std::move(role), chosen, std::move(node));
 }
