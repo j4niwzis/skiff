@@ -305,6 +305,43 @@ template <class Make, class N> auto tapped_off(Make make, N node) {
   return erased(TappedOff<Make, N>(std::move(make), std::move(node)));
 }
 
+// A view's offset kept by the model: what it reads is where it is scrolled
+// to (told again only where it moved there itself, a view made again --
+// the window remade in another theme -- put back where it was); where it
+// comes to rest after a scroll, it says so, `tell(offset)`, as a tick's
+// press (its answer, delivered as a press is). N is a view with current()
+// and setCurrent().
+template <class Tell, class N> struct KeptScroll : N {
+  using Answer = std::remove_cvref_t<std::invoke_result_t<Tell &, float>>;
+  using Out = Union<OutOf<N>, model::Types<Answer>>;
+  Tell fTell;
+  float fTold = 0.0f;
+  KeptScroll(Tell tell, N node) : N(std::move(node)), fTell(std::move(tell)) {}
+  void read(float at) {
+    if (at == fTold)
+      return;
+    fTold = at;
+    this->setCurrent(at);
+  }
+  [[nodiscard]] bool wantsTick() const {
+    if constexpr (requires(const N &view) { view.wantsTick(); })
+      return N::wantsTick() || this->current() != fTold;
+    else
+      return this->current() != fTold;
+  }
+  void update(double nowMs) {
+    N::update(nowMs);
+    if (!N::settling() && this->current() != fTold) {
+      fTold = this->current();
+      scene::pressLater(this->fState);
+    }
+  }
+  Answer onPress() { return std::invoke(fTell, fTold); }
+};
+template <class Want, class Tell, class N> auto kept_scroll(Tell tell, N node) {
+  return bound<Want>(KeptScroll<Tell, N>(std::move(tell), std::move(node)));
+}
+
 // Each list has its own offset. setCurrent retains the requested offset
 // until the new contents are laid out, even when the old list was shorter.
 template <class Key, class N> struct RememberedScroll : Box<N> {

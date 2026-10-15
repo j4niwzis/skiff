@@ -1429,6 +1429,9 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
   }
   // Where it is scrolled to, and kept there as it is laid out again.
   [[nodiscard]] float offset() const { return fScroll.current(); }
+  // The same, as a view says it (kept_scroll).
+  [[nodiscard]] float current() const { return this->offset(); }
+  void setCurrent(float at) { this->keepOffset(at); }
   void keepOffset(float at) {
     fOffsetDue = at;
     this->invalidateLayout();
