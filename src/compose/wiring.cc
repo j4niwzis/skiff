@@ -426,11 +426,13 @@ template <class Ask, class N> OnClickAt<Ask, N> onClickAt(Ask ask, N node) { ret
 // brings that row into view -- stepping the view a page at a time toward a
 // row made but not laid out yet -- and answers that it has (ListAimed). It
 // keeps no list of its own and calls nothing.
-template <class Key> struct ListAimed {
+// What a list answers, tagged by which list it is (Tag): a program with two
+// -- a chat's and a thread's -- tells them apart by type.
+template <class Key, class Tag = void> struct ListAimed {
   Key key;
   friend bool operator==(const ListAimed &, const ListAimed &) = default;
 };
-struct ListEdge {
+template <class Tag = void> struct ListEdge {
   bool older = false;  // the top; else the bottom
   friend bool operator==(ListEdge, ListEdge) = default;
 };
@@ -451,11 +453,13 @@ template <class Item, class Key> struct WindowShown {
 struct NoLocate {
   template <class Row> std::optional<float> operator()(const Row &, const std::string &) const { return std::nullopt; }
 };
-template <class Key, class View, class Row, class Make, class Locate = NoLocate>
+template <class Key, class View, class Row, class Make, class Locate = NoLocate, class Tag = void>
 class WindowList : public nodes::ScrollContainer<nodes::MemoRows<Key, View, Row, Make>> {
 public:
   using Rows = nodes::MemoRows<Key, View, Row, Make>;
-  using Answer = std::variant<ListAimed<Key>, ListEdge>;
+  using Aimed = ListAimed<Key, Tag>;
+  using Edge = ListEdge<Tag>;
+  using Answer = std::variant<Aimed, Edge>;
   using Out = Union<OutOf<Rows>, model::Types<Answer>>;
   explicit WindowList(Make make) : nodes::ScrollContainer<Rows>(Rows(std::move(make))) {}
   [[nodiscard]] Rows &rows() { return std::get<0>(this->fChildren); }
@@ -495,10 +499,10 @@ public:
     const float ahead = std::max(300.0f, this->bounds().height() * 1.5f);
     if (fMoreAbove && this->current() <= ahead && fAsked != fWindow) {
       fAsked = fWindow;
-      this->say(ListEdge{true});
+      this->say(Edge{true});
     } else if (fMoreBelow && this->current() >= this->extent() - ahead && fAsked != fWindow) {
       fAsked = fWindow;
-      this->say(ListEdge{false});
+      this->say(Edge{false});
     }
   }
   std::optional<Answer> onPress() { return std::exchange(fDue, std::nullopt); }
@@ -535,7 +539,7 @@ private:
         else
           this->scrollTo(to);
         fAimedAt = to;
-        this->say(ListAimed<Key>{*fAim});
+        this->say(Aimed{*fAim});
       } else if (std::abs(to - *fAimedAt) > 1.0f) {
         this->setCurrent(to);
         fAimedAt = to;
@@ -567,9 +571,9 @@ private:
   std::optional<std::pair<Key, Key>> fWindow, fAsked;
   std::optional<Answer> fDue;
 };
-template <class Key, class View, class Row, class Make, class Locate = NoLocate>
-WindowList<Key, View, Row, Make, Locate> window_list(Make make) {
-  return WindowList<Key, View, Row, Make, Locate>(std::move(make));
+template <class Key, class View, class Row, class Make, class Locate = NoLocate, class Tag = void>
+WindowList<Key, View, Row, Make, Locate, Tag> window_list(Make make) {
+  return WindowList<Key, View, Row, Make, Locate, Tag>(std::move(make));
 }
 
 // A window_list whose list is read where it is kept -- in the model it is
@@ -583,7 +587,10 @@ WindowList<Key, View, Row, Make, Locate> window_list(Make make) {
 //   count(const M &, const Told &) -> std::size_t
 //   key(const M &, const Told &, std::size_t) -> Key
 //   index(const M &, const Told &, const Key &) -> std::optional<std::size_t>
-//   items(const M &, const Told &, std::size_t from, std::size_t to) -> std::vector<Item>
+//   items(const M &, const Told &, std::size_t from, std::size_t to,
+//         const std::optional<Key> &newest) -> std::vector<Item>
+//     (newest: the newest it showed of this list -- those after it have just
+//     come, where it was at the end)
 //
 // Only its window's items are made, all at once -- what one row needs of its
 // neighbours (a run, who has read up to it) worked out once; its window --
@@ -601,13 +608,16 @@ template <class Key> struct WindowAim {
 struct WindowSizes {
   std::size_t first = 80, most = 240, step = 16;
 };
-template <class Source, class M, class Key, class View, class Row, class Make, class Locate = NoLocate>
-class WindowFrom : public WindowList<Key, View, Row, Make, Locate> {
-  using List = WindowList<Key, View, Row, Make, Locate>;
+template <class Source, class M, class Key, class View, class Row, class Make, class Locate = NoLocate, class Tag = void>
+class WindowFrom : public WindowList<Key, View, Row, Make, Locate, Tag> {
+  using List = WindowList<Key, View, Row, Make, Locate, Tag>;
 
 public:
   using Told = typename Source::Told;
   WindowFrom(Make make, WindowSizes sizes = {}) : List(std::move(make)), fSizes(sizes) {}
+  // How the runtime walks refresh it from its model (outside a release
+  // build), made where it is made.
+  bind::Refreshes<1> fRefreshes = bind::refreshes(bind::refreshFrom<WindowFrom, M>());
   void read(const Told &told) {
     const bool another = !fTold || fTold->of != told.of;
     const bool aimed = told.aim.key && (!fTold || told.aim.number != fTold->aim.number);
@@ -618,6 +628,8 @@ public:
       fFrom.reset();
       fTo.reset();
       fToEnd = true;
+      fShownLast.reset();
+      fShownEnd = false;
     }
     fSeen.reset();
     fAimNew = aimed;
@@ -640,8 +652,8 @@ public:
     auto asked = List::onPress();
     // At an edge of what is made, with more of the list beyond it: slid
     // here, not asked of anyone; past the list's own end, asked on.
-    if (asked && std::visit(spl::overloaded{[&](const ListEdge &edge) { return this->slides(edge.older); },
-                                            [](const ListAimed<Key> &) { return false; }},
+    if (asked && std::visit(spl::overloaded{[&](const typename List::Edge &edge) { return this->slides(edge.older); },
+                                            [](const typename List::Aimed &) { return false; }},
                             *asked))
       return std::nullopt;
     return asked;
@@ -706,8 +718,11 @@ private:
       }
     const auto [from, to] = this->window();
     this->keep(from, to);
-    using Item = typename decltype(Source::items(*fModel, *fTold, 0, 0))::value_type;
-    WindowShown<Item, Key> shown{.items = Source::items(*fModel, *fTold, from, to),
+    using Item = typename decltype(Source::items(*fModel, *fTold, 0, 0, std::optional<Key>()))::value_type;
+    const std::optional<Key> newest = fToEnd && fShownEnd ? fShownLast : std::nullopt;
+    fShownLast = to > 0 ? std::optional<Key>(Source::key(*fModel, *fTold, to - 1)) : std::nullopt;
+    fShownEnd = fToEnd;
+    WindowShown<Item, Key> shown{.items = Source::items(*fModel, *fTold, from, to, newest),
                                  // At the top: the window slides, or the history is asked for.
                                  .more_above = true,
                                  .more_below = !fToEnd,
@@ -721,7 +736,8 @@ private:
   const M *fModel = nullptr;
   std::optional<Told> fTold;
   std::optional<Key> fFrom, fTo;
-  bool fToEnd = true, fSlide = false, fAimNew = false;
+  bool fToEnd = true, fSlide = false, fAimNew = false, fShownEnd = false;
+  std::optional<Key> fShownLast;
   std::optional<model::Revision> fSeen;
 };
 
