@@ -1087,7 +1087,8 @@ template <class List, class Corner, class Show> WithWayDown<List, Corner, Show> 
 // noted, and what is under it clicked later: one that goes along is a drag
 // of the row, not a choice.
 template <class Line> struct SideScroll : Box<Line> {
-  explicit SideScroll(Line line) : Box<Line>(hbox(0.0f, {.masking = true}), std::move(line)) {}
+  explicit SideScroll(Line line, bool verticalWheel = false)
+      : Box<Line>(hbox(0.0f, {.masking = true}), std::move(line)), fVerticalWheel(verticalWheel) {}
   [[nodiscard]] Line &line() { return std::get<0>(this->fParts); }
   [[nodiscard]] const Line &line() const { return std::get<0>(this->fParts); }
   // How far it goes along: what of the line is past its room.
@@ -1104,10 +1105,11 @@ template <class Line> struct SideScroll : Box<Line> {
   template <class Phase>
     requires(std::same_as<Phase, scene::phase::bubble> || std::same_as<Phase, scene::phase::target>)
   void onPointer(const Phase &, const scene::pointer::scroll &wheel, scene::PointerReply &reply) {
-    if (wheel.dx == 0.0f || most() <= 0.0f)
+    const float delta = wheel.dx != 0.0f ? wheel.dx : fVerticalWheel ? wheel.dy : 0.0f;
+    if (delta == 0.0f || most() <= 0.0f)
       return;
     fGesture.setBounds(0.0f, most());
-    fGesture.glideTo(fGesture.target() - wheel.dx * 40.0f);
+    fGesture.glideTo(fGesture.target() - delta * 40.0f);
     scene::work::mark(this->fState.fId);
     reply.handle();
   }
@@ -1198,8 +1200,11 @@ private:
   bool fArmed = false;
   float fPressX = 0.0f, fPressY = 0.0f;
   double fLastMs = 0.0;
+  bool fVerticalWheel = false;
 };
-template <class Line> SideScroll<Line> side_scroll(Line line) { return SideScroll<Line>(std::move(line)); }
+template <class Line> SideScroll<Line> side_scroll(Line line, bool verticalWheel = false) {
+  return SideScroll<Line>(std::move(line), verticalWheel);
+}
 
 // ---- a >> b, a + b ----------------------------------------------------------
 
