@@ -6828,6 +6828,12 @@ public:
   }
   void focus(const Node &node) { this->focus(node.id()); }
   void clearFocus() { this->focus(0); }
+  // Everything drawn again: what draws it changed under all of it (the
+  // program's paint, say) -- walked whole at the next frame, all damaged.
+  void repaintAll() {
+    this->rootState().markDamaged();
+    ++work::fullGeneration();
+  }
   [[nodiscard]] NodeId focusedId() {
     Path ignored;
     return this->focusPath(ignored) ? fFocus : 0;
