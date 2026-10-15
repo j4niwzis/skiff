@@ -9,6 +9,22 @@ import :wiring;
 
 export namespace skiff::compose {
 
+// The plate around a focusable field follows that field's focus. The
+// field keeps its own geometry and input region inside the frame.
+template <class N> struct FocusFrame : Box<N> {
+  FocusFrame(Look look, N field) : Box<N>(std::move(look), std::move(field)) {}
+  [[nodiscard]] bool wantsTick() const {
+    return std::get<0>(this->fParts).focused() != this->selected();
+  }
+  void update(double) {
+    const bool focused = std::get<0>(this->fParts).focused();
+    if (focused != this->selected()) this->apply({.selected = focused});
+  }
+};
+template <class N> auto focus_frame(Look look, N field) {
+  return FocusFrame<N>(std::move(look), std::move(field));
+}
+
 // Observe a press before its target handles it, for example to dismiss a
 // popover when the press is outside it. The answer can edit the local model
 // while the target still handles its normal press.

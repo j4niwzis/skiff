@@ -3,6 +3,8 @@ import skia;
 import skiff.scene;
 import skiff.nodes.scroll;
 import skiff.compose;
+import skiff.model;
+import skiff.bind;
 import gtest;
 
 #include "gtest/gtest-macros.h"
@@ -17,6 +19,18 @@ auto scroll_view() {
   return view;
 }
 const auto viewport = skia::SkRect::MakeXYWH(0.0f, 0.0f, 200.0f, 100.0f);
+struct arrangement_gap {
+  float value = 2.0f;
+  friend bool operator==(const arrangement_gap&, const arrangement_gap&) = default;
+};
+struct arrangement_model { skiff::model::Tracked<arrangement_gap> gap; };
+struct gap_policy {
+  using State = arrangement_gap;
+  static void prepare(auto& node, const State& state) { node.setGap(state.value); }
+  static void arrange(auto&, const State&) {}
+  static bool settling(const auto&, const State&) { return false; }
+  static void settle(auto&, const State&) {}
+};
 }
 
 TEST(Views, EachListRestoresItsOffsetAfterShorterContentsWereShown) {
@@ -94,4 +108,44 @@ TEST(Views, CaptureObserverLeavesTheTargetsNormalClickAvailable) {
   EXPECT_EQ(observed, 2);
   EXPECT_TRUE(work.pressed.empty());
   work.answers.clear();
+}
+
+TEST(Views, AFieldsFrameTracksFocusWithoutChangingItsGeometry) {
+  auto field = c::onClick(1, c::column(c::vbox(0.0f, {.fillX = true, .height = 28.0f,
+      .margin = {2.0f, 14.0f, 0.0f, 14.0f}})), "Search");
+  auto node = c::focus_frame(c::vbox(0.0f, {.fillX = true, .height = 36.0f}), std::move(field));
+  scene::Scene tree(std::move(node));
+  tree.layoutIfNeeded(viewport);
+  const auto frame_box = tree.root().bounds();
+  const auto field_box = std::get<0>(tree.root().fParts).bounds();
+  tree.focus(std::get<0>(tree.root().fParts).id());
+  EXPECT_TRUE(tree.root().wantsTick());
+  tree.update(1000.0);
+  EXPECT_TRUE(tree.root().selected());
+  EXPECT_FALSE(tree.root().wantsTick());
+  EXPECT_EQ(tree.root().bounds(), frame_box);
+  EXPECT_EQ(std::get<0>(tree.root().fParts).bounds(), field_box);
+  tree.clearFocus();
+  tree.update(1100.0);
+  EXPECT_FALSE(tree.root().selected());
+}
+
+TEST(Views, ArrangementParametersReadFromTheModelChangeTheRealLayout) {
+  using model_type = skiff::model::Model<arrangement_model, skiff::bind::NoReactions>;
+  model_type model(arrangement_model{});
+  skiff::bind::Binding<model_type> binding;
+  auto node = c::bound<arrangement_gap>(c::arranged<gap_policy>({}, c::column(
+      c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+      c::column(c::vbox(0.0f, {.width = 40.0f, .height = 30.0f})),
+      c::column(c::vbox(0.0f, {.width = 40.0f, .height = 30.0f})))));
+  binding.refresh(node, model);
+  scene::layout(node, viewport);
+  EXPECT_FLOAT_EQ(std::get<1>(node.fParts).bounds().fTop, 32.0f);
+  model.apply(skiff::model::over<arrangement_gap>(skiff::model::setTo(arrangement_gap{8.0f})));
+  binding.refresh(node, model);
+  scene::layout(node, viewport);
+  EXPECT_FLOAT_EQ(std::get<1>(node.fParts).bounds().fTop, 38.0f);
+  EXPECT_TRUE(node.fState.fLayoutValid);
+  node.read(arrangement_gap{8.0f});
+  EXPECT_TRUE(node.fState.fLayoutValid);
 }

@@ -746,6 +746,16 @@ template <class N> Appearing<N> appearing(bool now, N node, float from = 12.0f) 
 template <class Policy, class N> struct Arranged : N {
   typename Policy::State fRules;
   Arranged(typename Policy::State rules, N node) : N(std::move(node)), fRules(std::move(rules)) {}
+  void read(const typename Policy::State& rules)
+    requires std::equality_comparable<typename Policy::State>
+  {
+    if (fRules == rules) return;
+    fRules = rules;
+    this->invalidateLayout();
+  }
+  template <class T>
+    requires requires(N& node, const T& value) { node.read(value); }
+  void read(const T& value) { N::read(value); }
   void layoutChildren() {
     Policy::prepare(static_cast<N &>(*this), fRules);
     this->nodes::Stack::layoutChildren();
