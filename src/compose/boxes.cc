@@ -888,6 +888,85 @@ auto sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const M
                                                                 std::move(makePart), makeStrip, std::move(onTab));
 }
 
+// A picture sized as a chat sizes one: its own size, or its picture's own
+// proportions once that has come (`ratio` of the node), fitted into `most`
+// by `most` and into the room there is, its proportions kept; no side under
+// `least` where the room allows. A cell of an album: as wide and as tall as
+// it is said (cell), whatever its picture.
+struct Fit {
+  float width = 0.0f, height = 0.0f;  // as the message says it; none: 320 by 240
+  float most = 430.0f, least = 100.0f;
+  std::optional<std::pair<float, float>> cell;
+};
+template <class Ratio, class N> struct Fitted : N {
+  Fit fFit;
+  Ratio fRatio;
+  Fitted(Fit fit, Ratio ratio, N node) : N(std::move(node)), fFit(fit), fRatio(std::move(ratio)) {}
+  void measure(const skia::SkRect &parent) {
+    if (fFit.cell) {
+      this->fState.fWidth = fFit.cell->first;
+      this->fState.fHeight = fFit.cell->second;
+      return;
+    }
+    float w = fFit.width > 0.0f ? fFit.width : 320.0f;
+    float h = fFit.height > 0.0f ? fFit.height : 240.0f;
+    // The picture's own proportions, where the message said none or others.
+    if (const std::optional<float> ratio = std::invoke(fRatio, static_cast<N &>(*this));
+        ratio && (fFit.width <= 0.0f || fFit.height <= 0.0f || std::abs(w / h - *ratio) > 0.01f))
+      h = w / *ratio;
+    const float room = parent.width() > 0.0f ? parent.width() : fFit.most;
+    const float scale = std::min({1.0f, fFit.most / w, fFit.most / h, room / w});
+    w *= scale;
+    h *= scale;
+    if (w < fFit.least && h < fFit.least) {
+      const float up = std::min(fFit.least / std::max(w, h), room / w);
+      w *= up;
+      h *= up;
+    }
+    this->fState.fWidth = std::floor(w);
+    this->fState.fHeight = std::floor(h);
+  }
+};
+template <class Ratio, class N> Fitted<Ratio, N> fitted(Fit fit, Ratio ratio, N node) {
+  return Fitted<Ratio, N>(fit, std::move(ratio), std::move(node));
+}
+
+// A picture and what turns over it while it comes: the second shown while
+// the first has no picture yet, and gone as it comes -- looked at only while
+// it is coming.
+template <class Picture, class Loader> struct WhileComing : Box<Picture, Loader> {
+  WhileComing(Look look, Picture picture, Loader loader) : Box<Picture, Loader>(std::move(look), std::move(picture), std::move(loader)) {}
+  [[nodiscard]] bool wantsTick() const { return std::get<1>(this->fParts).visible(); }
+  void update(double) {
+    auto &[picture, loader] = this->fParts;
+    const bool coming = picture.visible() && picture.image() == nullptr;
+    if (coming != loader.visible())
+      loader.setVisible(coming);
+  }
+};
+template <class Picture, class Loader> WhileComing<Picture, Loader> while_coming(Look look, Picture picture, Loader loader) {
+  return WhileComing<Picture, Loader>(std::move(look), std::move(picture), std::move(loader));
+}
+
+// Laid out at most as wide as its room, its natural width `wide`: narrower,
+// the share it is laid out at told to `fit(node, share)` -- an album's cells
+// all shrunk alike, a gap `gap` kept -- once each time the share changes.
+template <class Fit_, class N> struct Shrunk : N {
+  float fWide, fGap, fShare = 1.0f;
+  Fit_ fFit;
+  Shrunk(float wide, float gap, Fit_ fit, N node) : N(std::move(node)), fWide(wide), fGap(gap), fFit(std::move(fit)) {}
+  void measure(const skia::SkRect &parent) {
+    const float share = parent.width() > 0.0f ? std::min(1.0f, (parent.width() - fGap) / (fWide - fGap)) : 1.0f;
+    if (share <= 0.0f || share == fShare)
+      return;
+    fShare = share;
+    std::invoke(fFit, static_cast<N &>(*this), share);
+  }
+};
+template <class Fit_, class N> Shrunk<Fit_, N> shrunk(float wide, float gap, Fit_ fit, N node) {
+  return Shrunk<Fit_, N>(wide, gap, std::move(fit), std::move(node));
+}
+
 // Placed at a point of the window a part of the model says -- in window
 // coordinates, as what asked for it saw them -- out of its parent's flow,
 // kept inside its parent's box; shown where there is one: a popover over
