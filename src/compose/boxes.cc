@@ -135,6 +135,14 @@ struct Held : Stacked {
     fApply = +[](void *held, const scene::Spec &spec) { static_cast<T *>(held)->apply(spec); };
     parts.held = scene::AnyNode(std::forward<N>(node));
   }
+  // Made in place: a node that is never moved (a mount whose content may
+  // refer to itself).
+  template <class N, class... Args>
+    requires(std::derived_from<N, scene::Node> && !std::derived_from<N, Held>)
+  explicit Held(std::in_place_type_t<N> which, Args &&...args) : Stacked(vbox(0.0f)) {
+    fApply = +[](void *held, const scene::Spec &spec) { static_cast<N *>(held)->apply(spec); };
+    parts.held = scene::AnyNode(which, std::forward<Args>(args)...);
+  }
   [[nodiscard]] scene::AnyNode &held() noexcept { return parts.held; }
   [[nodiscard]] scene::AnyNode &seenThrough() noexcept { return parts.held; }
 
@@ -331,10 +339,18 @@ template <class Tag, class N> struct Marked : N {
 };
 template <class Tag, class N> auto marked(Tag tag, N node) { return erased(Marked<Tag, N>(std::move(node), std::move(tag))); }
 
+// A node made by a combinator where it cannot be moved: made in place, held
+// outside a release build; a prvalue in one.
+template <class N, class... Args> auto erased_made(Args &&...args) {
+  if constexpr (scene::kErasedCombinators)
+    return Held(std::in_place_type<N>, std::forward<Args>(args)...);
+  else
+    return N(std::forward<Args>(args)...);
+}
 // A node as a combinator returns it: itself in a release build; held,
 // outside one.
 template <class N> auto erased(N node) {
-  if constexpr (scene::kErasedWalks && !std::same_as<N, Held>)
+  if constexpr (scene::kErasedCombinators && !std::same_as<N, Held>)
     return Held(std::move(node));
   else
     return node;
@@ -551,12 +567,11 @@ template <class Content, class Facts, class Make> struct Mounted : Specced {
 template <class Content, class Facts, class Make>
 auto mount(Make make, scene::Spec spec = {},
                                     bool floats = false) {
-  return erased(Mounted<Content, Facts, Make>(std::move(make), std::move(spec),
-                                       floats));
+  return erased_made<Mounted<Content, Facts, Make>>(std::move(make), std::move(spec), floats);
 }
 template <class Content, class Facts, class Make>
 auto mount_now(Make make, const Facts &first, scene::Spec spec = {}) {
-  return erased(Mounted<Content, Facts, Make>(std::move(make), first, std::move(spec)));
+  return erased_made<Mounted<Content, Facts, Make>>(std::move(make), first, std::move(spec));
 }
 
 // ---- the model's kinds, around a node ------------------------------------

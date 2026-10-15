@@ -291,6 +291,11 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC
   $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<NOT:$<CONFIG:Release>>>:SKIFF_ERASED_WALKS>)
 # And outside a release build, the model's edits and looks go through its
 # runtime layer (skiff.model:schema): nothing made for each place's path.
+# Outside a release build every combinator erases what it returns
+# (compose::Held); this keeps them concrete with the walks still erased: for
+# skiff's own tests, which call a widget's members on what made it.
+option(SKIFF_CONCRETE_COMBINATORS "Keep what combinators return concrete outside a release build" OFF)
+target_compile_definitions(${PROJECT_NAME} PUBLIC $<$<BOOL:${SKIFF_CONCRETE_COMBINATORS}>:SKIFF_CONCRETE_COMBINATORS>)
 option(SKIFF_RUNTIME_MODEL "Outside a release build, edit and look at a model through its runtime layer" ON)
 target_compile_definitions(skiff_model PUBLIC
   $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<BOOL:${SKIFF_RUNTIME_MODEL}>,$<NOT:$<CONFIG:Release>>>:SKIFF_RUNTIME_MODEL>)

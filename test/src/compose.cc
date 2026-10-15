@@ -821,15 +821,15 @@ TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
   resting_t restingNode(300.0, noopRest, makeLocal());
   checkHolder(restingNode, [](resting_t &h) -> local_t & { return std::get<0>(h.fParts); });
 
-  auto pages = PageView(
-      [makeLocal](int) { return makeLocal(); },
+  using page_t = spl::variant<local_t>;
+  auto pages = page_view<int, page_t>(
+      [makeLocal](page_t &page, int) { page.template emplace<0>(makeLocal()); },
       [](int a, int b) { return a == b; },
-      [](int, int) { return 1.0f; },
-      [](local_t &) -> scene::Node * { return nullptr; },
-      [](int) -> std::optional<scene::Taken> { return std::nullopt; },
-      makeLocal(), {});
+      [](int) { return 1.0f; },
+      [](int) -> std::optional<scene::Spec> { return std::nullopt; },
+      page_t(std::in_place_index<0>, makeLocal()), {});
   static_assert(bind::detail::kHasLocal<decltype(pages)>);
-  checkHolder(pages, [](auto &h) -> local_t & { return h.page(); });
+  checkHolder(pages, [](auto &h) -> local_t & { return spl::get<local_t>(h.page()); });
 }
 
 TEST(Compose, ListedIsMadeAgainFromWhatItReads) {
@@ -901,12 +901,17 @@ TEST(Compose, RestingSaysWhenThePointerHasRestedAndWhenItLeaves) {
   node.update(1200.0);
   EXPECT_TRUE(said.empty());
   EXPECT_TRUE(node.settling());
+  // Said as a press: the node due, its act asked as the press is delivered.
   node.update(1300.0);
+  EXPECT_EQ(scene::hostWork().pressedNow, &node.fState);
+  node.onPress();
   EXPECT_EQ(said, std::vector<bool>{true});
   EXPECT_FALSE(node.settling());
   node.fState.fHovered = false;
   node.update(1400.0);
+  node.onPress();
   EXPECT_EQ(said, (std::vector<bool>{true, false}));
+  scene::hostWork().pressedNow = nullptr;
 }
 
 // A node shown only while what it reads says so, holding a text made from

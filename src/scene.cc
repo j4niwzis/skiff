@@ -35,6 +35,14 @@ inline constexpr bool kErasedWalks = true;
 #else
 inline constexpr bool kErasedWalks = false;
 #endif
+// Whether what each combinator returns is erased (compose::Held): where the
+// walks are, unless a build keeps them concrete -- skiff's own tests of each
+// widget's behaviour, which call its members on what its combinator made.
+#if defined(SKIFF_ERASED_WALKS) && !defined(SKIFF_CONCRETE_COMBINATORS)
+inline constexpr bool kErasedCombinators = true;
+#else
+inline constexpr bool kErasedCombinators = false;
+#endif
 
 
 // What a widget does when it was not given anything to do.
@@ -4359,6 +4367,27 @@ void collectFocusable(AnyNodeRef &, std::vector<NodeId> &);
                              float);
 [[nodiscard]] double wakeAt(AnyNodeRef &);
 void damageOver(AnyNodeRef &, NodeId, const skia::SkRect &, bool &, skia::SkRect &);
+// The routes given what was carried down to an erased node: nothing is
+// carried past one (a scene's root walked through its table, outside a
+// release build), so the carried is let go there.
+template <class C>
+void routePointer(AnyNodeRef &node, const Path &path, std::size_t at, const PointerEvent &e, PointerReply &reply, Routed &routed,
+                  bool targetOnly, const C &) {
+  routePointer(node, path, at, e, reply, routed, targetOnly);
+}
+template <class C> void routeKey(AnyNodeRef &node, const Path &path, std::size_t at, const KeyEvent &e, Reply &reply, const C &) {
+  routeKey(node, path, at, e, reply);
+}
+template <class C> void routeText(AnyNodeRef &node, const Path &path, std::size_t at, const TextEvent &e, Reply &reply, const C &) {
+  routeText(node, path, at, e, reply);
+}
+template <class C>
+void routeSemantic(AnyNodeRef &node, const Path &path, std::size_t at, const SemanticAction &e, Reply &reply, const C &) {
+  routeSemantic(node, path, at, e, reply);
+}
+template <class C> [[nodiscard]] bool clickPath(AnyNodeRef &node, const Path &path, std::size_t at, float x, float y, const C &) {
+  return clickPath(node, path, at, x, y);
+}
 
 // A node that does something of its own each frame says update() itself:
 // Node's is a template taking itself, which no member pointer names.
@@ -5770,6 +5799,12 @@ public:
       fOps = &opsOf<std::remove_cvref_t<T>>();
     }
   }
+
+  // Made in place, for a node that is never moved.
+  template <class T, class... Args>
+    requires std::derived_from<T, Node>
+  explicit AnyNode(std::in_place_type_t<T>, Args &&...args)
+      : fNode(new T(std::forward<Args>(args)...)), fOps(&opsOf<T>()) {}
 
   AnyNode(const AnyNode &) = delete;
   AnyNode &operator=(const AnyNode &) = delete;

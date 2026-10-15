@@ -35,6 +35,9 @@ CPMAddPackage(
 if(TEST_INSTALLED_VERSION)
   find_package(skiff REQUIRED)
 else()
+  # The widgets' members called on what their combinators made: kept
+  # concrete (Held's own behaviour is tested apart).
+  set(SKIFF_CONCRETE_COMBINATORS ON CACHE BOOL "" FORCE)
   CPMAddPackage(NAME skiff SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/..)
 endif()
 
