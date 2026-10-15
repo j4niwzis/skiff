@@ -679,6 +679,28 @@ TEST(Compose, VisibilityProjectionReadsLocalModelFields) {
   EXPECT_TRUE(node.visible());
 }
 
+TEST(Compose, AProjectionOverAProjectedNodeTellsItTheSamePart) {
+  struct Flag {
+    bool on = false;
+    int width = 10;
+  };
+  struct Root {
+    model::Tracked<Flag> flag;
+  };
+  model::Model<Root, bind::NoReactions> model;
+  // Shown as one projection says, its width as the one under it does.
+  auto node = shown_for<Flag>([](const Flag& now) { return now.on; },
+                              spec_for<Flag>([](const Flag& now) { return scene::Spec{.width = static_cast<float>(now.width)}; }, Pad{}));
+  bind::Binding<decltype(model)> binding;
+  binding.refresh(node, model);
+  EXPECT_FALSE(node.visible());
+  EXPECT_EQ(node.fState.width(), 10.0f);
+  model.apply(model::edit(model::placeOf<Flag, Root>(), model::setTo(Flag{true, 30})));
+  binding.refresh(node, model);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(node.fState.width(), 30.0f);
+}
+
 TEST(Compose, ARefreshCombinesChangedPathsAndLeavesOtherBindingsAlone) {
   struct First { int value = 0; };
   struct Second { int value = 0; };

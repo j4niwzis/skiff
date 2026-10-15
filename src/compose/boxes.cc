@@ -532,11 +532,24 @@ template <class... Reads, class Compute, class N> bind::Derived<Compute, ShownBy
 
 // Project a bound part into the value a node reads. Unlike derived, this
 // works below scopes and local state as well as at the root.
+// A projection over a node that reads a part of its own -- shown_for over
+// a spec_for, a text_for, a list -- hides that node's read under its own:
+// the part it reads is passed on to it too, where it reads the same.
+template <class N, class T> void readNested(N &, const T &) {}
+template <class N, class T>
+  requires bind::IsBound<N> &&
+           std::same_as<typename bind::BoundValueT<typename std::remove_cvref_t<decltype(bind::detail::asBound(std::declval<N &>()))>::BoundTo>::type, T>
+void readNested(N &node, const T &value) {
+  bind::detail::asBound(node).read(value);
+}
 template <class Compute, class N> struct Projected : N {
   Compute fCompute;
   Projected(Compute compute, N node)
       : N(std::move(node)), fCompute(std::move(compute)) {}
-  template <class T> void read(const T &value) { N::read(fCompute(value)); }
+  template <class T> void read(const T &value) {
+    N::read(fCompute(value));
+    readNested(static_cast<N &>(*this), value);
+  }
 };
 template <class Want, class Compute, class N>
 auto projected(Compute compute, N node) {
