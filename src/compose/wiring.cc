@@ -8,6 +8,8 @@ import skiff.scene;
 import skiff.nodes;
 import skiff.model;
 import skiff.bind;
+import skiff.paint;
+import skia;
 import :boxes;
 
 export namespace skiff::compose {
@@ -208,6 +210,186 @@ private:
 template <class Act, class N> Resting<Act, N> resting(double ms, Act act, N node) {
   return Resting<Act, N>(ms, std::move(act), std::move(node));
 }
+
+// A node swiped to the left to do something with it -- a message answered,
+// as Telegram's: a press that moves left at once -- more across than up or
+// down, within a quarter of a second, nothing holding the pointer yet --
+// takes the pointer and moves the node with it, as far as `most`; let go
+// past `reach`, what `act` answers; either way it goes back. `mark` beside
+// it, out of the flow, told how far it is as a share of the reach
+// (`show(mark, share)`): an arrow filling as it gets there. The node is
+// held, not derived from: its own presses stay its own.
+template <class Act, class Mark, class Show, class N> struct Swiped : Box<N, Mark> {
+  using Out = Union<OutOf<N>, model::Types<std::remove_cvref_t<std::invoke_result_t<Act &>>>>;
+  Act fAct;
+  Show fShow;
+  float fReach, fMost;
+  paint::Tween fShift{0.0f, 180.0f, paint::movement::subtle{}};
+  float fDrawn = 0.0f;
+  bool fArmed = false, fDragging = false;
+  float fX = 0.0f, fY = 0.0f;
+  std::chrono::steady_clock::time_point fPressed{};
+  Swiped(float reach, float most, Act act, Show show, Mark mark, N node)
+      : Box<N, Mark>(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(node), std::move(mark)),
+        fAct(std::move(act)), fShow(std::move(show)), fReach(reach), fMost(most) {}
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  using nodes::Stack::onPointer;
+  void onPointer(scene::phase::capture, const scene::pointer::down &press, scene::PointerReply &) {
+    fArmed = press.button <= 1;
+    fX = press.x;
+    fY = press.y;
+    fPressed = std::chrono::steady_clock::now();
+  }
+  void onPointer(scene::phase::capture, const scene::pointer::move &at, scene::PointerReply &reply) {
+    if (fDragging) {
+      fShift.jump(std::clamp(at.x - fX, -fMost, 0.0f));
+      this->markDamaged();
+      reply.handle();
+      return;
+    }
+    if (!fArmed)
+      return;
+    // Something holds the pointer already -- a text being selected: this
+    // drag is its, not a swipe.
+    if (reply.fCaptured) {
+      fArmed = false;
+      return;
+    }
+    const float dx = at.x - fX, dy = at.y - fY;
+    if (std::abs(dx) < 8.0f && std::abs(dy) < 8.0f)
+      return;
+    fArmed = false;
+    if (dx >= 0.0f || std::abs(dx) < 2.0f * std::abs(dy) ||
+        std::chrono::steady_clock::now() - fPressed > std::chrono::milliseconds(250))
+      return;
+    fDragging = true;
+    fShift.jump(std::clamp(dx, -fMost, 0.0f));
+    reply.capturePointer();
+    reply.suppressHover();
+    reply.handle();
+  }
+  void onPointer(scene::phase::capture, const scene::pointer::up &, scene::PointerReply &reply) {
+    fArmed = false;
+    if (!std::exchange(fDragging, false))
+      return;
+    if (fShift.value() <= -fReach)
+      scene::pressLater(this->fState);
+    fShift.setTarget(0.0f);
+    scene::work::mark(this->fState.fId);  // ticked back: nothing else asks for its frames
+    reply.releasePointer();
+    reply.handle();
+  }
+  void onPointer(scene::phase::capture, const scene::pointer::cancel &, scene::PointerReply &reply) {
+    fArmed = false;
+    if (!std::exchange(fDragging, false))
+      return;
+    fShift.setTarget(0.0f);
+    scene::work::mark(this->fState.fId);
+    reply.releasePointer();
+  }
+  auto onPress() { return std::invoke(fAct); }
+  [[nodiscard]] bool settling() const { return fShift.moving() || fShift.value() != fDrawn; }
+  [[nodiscard]] bool wantsTick() const { return settling(); }
+  void update(double nowMs) {
+    if (!fShift.step(nowMs) && fShift.value() == fDrawn)
+      return;
+    fDrawn = fShift.value();
+    auto &[node, mark] = this->fParts;
+    node.apply({.shiftX = fDrawn});
+    std::invoke(fShow, mark, std::clamp(-fDrawn / fReach, 0.0f, 1.0f));
+  }
+};
+template <class Act, class Mark, class Show, class N>
+Swiped<Act, Mark, Show, N> swiped(float reach, float most, Act act, Show show, Mark mark, N node) {
+  return Swiped<Act, Mark, Show, N>(reach, most, std::move(act), std::move(show), std::move(mark), std::move(node));
+}
+
+// A wash over a node in a colour, as the model says: held while it is said
+// to be (a message selected), and a flash that fades -- each time it is
+// told a newer one (a message jumped to). What it reads: Wash.
+struct Wash {
+  bool held = false;
+  std::uint64_t flash = 0;  // a newer one: flashed again
+  friend bool operator==(const Wash &, const Wash &) = default;
+};
+template <class N> struct Washed : N {
+  skia::SkColor fColour;
+  float fHeld, fFlash;
+  paint::Tween fFading{0.0f, 1200.0f};
+  Wash fNow{};
+  bool fRead = false;
+  Washed(skia::SkColor colour, float held, float flash, N node) : N(std::move(node)), fColour(colour), fHeld(held), fFlash(flash) {}
+  void read(const Wash &now) {
+    const bool flashed = fRead && now.flash != fNow.flash;
+    fRead = true;
+    fNow = now;
+    if (flashed) {
+      fFading.jump(1.0f);
+      fFading.setTarget(0.0f);
+      scene::work::mark(this->fState.fId);
+    }
+    paint();
+  }
+  [[nodiscard]] bool settling() const { return fFading.moving(); }
+  [[nodiscard]] bool wantsTick() const { return settling(); }
+  void update(double nowMs) {
+    if (fFading.step(nowMs))
+      paint();
+  }
+
+private:
+  void paint() {
+    const float strength = std::max(fFlash * fFading.value(), fNow.held ? fHeld : 0.0f);
+    this->apply({.background = strength > 0.0f ? (fColour & 0x00FFFFFFu) | (static_cast<skia::SkColor>(std::lround(strength)) << 24)
+                                               : skia::SkColor{0}});
+    this->markDamaged();
+  }
+};
+template <class Want, class Compute, class N> auto washed_for(skia::SkColor colour, float held, float flash, Compute compute, N node) {
+  return projected<Want>(std::move(compute), Washed<N>(colour, held, flash, std::move(node)));
+}
+
+// A node that comes in moving, where it is made so: from below, fading in,
+// as a message that has just come in Telegram. Unseen until its first frame
+// is laid out, so it is first seen where it goes.
+template <class N> struct Appearing : N {
+  paint::Tween fIn{1.0f, 220.0f};
+  float fFrom;
+  Appearing(bool now, float from, N node) : N(std::move(node)), fFrom(from) {
+    if (!now)
+      return;
+    fIn.jump(0.0f);
+    fIn.setTarget(1.0f);
+    this->apply({.alpha = 0.0f, .shiftY = fFrom});
+  }
+  [[nodiscard]] bool settling() const { return fIn.moving(); }
+  [[nodiscard]] bool wantsTick() const { return settling(); }
+  void update(double nowMs) {
+    if (fIn.step(nowMs)) {
+      const float shown = fIn.value();
+      this->apply({.alpha = shown, .shiftY = (1.0f - shown) * fFrom});
+    }
+  }
+};
+template <class N> Appearing<N> appearing(bool now, N node, float from = 12.0f) { return Appearing<N>(now, from, std::move(node)); }
+
+// A node laid out, then arranged and settled by rules of its own -- a
+// message's bubble: its time beside its last line where they fit, a
+// sticker's name and quote beside it. The rules are Policy's: a type with
+// static members, arrange(N&) after its parts are laid out, settle(N&) at
+// each frame it asks for (settling(const N&)) -- a template parameter, not
+// a callback.
+template <class Policy, class N> struct Arranged : N {
+  explicit Arranged(N node) : N(std::move(node)) {}
+  void layoutChildren() {
+    this->nodes::Stack::layoutChildren();
+    Policy::arrange(static_cast<N &>(*this));
+  }
+  [[nodiscard]] bool settling() const { return Policy::settling(static_cast<const N &>(*this)); }
+  [[nodiscard]] bool wantsTick() const { return settling(); }
+  void update(double) { Policy::settle(static_cast<N &>(*this)); }
+};
+template <class Policy, class N> Arranged<Policy, N> arranged(N node) { return Arranged<Policy, N>(std::move(node)); }
 
 // A row longer than its room, moved sideways -- by a finger or a mouse
 // dragged along it, flicked to glide on, or a sideways wheel -- and cut to
