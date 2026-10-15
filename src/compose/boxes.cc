@@ -57,6 +57,7 @@ struct Stacked : nodes::Stack {
 // made from one of its alternatives, or in place as one of them. Another
 // look said first: as tall and as wide as it is, for one.
 template <class Shown> struct Holding : Stacked {
+  using BindingChildren = std::tuple<Shown>;
   struct parts_t {
     Shown shown;
   } parts;
@@ -1022,6 +1023,7 @@ template <class Want, class Compute, class N> auto placed_at(Compute compute, N 
 //
 //   page_view<Facts, Page>(show, same, side, pin, back, first_page, spec)
 template <class Facts, class Page, class Show, class Same, class Side, class Pin, class Back> struct PageView : Specced {
+  using BindingChildren = std::tuple<Page>;
   Show fShow;
   Same fSame;
   Side fSide;

@@ -467,6 +467,7 @@ template <class Key, class View, class Row, class Make, class Locate = NoLocate,
 class WindowList : public nodes::ScrollContainer<nodes::MemoRows<Key, View, Row, Make>> {
 public:
   using Rows = nodes::MemoRows<Key, View, Row, Make>;
+  using BindingChildren = std::tuple<Rows>;
   using Aimed = ListAimed<Key, Tag>;
   using Edge = ListEdge<Tag>;
   using Seen = ListSeen<Key, Tag>;

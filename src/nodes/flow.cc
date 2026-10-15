@@ -688,6 +688,7 @@ public:
 // made from its item -- as its child, filling it across.
 template <class Key, class View, class Row> class KeptRow : public skiff::scene::Node {
 public:
+  using BindingChildren = std::tuple<Row>;
   template <class Item, class Make>
   KeptRow(const Item &item, Make &make)
       : fKey(std::get<0>(item)), fView(std::get<1>(item)), fRow(std::invoke(make, item)) {
@@ -710,6 +711,7 @@ template <class Key, class View, class Row, class Make, class Container = Stack>
 class MemoRows : public Container {
 public:
   using Kept = KeptRow<Key, View, Row>;
+  using BindingChildren = std::tuple<Kept>;
   MemoRows() = default;
   explicit MemoRows(Make make, Container container = {})
       : Container(std::move(container)), fMake(std::move(make)) {}

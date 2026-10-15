@@ -227,6 +227,10 @@ template <class T, class Allocator, class... Seen>
 struct HasLocal<std::vector<T, Allocator>, Seen...> : HasLocal<T, Seen...> {};
 template <class T, class D, class... Seen>
 struct HasLocal<std::unique_ptr<T, D>, Seen...> : HasLocal<T, Seen...> {};
+template <class T, class... Seen>
+struct HasLocal<std::shared_ptr<T>, Seen...> : HasLocal<T, Seen...> {};
+template <class T, class... Seen>
+struct HasLocal<std::reference_wrapper<T>, Seen...> : HasLocal<T, Seen...> {};
 template <class... T, class... Seen>
 struct HasLocal<std::tuple<T...>, Seen...> : AnyHasLocal<std::tuple<T...>, Seen...> {};
 template <class... T, class... Seen>

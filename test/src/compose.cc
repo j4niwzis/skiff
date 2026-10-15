@@ -723,10 +723,18 @@ TEST(Compose, PointerHandlerRetainsClickOutputsAndReadsItsNode) {
 }
 
 TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
-  using local_t = decltype(local<Expanded>(bound<Expanded>(Chevron{})));
+  struct FlipLocal {};
+  const auto makeLocal = [] {
+    return local<Expanded>(
+        handlers(handle<FlipLocal>([] { return model::over<Expanded>(model::flip); })),
+        onClick(FlipLocal{}, bound<Expanded>(Chevron{})));
+  };
+  using local_t = decltype(makeLocal());
   static_assert(bind::detail::kHasLocal<std::optional<local_t>>);
   static_assert(bind::detail::kHasLocal<std::vector<local_t>>);
   static_assert(bind::detail::kHasLocal<std::unique_ptr<local_t>>);
+  static_assert(bind::detail::kHasLocal<std::shared_ptr<local_t>>);
+  static_assert(bind::detail::kHasLocal<std::reference_wrapper<local_t>>);
   static_assert(bind::detail::kHasLocal<std::tuple<int, local_t>>);
   static_assert(bind::detail::kHasLocal<std::variant<int, local_t>>);
   static_assert(bind::detail::kHasLocal<spl::variant<int, local_t>>);
@@ -734,10 +742,72 @@ TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
   static_assert(bind::detail::kHasLocal<memo_t>);
   using mounted_t = Mounted<local_t, int, std::identity>;
   static_assert(bind::detail::kHasLocal<mounted_t>);
+  using kept_row_t = nodes::KeptRow<int, int, local_t>;
+  static_assert(bind::detail::kHasLocal<kept_row_t>);
+  const auto makeItem = [makeLocal](const std::tuple<int, int> &) { return makeLocal(); };
+  using memo_rows_t = nodes::MemoRows<int, int, local_t, decltype(makeItem)>;
+  static_assert(bind::detail::kHasLocal<memo_rows_t>);
+  using holding_t = Holding<std::variant<nodes::Text, local_t>>;
+  static_assert(bind::detail::kHasLocal<holding_t>);
+  using window_list_t = WindowList<int, int, local_t, decltype(makeItem)>;
+  static_assert(bind::detail::kHasLocal<window_list_t>);
+  const auto noopAct = [] { return scene::Taken{}; };
+  const auto noopShow = [](nodes::Text &, float) {};
+  using swiped_t = Swiped<decltype(noopAct), nodes::Text, decltype(noopShow), local_t>;
+  static_assert(bind::detail::kHasLocal<swiped_t>);
+  const auto noopRest = [](bool) { return scene::Taken{}; };
+  using resting_t = Resting<decltype(noopRest), local_t>;
+  static_assert(bind::detail::kHasLocal<resting_t>);
   static_assert(!bind::detail::kHasLocal<nodes::Memo<int, nodes::Text>>);
+  static_assert(!bind::detail::kHasLocal<nodes::KeptRow<int, int, nodes::Text>>);
+  static_assert(!bind::detail::kHasLocal<Holding<std::variant<nodes::Text>>>);
   static_assert(!bind::detail::kHasLocal<std::vector<int>>);
   static_assert(!bind::detail::kHasLocal<std::unique_ptr<nodes::Text>>);
   static_assert(!bind::detail::kHasLocal<std::tuple<int, nodes::Text>>);
+
+  // Verify on the Release LocalPass path that editing a Local inside each
+  // holder refreshes its bound child without an outer model change.
+  using PlainModel = model::Model<int, bind::NoReactions>;
+  const auto checkHolder = [](auto &&holder, auto &&findLocal) {
+    PlainModel model(0);
+    bind::Binding<PlainModel> binding;
+    binding.refresh(holder, model);
+    local_t &target = findLocal(holder);
+    EXPECT_FALSE(target.fOpen);
+    ASSERT_TRUE(bind::press(target, model, scene::Path{}));
+    // Also exercise detail::LocalPass<PlainModel> directly (the Release path).
+    bind::detail::LocalPass<PlainModel> pass{model};
+    bind::detail::visitNode(pass, holder, model::Place<int, model::Path<>>{});
+    binding.refresh(holder, model);
+    EXPECT_TRUE(target.fOpen);
+  };
+
+  memo_rows_t rows(makeItem);
+  rows.read(std::vector<std::tuple<int, int>>{{1, 10}});
+  checkHolder(rows, [](memo_rows_t &h) -> local_t & { return h.fRows[0].fRow; });
+
+  holding_t held(makeLocal());
+  checkHolder(held, [](holding_t &h) -> local_t & { return std::get<local_t>(h.parts.shown); });
+
+  window_list_t win(makeItem);
+  win.read(WindowShown<std::tuple<int, int>, int>{.items = {{1, 10}}});
+  checkHolder(win, [](window_list_t &h) -> local_t & { return h.rows().fRows[0].fRow; });
+
+  swiped_t swipedNode(48.0f, 72.0f, noopAct, noopShow, nodes::Text("", 12.0f, 0), makeLocal());
+  checkHolder(swipedNode, [](swiped_t &h) -> local_t & { return std::get<0>(h.fParts); });
+
+  resting_t restingNode(300.0, noopRest, makeLocal());
+  checkHolder(restingNode, [](resting_t &h) -> local_t & { return std::get<0>(h.fParts); });
+
+  auto pages = PageView(
+      [makeLocal](int) { return makeLocal(); },
+      [](int a, int b) { return a == b; },
+      [](int, int) { return 1.0f; },
+      [](local_t &) -> scene::Node * { return nullptr; },
+      [](int) -> std::optional<scene::Taken> { return std::nullopt; },
+      makeLocal(), {});
+  static_assert(bind::detail::kHasLocal<decltype(pages)>);
+  checkHolder(pages, [](auto &h) -> local_t & { return h.page(); });
 }
 
 TEST(Compose, ListedIsMadeAgainFromWhatItReads) {
