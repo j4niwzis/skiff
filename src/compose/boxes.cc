@@ -1031,6 +1031,75 @@ template <class Want, class Compute, class N> auto placed_at(Compute compute, N 
   return projected<Want>(std::move(compute), PlacedAt<N>(std::move(node)));
 }
 
+// Where a popover opens, in window coordinates: at a point (a menu, at the
+// pointer) -- going down and right, up where it would pass its parent's
+// bottom, left where it would pass its right -- or beside a box (a row's
+// list, opening from it), over its edge by `overlap`, to its right where
+// there is room, else its left, its top at the box's or higher where it
+// would pass the bottom. Kept `edge` inside its parent either way.
+struct PopAt {
+  skia::SkRect from = skia::SkRect::MakeEmpty();
+  bool beside = false;
+  float overlap = 0.0f;
+  friend bool operator==(const PopAt &, const PopAt &) = default;
+};
+template <class N> struct Popped : N {
+  std::optional<PopAt> fAt;
+  float fEdge;
+  Popped(float edge, N node) : N(std::move(node)), fEdge(edge) {
+    this->fState.apply({.place = scene::anchor::kTopLeft});
+    this->setVisible(false);
+  }
+  void read(const std::optional<PopAt> &at) {
+    if (fAt == at)
+      return;
+    fAt = at;
+    this->setVisible(at.has_value());
+    this->invalidateLayout();
+  }
+  [[nodiscard]] bool settling() const { return fAt.has_value() && this->target() != this->now(); }
+  void update(double) {
+    if (!fAt)
+      return;
+    const skia::SkPoint want = this->target();
+    if (want == this->now())
+      return;
+    const skia::SkRect box = this->fState.fLastConstraint;
+    this->setPosition(want.fX - box.fLeft, want.fY - box.fTop);
+  }
+
+private:
+  [[nodiscard]] skia::SkPoint now() const {
+    return {std::round(this->fState.fBounds.fLeft), std::round(this->fState.fBounds.fTop)};
+  }
+  // Where it goes, in its parent's coordinates as laid out.
+  [[nodiscard]] skia::SkPoint target() const {
+    const skia::SkRect box = this->fState.fLastConstraint;
+    const skia::SkRect &self = this->fState.fBounds;
+    if (box.isEmpty() || self.isEmpty())
+      return this->now();
+    const auto shift = scene::work::drawnOffset(this->fState.fId);
+    const skia::SkRect from = fAt->from.makeOffset(-shift.x, -shift.y);
+    const float w = self.width(), h = self.height();
+    float x = 0.0f, y = 0.0f;
+    if (fAt->beside) {
+      x = from.fRight - fAt->overlap;
+      if (x + w > box.fRight - fEdge)
+        x = from.fLeft + fAt->overlap - w;
+      y = std::min(from.fTop, box.fBottom - fEdge - h);
+    } else {
+      x = from.fLeft + w > box.fRight - fEdge ? from.fLeft - w : from.fLeft;
+      y = from.fTop + h > box.fBottom - fEdge ? from.fTop - h : from.fTop;
+    }
+    x = std::clamp(x, box.fLeft + fEdge, std::max(box.fLeft + fEdge, box.fRight - w - fEdge));
+    y = std::clamp(y, box.fTop + fEdge, std::max(box.fTop + fEdge, box.fBottom - h - fEdge));
+    return {std::round(x), std::round(y)};
+  }
+};
+template <class Want, class Compute, class N> auto popped_at(Compute compute, float edge, N node) {
+  return projected<Want>(std::move(compute), Popped<N>(edge, std::move(node)));
+}
+
 
 // Pages in a view that scrolls, one up at a time, chosen by what it reads:
 // a page made by `show` from the facts -- which says whether it is another

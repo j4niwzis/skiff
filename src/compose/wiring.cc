@@ -474,6 +474,42 @@ template <class Ask, class N> OnRightPressAt<Ask, N> onRightPressAt(Ask ask, N n
   return OnRightPressAt<Ask, N>(std::move(ask), std::move(node));
 }
 
+// A node that says as the pointer comes onto it and leaves it -- with its
+// box, in window coordinates: what `act(on, box)` answers (a list opening
+// beside it, from there).
+template <class Act, class N> struct Hovering : Box<N> {
+  using Out = Union<OutOf<N>, model::Types<std::remove_cvref_t<std::invoke_result_t<Act &, bool, const skia::SkRect &>>>>;
+  Act fAct;
+  bool fOn = false;
+  Hovering(Act act, N node) : Box<N>(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(node)), fAct(std::move(act)) {}
+  [[nodiscard]] bool hoverChangesAppearance() const { return true; }
+  [[nodiscard]] bool wantsTick() const { return this->hovered() != fOn; }
+  void update(double) {
+    if (this->hovered() == fOn)
+      return;
+    fOn = this->hovered();
+    scene::pressLater(this->fState);
+  }
+  auto onPress() {
+    const auto shift = scene::work::drawnOffset(this->fState.fId);
+    return std::invoke(fAct, fOn, this->fState.fBounds.makeOffset(shift.x, shift.y));
+  }
+};
+template <class Act, class N> Hovering<Act, N> hovering(Act act, N node) { return Hovering<Act, N>(std::move(act), std::move(node)); }
+
+// A list whose items Up and Down go through, round, as a menu's: the focus
+// moved, the key taken. Focusable itself, so the keys come to it first.
+template <class N> struct MovesFocus : N {
+  explicit MovesFocus(N node) : N(std::move(node)) {}
+  [[nodiscard]] bool focusable() const { return true; }
+  using N::onKey;
+  void onKey(scene::phase::bubble, const scene::key::down &press, scene::Reply &reply) {
+    if (press.key == scene::keys::kUp || press.key == scene::keys::kDown)
+      reply.moveFocus(press.key == scene::keys::kUp);
+  }
+};
+template <class N> MovesFocus<N> moves_focus(N node) { return MovesFocus<N>(std::move(node)); }
+
 // A node swiped to the left to do something with it -- a message answered,
 // as Telegram's: a press that moves left at once -- more across than up or
 // down, within a quarter of a second, nothing holding the pointer yet --
