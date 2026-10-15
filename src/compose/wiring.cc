@@ -330,6 +330,50 @@ template <class Want, class On, class List> auto spanned_for(On on, List list) {
   return projected<Want>(std::move(on), Spanned<List>(std::move(list)));
 }
 
+// A scroll over what is made a part at a time, as Qt's fetchMore: what
+// reads the model says whose list it is, how many are made, and whether
+// there are more (Fetched). Near the end of what is made, with more, `ask()`
+// is answered -- once for each count made: the program makes more, and the
+// count it says moves on. Another's list starts at its top.
+template <class Key> struct Fetched {
+  Key of{};
+  std::size_t made = 0;
+  bool more = false;
+  friend bool operator==(const Fetched &, const Fetched &) = default;
+};
+template <class Key, class Ask, class Contents> struct Fetching : nodes::ScrollContainer<Contents> {
+  using Answer = std::invoke_result_t<const Ask &>;
+  Ask fAsk;
+  std::optional<Fetched<Key>> fNow;
+  std::optional<std::size_t> fAsked;
+  std::optional<Answer> fDue;
+  Fetching(Ask ask, nodes::ScrollContainer<Contents> scroll)
+      : nodes::ScrollContainer<Contents>(std::move(scroll)), fAsk(std::move(ask)) {}
+  void read(const Fetched<Key> &now) {
+    if (fNow && fNow->of != now.of) {
+      this->scrollToStart();
+      fAsked.reset();
+    }
+    fNow = now;
+    // Looked at again at the next frame: what was made may not reach the end.
+    scene::work::mark(this->fState.fId);
+  }
+  void update(double nowMs) {
+    nodes::ScrollContainer<Contents>::update(nowMs);
+    const float ahead = std::max(300.0f, this->bounds().height() * 1.5f);
+    if (fNow && fNow->more && fAsked != fNow->made && this->atEnd(ahead)) {
+      fAsked = fNow->made;
+      fDue = fAsk();
+      scene::pressLater(this->fState);
+    }
+  }
+  std::optional<Answer> onPress() { return std::exchange(fDue, std::nullopt); }
+};
+template <class Want, class Key, class Compute, class Ask, class Contents>
+auto fetching_for(Compute compute, Ask ask, nodes::ScrollContainer<Contents> scroll) {
+  return projected<Want>(std::move(compute), Fetching<Key, Ask, Contents>(std::move(ask), std::move(scroll)));
+}
+
 // A picture seen whole -- a viewer's: fitted in its room less a margin
 // (never larger than itself), zoomed and moved as what it reads says
 // (ZoomView, through projected), masked to its room. It answers what is
