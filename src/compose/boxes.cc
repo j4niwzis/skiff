@@ -144,7 +144,7 @@ template <class Make, class N> struct Listed : Many<N> {
   Make fMake;
   Listed(Look look, Make make) : Many<N>(std::move(look), {}), fMake(std::move(make)) {}
   template <std::ranges::input_range R> void read(const R &items) {
-    this->fParts = std::ranges::to<std::vector>(std::views::transform(items, std::ref(fMake)));
+    this->fParts = items | std::views::transform(std::ref(fMake)) | std::ranges::to<std::vector>();
     this->invalidateLayout();
     this->markDamaged();
   }
@@ -670,7 +670,7 @@ template <class Element, class Button> struct WrappedStrip : nodes::Stack {
   }
   // Lit, or none (an index past them all).
   void light(std::size_t at) {
-    for (auto &&[index, tab] : std::views::enumerate(buttons())) {
+    for (auto &&[index, tab] : buttons() | std::views::enumerate) {
       const bool on = static_cast<std::size_t>(index) == at;
       if (on == tab.fState.selected())
         continue;
@@ -698,7 +698,7 @@ template <class Element, class Button> struct RowStrip : Many<Button> {
     this->invalidateLayout();
   }
   void light(std::size_t at) {
-    for (auto &&[index, tab] : std::views::enumerate(this->fParts))
+    for (auto &&[index, tab] : this->fParts | std::views::enumerate)
       tab.fState.apply({.selected = static_cast<std::size_t>(index) == at});
   }
 };
@@ -766,7 +766,7 @@ template <class Element, class Button, class MakeArrow> struct PagedStrip : node
     this->fState.relayoutQuietly();
   }
   void light(std::size_t at) {
-    for (auto &&[index, tab] : std::views::enumerate(buttons())) {
+    for (auto &&[index, tab] : buttons() | std::views::enumerate) {
       const bool on = static_cast<std::size_t>(index) == at;
       if (on && !tab.fState.selected() && !tab.visible()) {
         fFirst = static_cast<std::size_t>(index) / fHolds * fHolds;
@@ -778,7 +778,7 @@ template <class Element, class Button, class MakeArrow> struct PagedStrip : node
   void layoutChildren() {
     fHolds = static_cast<std::size_t>(std::max(1.0f, std::floor((this->fState.contentBox().width() - fArrowsWidth) / fTabWidth)));
     fFirst = buttons().empty() ? 0 : std::min(fFirst / fHolds, (buttons().size() - 1) / fHolds) * fHolds;
-    for (auto &&[index, tab] : std::views::enumerate(buttons()))
+    for (auto &&[index, tab] : buttons() | std::views::enumerate)
       tab.setVisible(static_cast<std::size_t>(index) >= fFirst && static_cast<std::size_t>(index) < fFirst + fHolds);
     if (fBack) {
       fBack->apply({.disabled = fFirst == 0});
@@ -909,11 +909,11 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
   // The parts made again, the view at its start; the tabs too, where they
   // are others.
   void read(const SectionsShown<Element> &shown) {
-    parts() = std::ranges::to<std::vector>(std::views::transform(shown.parts, std::ref(fMakePart)));
-    fStrip.put(shown.tabs, std::ranges::to<std::vector>(std::views::transform(std::views::enumerate(shown.tabs), [&](const auto &one) {
+    parts() = shown.parts | std::views::transform(std::ref(fMakePart)) | std::ranges::to<std::vector>();
+    fStrip.put(shown.tabs, shown.tabs | std::views::enumerate | std::views::transform([&](const auto &one) {
                              const auto &[at, element] = one;
                              return TabButton(Bring{this, static_cast<std::size_t>(at)}, fMakeTab(element), {});
-                           })));
+                           }) | std::ranges::to<std::vector>());
     fLit = shown.lit;
     fList.invalidateLayout();
     fList.scrollTo(0.0f);
@@ -933,7 +933,7 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
     const float top = fList.bounds().fTop + 1.0f;
     // The last of those whose top has reached the view's: they come in order.
     const std::size_t lit = std::ranges::fold_left(
-        std::views::filter(std::views::iota(std::size_t{0}, parts().size()), [&](std::size_t at) {
+        std::views::iota(std::size_t{0}, parts().size()) | std::views::filter([&](std::size_t at) {
           return !parts()[at].bounds().isEmpty() && fList.toView(parts()[at].bounds()).fTop <= top;
         }),
         std::size_t{0}, [](std::size_t, std::size_t at) { return at; });

@@ -1200,7 +1200,7 @@ struct ClipboardFragment {
 inline ClipboardFragment clipboardFragment(std::string display, std::vector<ClipboardAtom> atoms = {}) {
   ClipboardFragment made{display, std::move(display), std::move(atoms)};
   std::ranges::sort(made.atoms, {}, &ClipboardAtom::first);
-  for (const auto& atom : std::views::reverse(made.atoms))
+  for (const auto& atom : made.atoms | std::views::reverse)
     if (atom.last <= made.text.size() && atom.first <= atom.last)
       made.text.replace(atom.first, atom.last - atom.first, atom.plain);
   return made;

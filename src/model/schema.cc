@@ -89,8 +89,8 @@ struct Place {
 [[nodiscard]] inline bool related(const Place &a, const Place &b) {
   const std::size_t steps = std::min(a.fSteps.size(), b.fSteps.size());
   const std::size_t keys = std::min(a.fKeys.size(), b.fKeys.size());
-  return std::ranges::equal(std::views::take(a.fSteps, steps), std::views::take(b.fSteps, steps)) &&
-         std::ranges::equal(std::views::take(a.fKeys, keys), std::views::take(b.fKeys, keys));
+  return std::ranges::equal(a.fSteps | std::views::take(steps), b.fSteps | std::views::take(steps)) &&
+         std::ranges::equal(a.fKeys | std::views::take(keys), b.fKeys | std::views::take(keys));
 }
 // Whether `inner` is `outer` or below it.
 [[nodiscard]] inline bool within(const Place &inner, const Place &outer) {
