@@ -1417,6 +1417,7 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
       return;
     }
     fShow(page(), now);
+    scene::work::subtreeMade() = true;
     fShown = now;
     fDue.reset();
     fFrom = fSide(now);
@@ -1440,6 +1441,7 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
     if (auto due = std::exchange(fDue, std::nullopt)) {
       const float at = fScroll.current();
       fShow(page(), *due);
+      scene::work::subtreeMade() = true;
       fShown = std::move(due);
       fit();
       keepOffset(at);

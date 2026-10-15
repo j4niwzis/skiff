@@ -1824,6 +1824,13 @@ inline NodeId &focusWanted() {
   static NodeId kept = 0;
   return kept;
 }
+// A subtree made in place by what holds it -- a dialog opened, a panel slid
+// in, a page shown -- outside a binding's walk: for the program to walk its
+// bindings whole once (it drains this), so what was made reads the model.
+inline bool &subtreeMade() {
+  static bool kept = false;
+  return kept;
+}
 // The nodes made since the last tick: where one is not come to by a tick
 // that goes only where things changed, it looks everywhere.
 inline std::vector<NodeId> &births() {
