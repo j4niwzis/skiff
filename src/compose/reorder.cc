@@ -4,6 +4,7 @@
 export module skiff.compose:reorder;
 
 import std;
+import splice;
 import skia;
 import skiff.scene;
 import skiff.paint;
@@ -14,6 +15,9 @@ import :wiring;
 export namespace skiff::compose {
 
 enum class ReorderBar { horizontal, vertical };
+struct ItemsDragging {
+  bool on = false;
+};
 template <class Key> struct ItemsPlaced {
   ReorderBar from, to;
   Key item;
@@ -22,14 +26,19 @@ template <class Key> struct ItemsPlaced {
 
 // Rows are MemoRows: their keys and immutable views make a fresh ghost
 // possible without copying nodes. Drop can include a header around the view.
+template <class Viewport>
+  requires requires(const Viewport& view, const skia::SkRect& box) { view.toView(box); }
+skia::SkRect reorder_shown_at(const Viewport& view, const skia::SkRect& box) { return view.toView(box); }
+template <class Viewport>
+  requires requires(const Viewport& view) { view.offset(); }
+skia::SkRect reorder_shown_at(const Viewport& view, const skia::SkRect& box) { return box.makeOffset(-view.offset(), 0.0f); }
 template <class Viewport, class Rows> struct ReorderLane {
   Viewport& view;
   Rows& rows;
   skia::SkRect drop;
   float spacing = 0.0f;
   [[nodiscard]] skia::SkRect shown_at(const skia::SkRect& box) const {
-    if constexpr (requires { view.toView(box); }) return view.toView(box);
-    else return box.makeOffset(-view.offset(), 0.0f);
+    return reorder_shown_at(view, box);
   }
 };
 
@@ -37,7 +46,11 @@ template <class Key, class View, class Make, class Surface, class Lanes>
 struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, const Key&, const View&, bool>>> {
   using Row = std::invoke_result_t<Make&, const Key&, const View&, bool>;
   using Base = Box<Surface, std::optional<Row>>;
-  using Answer = ItemsPlaced<Key>;
+  // A successful placement also ends dragging. A cancellation or release
+  // outside the lanes answers ItemsDragging{false}. The program owns lane
+  // visibility; transient marks on rows and target lanes stay here.
+  // Order previews during a drag can be added as another answer later.
+  using Answer = spl::variant<ItemsDragging, ItemsPlaced<Key>>;
   using Out = Union<OutOf<Surface>, model::Types<Answer>>;
   struct Drag {
     Key key;
@@ -55,7 +68,6 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
   std::optional<Key> fLanding;
   paint::Tween fFly{0.0f, 180.0f};
   skia::SkPoint fFrom{}, fTo{};
-  bool fSideWasVisible = false;
   skia::SkColor fHighlight = 0;
   float fGhostWidth = 0.0f, fGhostHeight = 0.0f;
 
@@ -136,8 +148,9 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
   }
   template <class Phase>
     requires (std::same_as<Phase, scene::phase::capture> || std::same_as<Phase, scene::phase::target>)
-  void onPointer(Phase, const scene::pointer::move& at, scene::PointerReply& reply) {
-    if (!fDrag) return;
+  std::optional<Answer> onPointer(Phase, const scene::pointer::move& at, scene::PointerReply& reply) {
+    if (!fDrag) return std::nullopt;
+    bool starting = false;
     auto& drag = *fDrag;
     const auto scroll = [&](float delta) {
       auto lanes = fLanes(surface());
@@ -147,15 +160,15 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
       scroll(drag.last_x - at.x);
       drag.last_x = at.x;
       reply.handle();
-      return;
+      return std::nullopt;
     }
     if (!drag.moving) {
       const float dx = at.x - drag.x, dy = at.y - drag.y;
-      if (std::abs(dx) < 6.0f && std::abs(dy) < 6.0f) return;
+      if (std::abs(dx) < 6.0f && std::abs(dy) < 6.0f) return std::nullopt;
       const bool quick = std::chrono::steady_clock::now() - drag.pressed < std::chrono::milliseconds(250);
       if (quick && drag.from == ReorderBar::vertical && std::abs(dy) > std::abs(dx)) {
         fDrag.reset(); // the vertical scroll view owns this move
-        return;
+        return std::nullopt;
       }
       if (quick && drag.from == ReorderBar::horizontal && std::abs(dx) > std::abs(dy)) {
         drag.scrolling = true;
@@ -163,18 +176,15 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
         scroll(drag.x - at.x);
         reply.capturePointer();
         reply.handle();
-        return;
+        return std::nullopt;
       }
       drag.moving = true;
+      starting = true;
       fGhostWidth = drag.width;
       fGhostHeight = drag.height;
       ghost().emplace(std::invoke(fMake, drag.key, drag.view, true));
       ghost()->apply({.place = scene::anchor::kTopLeft, .x = 0.0f, .y = 0.0f, .alpha = 0.9f});
       show_key(drag.key, false, drag.from);
-      lane(ReorderBar::vertical, [&](auto& line) {
-        fSideWasVisible = line.view.visible();
-        line.view.setVisible(true);
-      });
       reply.capturePointer();
       reply.suppressHover();
     }
@@ -182,6 +192,8 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
     light(bar_at(at.x, at.y));
     this->markDamaged();
     reply.handle();
+    if (starting) return Answer{ItemsDragging{true}};
+    return std::nullopt;
   }
   // The insertion is computed from visible row centers, excluding the
   // dragged key. A drop outside both lanes returns to its original lane.
@@ -226,23 +238,24 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
     fLanding = drag->key;
     fFly.jump(0.0f);
     fFly.setTarget(1.0f);
-    lane(ReorderBar::vertical, [&](auto& line) { line.view.setVisible(fSideWasVisible); });
     scene::work::mark(this->fState.fId);
-    if (over) return Answer{drag->from, to, std::move(drag->key), std::move(order)};
-    return std::nullopt;
+    if (over) return Answer{ItemsPlaced<Key>{drag->from, to, std::move(drag->key), std::move(order)}};
+    return Answer{ItemsDragging{false}};
   }
   template <class Phase>
     requires (std::same_as<Phase, scene::phase::capture> || std::same_as<Phase, scene::phase::target>)
-  void onPointer(Phase, const scene::pointer::cancel&, scene::PointerReply& reply) {
-    if (!fDrag) return;
-    if (fDrag->moving) {
+  std::optional<Answer> onPointer(Phase, const scene::pointer::cancel&, scene::PointerReply& reply) {
+    if (!fDrag) return std::nullopt;
+    const bool moving = fDrag->moving;
+    if (moving) {
       light(std::nullopt);
       show_key(fDrag->key, true);
-      lane(ReorderBar::vertical, [&](auto& line) { line.view.setVisible(fSideWasVisible); });
       ghost().reset();
     }
     fDrag.reset();
     reply.releasePointer();
+    if (moving) return Answer{ItemsDragging{false}};
+    return std::nullopt;
   }
   using Base::onPointer;
   [[nodiscard]] bool wantsTick() const { return fLanding.has_value(); }
