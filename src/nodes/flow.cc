@@ -583,16 +583,26 @@ bool reconcile(std::vector<Row> &rows, Items &&items, KeyOf keyOf,
         ++i;
       }
       if (same) {
-        bool changed = false;
-        i = 0;
-        for (auto &&item : items) {
-          if (!std::invoke(shows, std::as_const(rows[i]), item)) {
-            rows[i] = std::invoke(make, item);
-            changed = true;
+        if constexpr (std::is_move_assignable_v<Row>) {
+          bool changed = false;
+          i = 0;
+          for (auto &&item : items) {
+            if (!std::invoke(shows, std::as_const(rows[i]), item)) {
+              rows[i] = std::invoke(make, item);
+              changed = true;
+            }
+            ++i;
           }
-          ++i;
+          return changed;
+        } else {
+          // Captured callables make composed rows move-constructible but
+          // not assignable. Keep an unchanged list exactly where it is;
+          // changed rows use the construction-only path below.
+          if (std::ranges::equal(rows, items, [&](const Row& row, auto&& item) {
+                return std::invoke(shows, row, item);
+              }))
+            return false;
         }
-        return changed;
       }
     }
   }
