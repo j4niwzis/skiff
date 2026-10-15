@@ -285,10 +285,18 @@ template <class Card, class Make, class N> auto tapped_off(Card card, Make make,
 
 // Each list has its own offset. setCurrent retains the requested offset
 // until the new contents are laid out, even when the old list was shorter.
-template <class Key, class N> struct RememberedScroll : N {
+template <class Key, class N> struct RememberedScroll : Box<N> {
   std::optional<Key> fKey;
   std::vector<std::pair<Key, float>> fPositions;
-  explicit RememberedScroll(N node) : N(std::move(node)) {}
+  explicit RememberedScroll(N node)
+      : Box<N>(vbox(0.0f, {.fill = true}), std::move(node)) {}
+  N& view() { return std::get<0>(this->fParts); }
+  const N& view() const { return std::get<0>(this->fParts); }
+  float current() const { return view().current(); }
+  float extent() const { return view().extent(); }
+  void setCurrent(float offset) { view().setCurrent(offset); this->invalidateLayout(); }
+  void scrollTo(float offset) { view().scrollTo(offset); this->invalidateLayout(); }
+  void scrollToStart() { view().scrollToStart(); this->invalidateLayout(); }
   void read(const Key& key) {
     if (fKey && *fKey == key) return;
     if (fKey) {
@@ -333,7 +341,7 @@ struct WidthLimit {
 template <class N> struct ClampedWidth : N {
   WidthLimit fLimit;
   ClampedWidth(WidthLimit limit, N node) : N(std::move(node)), fLimit(limit) {
-    this->apply({.fillX = false});
+    this->apply({.relativeSize = this->fState.fRelativeSizeAxes.template without<scene::axis::x>()});
   }
   void read(const WidthLimit& limit) {
     if (limit == fLimit) return;
