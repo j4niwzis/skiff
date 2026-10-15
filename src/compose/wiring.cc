@@ -793,26 +793,38 @@ template <class Want, class Compute, class N> auto washed_for(skia::SkColor colo
 // A node that comes in moving, where it is made so: from below, fading in,
 // as a message that has just come in Telegram. Unseen until its first frame
 // is laid out, so it is first seen where it goes.
-template <class N> struct Appearing : N {
-  paint::Tween fIn{1.0f, 220.0f};
+// Which way something comes in from: below (the default) or from a side.
+namespace appear {
+struct below {};
+struct across {};
+}  // namespace appear
+[[nodiscard]] inline scene::Spec appearing_spec(appear::below, float shown, float shift) { return {.alpha = shown, .shiftY = shift}; }
+[[nodiscard]] inline scene::Spec appearing_spec(appear::across, float shown, float shift) { return {.alpha = shown, .shiftX = shift}; }
+template <class N, class Way = appear::below> struct Appearing : N {
+  paint::Tween fIn;
   float fFrom;
-  Appearing(bool now, float from, N node) : N(std::move(node)), fFrom(from) {
+  Appearing(bool now, float from, N node, float duration = 220.0f) : N(std::move(node)), fIn(1.0f, duration), fFrom(from) {
     if (!now)
       return;
     fIn.jump(0.0f);
     fIn.setTarget(1.0f);
-    this->apply({.alpha = 0.0f, .shiftY = fFrom});
+    this->apply(appearing_spec(Way{}, 0.0f, fFrom));
   }
   [[nodiscard]] bool settling() const { return fIn.moving(); }
   [[nodiscard]] bool wantsTick() const { return settling(); }
   void update(double nowMs) {
     if (fIn.step(nowMs)) {
       const float shown = fIn.value();
-      this->apply({.alpha = shown, .shiftY = (1.0f - shown) * fFrom});
+      this->apply(appearing_spec(Way{}, shown, (1.0f - shown) * fFrom));
     }
   }
 };
 template <class N> Appearing<N> appearing(bool now, N node, float from = 12.0f) { return Appearing<N>(now, from, std::move(node)); }
+// Coming in from a side: `from` pixels off to it (negative: from the left),
+// over `duration` milliseconds -- a page slid in as it is gone to.
+template <class N> Appearing<N, appear::across> appearing_across(bool now, N node, float from, float duration = 220.0f) {
+  return Appearing<N, appear::across>(now, from, std::move(node), duration);
+}
 
 // A node laid out, then arranged and settled by rules of its own -- a
 // message's bubble: its time beside its last line where they fit, a
