@@ -24,6 +24,14 @@ struct arrangement_gap {
   friend bool operator==(const arrangement_gap&, const arrangement_gap&) = default;
 };
 struct arrangement_model { skiff::model::Tracked<arrangement_gap> gap; };
+struct projection_amount { int value = 2; };
+struct projection_hint { int value = 3; };
+struct projection_source { skiff::model::Tracked<projection_amount> amount; };
+struct projection_facts { skiff::model::Tracked<projection_hint> hint; };
+struct projection_probe : scene::Node {
+  int value = 0;
+  void read(int now) { value = now; }
+};
 struct gap_policy {
   using State = arrangement_gap;
   static void prepare(auto& node, const State& state) { node.setGap(state.value); }
@@ -148,4 +156,41 @@ TEST(Views, ArrangementParametersReadFromTheModelChangeTheRealLayout) {
   EXPECT_TRUE(node.fState.fLayoutValid);
   node.read(arrangement_gap{8.0f});
   EXPECT_TRUE(node.fState.fLayoutValid);
+}
+
+TEST(Views, ModelAndViewFactsCanArriveInEitherOrderAndBothRefreshTheProjection) {
+  using source_type = skiff::model::Model<projection_source, skiff::bind::NoReactions>;
+  using facts_type = skiff::model::Model<projection_facts, skiff::bind::NoReactions>;
+  source_type source(projection_source{});
+  facts_type facts(projection_facts{});
+  skiff::bind::Binding<source_type> source_binding;
+  skiff::bind::Binding<facts_type> facts_binding;
+  int computed = 0;
+  const auto make = [&] {
+    return c::bound<projection_hint>(c::with_model<source_type, projection_hint>(
+        [&](const source_type& now, const projection_hint& hint) {
+          ++computed;
+          return now.look<projection_amount>()->value + hint.value;
+        }, projection_probe{}));
+  };
+  auto source_first = make();
+  source_binding.refresh(source_first, source);
+  EXPECT_EQ(source_first.value, 0);
+  facts_binding.refresh(source_first, facts);
+  EXPECT_EQ(source_first.value, 5);
+  const int before = computed;
+  source_binding.refresh(source_first, source);
+  EXPECT_EQ(computed, before);
+  source.apply(skiff::model::over<projection_amount>(skiff::model::setTo(projection_amount{4})));
+  source_binding.refresh(source_first, source);
+  EXPECT_EQ(source_first.value, 7);
+  facts.apply(skiff::model::over<projection_hint>(skiff::model::setTo(projection_hint{7})));
+  facts_binding.refresh(source_first, facts);
+  EXPECT_EQ(source_first.value, 11);
+
+  auto facts_first = make();
+  skiff::bind::refresh(facts_first, facts);
+  EXPECT_EQ(facts_first.value, 0);
+  skiff::bind::refresh(facts_first, source);
+  EXPECT_EQ(facts_first.value, 11);
 }

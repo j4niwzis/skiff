@@ -5,9 +5,44 @@ import std;
 import skia;
 import skiff.scene;
 import skiff.model;
+import skiff.bind;
 import :wiring;
 
 export namespace skiff::compose {
+
+// A view described by one model part and resolved against another model:
+// a filtered list's keys and snapshots, with its source rows in the main
+// model. Both arrive through binding; construction needs neither model.
+template <class M, class Told, class Compute, class N> struct WithModel : N {
+  Compute fCompute;
+  const M* fModel = nullptr;
+  std::optional<Told> fTold;
+  model::Revision fRevision = 0;
+  bool fDirty = true, fRead = false;
+  bind::Refreshes<1> fRefreshes = bind::refreshes(bind::refreshFrom<WithModel, M>());
+  WithModel(Compute compute, N node) : N(std::move(node)), fCompute(std::move(compute)) {}
+  void read(const Told& told) {
+    fTold = told;
+    fDirty = true;
+    render();
+  }
+  void refresh(const M& model) {
+    if (fModel != &model) fDirty = true;
+    fModel = &model;
+    render();
+  }
+  void render() {
+    if (!fModel || !fTold) return;
+    if (fRead && !fDirty && fRevision == fModel->revision()) return;
+    N::read(std::invoke(fCompute, *fModel, *fTold));
+    fRevision = fModel->revision();
+    fRead = true;
+    fDirty = false;
+  }
+};
+template <class M, class Told, class Compute, class N> auto with_model(Compute compute, N node) {
+  return WithModel<M, Told, Compute, N>(std::move(compute), std::move(node));
+}
 
 // The plate around a focusable field follows that field's focus. The
 // field keeps its own geometry and input region inside the frame.
