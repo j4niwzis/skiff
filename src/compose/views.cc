@@ -6,6 +6,7 @@ import skia;
 import skiff.scene;
 import skiff.model;
 import skiff.bind;
+import skiff.paint;
 import :wiring;
 
 export namespace skiff::compose {
@@ -164,6 +165,52 @@ template <class Item, class Height, class N> struct VirtualRows : N {
 template <class Item, class Height, class N>
 auto virtual_rows(Height height, N node, VirtualRowsOptions options = {}) {
   return VirtualRows<Item, Height, N>(std::move(height), options, std::move(node));
+}
+
+// One pane at a time, as a phone shows them: which is up, and whether the
+// window is one pane at a time at all (Paned). As it moves on, the node
+// slides in from the right; coming back, from the left -- across its width.
+struct Paned {
+  bool on = false;
+  int at = 0;
+  friend bool operator==(const Paned&, const Paned&) = default;
+};
+template <class N> struct Slid : N {
+  std::optional<Paned> fNow;
+  float fFrom = 0.0f;
+  paint::Tween fIn{1.0f, 240.0f, paint::movement::sweeping{}};
+  explicit Slid(N node) : N(std::move(node)) {}
+  void read(const Paned& now) {
+    if (fNow && now.on && fNow->on && now.at != fNow->at) {
+      fFrom = now.at > fNow->at ? 1.0f : -1.0f;
+      fIn.jump(0.0f);
+      fIn.setTarget(1.0f);
+      scene::work::mark(this->fState.fId);
+    }
+    fNow = now;
+    this->place();
+  }
+  [[nodiscard]] bool wantsTick() const {
+    if constexpr (requires(const N& node) { node.wantsTick(); })
+      return fIn.moving() || N::wantsTick();
+    else
+      return fIn.moving();
+  }
+  [[nodiscard]] bool settling() const { return fIn.moving(); }
+  void update(double nowMs) {
+    if constexpr (requires(N& node) { node.update(nowMs); })
+      N::update(nowMs);
+    if (fIn.step(nowMs))
+      this->place();
+  }
+  void place() {
+    const float shift = fNow && fNow->on ? (1.0f - fIn.value()) * this->bounds().width() * fFrom : 0.0f;
+    this->apply({.shiftX = shift});
+    this->markDamaged();
+  }
+};
+template <class Want, class Compute, class N> auto slid_for(Compute compute, N node) {
+  return projected<Want>(std::move(compute), Slid<N>(std::move(node)));
 }
 
 // Each list has its own offset. setCurrent retains the requested offset
