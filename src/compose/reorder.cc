@@ -95,13 +95,15 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
       line.view.apply({.background = over == ReorderBar::vertical ? fHighlight : skia::SkColor{0}});
     });
   }
-  void show_key(const Key& key, bool shown) {
-    both([&](auto& line) {
+  void show_key(const Key& key, bool shown, std::optional<ReorderBar> only = std::nullopt) {
+    const auto change = [&](auto& line) {
       std::ranges::for_each(line.rows.fRows, [&](auto& row) {
         if (row.fKey == key) row.fRow.setVisible(shown);
       });
       line.rows.invalidateLayout();
-    });
+    };
+    if (only) lane(*only, change);
+    else both(change);
     this->invalidateLayout();
   }
   void land() {
@@ -138,9 +140,8 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
     if (!fDrag) return;
     auto& drag = *fDrag;
     const auto scroll = [&](float delta) {
-      lane(ReorderBar::horizontal, [&](auto& line) {
-        if constexpr (requires { line.view.scroll_by(delta); }) line.view.scroll_by(delta);
-      });
+      auto lanes = fLanes(surface());
+      std::get<0>(lanes).view.scroll_by(delta);
     };
     if (drag.scrolling) {
       scroll(drag.last_x - at.x);
@@ -169,7 +170,7 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
       fGhostHeight = drag.height;
       ghost().emplace(std::invoke(fMake, drag.key, drag.view, true));
       ghost()->apply({.place = scene::anchor::kTopLeft, .x = 0.0f, .y = 0.0f, .alpha = 0.9f});
-      show_key(drag.key, false);
+      show_key(drag.key, false, drag.from);
       lane(ReorderBar::vertical, [&](auto& line) {
         fSideWasVisible = line.view.visible();
         line.view.setVisible(true);
