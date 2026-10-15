@@ -436,6 +436,16 @@ template <class Tag = void> struct ListEdge {
   bool older = false;  // the top; else the bottom
   friend bool operator==(ListEdge, ListEdge) = default;
 };
+// What the reader sees of it, said as it changes: the rows at the view's
+// top, middle and bottom (the last wholly above the view's bottom), and
+// whether it is at its end -- what is read, and how far a way back is
+// come down to. Not while it is aiming: what it passes on its way is not
+// seen.
+template <class Key, class Tag = void> struct ListSeen {
+  std::optional<Key> top, middle, bottom;
+  bool end = false;
+  friend bool operator==(const ListSeen &, const ListSeen &) = default;
+};
 template <class Item, class Key> struct WindowShown {
   std::vector<Item> items;
   bool more_above = false, more_below = false;
@@ -459,7 +469,8 @@ public:
   using Rows = nodes::MemoRows<Key, View, Row, Make>;
   using Aimed = ListAimed<Key, Tag>;
   using Edge = ListEdge<Tag>;
-  using Answer = std::variant<Aimed, Edge>;
+  using Seen = ListSeen<Key, Tag>;
+  using Answer = std::variant<Aimed, Edge, Seen>;
   using Out = Union<OutOf<Rows>, model::Types<Answer>>;
   // Its rows a column as wide as the view and as tall as they are: the
   // scroll's extent theirs.
@@ -491,13 +502,24 @@ public:
     if (!rows().fRows.empty())
       fWindow = std::pair{rows().fRows.front().fKey, rows().fRows.back().fKey};
   }
-  [[nodiscard]] bool settling() const { return fAim.has_value() || nodes::ScrollContainer<Rows>::settling(); }
+  // Another list shown in it: what it aimed at in the last let go.
+  void forgetAim() {
+    fAim.reset();
+    fAimedAt.reset();
+    fSaid.reset();
+    fSeenAt.reset();
+  }
+  [[nodiscard]] bool settling() const { return fAim.has_value() || !fDue.empty() || nodes::ScrollContainer<Rows>::settling(); }
   void update(double nowMs) {
     nodes::ScrollContainer<Rows>::update(nowMs);
+    // One answer a frame, the first said first.
+    if (!fDue.empty())
+      scene::pressLater(this->fState);
     if (fAim) {
       this->aimed();
       return;
     }
+    this->seen();
     // Near an edge of what is made, with more beyond it: asked once for each
     // window.
     const float ahead = std::max(300.0f, this->bounds().height() * 1.5f);
@@ -509,7 +531,13 @@ public:
       this->say(Edge{false});
     }
   }
-  std::optional<Answer> onPress() { return std::exchange(fDue, std::nullopt); }
+  std::optional<Answer> onPress() {
+    if (fDue.empty())
+      return std::nullopt;
+    Answer first = std::move(fDue.front());
+    fDue.pop_front();
+    return first;
+  }
 
 private:
   // The row aimed at: in view once it is laid out; a page at a time toward
@@ -562,8 +590,36 @@ private:
     this->markDamaged();
   }
   void say(Answer answer) {
-    fDue = std::move(answer);
-    scene::pressLater(this->fState);
+    fDue.push_back(std::move(answer));
+    scene::work::mark(this->fState.fId);
+  }
+  // What is in view, said where it changed -- looked at again only where
+  // the view or its rows moved.
+  void seen() {
+    const auto &all = rows().fRows;
+    const std::tuple now{this->current(), this->extent(), all.size(), all.empty() ? std::optional<Key>() : std::optional<Key>(all.back().fKey)};
+    if (fSeenAt == now)
+      return;
+    fSeenAt = now;
+    const skia::SkRect view = this->bounds();
+    Seen said{.end = this->atEnd(1.0f)};
+    for (const auto &one : all) {
+      if (one.bounds().isEmpty() || !one.visible())
+        continue;
+      const skia::SkRect box = this->toView(one.bounds());
+      if (box.fBottom <= view.fTop || box.fTop >= view.fBottom)
+        continue;
+      if (!said.top)
+        said.top = one.fKey;
+      if (box.fTop <= view.centerY())
+        said.middle = one.fKey;
+      if (box.fBottom <= view.fBottom + 1.0f)
+        said.bottom = one.fKey;
+    }
+    if (said != fSaid) {
+      fSaid = said;
+      this->say(std::move(said));
+    }
   }
   bool fMoreAbove = false, fMoreBelow = false;
   std::optional<Key> fAim;
@@ -573,7 +629,9 @@ private:
   int fAimFrames = 0;
   [[no_unique_address]] Locate fLocate{};
   std::optional<std::pair<Key, Key>> fWindow, fAsked;
-  std::optional<Answer> fDue;
+  std::deque<Answer> fDue;
+  std::optional<std::tuple<float, float, std::size_t, std::optional<Key>>> fSeenAt;
+  std::optional<Seen> fSaid;
 };
 template <class Key, class View, class Row, class Make, class Locate = NoLocate, class Tag = void>
 WindowList<Key, View, Row, Make, Locate, Tag> window_list(Make make) {
@@ -605,6 +663,8 @@ WindowList<Key, View, Row, Make, Locate, Tag> window_list(Make make) {
 // (ListEdge), as a window_list does.
 template <class Key> struct WindowAim {
   std::optional<Key> key;
+  // Aimed at its end instead -- its newest made, the view glided down.
+  bool end = false;
   std::uint64_t number = 0;
   std::optional<float> top;
   std::optional<std::string> line;
@@ -625,7 +685,9 @@ public:
   bind::Refreshes<1> fRefreshes = bind::refreshes(bind::refreshFrom<WindowFrom, M>());
   void read(const Told &told) {
     const bool another = !fTold || fTold->of != told.of;
-    const bool aimed = told.aim.key && (!fTold || told.aim.number != fTold->aim.number);
+    const bool anew = !fTold || told.aim.number != fTold->aim.number;
+    const bool aimed = anew && told.aim.key;
+    const bool ended = anew && told.aim.end && fTold;
     if (fTold && *fTold == told)
       return;
     if (another) {
@@ -640,6 +702,7 @@ public:
       fShownEnd = false;
       fUnseen = 0;
       fRestore.reset();
+      this->forgetAim();
       if (told.of)
         if (const auto kept = fLeft.find(*told.of); kept != fLeft.end()) {
           fFrom = kept->second.from;
@@ -653,7 +716,10 @@ public:
     fTold = told;
     fSeen.reset();
     fAimNew = aimed;
-    this->show();
+    if (ended && !another)
+      this->toEnd();
+    else
+      this->show();
   }
   // The model it is bound to, moved: its window made again where its list
   // moved.
@@ -684,7 +750,7 @@ public:
     // At an edge of what is made, with more of the list beyond it: slid
     // here, not asked of anyone; past the list's own end, asked on.
     if (asked && std::visit(spl::overloaded{[&](const typename List::Edge &edge) { return this->slides(edge.older); },
-                                            [](const typename List::Aimed &) { return false; }},
+                                            [](const auto &) { return false; }},
                             *asked))
       return std::nullopt;
     return asked;
