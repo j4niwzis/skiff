@@ -226,7 +226,7 @@ private:
             .grow = spec.grow, .shrink = spec.shrink, .minWidth = spec.minWidth, .maxWidth = spec.maxWidth,
             .minHeight = spec.minHeight, .maxHeight = spec.maxHeight, .alignSelf = spec.alignSelf, .depth = spec.depth,
             .margin = spec.margin, .scale = spec.scale, .alpha = spec.alpha, .shiftX = spec.shiftX, .shiftY = spec.shiftY,
-            .visible = spec.visible};
+            .visible = spec.visible, .disabled = spec.disabled};
   }
   [[nodiscard]] static scene::Spec nodeSide(scene::Spec spec) {
     spec.place.reset();
@@ -1390,25 +1390,25 @@ template <class Want, class Compute, class N> auto popped_at(Compute compute, fl
 // a page made by `show` from the facts -- which says whether it is another
 // page than the one up -- comes in sliding from the side `side` says and
 // fading in; the same page made again is made where it was scrolled to, at
-// the next frame, without a slide. The header `pin` finds in a page stays at
-// the top while the rest scrolls, drawn over it. Esc on a page goes where
-// `back` says, if anywhere: a settings box's pages, whose home Esc closes.
+// the next frame, without a slide. Where `pin(facts)` gives a page a header
+// -- its first part, looking as the spec it gives says -- the header stays
+// at the top while the rest scrolls, drawn over it; found as the walks see
+// the page, not by any type of its parts.
 //
-//   page_view<Facts, Page>(show, same, side, pin, back, first_page, spec)
-template <class Facts, class Page, class Show, class Same, class Side, class Pin, class Back> struct PageView : Specced {
+//   page_view<Facts, Page>(show, same, side, pin, first_page, spec)
+template <class Facts, class Page, class Show, class Same, class Side, class Pin> struct PageView : Specced {
   using BindingChildren = std::tuple<Page>;
   Show fShow;
   Same fSame;
   Side fSide;
   Pin fPin;
-  Back fBack;
   nodes::ScrollContainer<Page> fScroll;
   paint::Tween fSwap{1.0f, 200.0f, paint::movement::subtle{}};
   float fFrom = 1.0f;
   std::optional<float> fOffsetDue;
   std::optional<Facts> fShown, fDue;
-  PageView(Show show, Same same, Side side, Pin pin, Back back, Page first, scene::Spec spec)
-      : Specced(spec), fShow(std::move(show)), fSame(std::move(same)), fSide(std::move(side)), fPin(std::move(pin)), fBack(std::move(back)),
+  PageView(Show show, Same same, Side side, Pin pin, Page first, scene::Spec spec)
+      : Specced(spec), fShow(std::move(show)), fSame(std::move(same)), fSide(std::move(side)), fPin(std::move(pin)),
         fScroll(std::move(first)) {
     fScroll.apply({.fill = true});
     fScroll.setCopiesOnScroll(false);
@@ -1428,6 +1428,7 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
     scene::work::subtreeMade() = true;
     fShown = now;
     fDue.reset();
+    this->lookPinned();
     fFrom = fSide(now);
     fit();
     keepOffset(0.0f);
@@ -1444,8 +1445,6 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
     fOffsetDue = at;
     this->invalidateLayout();
   }
-  // Esc: the page's way back, where it has one; false where it has none.
-  bool stepBack() { return fBack(page()); }
   [[nodiscard]] bool settling() const { return fSwap.moving() || fDue.has_value(); }
   [[nodiscard]] bool wantsTick() const { return settling(); }
   void update(double nowMs) {
@@ -1454,6 +1453,7 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
       fShow(page(), *due);
       scene::work::subtreeMade() = true;
       fShown = std::move(due);
+      this->lookPinned();
       fit();
       keepOffset(at);
     }
@@ -1461,8 +1461,8 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
       this->invalidateLayout();
   }
   void draw(scene::Painting &painting, skia::SkCanvas *canvas, float alpha) {
-    if (scene::Node *header = fPin(page()))
-      header->fState.setShift(0.0f, -fScroll.contentsShift());
+    if (fShown && fPin(*fShown))
+      this->header([&](scene::State &header) { header.setShift(0.0f, -fScroll.contentsShift()); });
     scene::drawDefault(*this, painting, canvas, alpha);
   }
   void layoutChildren() {
@@ -1481,14 +1481,36 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
  private:
   // A page fills the view across, as tall as what it holds.
   void fit() {
-    spl::visit([](auto &one) { one.fState.apply({.relativeSize = scene::axes::kX, .autoSize = scene::axes::kY}); }, page());
+    spl::visit([](auto &one) { one.apply({.relativeSize = scene::axes::kX, .autoSize = scene::axes::kY}); }, page());
+  }
+  // The page's header -- its first part, as the walks see it -- given to f.
+  template <class F> void header(F &&f) {
+    spl::visit([&](auto &one) {
+      bool first = true;
+      if constexpr (scene::kErasedWalks) {
+        auto seen = scene::AnyNodeRef::of(one);
+        seen.forEachChild([&](scene::AnyNodeRef &part) {
+          if (std::exchange(first, false))
+            f(part.state());
+        });
+      } else {
+        scene::eachChild(one, [&](auto &part) {
+          if (std::exchange(first, false))
+            f(scene::stateOf(part));
+        });
+      }
+    }, page());
+  }
+  // The header looking as the facts shown say, where they give the page one.
+  void lookPinned() {
+    if (const std::optional<scene::Spec> look = fPin(*fShown))
+      this->header([&](scene::State &header) { header.apply(*look); });
   }
 };
-template <class Facts, class Page, class Show, class Same, class Side, class Pin, class Back>
-PageView<Facts, Page, Show, Same, Side, Pin, Back> page_view(Show show, Same same, Side side, Pin pin, Back back, Page first,
-                                                            scene::Spec spec = {}) {
+template <class Facts, class Page, class Show, class Same, class Side, class Pin>
+PageView<Facts, Page, Show, Same, Side, Pin> page_view(Show show, Same same, Side side, Pin pin, Page first, scene::Spec spec = {}) {
   // Concrete in every build: what keeps its offset (kept_scroll) reads it.
-  return {std::move(show), std::move(same), std::move(side), std::move(pin), std::move(back), std::move(first), std::move(spec)};
+  return {std::move(show), std::move(same), std::move(side), std::move(pin), std::move(first), std::move(spec)};
 }
 
 } // namespace skiff::compose
