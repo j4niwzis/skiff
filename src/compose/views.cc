@@ -90,6 +90,82 @@ auto onCapture(Ask ask, N node) {
   return OnCapture<E, Ask, N>(std::move(ask), std::move(node));
 }
 
+// Known-height rows retain the full scroll extent while only the viewport
+// and its neighbouring screens have scene nodes. Direct jumps, wheel
+// movement and restored offsets all select rows before their next layout.
+struct VirtualRowsOptions {
+  std::size_t step = 40;
+  float minimum_view = 400.0f;
+};
+template <class Item, class Height, class N> struct VirtualRows : N {
+  Height fHeight;
+  VirtualRowsOptions fOptions;
+  std::vector<Item> fItems;
+  std::vector<float> fTops{0.0f};
+  std::size_t fFrom = 0, fTo = 0;
+  std::optional<float> fRequested;
+  bool fHaveRows = false;
+  VirtualRows(Height height, VirtualRowsOptions options, N node)
+      : N(std::move(node)), fHeight(std::move(height)), fOptions(options) {
+    fOptions.step = std::max(std::size_t{1}, fOptions.step);
+    this->setHoldsInView(false);
+  }
+  void read(const std::vector<Item>& items) {
+    fItems = items;
+    fTops.assign(1, 0.0f);
+    fTops.reserve(fItems.size() + 1);
+    for (const auto& item : fItems)
+      fTops.push_back(fTops.back() + std::max(0.0f, static_cast<float>(std::invoke(fHeight, item))));
+    // Changes to the list preserve its offset, including an empty list
+    // becoming populated while the viewport happened to be at its end.
+    N::setCurrent(fRequested.value_or(this->current()));
+    showRows(true);
+  }
+  void setCurrent(float offset) {
+    fRequested = std::max(0.0f, offset);
+    N::setCurrent(*fRequested);
+    showRows(false);
+  }
+  void scrollToStart() { setCurrent(0.0f); }
+  bool showRows(bool changed) {
+    const float view = std::max(this->bounds().height(), fOptions.minimum_view);
+    const float at = std::clamp(fRequested.value_or(this->current()), 0.0f,
+                              std::max(0.0f, fTops.back() - this->bounds().height()));
+    const auto indexAt = [&](float y) {
+      const auto next = std::upper_bound(fTops.begin(), fTops.end(), std::max(0.0f, y));
+      return std::min(fItems.size(), static_cast<std::size_t>(next - fTops.begin() - 1));
+    };
+    const auto step = fOptions.step;
+    const auto from = indexAt(at - view) / step * step;
+    const auto last = std::min(fItems.size(), indexAt(at + 2.0f * view) + 1);
+    const auto to = std::min(fItems.size(), std::max(from + step, (last + step - 1) / step * step));
+    if (!changed && fHaveRows && from == fFrom && to == fTo) return false;
+    fHaveRows = true;
+    fFrom = from;
+    fTo = to;
+    auto& rows = std::get<0>(this->fChildren);
+    rows.apply({.padding = {fTops[from], 0.0f, fTops.back() - fTops[to], 0.0f}});
+    rows.read(std::vector<Item>(fItems.begin() + from, fItems.begin() + to));
+    this->invalidateLayout();
+    return true;
+  }
+  void layoutChildren() {
+    showRows(false);
+    N::layoutChildren();
+    fRequested.reset();
+    // Layout may clamp the offset after a shorter list or viewport resize.
+    if (showRows(false)) N::layoutChildren();
+  }
+  void update(double now) {
+    N::update(now);
+    showRows(false);
+  }
+};
+template <class Item, class Height, class N>
+auto virtual_rows(Height height, N node, VirtualRowsOptions options = {}) {
+  return VirtualRows<Item, Height, N>(std::move(height), options, std::move(node));
+}
+
 // Each list has its own offset. setCurrent retains the requested offset
 // until the new contents are laid out, even when the old list was shorter.
 template <class Key, class N> struct RememberedScroll : N {

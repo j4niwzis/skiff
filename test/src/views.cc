@@ -2,6 +2,7 @@ import std;
 import skia;
 import skiff.scene;
 import skiff.nodes.scroll;
+import skiff.nodes.flow;
 import skiff.compose;
 import skiff.model;
 import skiff.bind;
@@ -193,4 +194,93 @@ TEST(Views, ModelAndViewFactsCanArriveInEitherOrderAndBothRefreshTheProjection) 
   EXPECT_EQ(facts_first.value, 0);
   skiff::bind::refresh(facts_first, source);
   EXPECT_EQ(facts_first.value, 11);
+}
+
+namespace {
+using virtual_item = std::pair<int, int>;
+inline constexpr auto virtual_make = [](const virtual_item& item) {
+  return c::column(c::vbox(0.0f, {.fillX = true, .height = static_cast<float>(item.second)}));
+};
+auto virtual_view() {
+  using rows = skiff::nodes::MemoRows<int, int,
+      std::invoke_result_t<decltype(virtual_make), const virtual_item&>,
+      std::remove_cv_t<decltype(virtual_make)>>;
+  auto contents = rows(virtual_make);
+  contents.apply({.fillX = true, .autoSize = scene::axes::kY});
+  auto scroll = skiff::nodes::ScrollContainer(std::move(contents));
+  scroll.apply({.fillX = true, .height = 100.0f});
+  return c::virtual_rows<virtual_item>([](const virtual_item& item) { return item.second; }, std::move(scroll));
+}
+std::vector<virtual_item> virtual_items(int count) {
+  std::vector<virtual_item> out;
+  for (int i = 0; i < count; ++i) out.emplace_back(i, i % 2 ? 82 : 62);
+  return out;
+}
+}
+
+TEST(Views, VirtualRowsKeepFullExtentAndOnlyBuildNearbyVariableHeightRows) {
+  auto node = virtual_view();
+  node.read(virtual_items(1000));
+  scene::layout(node, viewport);
+  EXPECT_FLOAT_EQ(node.extent(), 72000.0f - 100.0f);
+  EXPECT_EQ(node.fFrom, 0u);
+  EXPECT_LT(std::get<0>(node.fChildren).fRows.size(), 100u);
+  node.setCurrent(50000.0f);
+  scene::layout(node, viewport);
+  EXPECT_FLOAT_EQ(node.current(), 50000.0f);
+  EXPECT_LE(node.fTops[node.fFrom], node.current());
+  EXPECT_GE(node.fTops[node.fTo], node.current() + viewport.height());
+  EXPECT_LT(std::get<0>(node.fChildren).fRows.size(), 100u);
+  EXPECT_FLOAT_EQ(node.extent(), 71900.0f);
+  const auto& row = std::get<0>(node.fChildren).fRows.front();
+  EXPECT_FLOAT_EQ(row.bounds().fTop, node.fTops[node.fFrom]);
+}
+
+TEST(Views, VirtualRowsRestoreADistantListAfterShortContentsAndClampShrinks) {
+  auto node = c::remembered_scroll<std::string>(virtual_view());
+  node.read("long");
+  // The outer read selects a list; its rows arrive through their own part.
+  using base = decltype(virtual_view());
+  static_cast<base&>(node).read(virtual_items(1000));
+  scene::layout(node, viewport);
+  node.setCurrent(50000.0f);
+  scene::layout(node, viewport);
+  node.read("short");
+  static_cast<base&>(node).read(virtual_items(1));
+  scene::layout(node, viewport);
+  EXPECT_FLOAT_EQ(node.current(), 0.0f);
+  node.read("long");
+  static_cast<base&>(node).read(virtual_items(1000));
+  scene::layout(node, viewport);
+  EXPECT_FLOAT_EQ(node.current(), 50000.0f);
+  EXPECT_LE(node.fTops[node.fFrom], 50000.0f);
+  EXPECT_GE(node.fTops[node.fTo], 50100.0f);
+  static_cast<base&>(node).read(virtual_items(3));
+  scene::layout(node, viewport);
+  EXPECT_FLOAT_EQ(node.current(), 106.0f);
+  EXPECT_EQ(node.fFrom, 0u);
+  EXPECT_EQ(node.fTo, 3u);
+  static_cast<base&>(node).read({});
+  scene::layout(node, viewport);
+  EXPECT_FLOAT_EQ(node.extent(), 0.0f);
+  EXPECT_EQ(node.fFrom, 0u);
+  EXPECT_EQ(node.fTo, 0u);
+}
+
+TEST(Views, VirtualRowsTrackGlidingAndDirectScrollbarOffsets) {
+  auto node = virtual_view();
+  node.read(virtual_items(1000));
+  scene::layout(node, viewport);
+  node.scrollTo(50000.0f);
+  for (int i = 1; i < 200; ++i) {
+    node.update(i * 16.0);
+    scene::layout(node, viewport);
+    EXPECT_LE(node.fTops[node.fFrom], node.current());
+    EXPECT_GE(node.fTops[node.fTo], node.current() + viewport.height());
+  }
+  EXPECT_NEAR(node.current(), 50000.0f, 1.0f);
+  node.scrollToStart();
+  scene::layout(node, viewport);
+  EXPECT_FLOAT_EQ(node.current(), 0.0f);
+  EXPECT_EQ(node.fFrom, 0u);
 }
