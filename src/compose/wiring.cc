@@ -1121,6 +1121,8 @@ template <class Key> struct WindowAim {
   std::uint64_t number = 0;
   std::optional<float> top;
   std::optional<std::string> line;
+  // Or a page up (-1) or down (1): most of what is in view, scrolled.
+  int page = 0;
   friend bool operator==(const WindowAim &, const WindowAim &) = default;
 };
 struct WindowSizes {
@@ -1169,6 +1171,8 @@ public:
     fTold = told;
     fSeen.reset();
     fAimNew = aimed;
+    if (anew && !another && !aimed && told.aim.page != 0)
+      this->scrollTo(std::max(0.0f, this->current() + this->bounds().height() * 0.9f * static_cast<float>(told.aim.page)));
     if (ended && !another)
       this->toEnd();
     else
