@@ -326,8 +326,10 @@ private:
     scene::pressLater(this->fState);
   }
 };
+// Concrete in every build: what goes down it (with_way_down) asks it how
+// far from its end the reader is.
 template <class Want, class On, class List> auto spanned_for(On on, List list) {
-  return projected<Want>(std::move(on), Spanned<List>(std::move(list)));
+  return bind::Bound<Want, Projected<On, Spanned<List>>>(Projected<On, Spanned<List>>(std::move(on), Spanned<List>(std::move(list))));
 }
 
 // A scroll over what is made a part at a time, as Qt's fetchMore: what
@@ -1365,38 +1367,38 @@ private:
 };
 
 // A list with its way down over it -- Telegram's "\u2193", in a corner the
-// program fills: told whether it is wanted -- the reader away from the
-// list's end, or what it reads says so (a way back to go) -- and how many
-// have come meanwhile (`show(corner, wanted, unseen)`). What is pressed in
-// the corner answers as it says.
-template <class List, class Corner, class Show> struct WithWayDown : Box<List, Corner> {
-  Show fShow;
+// program fills: whether it is wanted -- the reader away from the list's
+// end, or what it reads says so (a way back to go) -- and how many have come
+// meanwhile, said as they change (`tell(wanted, unseen)`, answered as a
+// tick's press), for the program to keep and the corner to read. What is
+// pressed in the corner answers as it says.
+template <class List, class Corner, class Tell> struct WithWayDown : Box<List, Corner> {
+  using Answer = std::remove_cvref_t<std::invoke_result_t<Tell &, bool, std::size_t>>;
+  using Out = Union<OutOf<Box<List, Corner>>, model::Types<Answer>>;
+  Tell fTell;
   bool fAlso = false;
   std::optional<std::pair<bool, std::size_t>> fShown;
-  WithWayDown(Look look, List list, Corner corner, Show show)
-      : Box<List, Corner>(std::move(look), std::move(list), std::move(corner)), fShow(std::move(show)) {}
+  WithWayDown(Look look, List list, Corner corner, Tell tell)
+      : Box<List, Corner>(std::move(look), std::move(list), std::move(corner)), fTell(std::move(tell)) {}
+  Answer onPress() { return std::invoke(fTell, fShown ? fShown->first : false, fShown ? fShown->second : std::size_t{0}); }
   [[nodiscard]] List &list() { return std::get<0>(this->fParts); }
   [[nodiscard]] Corner &corner() { return std::get<1>(this->fParts); }
   void read(bool also) {
     fAlso = also;
-    this->told();
+    scene::work::mark(this->fState.fId);
   }
   [[nodiscard]] bool wantsTick() const { return true; }
-  void update(double) { this->told(); }
-
-private:
-  void told() {
-    auto &[list, corner] = this->fParts;
+  void update(double) {
+    auto &list = std::get<0>(this->fParts);
     const std::pair now{list.away() || fAlso, list.unseen()};
     if (fShown == now)
       return;
     fShown = now;
-    std::invoke(fShow, corner, now.first, now.second);
-    this->invalidateLayout();
+    scene::pressLater(this->fState);
   }
 };
-template <class List, class Corner, class Show> auto with_way_down(Look look, List list, Corner corner, Show show) {
-  return erased(WithWayDown<List, Corner, Show>(std::move(look), std::move(list), std::move(corner), std::move(show)));
+template <class List, class Corner, class Tell> auto with_way_down(Look look, List list, Corner corner, Tell tell) {
+  return erased(WithWayDown<List, Corner, Tell>(std::move(look), std::move(list), std::move(corner), std::move(tell)));
 }
 
 // A row longer than its room, moved sideways -- by a finger or a mouse
