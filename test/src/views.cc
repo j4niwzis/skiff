@@ -89,4 +89,9 @@ TEST(Views, CaptureObserverLeavesTheTargetsNormalClickAvailable) {
   EXPECT_EQ(std::get<0>(tree.root().fParts).onPress(), 9);
   work.answers.clear();
   work.pressed.clear();
+  tree.dispatchPointer(scene::pointer::down{180.0f, 80.0f, 1});
+  tree.dispatchPointer(scene::pointer::up{180.0f, 80.0f, 1});
+  EXPECT_EQ(observed, 2);
+  EXPECT_TRUE(work.pressed.empty());
+  work.answers.clear();
 }

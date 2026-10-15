@@ -12,20 +12,28 @@ export namespace skiff::compose {
 // Observe a press before its target handles it, for example to dismiss a
 // popover when the press is outside it. The answer can edit the local model
 // while the target still handles its normal press.
+// Answering does not take the press from its target.
 template <class E, class Ask, class N> struct OnCapture : N {
   using Answer = E;
   using Out = Union<OutOf<N>, model::Types<E>>;
   Ask fAsk;
   OnCapture(Ask ask, N node) : N(std::move(node)), fAsk(std::move(ask)) {}
+  [[nodiscard]] bool acceptsInput() const { return true; }
   using N::onPointer;
   std::optional<E> onPointer(scene::phase::capture, const scene::pointer::down& press, scene::PointerReply& reply) {
     N::onPointer(scene::phase::capture{}, press, reply);
+    return std::invoke(fAsk, std::as_const(static_cast<N&>(*this)), press, reply);
+  }
+  // Empty background has no child target; the observer is the target.
+  std::optional<E> onPointer(scene::phase::target, const scene::pointer::down& press, scene::PointerReply& reply) {
+    N::onPointer(scene::phase::target{}, press, reply);
     return std::invoke(fAsk, std::as_const(static_cast<N&>(*this)), press, reply);
   }
 };
 template <class E, class Ask, class N>
   requires requires(N& node, const scene::pointer::down& press, scene::PointerReply& reply) {
     { node.onPointer(scene::phase::capture{}, press, reply) } -> std::same_as<void>;
+    { node.onPointer(scene::phase::target{}, press, reply) } -> std::same_as<void>;
   }
 auto onCapture(Ask ask, N node) {
   return OnCapture<E, Ask, N>(std::move(ask), std::move(node));
