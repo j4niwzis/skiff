@@ -43,20 +43,21 @@ struct gap_policy {
 }
 
 TEST(Views, EachListRestoresItsOffsetAfterShorterContentsWereShown) {
-  auto node = c::remembered_scroll<std::string>(scroll_view());
+  scene::Scene tree(c::remembered_scroll<std::string>(scroll_view()));
+  auto& node = tree.root();
   node.read("home");
-  scene::layout(node, viewport);
+  tree.layoutIfNeeded(viewport);
   node.setCurrent(500.0f);
-  scene::layout(node, viewport);
+  tree.layoutIfNeeded(viewport);
   EXPECT_FLOAT_EQ(node.current(), 500.0f);
   node.read("space");
-  std::get<0>(node.fChildren).apply({.height = 40.0f});
-  scene::layout(node, viewport);
+  std::get<0>(node.view().fChildren).apply({.height = 40.0f});
+  tree.layoutIfNeeded(viewport);
   EXPECT_FLOAT_EQ(node.current(), 0.0f);
   // Read the target key before its new, taller rows have been laid out.
   node.read("home");
-  std::get<0>(node.fChildren).apply({.height = 1000.0f});
-  scene::layout(node, viewport);
+  std::get<0>(node.view().fChildren).apply({.height = 1000.0f});
+  tree.layoutIfNeeded(viewport);
   EXPECT_FLOAT_EQ(node.current(), 500.0f);
   node.read("home");
   EXPECT_FLOAT_EQ(node.current(), 500.0f);
@@ -237,34 +238,35 @@ TEST(Views, VirtualRowsKeepFullExtentAndOnlyBuildNearbyVariableHeightRows) {
 }
 
 TEST(Views, VirtualRowsRestoreADistantListAfterShortContentsAndClampShrinks) {
-  auto node = c::remembered_scroll<std::string>(virtual_view());
+  scene::Scene tree(c::remembered_scroll<std::string>(virtual_view()));
+  auto& node = tree.root();
   node.read("long");
   // The outer read selects a list; its rows arrive through their own part.
-  using base = decltype(virtual_view());
-  static_cast<base&>(node).read(virtual_items(1000));
-  scene::layout(node, viewport);
+
+  node.view().read(virtual_items(1000));
+  tree.layoutIfNeeded(viewport);
   node.setCurrent(50000.0f);
-  scene::layout(node, viewport);
+  tree.layoutIfNeeded(viewport);
   node.read("short");
-  static_cast<base&>(node).read(virtual_items(1));
-  scene::layout(node, viewport);
+  node.view().read(virtual_items(1));
+  tree.layoutIfNeeded(viewport);
   EXPECT_FLOAT_EQ(node.current(), 0.0f);
   node.read("long");
-  static_cast<base&>(node).read(virtual_items(1000));
-  scene::layout(node, viewport);
+  node.view().read(virtual_items(1000));
+  tree.layoutIfNeeded(viewport);
   EXPECT_FLOAT_EQ(node.current(), 50000.0f);
-  EXPECT_LE(node.fTops[node.fFrom], 50000.0f);
-  EXPECT_GE(node.fTops[node.fTo], 50100.0f);
-  static_cast<base&>(node).read(virtual_items(3));
-  scene::layout(node, viewport);
+  EXPECT_LE(node.view().fTops[node.view().fFrom], 50000.0f);
+  EXPECT_GE(node.view().fTops[node.view().fTo], 50100.0f);
+  node.view().read(virtual_items(3));
+  tree.layoutIfNeeded(viewport);
   EXPECT_FLOAT_EQ(node.current(), 106.0f);
-  EXPECT_EQ(node.fFrom, 0u);
-  EXPECT_EQ(node.fTo, 3u);
-  static_cast<base&>(node).read({});
-  scene::layout(node, viewport);
+  EXPECT_EQ(node.view().fFrom, 0u);
+  EXPECT_EQ(node.view().fTo, 3u);
+  node.view().read({});
+  tree.layoutIfNeeded(viewport);
   EXPECT_FLOAT_EQ(node.extent(), 0.0f);
-  EXPECT_EQ(node.fFrom, 0u);
-  EXPECT_EQ(node.fTo, 0u);
+  EXPECT_EQ(node.view().fFrom, 0u);
+  EXPECT_EQ(node.view().fTo, 0u);
 }
 
 TEST(Views, VirtualRowsTrackGlidingAndDirectScrollbarOffsets) {
@@ -283,4 +285,47 @@ TEST(Views, VirtualRowsTrackGlidingAndDirectScrollbarOffsets) {
   scene::layout(node, viewport);
   EXPECT_FLOAT_EQ(node.current(), 0.0f);
   EXPECT_EQ(node.fFrom, 0u);
+}
+
+TEST(Views, RememberedViewportKeepsItsIdentityAndContentsInDistinctBindingNodes) {
+  using source_type = skiff::model::Model<projection_source, skiff::bind::NoReactions>;
+  using facts_type = skiff::model::Model<projection_facts, skiff::bind::NoReactions>;
+  source_type source(projection_source{});
+  facts_type facts(projection_facts{});
+  auto expression = c::projected<projection_hint>([](const projection_hint& hint) { return hint.value; },
+      c::remembered_scroll<int>(c::projected<projection_amount>([](const projection_amount& amount) {
+        return virtual_items(amount.value * 100);
+      }, virtual_view())));
+  scene::Scene tree(std::move(expression));
+  auto& node = tree.root();
+  skiff::bind::refresh(node, facts);
+  skiff::bind::refresh(node, source);
+  tree.layoutIfNeeded(viewport);
+  EXPECT_EQ(node.view().fItems.size(), 200u);
+  EXPECT_FLOAT_EQ(node.extent(), 14300.0f);
+  node.setCurrent(5000.0f);
+  tree.layoutIfNeeded(viewport);
+  facts.apply(skiff::model::over<projection_hint>(skiff::model::setTo(projection_hint{7})));
+  skiff::bind::refresh(node, facts);
+  tree.layoutIfNeeded(viewport);
+  EXPECT_FLOAT_EQ(node.current(), 0.0f);
+  source.apply(skiff::model::over<projection_amount>(skiff::model::setTo(projection_amount{3})));
+  skiff::bind::refresh(node, source);
+  tree.layoutIfNeeded(viewport);
+  EXPECT_EQ(node.view().fItems.size(), 300u);
+  facts.apply(skiff::model::over<projection_hint>(skiff::model::setTo(projection_hint{3})));
+  skiff::bind::refresh(node, facts);
+  tree.layoutIfNeeded(viewport);
+  EXPECT_FLOAT_EQ(node.current(), 5000.0f);
+}
+
+TEST(Views, ClampedWidthUsesPixelsInsideAFormerlyFillingRoot) {
+  auto node = c::clamped_width({}, c::column(c::vbox(0.0f, {.fill = true})));
+  scene::layout(node, skia::SkRect::MakeXYWH(0.0f, 0.0f, 1000.0f, 600.0f));
+  EXPECT_FLOAT_EQ(node.bounds().width(), 300.0f);
+  EXPECT_FLOAT_EQ(node.bounds().height(), 600.0f);
+  node.read({.whole = true});
+  scene::layout(node, skia::SkRect::MakeXYWH(0.0f, 0.0f, 1000.0f, 600.0f));
+  EXPECT_FLOAT_EQ(node.bounds().width(), 1000.0f);
+  EXPECT_FLOAT_EQ(node.bounds().height(), 600.0f);
 }
