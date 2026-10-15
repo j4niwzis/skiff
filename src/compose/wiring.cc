@@ -962,29 +962,39 @@ private:
   std::optional<model::Revision> fSeen;
 };
 
-// A list with its way down over it -- Telegram's "↓": shown while the
-// reader is away from its end, told how many have come meanwhile
-// (`show(button, unseen)`); pressed, back to the end.
-template <class List, class Button, class Show> struct WithWayDown : Box<List, Button> {
+// A list with its way down over it -- Telegram's "\u2193", in a corner the
+// program fills: told whether it is wanted -- the reader away from the
+// list's end, or what it reads says so (a way back to go) -- and how many
+// have come meanwhile (`show(corner, wanted, unseen)`). What is pressed in
+// the corner answers as it says.
+template <class List, class Corner, class Show> struct WithWayDown : Box<List, Corner> {
   Show fShow;
+  bool fAlso = false;
   std::optional<std::pair<bool, std::size_t>> fShown;
-  WithWayDown(Look look, List list, Button button, Show show)
-      : Box<List, Button>(std::move(look), std::move(list), std::move(button)), fShow(std::move(show)) {}
+  WithWayDown(Look look, List list, Corner corner, Show show)
+      : Box<List, Corner>(std::move(look), std::move(list), std::move(corner)), fShow(std::move(show)) {}
   [[nodiscard]] List &list() { return std::get<0>(this->fParts); }
+  [[nodiscard]] Corner &corner() { return std::get<1>(this->fParts); }
+  void read(bool also) {
+    fAlso = also;
+    this->told();
+  }
   [[nodiscard]] bool wantsTick() const { return true; }
-  void update(double) {
-    auto &[list, button] = this->fParts;
-    const std::pair now{list.away(), list.unseen()};
+  void update(double) { this->told(); }
+
+private:
+  void told() {
+    auto &[list, corner] = this->fParts;
+    const std::pair now{list.away() || fAlso, list.unseen()};
     if (fShown == now)
       return;
     fShown = now;
-    button.setVisible(now.first);
-    std::invoke(fShow, button, now.second);
-    this->markDamaged();
+    std::invoke(fShow, corner, now.first, now.second);
+    this->invalidateLayout();
   }
 };
-template <class List, class Button, class Show> WithWayDown<List, Button, Show> with_way_down(Look look, List list, Button button, Show show) {
-  return WithWayDown<List, Button, Show>(std::move(look), std::move(list), std::move(button), std::move(show));
+template <class List, class Corner, class Show> WithWayDown<List, Corner, Show> with_way_down(Look look, List list, Corner corner, Show show) {
+  return WithWayDown<List, Corner, Show>(std::move(look), std::move(list), std::move(corner), std::move(show));
 }
 
 // A row longer than its room, moved sideways -- by a finger or a mouse
