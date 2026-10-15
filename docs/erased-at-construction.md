@@ -1,83 +1,64 @@
-# Debug builds: containers erase their children as they are made
+# Erased at construction
 
-What the owner asked for (2026-10-15): in a debug build no composed static
-type -- the tables are built where each combinator is called, over children
-already erased, so no unit instantiates a tree. Release stays fully static.
-The walks units, the `kOpsElsewhere` tables and the global erased-walk mode go.
+Outside a release build, every combinator in `skiff.compose` erases what it
+returns: it builds its node from the concrete node it was handed, makes that
+node's table there, and returns it held (`compose::Held`). No composed type
+exists in a debug build -- a view's type is `Held` however deep it is -- so no
+unit instantiates the walks of a tree it did not build. A release build
+returns the concrete types, as before, and stays fully static.
 
-## Why it is slow now
+## Held is not in the tree
 
-`AnyNode::opsOf<T>()` makes the table for `T`, and the walks reach a node's
-children through `forEachChild`, which makes each child's table in turn: the
-table of a composed type is the tables of its whole subtree. Every unit that
-names `chats_screen_t` or `window_body_t` made all of them; `kOpsElsewhere`
-moved them to one unit each (walks_*.cc), which only moved the cost.
+`Held` owns its node through an `AnyNode`. The scene sees through it
+(`scene::kSeenThrough<Held>`): in every walk, in `AnyNode`, and at a scene's
+root, what is walked is the node it holds, with that node's own state. What a
+node does to itself later -- hides itself, slides in, is emptied -- is what
+its parent sees, with no copy to fall out of date.
 
-## Where to erase: what holds children
+What a `Held` is asked or told as a node goes to the node it holds: `apply`,
+`setVisible`, `visible`, `bounds`, `id`, `state`, the setters, damage and
+layout. These are overloads on the object's type (`this Held&` beside a
+template for anything derived), not tests of it.
 
-The depth of a type comes from containers: `column`, `row`, `many`, a mount's
-content, a dialog's or a page's content, the alternatives of a page variant.
-In a debug build each of them erases the children it is given -- each child
-that has children of its own -- as it is made: `Box<Held, Text, Held>`, not
-`Box<Box<...>, Text, Projected<...>>`. A container's type then depends on its
-arity and its leaves, never on what is below; its table is made where it is
-called, over `Held`'s one table.
+## Wrappers over held content
 
-Leaves stay as they are (a `Text`, an `Icon`, a widget): cheap, and a row's
-elided name keeps its own shrinking. Wrappers over a leaf or over a container
-stay concrete too (`styled`, `projected`, `bound`, `applied`, `onKeys`): a
-wrapper adds one level to one node and keeps its node's methods -- a scroll
-container's `scrollToStart`, a toggle's `setOn` -- where its own code needs
-them. Release erases nothing.
+A combinator that wraps what another one returned -- `onClick` over a
+`column` -- makes a node of its own over held content: `W<Held>`, derived from
+`Held`. It stands where its content stood:
 
-## `Held`: one node type, transparent in layout
+- As it is erased (or as it is made, for a `Marked`), its content's placement
+  is folded into it once (`Held::adopt`): where it stands, its margin, how it
+  is aligned, what bounds its size, how it is drawn as a whole.
+- Its size follows its content's, axis by axis: relative to the parent, the
+  wrapper is and the content fills it; growing, the wrapper grows and the
+  content fills it; any other way, the wrapper is as big as the content. The
+  content's own sizing is kept apart, so a later spec starts from it.
+- A spec given it later is split: placement to the wrapper, the rest to the
+  content. Disabling disables both.
+- It is shown only while its content is (`walkedState`), so content that
+  hides itself hides its wrapper.
 
-A `scene::Node`, the same in every debug unit, owning one node through
-`AnyNode` and laying it out as the node would lay itself out:
+## Nothing reaches into a built tree
 
-- Placement goes to the holder and is cleared on the node: place, anchor,
-  origin, x/y, margin, alignSelf, depth, min/max.
-- Size, axis by axis: where the node is relative to its parent, the holder is
-  (the same fraction) and the node fills the holder; where the node grows,
-  the holder grows and the node fills it; anywhere else the holder auto-sizes
-  round the node, which keeps its own sizing -- fixed, auto, or measured by
-  itself (a text area's lines).
-- `Held::apply(spec)` splits a spec the same way: placement to itself, size
-  to the node (mirrored as above), drawing and state flags to the node, alpha,
-  visibility, shift and scale to itself.
-- Walks and events: the node is its only child, through `AnyNode`; `Held`'s
-  table is made once in skiff.
+A program never takes a part of a built tree to read or change it. What
+it reached into the tree for is now the model's, or the nodes' own:
 
-## Binding and answers
+- **What a part shows** is read from the model (`bound`, `projected`, `applied`,
+  `focused_by`, `kept_scroll`). A combinator may use the concrete type of what
+  it is handed; erasure happens only at its return.
+- **What a part says** is an answer: from an event, or from a tick
+  (`scene::pressLater` in `update`, delivered as a press): a view's resting
+  offset (`kept_scroll`), the way down over a list (`with_way_down`).
+- **Program-level signals** are data the program drains: `work::focusWanted`,
+  `work::subtreeMade`, an image source's `want()`.
+- **A widget's own rules over its parts** (a bubble placing its time, an album
+  shrinking its cells, a drag between lanes) find marked parts as the walks
+  see them: `Marked<Tag, N>` with `scene::findNode` and
+  `scene::forEachNode`, and `state_of(node)` for a part's state.
 
-Debug binds and answers through the runtime walks (skiff.bind:runtime); that
-is the one debug path. A child erased in a container keeps its own wrappers
-(each a node of its own above it), so what it binds and answers is found
-through its table as any erased child's is.
+Widgets with rules that name their parts by position (the message bubble,
+the info cards) are a flat `Box` of their parts: one static type for the
+widget, as a `Text` is one, its parts held.
 
-## Variants of nodes
-
-A choice among node types (`spl::variant` of pages) is `c::one_of<A, B, ...>`:
-the variant in release, `Held` in debug.
-
-## In mux
-
-- No reach-ins by static type through containers: `body_of`, `frame_of`,
-  `chat_line_of`, `composer_field`, `layer_of<N>`, `std::get<N>(...fParts)`,
-  `input_emoji` bounds, `open_panel`, `drop_closed`, the emoji layer walk.
-  Each becomes a model read (most have one now) or a query a node answers by
-  its id (focus it, its bounds).
-- walks_*.cc, every `kOpsElsewhere`/`opsElsewhere`, the erased manage pages and
-  what served only them go.
-
-## Order
-
-1. skiff: `Held` and its layout transparency; boxcheck: sizes and places equal
-   to the unerased node for each kind of spec.
-2. skiff compose: containers erase their composite children in debug;
-   `one_of`; the global erased-walk switch removed.
-3. skiff-widgets: the erased widgets (`ErasedTextArea`, `AnyCall`,
-   `AnyBlocks`) go -- a widget is a leaf.
-4. mux: reach-ins removed, `one_of` for variants of nodes, walks units and
-   tables deleted.
-5. Every unit measured alone: under 30 s CPU.
+Combinators whose result another one reads as itself stay concrete in every
+build: `window_list`, `spanned_for`, `page_view`, `styled`, `visible`.
