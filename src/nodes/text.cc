@@ -148,8 +148,14 @@ struct AnyPictures {
   const skia::Sp<skia::SkImage> *(*fPicture)(std::string_view) = &NoPictures::picture;
   bool (*fAnimated)(std::string_view) = nullptr;
   double (*fWakeAt)(std::string_view) = nullptr;
+  skiff::scene::Waiters *(*fPillWaiters)(std::string_view) = nullptr;
+  skiff::scene::Waiters *(*fPictureWaiters)(std::string_view) = nullptr;
   template <class Pictures> [[nodiscard]] static AnyPictures of() {
     AnyPictures made{&Pictures::pill, &Pictures::picture};
+    if constexpr (requires { Pictures::pillWaiters(std::string_view{}); })
+      made.fPillWaiters = &Pictures::pillWaiters;
+    if constexpr (requires { Pictures::pictureWaiters(std::string_view{}); })
+      made.fPictureWaiters = &Pictures::pictureWaiters;
     if constexpr (requires { Pictures::animated(std::string_view{}); })
       made.fAnimated = &Pictures::animated;
     if constexpr (requires { Pictures::wakeAt(std::string_view{}); })
@@ -160,6 +166,12 @@ struct AnyPictures {
     return fWakeAt ? fWakeAt(target) : std::numeric_limits<double>::infinity();
   }
   [[nodiscard]] bool animated(std::string_view target) const { return fAnimated && fAnimated(target); }
+  [[nodiscard]] skiff::scene::Waiters *pillWaiters(std::string_view target) const {
+    return fPillWaiters ? fPillWaiters(target) : nullptr;
+  }
+  [[nodiscard]] skiff::scene::Waiters *pictureWaiters(std::string_view target) const {
+    return fPictureWaiters ? fPictureWaiters(target) : nullptr;
+  }
   [[nodiscard]] std::optional<skiff::scene::PillPicture> pill(std::string_view target) const { return fPill(target); }
   [[nodiscard]] const skia::Sp<skia::SkImage> *picture(std::string_view target) const { return fPicture(target); }
 };
@@ -917,6 +929,26 @@ private:
     }
   }
 
+  // A picture it draws, not here yet: the text waits for it with the rest
+  // waiting on where it comes from (Pictures::pillWaiters and
+  // pictureWaiters, where it has them), and is drawn again as it comes --
+  // nothing polls for it.
+  [[nodiscard]] skiff::scene::Waiters *pillWaitersOf(std::string_view target) const {
+    if constexpr (requires { fPictures.pillWaiters(target); })
+      return fPictures.pillWaiters(target);
+    else
+      return nullptr;
+  }
+  [[nodiscard]] skiff::scene::Waiters *pictureWaitersOf(std::string_view target) const {
+    if constexpr (requires { fPictures.pictureWaiters(target); })
+      return fPictures.pictureWaiters(target);
+    else
+      return nullptr;
+  }
+  void waitFor(skiff::scene::Waiters *waiters) const {
+    if (waiters)
+      waiters->wait(fState.fId);
+  }
   // A line in pieces: plain in the text's colour, links in theirs and
   // underlined.
   float drawWithLinks(skia::SkCanvas *canvas, const skiff::paint::Painter &p, std::size_t start,
@@ -1008,7 +1040,9 @@ private:
         // its baseline; nothing where the program has none (yet).
         if (cuts[i] == link->first)
           if (const skia::Sp<skia::SkImage> *picture = fPictures.picture(link->target);
-              picture && *picture) {
+              !(picture && *picture)) {
+            waitFor(pictureWaitersOf(link->target));
+          } else {
             const float side = fSize * 1.2f;
             skia::SkPaint paint;
             paint.setAlphaf(alpha);
@@ -1022,8 +1056,11 @@ private:
       if (link && link->pill) {
         // The plate, the picture at its start where the pill begins, the
         // text over it -- not underlined.
-        drawPill(canvas, p, at, y, width, fSize, colour,
-                 cuts[i] == link->first ? fPictures.pill(link->target) : std::nullopt, alpha);
+        const auto look = cuts[i] == link->first ? fPictures.pill(link->target) : std::nullopt;
+        // Its picture not here yet: drawn again when it comes.
+        if (look && !(look->picture && *look->picture))
+          waitFor(pillWaitersOf(link->target));
+        drawPill(canvas, p, at, y, width, fSize, colour, look, alpha);
         p.text(piece, at, y, fSize, colour, alpha, fBold);
         at += width;
         continue;
