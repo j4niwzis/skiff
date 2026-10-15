@@ -173,6 +173,12 @@ private:
     mine.fMinHeight = std::exchange(node.fMinHeight, 0.0f);
     mine.fMaxHeight = std::exchange(node.fMaxHeight, 0.0f);
     mine.fVisible = std::exchange(node.fVisible, true);
+    // How it is drawn as a whole -- faded, scaled, shifted -- the holder's
+    // too: a later spec of them replaces them, not multiplies them in.
+    mine.fAlpha = std::exchange(node.fAlpha, 1.0f);
+    mine.fScale = std::exchange(node.fScale, 1.0f);
+    mine.fShiftX = std::exchange(node.fShiftX, 0.0f);
+    mine.fShiftY = std::exchange(node.fShiftY, 0.0f);
     mine.fGrowAxes = node.fGrowAxes;
     mine.fShrinkAxes = node.fShrinkAxes;
     this->followSize(node);
