@@ -1485,9 +1485,10 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
   }
 };
 template <class Facts, class Page, class Show, class Same, class Side, class Pin, class Back>
-auto page_view(Show show, Same same, Side side, Pin pin, Back back, Page first,
+PageView<Facts, Page, Show, Same, Side, Pin, Back> page_view(Show show, Same same, Side side, Pin pin, Back back, Page first,
                                                             scene::Spec spec = {}) {
-  return erased(PageView<Facts, Page, Show, Same, Side, Pin, Back>{std::move(show), std::move(same), std::move(side), std::move(pin), std::move(back), std::move(first), std::move(spec)});
+  // Concrete in every build: what keeps its offset (kept_scroll) reads it.
+  return {std::move(show), std::move(same), std::move(side), std::move(pin), std::move(back), std::move(first), std::move(spec)};
 }
 
 } // namespace skiff::compose
