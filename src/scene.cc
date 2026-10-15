@@ -6106,6 +6106,7 @@ public:
     return fOps == tableOf<T>() ? static_cast<T *>(fNode) : nullptr;
   }
   [[nodiscard]] State &state() { return fOps->fState(fNode); }
+  [[nodiscard]] bool settling() const { return fOps->fSettling(fNode); }
   [[nodiscard]] const AnyNode::Ops &ops() const noexcept { return *fOps; }
   [[nodiscard]] void *node() const noexcept { return fNode; }
   // The node's own type, for what names it.

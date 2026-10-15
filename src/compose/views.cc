@@ -213,12 +213,12 @@ template <class Want, class Compute, class N> auto slid_for(Compute compute, N n
   return projected<Want>(std::move(compute), Slid<N>(std::move(node)));
 }
 
-// What lies under some layers drawn once, while one over it fades in or
-// out (as `Fading(over)` says), into pixels kept: each frame of the fade
-// puts those down and draws only what is over them -- every frame of a
-// fade repainted all of the window under its scrim, and blurred it again.
-// Done, they are let go: the frame the fade ends on draws all of it.
-template <class Fading, class Under, class Over> struct FrozenUnder : Box<Under, Over> {
+// What lies under some layers drawn once, while anything over it moves (a
+// dialog fading in or out), into pixels kept: each frame of the fade puts
+// those down and draws only what is over them -- every frame of a fade
+// repainted all of the window under its scrim, and blurred it again. Done,
+// they are let go: the frame the fade ends on draws all of it.
+template <class Under, class Over> struct FrozenUnder : Box<Under, Over> {
   skia::Sp<skia::SkImage> fFrozen;
   skia::SkRect fAt = skia::SkRect::MakeEmpty();  // where it is on the device
   FrozenUnder(Look look, Under under, Over over) : Box<Under, Over>(std::move(look), std::move(under), std::move(over)) {}
@@ -226,7 +226,7 @@ template <class Fading, class Under, class Over> struct FrozenUnder : Box<Under,
     auto &under = std::get<0>(this->fParts);
     auto &over = std::get<1>(this->fParts);
     skia::SkMatrix inverse;
-    if (!Fading{}(over) || !canvas->getTotalMatrix().invert(&inverse)) {
+    if (!moving(over) || !canvas->getTotalMatrix().invert(&inverse)) {
       fFrozen = nullptr;
       scene::drawDefault(*this, painting, canvas, alpha);
       return;
@@ -253,24 +253,46 @@ template <class Fading, class Under, class Over> struct FrozenUnder : Box<Under,
     canvas->drawImageRect(fFrozen, inverse.mapRect(fAt), skia::SkSamplingOptions(skia::SkFilterMode::kNearest));
     scene::draw(over, painting, canvas, alpha);
   }
+
+private:
+  // Whether anything over it moves: seen as the walks see it, through
+  // whatever holds it.
+  static bool moving(Over &over) {
+    if constexpr (scene::kErasedWalks) {
+      auto seen = scene::AnyNodeRef::of(over);
+      return scene::walk::animating(seen);
+    } else {
+      return scene::walk::animating(over);
+    }
+  }
 };
-template <class Fading, class Under, class Over> auto frozen_under(Look look, Under under, Over over) {
-  return erased(FrozenUnder<Fading, Under, Over>(std::move(look), std::move(under), std::move(over)));
+template <class Under, class Over> auto frozen_under(Look look, Under under, Over over) {
+  return erased(FrozenUnder<Under, Over>(std::move(look), std::move(under), std::move(over)));
 }
 
 // A tap off a popup -- pressed and let go a few pixels apart at most, off
-// what `card(node)` says it covers -- answered with `make()`: the popup
-// closed by a tap, a drag over what is under it left alone.
-template <class Card, class Make, class N> struct TappedOff : N {
+// its cards -- answered with `make()`: the popup closed by a tap, a drag
+// over what is under it left alone. The layer N shows the popup as a node
+// over the whole window whose parts are its cards (a panel, a menu): what a
+// press is off is those parts, as they are laid out -- read as the walks
+// see them, not by any type of theirs.
+template <class Make, class N> struct TappedOff : N {
   using Answer = std::remove_cvref_t<std::invoke_result_t<Make &>>;
-  Card fCard;
   Make fMake;
   std::optional<skia::SkPoint> fFrom;
-  TappedOff(Card card, Make make, N node) : N(std::move(node)), fCard(std::move(card)), fMake(std::move(make)) {}
+  TappedOff(Make make, N node) : N(std::move(node)), fMake(std::move(make)) {}
   using N::onPointer;
   void onPointer(scene::phase::capture, const scene::pointer::down &press, scene::PointerReply &) {
-    const std::optional<skia::SkRect> covers = std::invoke(fCard, static_cast<N &>(*this));
-    fFrom = covers && !covers->contains(press.x, press.y) ? std::optional(skia::SkPoint::Make(press.x, press.y)) : std::nullopt;
+    bool on = false;
+    bool shown = false;
+    scene::eachChild(static_cast<N &>(*this), [&](auto &popup) {
+      shown = shown || scene::stateOf(popup).fVisible;
+      scene::eachChild(popup, [&](auto &card) {
+        const scene::State &state = scene::stateOf(card);
+        on = on || (state.fVisible && state.fBounds.contains(press.x, press.y));
+      });
+    });
+    fFrom = shown && !on ? std::optional(skia::SkPoint::Make(press.x, press.y)) : std::nullopt;
   }
   std::optional<Answer> onPointer(scene::phase::capture, const scene::pointer::up &lift, scene::PointerReply &) {
     const auto from = std::exchange(fFrom, std::nullopt);
@@ -279,8 +301,8 @@ template <class Card, class Make, class N> struct TappedOff : N {
     return std::invoke(fMake);
   }
 };
-template <class Card, class Make, class N> auto tapped_off(Card card, Make make, N node) {
-  return erased(TappedOff<Card, Make, N>(std::move(card), std::move(make), std::move(node)));
+template <class Make, class N> auto tapped_off(Make make, N node) {
+  return erased(TappedOff<Make, N>(std::move(make), std::move(node)));
 }
 
 // Each list has its own offset. setCurrent retains the requested offset
