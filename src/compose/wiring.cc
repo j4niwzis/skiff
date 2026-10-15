@@ -97,6 +97,75 @@ OnPointer<E, Make, N> onPointer(Make make, N node) {
   return OnPointer<E, Make, N>(std::move(make), std::move(node));
 }
 
+// A node dragged across: pressed, it takes the pointer, and each move until
+// it is let go answers what Act makes of where across the pointer is --
+// asked as the move is delivered (onPress), as a press's answer is: a
+// divider dragged, the column beside it as wide as it says.
+template <class Act, class N> struct OnDragAcross : N {
+  using Out = Union<OutOf<N>, model::Types<std::remove_cvref_t<std::invoke_result_t<Act &, float>>>>;
+  Act fAct;
+  float fAt = 0.0f;
+  bool fDragging = false;
+  OnDragAcross(Act act, N node) : N(std::move(node)), fAct(std::move(act)) {}
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  [[nodiscard]] bool focusable() const { return false; }
+  auto onPress() { return std::invoke(fAct, fAt); }
+  using N::onPointer;
+  void onPointer(scene::phase::target, const scene::pointer::down &, scene::PointerReply &reply) {
+    fDragging = true;
+    reply.capturePointer();
+    reply.handle();
+  }
+  void onPointer(scene::phase::target, const scene::pointer::move &at, scene::PointerReply &reply) {
+    if (!fDragging)
+      return;
+    fAt = at.x;
+    scene::pressLater(this->fState);
+    reply.handle();
+  }
+  void onPointer(scene::phase::target, const scene::pointer::up &, scene::PointerReply &reply) {
+    fDragging = false;
+    reply.releasePointer();
+    reply.handle();
+  }
+  void onPointer(scene::phase::target, const scene::pointer::cancel &, scene::PointerReply &reply) {
+    fDragging = false;
+    reply.releasePointer();
+  }
+};
+template <class Act, class N> OnDragAcross<Act, N> onDragAcross(Act act, N node) {
+  return OnDragAcross<Act, N>(std::move(act), std::move(node));
+}
+
+// The other button pressed on a node -- on it, or on what is in it --
+// answered with a copy of its event: what lists or opens a menu. A press on
+// the node itself is its target's, which the way back up does not reach:
+// taken there too; any other press there as the node takes it.
+template <class E, class N> struct OnRightPress : N {
+  using Out = Union<OutOf<N>, model::Types<E>>;
+  E fEvent;
+  OnRightPress(E event, N node) : N(std::move(node)), fEvent(std::move(event)) {}
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  using N::onPointer;
+  std::optional<E> onPointer(scene::phase::bubble, const scene::pointer::down &press, scene::PointerReply &reply) {
+    if (press.button != 3)
+      return std::nullopt;
+    reply.handle();
+    return fEvent;
+  }
+  std::optional<E> onPointer(scene::phase::target, const scene::pointer::down &press, scene::PointerReply &reply) {
+    if (press.button != 3) {
+      scene::defaultPointer(*this, scene::phase::target{}, press, reply);
+      return std::nullopt;
+    }
+    reply.handle();
+    return fEvent;
+  }
+};
+template <class E, class N> OnRightPress<E, N> onRightPress(E event, N node) {
+  return OnRightPress<E, N>(std::move(event), std::move(node));
+}
+
 // ---- a >> b, a + b ----------------------------------------------------------
 
 template <class A, class B> struct Ends {

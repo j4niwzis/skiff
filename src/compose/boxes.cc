@@ -229,6 +229,14 @@ N recorded(N node, bool on = true) {
   return node;
 }
 
+// A node showing the pointer as `shape` over it.
+template <class N>
+  requires std::derived_from<N, scene::Node>
+N with_cursor(scene::Cursor shape, N node) {
+  node.fState.setCursor(shape);
+  return node;
+}
+
 // Leaf options declared where the node is composed. Keep the concrete
 // node type, including a text's picture provider and a widget's actions.
 template <class N> requires requires(N& node) { node.setWrapped(true); }
@@ -537,6 +545,21 @@ auto spec_for(Compute compute, N node) {
 template <class Want, class Compute>
 auto text_for(Compute compute, nodes::Text text) {
   return projected<Want>(std::move(compute), TextOf(std::move(text)));
+}
+// A scope at the part what it reads says -- the chat chosen, as what is
+// shown has it: Compute makes the scope's keys of the value read, and the
+// scope is moved to them (rekey), shown that part by the next refresh of
+// its model that walks it.
+template <class Compute, class N> struct Rekeyed : N {
+  Compute fCompute;
+  Rekeyed(Compute compute, N node) : N(std::move(node)), fCompute(std::move(compute)) {}
+  template <class T> void read(const T &value) {
+    std::apply([&](auto &&...keys) { this->rekey(std::forward<decltype(keys)>(keys)...); }, fCompute(value));
+  }
+};
+template <class Want, class Compute, class N>
+auto rekeyed_by(Compute compute, N node) {
+  return bound<Want>(Rekeyed<Compute, N>(std::move(compute), std::move(node)));
 }
 
 // What sections show: their parts, one under another, the tabs of every
