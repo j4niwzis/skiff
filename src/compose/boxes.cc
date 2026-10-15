@@ -109,6 +109,10 @@ template <class Out_> struct Erased : Stacked {
 // content fills it; any other way, the wrapper is as big as the content. A
 // spec given it later goes the same way.
 struct Held : Stacked {
+  // What it holds is not known here: walked, and taken to hold a Local, as
+  // any node naming its children itself is.
+  using Walked = std::true_type;
+  using HasLocal = std::true_type;
   // The content's size as it says it, kept apart from the wrapper's
   // following of it: content made to fill its wrapper is still the size it
   // was made.
@@ -147,11 +151,20 @@ struct Held : Stacked {
       self.restore(node);
       self.fApply(self.parts.held.ref().node(), nodeSide(spec));
       self.fState.apply(placement(spec));
+      if (spec.visible)
+        self.fShown = *spec.visible;
       self.followSize(node);
       self.invalidateLayout();
     }
   }
   template <class Self> void setVisible(this Self &self, bool on) { self.apply({.visible = on}); }
+  // A wrapper as the walks see it: shown while it says it is and its
+  // content is -- content that hides itself later (a mount emptied, a part
+  // shown as the model says) hides the wrapper with it.
+  [[nodiscard]] scene::State &walkedState() noexcept {
+    this->fState.fVisible = fShown && (!parts.held || parts.held.state().fVisible);
+    return this->fState;
+  }
 
   // The content's placement folded into this wrapper's, and left at rest
   // in it: what the wrapper said of its own is kept, and how both are drawn
@@ -181,7 +194,9 @@ struct Held : Stacked {
     take(mine.fMaxWidth, node.fMaxWidth, 0.0f);
     take(mine.fMinHeight, node.fMinHeight, 0.0f);
     take(mine.fMaxHeight, node.fMaxHeight, 0.0f);
-    mine.fVisible = mine.fVisible && std::exchange(node.fVisible, true);
+    // Its content's own visibility stays the content's, followed as it is
+    // seen (walkedState); the wrapper's is its own.
+    fShown = mine.fVisible;
     mine.fAlpha *= std::exchange(node.fAlpha, 1.0f);
     mine.fScale *= std::exchange(node.fScale, 1.0f);
     mine.fShiftX += std::exchange(node.fShiftX, 0.0f);
@@ -196,6 +211,8 @@ private:
   void (*fApply)(void *, const scene::Spec &) = nullptr;
   // Not a part: nothing walks it.
   own_t fOwn;
+  // Shown, as the wrapper itself says.
+  bool fShown = true;
   [[nodiscard]] static scene::Spec placement(const scene::Spec &spec) {
     return {.place = spec.place, .anchor = spec.anchor, .origin = spec.origin, .x = spec.x, .y = spec.y,
             .grow = spec.grow, .shrink = spec.shrink, .minWidth = spec.minWidth, .maxWidth = spec.maxWidth,

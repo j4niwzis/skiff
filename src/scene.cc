@@ -5992,7 +5992,14 @@ private:
   }
   template <class T>
   static constexpr Ops kOps{      +[](void *n) { delete static_cast<T *>(n); },
-      +[](void *n) -> State & { return as<T>(n).fState; },
+      +[](void *n) -> State & {
+        // A node whose state follows another's as it is seen (a wrapper over
+        // held content: shown only while its content is) says so.
+        if constexpr (requires(T &node) { { node.walkedState() } -> std::same_as<State &>; })
+          return as<T>(n).walkedState();
+        else
+          return as<T>(n).fState;
+      },
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
       +[](void *n, const skia::SkRect &box) { layoutShared(n, &kOps<T>, box); },
 #else
