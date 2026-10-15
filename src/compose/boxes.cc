@@ -116,7 +116,14 @@ struct Held : Stacked {
     scene::State &node = parts.held.state();
     node.apply(nodeSide(spec));
     this->fState.apply(placement(spec));
-    this->followSize(node);
+    // Followed again only on the axes the spec sizes: the node fills the
+    // holder already where it was relative, and a spec of its padding alone
+    // took the holder for the parent's whole width.
+    const bool sized = spec.relativeSize || spec.autoSize || spec.grow || spec.fill;
+    if (sized || spec.width || spec.fillX)
+      this->followAxis<scene::axis::x>(node, node.fWidth, this->fState.fWidth);
+    if (sized || spec.height || spec.fillY)
+      this->followAxis<scene::axis::y>(node, node.fHeight, this->fState.fHeight);
     this->invalidateLayout();
   }
 
