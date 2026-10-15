@@ -6172,6 +6172,29 @@ template <class T, class N> T *findTyped(N &node) {
   });
   return found;
 }
+// Every node of type T under a node (itself included), shown or not, in
+// their order, each given to f -- as findNode finds one: for a widget's own
+// rules over the marked parts of what it holds (an album's cells shrunk).
+template <class T, class F> void eachIn(AnyNodeRef &node, F &f) {
+  if (T *hit = node.get<T>()) {
+    f(*hit);
+    return;
+  }
+  node.forEachChild([&](AnyNodeRef &child) { eachIn<T>(child, f); });
+}
+template <class T, class F> void eachTyped(T &node, F &f) { f(node); }
+template <class T, class F> void eachTyped(AnyNodeRef &node, F &f) { eachIn<T>(node, f); }
+template <class T, class N, class F> void eachTyped(N &node, F &f) {
+  eachChild(node, [&](auto &child) { eachTyped<T>(child, f); });
+}
+template <class T, class N, class F> void forEachNode(N &root, F &&f) {
+  if constexpr (kErasedWalks) {
+    AnyNodeRef seen = AnyNodeRef::of(root);
+    eachIn<T>(seen, f);
+  } else {
+    eachTyped<T>(root, f);
+  }
+}
 template <class T, class N> [[nodiscard]] T *findNode(N &root) {
   if constexpr (kErasedWalks) {
     AnyNodeRef seen = AnyNodeRef::of(root);
