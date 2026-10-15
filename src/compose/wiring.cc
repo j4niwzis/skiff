@@ -1093,6 +1093,12 @@ template <class Line> struct SideScroll : Box<Line> {
   // How far it goes along: what of the line is past its room.
   [[nodiscard]] float most() const { return std::max(0.0f, line().bounds().width() - this->fState.contentBox().width()); }
   [[nodiscard]] float offset() const noexcept { return fGesture.offset(); }
+  // A parent gesture moves the view while it holds the pointer itself.
+  void scroll_by(float delta) {
+    fGesture.setBounds(0.0f, most());
+    fGesture.jumpTo(fGesture.offset() + delta);
+    place();
+  }
   [[nodiscard]] bool acceptsInput() const { return true; }
   using nodes::Stack::onPointer;
   template <class Phase>

@@ -31,3 +31,4 @@ export module skiff.compose;
 export import :boxes;
 export import :wiring;
 export import :processes;
+export import :reorder;
