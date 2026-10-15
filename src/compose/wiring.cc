@@ -498,17 +498,27 @@ template <class Act, class N> struct Hovering : Box<N> {
 template <class Act, class N> Hovering<Act, N> hovering(Act act, N node) { return Hovering<Act, N>(std::move(act), std::move(node)); }
 
 // A list whose items Up and Down go through, round, as a menu's: the focus
-// moved, the key taken. Focusable itself, so the keys come to it first.
-template <class N> struct MovesFocus : N {
-  explicit MovesFocus(N node) : N(std::move(node)) {}
+// moved, the key taken; the other keys answered as `ask(press)` makes
+// something of them (Esc, closing it). Focusable itself, so the keys come to
+// it first.
+template <class Ask, class N> struct MovesFocus : N {
+  using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Ask &, const scene::key::down &>>())>;
+  Ask fAsk;
+  MovesFocus(Ask ask, N node) : N(std::move(node)), fAsk(std::move(ask)) {}
   [[nodiscard]] bool focusable() const { return true; }
   using N::onKey;
-  void onKey(scene::phase::bubble, const scene::key::down &press, scene::Reply &reply) {
-    if (press.key == scene::keys::kUp || press.key == scene::keys::kDown)
+  std::optional<Answer> onKey(scene::phase::bubble, const scene::key::down &press, scene::Reply &reply) {
+    if (press.key == scene::keys::kUp || press.key == scene::keys::kDown) {
       reply.moveFocus(press.key == scene::keys::kUp);
+      return std::nullopt;
+    }
+    auto answer = std::invoke(fAsk, press);
+    if (answer)
+      reply.handle();
+    return answer;
   }
 };
-template <class N> MovesFocus<N> moves_focus(N node) { return MovesFocus<N>(std::move(node)); }
+template <class Ask, class N> MovesFocus<Ask, N> moves_focus(Ask ask, N node) { return MovesFocus<Ask, N>(std::move(ask), std::move(node)); }
 
 // A node swiped to the left to do something with it -- a message answered,
 // as Telegram's: a press that moves left at once -- more across than up or
