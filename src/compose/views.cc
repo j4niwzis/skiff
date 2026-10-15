@@ -213,6 +213,76 @@ template <class Want, class Compute, class N> auto slid_for(Compute compute, N n
   return projected<Want>(std::move(compute), Slid<N>(std::move(node)));
 }
 
+// What lies under some layers drawn once, while one over it fades in or
+// out (as `Fading(over)` says), into pixels kept: each frame of the fade
+// puts those down and draws only what is over them -- every frame of a
+// fade repainted all of the window under its scrim, and blurred it again.
+// Done, they are let go: the frame the fade ends on draws all of it.
+template <class Fading, class Under, class Over> struct FrozenUnder : Box<Under, Over> {
+  skia::Sp<skia::SkImage> fFrozen;
+  skia::SkRect fAt = skia::SkRect::MakeEmpty();  // where it is on the device
+  FrozenUnder(Look look, Under under, Over over) : Box<Under, Over>(std::move(look), std::move(under), std::move(over)) {}
+  void draw(scene::Painting &painting, skia::SkCanvas *canvas, float alpha) {
+    auto &under = std::get<0>(this->fParts);
+    auto &over = std::get<1>(this->fParts);
+    skia::SkMatrix inverse;
+    if (!Fading{}(over) || !canvas->getTotalMatrix().invert(&inverse)) {
+      fFrozen = nullptr;
+      scene::drawDefault(*this, painting, canvas, alpha);
+      return;
+    }
+    if (!fFrozen) {
+      const skia::SkRect device = canvas->getTotalMatrix().mapRect(this->fState.fBounds);
+      const int width = std::max(1, static_cast<int>(std::ceil(device.width())));
+      const int height = std::max(1, static_cast<int>(std::ceil(device.height())));
+      skia::SkBitmap pixels;
+      if (pixels.tryAllocN32Pixels(width, height)) {
+        pixels.eraseColor(0);
+        skia::SkCanvas into(pixels);
+        into.translate(-device.fLeft, -device.fTop);
+        into.concat(canvas->getTotalMatrix());
+        scene::draw(under, painting, &into, alpha);
+        fFrozen = pixels.asImage();
+        fAt = skia::SkRect::MakeXYWH(device.fLeft, device.fTop, static_cast<float>(width), static_cast<float>(height));
+      }
+    }
+    if (!fFrozen) {
+      scene::drawDefault(*this, painting, canvas, alpha);
+      return;
+    }
+    canvas->drawImageRect(fFrozen, inverse.mapRect(fAt), skia::SkSamplingOptions(skia::SkFilterMode::kNearest));
+    scene::draw(over, painting, canvas, alpha);
+  }
+};
+template <class Fading, class Under, class Over> auto frozen_under(Look look, Under under, Over over) {
+  return FrozenUnder<Fading, Under, Over>(std::move(look), std::move(under), std::move(over));
+}
+
+// A tap off a popup -- pressed and let go a few pixels apart at most, off
+// what `card(node)` says it covers -- answered with `make()`: the popup
+// closed by a tap, a drag over what is under it left alone.
+template <class Card, class Make, class N> struct TappedOff : N {
+  using Answer = std::remove_cvref_t<std::invoke_result_t<Make &>>;
+  Card fCard;
+  Make fMake;
+  std::optional<skia::SkPoint> fFrom;
+  TappedOff(Card card, Make make, N node) : N(std::move(node)), fCard(std::move(card)), fMake(std::move(make)) {}
+  using N::onPointer;
+  void onPointer(scene::phase::capture, const scene::pointer::down &press, scene::PointerReply &) {
+    const std::optional<skia::SkRect> covers = std::invoke(fCard, static_cast<N &>(*this));
+    fFrom = covers && !covers->contains(press.x, press.y) ? std::optional(skia::SkPoint::Make(press.x, press.y)) : std::nullopt;
+  }
+  std::optional<Answer> onPointer(scene::phase::capture, const scene::pointer::up &lift, scene::PointerReply &) {
+    const auto from = std::exchange(fFrom, std::nullopt);
+    if (!from || std::hypot(lift.x - from->fX, lift.y - from->fY) >= 8.0f)
+      return std::nullopt;
+    return std::invoke(fMake);
+  }
+};
+template <class Card, class Make, class N> auto tapped_off(Card card, Make make, N node) {
+  return TappedOff<Card, Make, N>(std::move(card), std::move(make), std::move(node));
+}
+
 // Each list has its own offset. setCurrent retains the requested offset
 // until the new contents are laid out, even when the old list was shorter.
 template <class Key, class N> struct RememberedScroll : N {
