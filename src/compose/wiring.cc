@@ -167,6 +167,121 @@ template <class E, class N> OnRightPress<E, N> onRightPress(E event, N node) {
   return OnRightPress<E, N>(std::move(event), std::move(node));
 }
 
+// A row longer than its room, moved sideways -- by a finger or a mouse
+// dragged along it, flicked to glide on, or a sideways wheel -- and cut to
+// its room. Up and down are left to the page round it: a gesture going more
+// that way than along is not taken, nor is an upright wheel. A press is only
+// noted, and what is under it clicked later: one that goes along is a drag
+// of the row, not a choice.
+template <class Line> struct SideScroll : Box<Line> {
+  explicit SideScroll(Line line) : Box<Line>(hbox(0.0f, {.masking = true}), std::move(line)) {}
+  [[nodiscard]] Line &line() { return std::get<0>(this->fParts); }
+  [[nodiscard]] const Line &line() const { return std::get<0>(this->fParts); }
+  // How far it goes along: what of the line is past its room.
+  [[nodiscard]] float most() const { return std::max(0.0f, line().bounds().width() - this->fState.contentBox().width()); }
+  [[nodiscard]] float offset() const noexcept { return fGesture.offset(); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  using nodes::Stack::onPointer;
+  template <class Phase>
+    requires(std::same_as<Phase, scene::phase::bubble> || std::same_as<Phase, scene::phase::target>)
+  void onPointer(const Phase &, const scene::pointer::scroll &wheel, scene::PointerReply &reply) {
+    if (wheel.dx == 0.0f || most() <= 0.0f)
+      return;
+    fGesture.setBounds(0.0f, most());
+    fGesture.glideTo(fGesture.target() - wheel.dx * 40.0f);
+    scene::work::mark(this->fState.fId);
+    reply.handle();
+  }
+  template <class Phase>
+    requires(std::same_as<Phase, scene::phase::capture> || std::same_as<Phase, scene::phase::target>)
+  void onPointer(const Phase &, const scene::pointer::down &press, scene::PointerReply &reply) {
+    if (press.button > 1 || most() <= 0.0f)
+      return;
+    fGesture.setBounds(0.0f, most());
+    fArmed = true;
+    fPressX = press.x;
+    fPressY = press.y;
+    if constexpr (std::same_as<Phase, scene::phase::capture>)
+      reply.deferClick();
+    if (fGesture.press(press.x))
+      reply.handle();  // the press was spent catching a glide
+  }
+  template <class Phase>
+    requires(std::same_as<Phase, scene::phase::capture> || std::same_as<Phase, scene::phase::target>)
+  void onPointer(const Phase &, const scene::pointer::move &move, scene::PointerReply &reply) {
+    if (!fArmed)
+      return;
+    // Going more up or down than along: the page's, from here on.
+    if (!fGesture.dragging() && std::abs(move.y - fPressY) >= scene::ScrollGesture::kSlop &&
+        std::abs(move.y - fPressY) > std::abs(move.x - fPressX)) {
+      fArmed = false;
+      return;
+    }
+    const bool was = fGesture.dragging();
+    if (!fGesture.drag(move.x, nowMs()))
+      return;
+    if (!was) {
+      if (reply.fCaptured) {
+        fArmed = false;  // something else is dragged already
+        return;
+      }
+      reply.capturePointer();
+    }
+    reply.suppressHover();
+    place();
+    reply.handle();
+  }
+  template <class Phase>
+    requires(std::same_as<Phase, scene::phase::capture> || std::same_as<Phase, scene::phase::target>)
+  void onPointer(const Phase &, const scene::pointer::up &, scene::PointerReply &reply) {
+    finish(reply);
+  }
+  template <class Phase>
+    requires(std::same_as<Phase, scene::phase::capture> || std::same_as<Phase, scene::phase::target>)
+  void onPointer(const Phase &, const scene::pointer::cancel &, scene::PointerReply &reply) {
+    finish(reply);
+  }
+  // Gliding: a frame at a time, until it rests.
+  void update(double now) {
+    const double dt = fLastMs > 0.0 ? now - fLastMs : 16.0;
+    fLastMs = now;
+    fGesture.setBounds(0.0f, most());
+    if (fGesture.advance(dt))
+      place();
+  }
+  [[nodiscard]] bool wantsTick() const { return fGesture.moving() || fGesture.dragging(); }
+
+private:
+  // Where the line is put: at the gesture's offset, its ends held to.
+  void place() {
+    const float at = scene::snapToPixel(fGesture.offset());
+    if (at == fShown)
+      return;
+    fShown = at;
+    line().apply({.shiftX = -at});
+    this->markDamaged();
+  }
+  void finish(scene::PointerReply &reply) {
+    fArmed = false;
+    if (!fGesture.dragging())
+      return;
+    fGesture.release();
+    scene::work::mark(this->fState.fId);  // to glide on, or spring back
+    reply.releasePointer();
+    reply.suppressHover();
+    reply.handle();
+  }
+  [[nodiscard]] static double nowMs() {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  }
+  scene::ScrollGesture fGesture;
+  float fShown = 0.0f;
+  bool fArmed = false;
+  float fPressX = 0.0f, fPressY = 0.0f;
+  double fLastMs = 0.0;
+};
+template <class Line> SideScroll<Line> side_scroll(Line line) { return SideScroll<Line>(std::move(line)); }
+
 // ---- a >> b, a + b ----------------------------------------------------------
 
 template <class A, class B> struct Ends {

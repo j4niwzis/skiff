@@ -432,6 +432,32 @@ OnPress<Make, N> onPress(Make make, N node, std::string label = {}) {
   return OnPress<Make, N>(std::move(make), std::move(node), std::move(label));
 }
 
+// What a node says of itself to assistive technology beyond its own
+// semantics: what it is (a tab of a segmented control, not a button) and
+// whether it is the one chosen -- a radio row, the segment in effect.
+// Read from the model where that moves (chosen_for).
+template <class N> struct Said : N {
+  std::optional<scene::SemanticRole> fRole;
+  bool fChosen = false;
+  Said(std::optional<scene::SemanticRole> role, bool chosen, N node) : N(std::move(node)), fRole(std::move(role)), fChosen(chosen) {}
+  void read(bool chosen) { fChosen = chosen; }
+  scene::Semantics semantics() const {
+    scene::Semantics out;
+    if constexpr (requires(const N &node) { node.semantics(); })
+      out = N::semantics();
+    if (fRole)
+      out.fRole = *fRole;
+    out.fSelected = out.fSelected || fChosen;
+    return out;
+  }
+};
+template <class N> Said<N> said(std::optional<scene::SemanticRole> role, bool chosen, N node) {
+  return Said<N>(std::move(role), chosen, std::move(node));
+}
+template <class Want, class Compute, class N> auto chosen_for(Compute compute, std::optional<scene::SemanticRole> role, N node) {
+  return projected<Want>(std::move(compute), Said<N>(std::move(role), false, std::move(node)));
+}
+
 // Answers a key with a copy of its event: Esc, as a bar is let go.
 template <class E, class N, class K> struct OnKey : N {
   using Walked = std::bool_constant<bind::detail::kWalks<N>>;
@@ -487,6 +513,22 @@ auto projected(Compute compute, N node) {
 template <class Want, class Compute, class N>
 auto shown_for(Compute compute, N node) {
   return projected<Want>(std::move(compute), ShownBy<N>(std::move(node)));
+}
+// A node shown what it reads by a function said where it is put --
+// `apply(node, value)` -- for a leaf with no read of its own: an icon's shape
+// and colour, an avatar's person. What it shows is still the model's; only
+// how the value lands on the node is said here, once.
+template <class Apply, class N> struct Applied : N {
+  Apply fApply;
+  Applied(Apply apply, N node) : N(std::move(node)), fApply(std::move(apply)) {}
+  template <class T> void read(const T &value) {
+    std::invoke(fApply, static_cast<N &>(*this), value);
+    this->markDamaged();
+  }
+};
+template <class Want, class Compute, class Apply, class N>
+auto applied(Compute compute, Apply apply, N node) {
+  return projected<Want>(std::move(compute), Applied<Apply, N>(std::move(apply), std::move(node)));
 }
 template <class N> struct SpecOf : N {
   explicit SpecOf(N node) : N(std::move(node)) {}
