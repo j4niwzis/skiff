@@ -376,20 +376,46 @@ template <class N> Appearing<N> appearing(bool now, N node, float from = 12.0f) 
 // A node laid out, then arranged and settled by rules of its own -- a
 // message's bubble: its time beside its last line where they fit, a
 // sticker's name and quote beside it. The rules are Policy's: a type with
-// static members, arrange(N&) after its parts are laid out, settle(N&) at
-// each frame it asks for (settling(const N&)) -- a template parameter, not
-// a callback.
+// static members and the state it keeps (Policy::State) -- prepare(N&,
+// State&) before its parts are laid out, arrange(N&, State&) after,
+// settle(N&, State&) at each frame it asks for (settling(const N&, const
+// State&)) -- a template parameter, not a callback.
 template <class Policy, class N> struct Arranged : N {
-  explicit Arranged(N node) : N(std::move(node)) {}
+  typename Policy::State fRules;
+  Arranged(typename Policy::State rules, N node) : N(std::move(node)), fRules(std::move(rules)) {}
   void layoutChildren() {
+    Policy::prepare(static_cast<N &>(*this), fRules);
     this->nodes::Stack::layoutChildren();
-    Policy::arrange(static_cast<N &>(*this));
+    Policy::arrange(static_cast<N &>(*this), fRules);
   }
-  [[nodiscard]] bool settling() const { return Policy::settling(static_cast<const N &>(*this)); }
+  [[nodiscard]] bool settling() const { return Policy::settling(static_cast<const N &>(*this), fRules); }
   [[nodiscard]] bool wantsTick() const { return settling(); }
-  void update(double) { Policy::settle(static_cast<N &>(*this)); }
+  void update(double) { Policy::settle(static_cast<N &>(*this), fRules); }
 };
-template <class Policy, class N> Arranged<Policy, N> arranged(N node) { return Arranged<Policy, N>(std::move(node)); }
+template <class Policy, class N> Arranged<Policy, N> arranged(typename Policy::State rules, N node) {
+  return Arranged<Policy, N>(std::move(rules), std::move(node));
+}
+
+// A press at a place in a node, asked of it there -- a quote in a text,
+// pressed, the message it quotes: `ask(node, x, y)` answers, or says
+// nothing and the press is not taken.
+template <class Ask, class N> struct OnClickAt : N {
+  using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Ask &, N &, float, float>>())>;
+  using Out = Union<OutOf<N>, model::Types<Answer>>;
+  Ask fAsk;
+  std::optional<Answer> fAsked;
+  OnClickAt(Ask ask, N node) : N(std::move(node)), fAsk(std::move(ask)) {}
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  bool onClick(float x, float y) {
+    fAsked = std::invoke(fAsk, static_cast<N &>(*this), x, y);
+    if (!fAsked)
+      return false;
+    scene::pressLater(this->fState);
+    return true;
+  }
+  std::optional<Answer> onPress() { return std::exchange(fAsked, std::nullopt); }
+};
+template <class Ask, class N> OnClickAt<Ask, N> onClickAt(Ask ask, N node) { return OnClickAt<Ask, N>(std::move(ask), std::move(node)); }
 
 // A row longer than its room, moved sideways -- by a finger or a mouse
 // dragged along it, flicked to glide on, or a sideways wheel -- and cut to
