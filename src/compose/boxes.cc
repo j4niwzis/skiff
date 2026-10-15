@@ -125,8 +125,8 @@ struct ErasedStack : nodes::Stack {
 // A stack of its parts, in order.
 // Outside a release build, seen as an ErasedStack: its parts listed as it is
 // made, moved or copied -- the list pointing at its own parts.
-template <class... Parts> struct Box : std::conditional_t<scene::kErasedWalks, ErasedStack, nodes::Stack> {
-  using Base = std::conditional_t<scene::kErasedWalks, ErasedStack, nodes::Stack>;
+template <class... Parts> struct Box : nodes::Stack {
+  using Base = nodes::Stack;
   using Walked = std::bool_constant<kAnyWalks<Parts...>>;
   using HasLocal = std::bool_constant<(bind::detail::kHasLocal<Parts> || ...)>;
   using SeenAs = ErasedStack;
@@ -166,19 +166,13 @@ template <class... Parts> struct Box : std::conditional_t<scene::kErasedWalks, E
   // Its parts walked as they are in a release build; outside it, as listed
   // (for a node made from a box, which has a table of its own).
   template <class Self, class F> void forEachChild(this Self &self, F &&f) {
-    if constexpr (scene::kErasedWalks)
-      self.ErasedStack::forEachChild(f);
-    else
-      std::apply([&](auto &...each) { (f(each), ...); }, self.fParts);
+    std::apply([&](auto &...each) { (f(each), ...); }, self.fParts);
   }
 
 private:
   // Keep lookup dependent: the typed base has no list of erased parts.
   template <class Self> void see(this Self &self) {
-    if constexpr (scene::kErasedWalks)
-      self.fSeen = std::apply(
-          [](auto &...each) { return std::vector<SeenPart>{SeenPart{std::addressof(each), &handOn<std::remove_cvref_t<decltype(each)>>}...}; },
-          self.fParts);
+    (void)self;
   }
 };
 
@@ -294,7 +288,7 @@ N styled(scene::Spec spec, N node) {
 // made here had them before the program said them. It is small -- it names
 // no part's type -- so made in each unit that walks one.
 namespace skiff::scene {
-template <class... Parts> inline constexpr bool kSeenAsBase<compose::Box<Parts...>> = kErasedWalks;
+template <class... Parts> inline constexpr bool kSeenAsBase<compose::Box<Parts...>> = false;
 } // namespace skiff::scene
 
 export namespace skiff::compose {
