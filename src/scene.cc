@@ -6142,11 +6142,14 @@ private:
 
 inline AnyNodeRef AnyNode::ref() const noexcept { return AnyNodeRef(fNode, fOps); }
 
-// The first node of type T under a node (itself included), as the walks see
-// them -- through what holds them outside a release build, by their types
-// in one: for a widget that works across marked parts of what it holds (a
-// drag between lanes), never for a program to reach into its tree.
+// The first node of type T shown under a node (itself included), as the
+// walks see them -- through what holds them outside a release build, by
+// their types in one; nothing under a hidden node: for a widget that works
+// across marked parts of what it holds (a drag between lanes), never for a
+// program to reach into its tree.
 template <class T> T *findIn(AnyNodeRef &node) {
+  if (!node.state().fVisible)
+    return nullptr;
   if (T *hit = node.get<T>())
     return hit;
   T *found = nullptr;
@@ -6156,10 +6159,12 @@ template <class T> T *findIn(AnyNodeRef &node) {
   });
   return found;
 }
-template <class T> T *findTyped(T &node) { return &node; }
+template <class T> T *findTyped(T &node) { return node.fState.fVisible ? &node : nullptr; }
 template <class T, class N> T *findTyped(N &node);
 template <class T> T *findTyped(AnyNodeRef &node) { return findIn<T>(node); }
 template <class T, class N> T *findTyped(N &node) {
+  if (!stateOf(node).fVisible)
+    return nullptr;
   T *found = nullptr;
   eachChild(node, [&](auto &child) {
     if (found == nullptr)

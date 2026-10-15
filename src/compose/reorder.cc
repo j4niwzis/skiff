@@ -1,6 +1,7 @@
 // A held item can move along a bar or between a horizontal and vertical bar.
-// The application supplies the two lanes and the item factory, not pointer
-// handlers or callbacks that change its children.
+// The application supplies the two lanes -- each where it is shown, as the
+// lanes found by their marks say (an optional lane: none shown) -- and the
+// item factory, not pointer handlers or callbacks that change its children.
 export module skiff.compose:reorder;
 
 import std;
@@ -90,10 +91,20 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
         fMake(std::move(make)), fLanes(std::move(lanes)), fHighlight(highlight) {}
   Surface& surface() { return std::get<0>(this->fParts); }
   auto& ghost() { return std::get<1>(this->fParts); }
+  // A lane used where it is shown; where it is not, what using it would
+  // give, empty.
+  template <class F, class Lane> static auto use_lane(F& use, std::optional<Lane>& one) {
+    using R = std::invoke_result_t<F&, Lane&>;
+    if constexpr (std::is_void_v<R>) {
+      if (one) std::invoke(use, *one);
+    } else {
+      return one ? std::invoke(use, *one) : R{};
+    }
+  }
   template <class F> decltype(auto) lane(ReorderBar which, F&& use) {
     auto lanes = fLanes(LanesFound<Surface>{&surface()});
-    if (which == ReorderBar::horizontal) return std::invoke(use, std::get<0>(lanes));
-    return std::invoke(use, std::get<1>(lanes));
+    if (which == ReorderBar::horizontal) return use_lane(use, std::get<0>(lanes));
+    return use_lane(use, std::get<1>(lanes));
   }
   template <class F> void both(F&& use) {
     lane(ReorderBar::horizontal, use);
@@ -167,8 +178,7 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
     bool starting = false;
     auto& drag = *fDrag;
     const auto scroll = [&](float delta) {
-      auto lanes = fLanes(LanesFound<Surface>{&surface()});
-      std::get<0>(lanes).view.scroll_by(delta);
+      lane(ReorderBar::horizontal, [&](auto& line) { line.view.scroll_by(delta); });
     };
     if (drag.scrolling) {
       scroll(drag.last_x - at.x);
