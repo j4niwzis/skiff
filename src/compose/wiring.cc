@@ -520,6 +520,27 @@ template <class Ask, class N> struct MovesFocus : N {
 };
 template <class Ask, class N> MovesFocus<Ask, N> moves_focus(Ask ask, N node) { return MovesFocus<Ask, N>(std::move(ask), std::move(node)); }
 
+// A press answered with what `make` makes of a part of the model as it is
+// then -- a form's fields, kept in a Local, sent as they are when its button
+// is pressed. Read through bound (asking_for).
+template <class Want, class Make, class N> struct AskingFor : N {
+  using Answer = std::remove_cvref_t<std::invoke_result_t<Make &, const Want &>>;
+  using Out = Union<OutOf<N>, model::Types<Answer>>;
+  Make fMake;
+  Want fNow{};
+  AskingFor(Make make, N node) : N(std::move(node)), fMake(std::move(make)) {}
+  void read(const Want &now) { fNow = now; }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  bool onClick(float, float) {
+    scene::pressLater(this->fState);
+    return true;
+  }
+  auto onPress() { return std::invoke(fMake, std::as_const(fNow)); }
+};
+template <class Want, class Make, class N> auto asking_for(Make make, N node) {
+  return bind::Bound<Want, AskingFor<Want, Make, N>>(AskingFor<Want, Make, N>(std::move(make), std::move(node)));
+}
+
 // A node swiped to the left to do something with it -- a message answered,
 // as Telegram's: a press that moves left at once -- more across than up or
 // down, within a quarter of a second, nothing holding the pointer yet --
