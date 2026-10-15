@@ -6142,6 +6142,40 @@ private:
 
 inline AnyNodeRef AnyNode::ref() const noexcept { return AnyNodeRef(fNode, fOps); }
 
+// The first node of type T under a node (itself included), as the walks see
+// them -- through what holds them outside a release build, by their types
+// in one: for a widget that works across marked parts of what it holds (a
+// drag between lanes), never for a program to reach into its tree.
+template <class T> T *findIn(AnyNodeRef &node) {
+  if (T *hit = node.get<T>())
+    return hit;
+  T *found = nullptr;
+  node.forEachChild([&](AnyNodeRef &child) {
+    if (found == nullptr)
+      found = findIn<T>(child);
+  });
+  return found;
+}
+template <class T> T *findTyped(T &node) { return &node; }
+template <class T, class N> T *findTyped(N &node);
+template <class T> T *findTyped(AnyNodeRef &node) { return findIn<T>(node); }
+template <class T, class N> T *findTyped(N &node) {
+  T *found = nullptr;
+  eachChild(node, [&](auto &child) {
+    if (found == nullptr)
+      found = findTyped<T>(child);
+  });
+  return found;
+}
+template <class T, class N> [[nodiscard]] T *findNode(N &root) {
+  if constexpr (kErasedWalks) {
+    AnyNodeRef seen = AnyNodeRef::of(root);
+    return findIn<T>(seen);
+  } else {
+    return findTyped<T>(root);
+  }
+}
+
 // Any node, as the walks made once see it: its State, its children, and its
 // hooks through its table -- what a walk asks of a typed node, asked here.
 class ErasedNode {

@@ -286,9 +286,11 @@ template <class Make, class N> struct TappedOff : N {
     bool on = false;
     bool shown = false;
     scene::eachChild(static_cast<N &>(*this), [&](auto &popup) {
-      shown = shown || scene::stateOf(popup).fVisible;
+      if (!scene::stateOf(popup).fVisible)
+        return;
       scene::eachChild(popup, [&](auto &card) {
         const scene::State &state = scene::stateOf(card);
+        shown = shown || state.fVisible;
         on = on || (state.fVisible && state.fBounds.contains(press.x, press.y));
       });
     });

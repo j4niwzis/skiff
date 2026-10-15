@@ -42,6 +42,20 @@ template <class Viewport, class Rows> struct ReorderLane {
   }
 };
 
+// A lane of a drag between bars, marked where it is made: Tag names it,
+// N is the view of its rows (concrete). ReorderBars finds it by its mark,
+// as the walks see what it holds -- not handed it by a function that names
+// the parts of what it holds.
+template <class Tag, class N> struct LaneMark : N {
+  explicit LaneMark(N node) : N(std::move(node)) {}
+};
+template <class Tag, class N> auto reorder_lane(N node) { return erased(LaneMark<Tag, N>(std::move(node))); }
+// What a lanes function is given: the lanes found by their marks.
+template <class Surface> struct LanesFound {
+  Surface *surface;
+  template <class Lane> [[nodiscard]] Lane *of() const { return scene::findNode<Lane>(*surface); }
+};
+
 template <class Key, class View, class Make, class Surface, class Lanes>
 struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, const Key&, const View&, bool>>> {
   using Row = std::invoke_result_t<Make&, const Key&, const View&, bool>;
@@ -77,7 +91,7 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
   Surface& surface() { return std::get<0>(this->fParts); }
   auto& ghost() { return std::get<1>(this->fParts); }
   template <class F> decltype(auto) lane(ReorderBar which, F&& use) {
-    auto lanes = fLanes(surface());
+    auto lanes = fLanes(LanesFound<Surface>{&surface()});
     if (which == ReorderBar::horizontal) return std::invoke(use, std::get<0>(lanes));
     return std::invoke(use, std::get<1>(lanes));
   }
@@ -153,7 +167,7 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
     bool starting = false;
     auto& drag = *fDrag;
     const auto scroll = [&](float delta) {
-      auto lanes = fLanes(surface());
+      auto lanes = fLanes(LanesFound<Surface>{&surface()});
       std::get<0>(lanes).view.scroll_by(delta);
     };
     if (drag.scrolling) {
