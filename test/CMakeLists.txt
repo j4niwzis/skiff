@@ -40,7 +40,7 @@ endif()
 
 add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/style.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/tracking.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/model.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/bind.cc
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/compose.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reconcile.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/rekey.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reorder.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/picker.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/compose.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reconcile.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/rekey.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reorder.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/views.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/picker.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/images.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/schema.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/takes.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/hook.cc)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
