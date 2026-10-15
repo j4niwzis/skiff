@@ -932,37 +932,6 @@ template <class Want, class Compute, class N> auto placed_at(Compute compute, N 
   return projected<Want>(std::move(compute), PlacedAt<N>(std::move(node)));
 }
 
-// The pointer resting on a node: `act(true)` once it has rested there `ms`,
-// `act(false)` as it leaves after that -- a preview shown while it rests,
-// as Telegram's pickers do. Frames are asked for only while it counts.
-template <class Act, class N> struct Resting : N {
-  using Walked = std::bool_constant<bind::detail::kWalks<N>>;
-  using HasLocal = std::bool_constant<bind::detail::kHasLocal<N>>;
-  double fMs = 0.0;
-  Act fAct;
-  std::optional<double> fSince;
-  bool fSaid = false;
-  Resting(double ms, Act act, N node) : N(std::move(node)), fMs(ms), fAct(std::move(act)) {}
-  [[nodiscard]] bool settling() const { return this->hovered() && !fSaid; }
-  [[nodiscard]] bool hoverChangesAppearance() const { return true; }
-  void update(double now) {
-    if (!this->hovered()) {
-      fSince.reset();
-      if (std::exchange(fSaid, false))
-        fAct(false);
-      return;
-    }
-    if (!fSince)
-      fSince = now;
-    if (!fSaid && now - *fSince >= fMs) {
-      fSaid = true;
-      fAct(true);
-    }
-  }
-};
-template <class Act, class N> Resting<Act, N> resting(double ms, Act act, N node) {
-  return Resting<Act, N>(ms, std::move(act), std::move(node));
-}
 
 // Pages in a view that scrolls, one up at a time, chosen by what it reads:
 // a page made by `show` from the facts -- which says whether it is another

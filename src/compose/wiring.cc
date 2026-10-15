@@ -167,6 +167,48 @@ template <class E, class N> OnRightPress<E, N> onRightPress(E event, N node) {
   return OnRightPress<E, N>(std::move(event), std::move(node));
 }
 
+// The pointer resting on a node: once it has rested there `ms`, what
+// `act(true)` answers; as it leaves after that, what `act(false)` answers --
+// a preview shown while it rests, as Telegram's pickers do, said to the
+// model like any press. The node is held, not derived from: its own press
+// (a cell's click) stays its own. Frames are asked for only while it counts.
+template <class Act, class N> struct Resting : Box<N> {
+  using Out = Union<OutOf<N>, model::Types<std::remove_cvref_t<std::invoke_result_t<Act &, bool>>>>;
+  double fMs = 0.0;
+  Act fAct;
+  std::optional<double> fSince;
+  bool fSaid = false;
+  bool fOn = false;
+  Resting(double ms, Act act, N node)
+      : Box<N>(vbox(0.0f, {.autoSize = scene::axes::kBoth}), std::move(node)), fMs(ms), fAct(std::move(act)) {}
+  [[nodiscard]] bool settling() const { return this->hovered() && !fSaid; }
+  [[nodiscard]] bool hoverChangesAppearance() const { return true; }
+  void update(double now) {
+    if (!this->hovered()) {
+      fSince.reset();
+      if (std::exchange(fSaid, false))
+        say(false);
+      return;
+    }
+    if (!fSince)
+      fSince = now;
+    if (!fSaid && now - *fSince >= fMs) {
+      fSaid = true;
+      say(true);
+    }
+  }
+  auto onPress() { return std::invoke(fAct, fOn); }
+
+private:
+  void say(bool on) {
+    fOn = on;
+    scene::pressLater(this->fState);
+  }
+};
+template <class Act, class N> Resting<Act, N> resting(double ms, Act act, N node) {
+  return Resting<Act, N>(ms, std::move(act), std::move(node));
+}
+
 // A row longer than its room, moved sideways -- by a finger or a mouse
 // dragged along it, flicked to glide on, or a sideways wheel -- and cut to
 // its room. Up and down are left to the page round it: a gesture going more
