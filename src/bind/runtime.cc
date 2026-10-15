@@ -139,7 +139,7 @@ template <class E> void add(Answers &out, const std::optional<E> &maybe) {
     add(out, *maybe);
 }
 template <class E> void add(Answers &out, const std::vector<E> &all) {
-  std::ranges::for_each(all, [&](const E &each) { add(out, each); });
+  for (const E &each : all) { add(out, each); }
 }
 template <class... E> void add(Answers &out, const std::variant<E...> &one) {
   std::visit([&](const auto &each) { add(out, each); }, one);

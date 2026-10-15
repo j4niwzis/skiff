@@ -6587,11 +6587,11 @@ public:
     }
     fTickedBorn = work::bornGeneration();
     auto &pressed = hostWork().pressed;
-    std::ranges::for_each(std::exchange(hostWork().due, {}), [&](const State *one) {
+    for (const State *one : std::exchange(hostWork().due, {})) {
       Path way;
       if (walk::findPath(this->walked(), one->fId, way))
         pressed.push_back(std::move(way));
-    });
+    }
   }
 
   // Whether this frame's walks go everywhere: where a full walk was asked

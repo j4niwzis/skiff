@@ -58,7 +58,7 @@ public:
       detail::change(change, part);
       detail::stamp(part, fRevision, detail::kReplaces<F, T>);
       taken(part);
-      std::ranges::for_each(walked->fRevisions, [&](Revision *each) { *each = fRevision; });
+      for (Revision *each : walked->fRevisions) { *each = fRevision; }
       fTouched.append_range(walked->fTouched);
       if (walked->fRevisions.empty())
         fUntrackedEdit = true;
@@ -87,7 +87,7 @@ public:
       change.fApply(walked->fPart, change.fFn.get(), fRevision);
       if (const auto list = takenOf().find(change.fPart); list != takenOf().end())
         list->second(*this, walked->fPart);
-      std::ranges::for_each(walked->fRevisions, [&](Revision *each) { *each = fRevision; });
+      for (Revision *each : walked->fRevisions) { *each = fRevision; }
       fTouched.append_range(walked->fTouched);
       if (walked->fRevisions.empty())
         fUntrackedEdit = true;

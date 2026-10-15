@@ -229,7 +229,7 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
   template <class... Frames> void sendAll(model::Nothing, const Frames &...) {}
   template <class... Frames> void sendAll(scene::Taken, const Frames &...) {}
   template <class E, class... Frames> void sendAll(const std::vector<E> &all, const Frames &...frames) {
-    std::ranges::for_each(all, [&](const E &each) { this->sendAll(each, frames...); });
+    for (const E &each : all) { this->sendAll(each, frames...); }
   }
   template <class E, class... Frames> void sendAll(const std::optional<E> &maybe, const Frames &...frames) {
     if (maybe)

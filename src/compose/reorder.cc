@@ -132,9 +132,9 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
   }
   void show_key(const Key& key, bool shown, std::optional<ReorderBar> only = std::nullopt) {
     const auto change = [&](auto& line) {
-      std::ranges::for_each(line.rows.fRows, [&](auto& row) {
+      for (auto& row : line.rows.fRows) {
         if (row.fKey == key) row.fRow.setVisible(shown);
-      });
+      }
       line.rows.invalidateLayout();
     };
     if (only) lane(*only, change);
