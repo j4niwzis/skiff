@@ -112,10 +112,10 @@ template <class Item, class Height, class N> struct VirtualRows : N {
   }
   void read(const std::vector<Item>& items) {
     fItems = items;
+    // Where each row begins, and where the last ends: the heights summed.
     fTops.assign(1, 0.0f);
-    fTops.reserve(fItems.size() + 1);
-    for (const auto& item : fItems)
-      fTops.push_back(fTops.back() + std::max(0.0f, static_cast<float>(std::invoke(fHeight, item))));
+    std::transform_inclusive_scan(fItems.begin(), fItems.end(), std::back_inserter(fTops), std::plus{},
+                                          [&](const Item& item) { return std::max(0.0f, static_cast<float>(std::invoke(fHeight, item))); });
     // Changes to the list preserve its offset, including an empty list
     // becoming populated while the viewport happened to be at its end.
     N::setCurrent(fRequested.value_or(this->current()));
