@@ -211,41 +211,123 @@ template <class Act, class N> Resting<Act, N> resting(double ms, Act act, N node
   return Resting<Act, N>(ms, std::move(act), std::move(node));
 }
 
-// A node that, while what it reads says so -- a list whose rows are being
-// selected -- takes the main button's press itself, before anything in it
-// sees it, and answers what `act` makes of it (the row selected or let
-// go); else its presses are all its own. As wide as its room, as tall as
-// the node: a list's row. Read through projected (seized_for).
-template <class Act, class N> struct Seizing : Box<N> {
-  using Out = Union<OutOf<N>, model::Types<std::remove_cvref_t<std::invoke_result_t<Act &>>>>;
-  Act fAct;
+// A node whose presses are held off while what it reads says so -- a list's
+// row while rows are being selected: what is in it neither sees the press
+// nor is clicked; the list takes it (spanned). As wide as its room, as tall
+// as the node. Read through projected (held_off_for).
+template <class N> struct HeldOff : Box<N> {
   bool fOn = false, fHeld = false;
-  Seizing(Act act, N node) : Box<N>(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(node)), fAct(std::move(act)) {}
+  explicit HeldOff(N node) : Box<N>(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(node)) {}
   void read(bool on) { fOn = on; }
   [[nodiscard]] bool acceptsInput() const { return true; }
   using nodes::Stack::onPointer;
   void onPointer(scene::phase::capture, const scene::pointer::down &press, scene::PointerReply &reply) {
+    fHeld = fOn && press.button <= 1;
+    if (fHeld)
+      reply.handle();
+  }
+  void onPointer(scene::phase::capture, const scene::pointer::up &, scene::PointerReply &reply) {
+    if (std::exchange(fHeld, false))
+      reply.handle();
+  }
+  void onPointer(scene::phase::capture, const scene::pointer::cancel &, scene::PointerReply &) { fHeld = false; }
+};
+template <class Want, class Take, class N> auto held_off_for(Take take, N node) {
+  return projected<Want>(std::move(take), HeldOff<N>(std::move(node)));
+}
+
+// A window list whose rows are picked by a press -- or a span of them by a
+// drag across them -- while what it reads says so (rows being selected):
+// as the drag goes, what it spans (ListSpan, not done), and as it is let go,
+// the span done; a press that does not move, the row it was on. The rows'
+// own presses are theirs to hold off (held_off_for).
+template <class Key, class Tag = void> struct ListSpan {
+  Key first, last;
+  bool done = false;
+  friend bool operator==(const ListSpan &, const ListSpan &) = default;
+};
+template <class List> struct Spanned : Box<List> {
+  using Key = std::remove_cvref_t<decltype(std::declval<List &>().rows().fRows.front().fKey)>;
+  using Span = ListSpan<Key, typename List::ListTag>;
+  using Out = Union<OutOf<List>, model::Types<Span>>;
+  bool fOn = false;
+  std::optional<Key> fFirst, fLast;
+  bool fMoved = false;
+  float fX = 0.0f, fY = 0.0f;
+  std::optional<Span> fDue;
+  explicit Spanned(List list) : Box<List>(vbox(0.0f, {.fill = true}), std::move(list)) {}
+  void read(bool on) { fOn = on; }
+  [[nodiscard]] List &list() { return std::get<0>(this->fParts); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  using nodes::Stack::onPointer;
+  void onPointer(scene::phase::capture, const scene::pointer::down &press, scene::PointerReply &) {
+    fFirst.reset();
     if (!fOn || press.button > 1)
       return;
-    fHeld = true;
-    reply.capturePointer();
+    fFirst = this->keyAt(press.x, press.y);
+    fLast = fFirst;
+    fMoved = false;
+    fX = press.x;
+    fY = press.y;
+  }
+  void onPointer(scene::phase::capture, const scene::pointer::move &at, scene::PointerReply &reply) {
+    if (!fFirst)
+      return;
+    if (!fMoved && std::hypot(at.x - fX, at.y - fY) <= 6.0f)
+      return;
+    if (!fMoved) {
+      fMoved = true;
+      reply.capturePointer();
+    }
+    if (const auto here = this->keyAt(at.x, at.y); here && here != fLast) {
+      fLast = here;
+      this->say(Span{*fFirst, *fLast, false});
+    }
     reply.handle();
   }
   void onPointer(scene::phase::capture, const scene::pointer::up &, scene::PointerReply &reply) {
-    if (!std::exchange(fHeld, false))
+    if (!fFirst)
       return;
-    scene::pressLater(this->fState);
-    reply.releasePointer();
+    if (fMoved)
+      reply.releasePointer();
+    this->say(Span{*fFirst, fLast.value_or(*fFirst), true});
+    fFirst.reset();
     reply.handle();
   }
   void onPointer(scene::phase::capture, const scene::pointer::cancel &, scene::PointerReply &reply) {
-    if (std::exchange(fHeld, false))
+    if (std::exchange(fFirst, std::nullopt) && fMoved)
       reply.releasePointer();
   }
-  auto onPress() { return std::invoke(fAct); }
+  std::optional<Span> onPress() { return std::exchange(fDue, std::nullopt); }
+  // The list's own, where it has them: whether the reader is away from its
+  // end, and how many came meanwhile (with_way_down).
+  [[nodiscard]] bool away() const
+    requires requires(const List &list) { list.away(); }
+  {
+    return std::get<0>(this->fParts).away();
+  }
+  [[nodiscard]] std::size_t unseen() const
+    requires requires(const List &list) { list.unseen(); }
+  {
+    return std::get<0>(this->fParts).unseen();
+  }
+
+private:
+  // The row under a point in the view, by its key.
+  [[nodiscard]] std::optional<Key> keyAt(float x, float y) {
+    auto &shown = this->list();
+    for (const auto &one : shown.rows().fRows)
+      if (!one.bounds().isEmpty() && shown.toView(one.bounds()).contains(x, y))
+        return one.fKey;
+    return std::nullopt;
+  }
+  void say(Span span) {
+    fDue = std::move(span);
+    scene::pressLater(this->fState);
+  }
 };
-template <class Want, class Take, class Act, class N> auto seized_for(Take take, Act act, N node) {
-  return projected<Want>(std::move(take), Seizing<Act, N>(std::move(act), std::move(node)));
+template <class Want, class On, class List> auto spanned_for(On on, List list) {
+  return projected<Want>(std::move(on), Spanned<List>(std::move(list)));
 }
 
 // A right press on a node -- a long press, on a phone -- answered by what
@@ -539,6 +621,7 @@ public:
   using Aimed = ListAimed<Key, Tag>;
   using Edge = ListEdge<Tag>;
   using Seen = ListSeen<Key, Tag>;
+  using ListTag = Tag;
   using Answer = std::variant<Aimed, Edge, Seen>;
   using Out = Union<OutOf<Rows>, model::Types<Answer>>;
   // Its rows a column as wide as the view and as tall as they are: the
