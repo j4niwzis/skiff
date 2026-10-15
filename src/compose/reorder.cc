@@ -47,9 +47,7 @@ template <class Viewport, class Rows> struct ReorderLane {
 // N is the view of its rows (concrete). ReorderBars finds it by its mark,
 // as the walks see what it holds -- not handed it by a function that names
 // the parts of what it holds.
-template <class Tag, class N> struct LaneMark : N {
-  explicit LaneMark(N node) : N(std::move(node)) {}
-};
+template <class Tag, class N> using LaneMark = Marked<Tag, N>;
 template <class Tag, class N> auto reorder_lane(N node) { return erased(LaneMark<Tag, N>(std::move(node))); }
 // What a lanes function is given: the lanes found by their marks.
 template <class Surface> struct LanesFound {

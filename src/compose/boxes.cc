@@ -287,6 +287,21 @@ namespace skiff::scene {
 template <> inline constexpr bool kSeenThrough<compose::Held> = true;
 } // namespace skiff::scene
 export namespace skiff::compose {
+// A node's state as the walks see it: a Held's, its node's; any other node's
+// -- a wrapper over held content too -- its own. For a node's own rules over
+// its parts (a bubble placing its time), whatever each part is.
+template <class N> [[nodiscard]] scene::State &state_of(N &node) { return node.fState; }
+[[nodiscard]] inline scene::State &state_of(Held &held) { return held.held().state(); }
+
+// A node marked where it is made -- Tag says what it is, and what it
+// carries (a link's address) -- for what holds it to find it by its mark,
+// as the walks see it (scene::findNode): never named by where it is.
+template <class Tag, class N> struct Marked : N {
+  Tag fTag;
+  explicit Marked(N node, Tag tag = {}) : N(std::move(node)), fTag(std::move(tag)) {}
+};
+template <class Tag, class N> auto marked(Tag tag, N node) { return erased(Marked<Tag, N>(std::move(node), std::move(tag))); }
+
 // A node as a combinator returns it: itself in a release build; held,
 // outside one.
 template <class N> auto erased(N node) {
