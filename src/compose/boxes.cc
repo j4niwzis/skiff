@@ -493,6 +493,25 @@ template <class K, class E, class N> OnKey<E, N, K> onKey(K key, E event, N node
   return OnKey<E, N, K>(key, std::move(event), std::move(node));
 }
 
+// Answers the keys `ask(press)` makes something of -- Enter and Shift+Enter
+// apart, the arrows: what it makes, the key taken; nothing, the key on its
+// way up.
+template <class Ask, class N> struct OnKeys : N {
+  using Walked = std::bool_constant<bind::detail::kWalks<N>>;
+  using HasLocal = std::bool_constant<bind::detail::kHasLocal<N>>;
+  using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Ask &, const scene::key::down &>>())>;
+  Ask fAsk;
+  OnKeys(Ask ask, N node) : N(std::move(node)), fAsk(std::move(ask)) {}
+  using N::onKey;
+  std::optional<Answer> onKey(scene::phase::bubble, const scene::key::down &press, scene::Reply &reply) {
+    auto answer = std::invoke(fAsk, press);
+    if (answer)
+      reply.handle();
+    return answer;
+  }
+};
+template <class Ask, class N> OnKeys<Ask, N> onKeys(Ask ask, N node) { return OnKeys<Ask, N>(std::move(ask), std::move(node)); }
+
 // What a node shows, read from the model: a text made from the parts it
 // reads (Reads), and a node shown or hidden as they say -- never set by
 // hand. Compute takes the parts' values.
