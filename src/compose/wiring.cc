@@ -572,6 +572,161 @@ WindowList<Key, View, Row, Make, Locate> window_list(Make make) {
   return WindowList<Key, View, Row, Make, Locate>(std::move(make));
 }
 
+// A window_list whose list is read where it is kept -- in the model it is
+// bound to, through Source, a type with static members:
+//
+//   using Of = ...;                                   what list it shows (a chat)
+//   revision(const M &, const Of &) -> model::Revision  moved when the list did
+//   count(const M &, const Of &) -> std::size_t
+//   key(const M &, const Of &, std::size_t) -> Key
+//   index(const M &, const Of &, const Key &) -> std::optional<std::size_t>
+//   item(const M &, const Of &, std::size_t) -> Item   a row's item: its key, its view...
+//
+// Only its window's items are made; its window -- kept by the keys at its
+// ends, so that what comes in above does not move it -- slides as the view
+// nears an edge, and is made around what it is told to aim at. Which list,
+// and what to aim at, it reads from what the program shows (WindowTold).
+// Past the list's ends -- history not here yet -- it asks (ListEdge), as a
+// window_list does.
+template <class Key> struct WindowTold {
+  std::optional<Key> aim;
+  std::uint64_t aim_number = 0;
+  std::optional<float> aim_top;
+  std::optional<std::string> aim_line;
+  friend bool operator==(const WindowTold &, const WindowTold &) = default;
+};
+struct WindowSizes {
+  std::size_t first = 80, most = 240, step = 16;
+};
+template <class Source, class M, class Key, class View, class Row, class Make, class Locate = NoLocate>
+class WindowFrom : public WindowList<Key, View, Row, Make, Locate> {
+  using List = WindowList<Key, View, Row, Make, Locate>;
+
+public:
+  using Of = typename Source::Of;
+  WindowFrom(Make make, WindowSizes sizes = {}) : List(std::move(make)), fSizes(sizes) {}
+  // The list it shows, and what it is told to aim at.
+  void read(const std::pair<std::optional<Of>, WindowTold<Key>> &told) {
+    if (told.first != fOf) {
+      fOf = told.first;
+      fFrom.reset();
+      fTo.reset();
+      fToEnd = true;
+      fSeen = ~model::Revision{0};
+    }
+    if (told.second.aim && told.second.aim_number != fAimNumber) {
+      fAimNumber = told.second.aim_number;
+      fAimed = told.second;
+      fSeen = ~model::Revision{0};  // made around it, at the next refresh
+    }
+    this->show();
+  }
+  // The model it is bound to, moved: its window made again where its list
+  // moved.
+  void refresh(const M &model) {
+    fModel = &model;
+    this->show();
+  }
+  void update(double nowMs) {
+    List::update(nowMs);
+    if (fSlide) {
+      fSlide = false;
+      fSeen = ~model::Revision{0};
+      this->show();
+    }
+  }
+  std::optional<typename List::Answer> onPress() {
+    auto asked = List::onPress();
+    // At an edge of what is made, with more of the list beyond it: slid
+    // here, not asked of anyone; past the list's own end, asked on.
+    if (asked && std::visit(spl::overloaded{[&](const ListEdge &edge) { return this->slides(edge.older); },
+                                            [](const ListAimed<Key> &) { return false; }},
+                            *asked))
+      return std::nullopt;
+    return asked;
+  }
+
+private:
+  bool slides(bool older) {
+    if (!fModel || !fOf)
+      return false;
+    auto [from, to] = this->window();
+    const std::size_t count = Source::count(*fModel, *fOf);
+    if (older && from > 0) {
+      from = from > fSizes.step ? from - fSizes.step : 0;
+      to = std::min(to, from + fSizes.most);
+    } else if (!older && to < count) {
+      to = std::min(count, to + fSizes.step);
+      from = to - from > fSizes.most ? to - fSizes.most : from;
+    } else {
+      return false;
+    }
+    this->keep(from, to);
+    fSlide = true;
+    scene::work::mark(this->fState.fId);
+    return true;
+  }
+  [[nodiscard]] std::pair<std::size_t, std::size_t> window() const {
+    const std::size_t count = Source::count(*fModel, *fOf);
+    std::size_t to = count;
+    if (!fToEnd && fTo)
+      if (const auto at = Source::index(*fModel, *fOf, *fTo))
+        to = *at + 1;
+    std::size_t from = to > fSizes.first ? to - fSizes.first : 0;
+    if (fFrom)
+      if (const auto at = Source::index(*fModel, *fOf, *fFrom); at && *at <= to)
+        from = *at;
+    if (to - from > fSizes.most)
+      from = to - fSizes.most;
+    return {from, to};
+  }
+  void keep(std::size_t from, std::size_t to) {
+    const std::size_t count = Source::count(*fModel, *fOf);
+    to = std::min(to, count);
+    from = std::min(from, to);
+    fFrom = from < count ? std::optional<Key>(Source::key(*fModel, *fOf, from)) : std::nullopt;
+    fTo = to > 0 ? std::optional<Key>(Source::key(*fModel, *fOf, to - 1)) : std::nullopt;
+    fToEnd = to == count;
+  }
+  void show() {
+    if (!fModel || !fOf)
+      return;
+    const model::Revision now = Source::revision(*fModel, *fOf);
+    if (now == fSeen)
+      return;
+    fSeen = now;
+    // Aimed at: its window made around it, where it is held and not made.
+    if (fAimed)
+      if (const auto at = Source::index(*fModel, *fOf, *fAimed->aim)) {
+        const auto [from, to] = this->window();
+        if (*at < from || *at >= to)
+          this->keep(*at > fSizes.first / 2 ? *at - fSizes.first / 2 : 0, *at + fSizes.first / 2);
+      }
+    const auto [from, to] = this->window();
+    this->keep(from, to);
+    WindowShown<decltype(Source::item(*fModel, *fOf, 0)), Key> shown;
+    shown.items = std::views::iota(from, to) | std::views::transform([&](std::size_t i) { return Source::item(*fModel, *fOf, i); }) |
+                  std::ranges::to<std::vector>();
+    shown.more_above = true;  // at the top: the window slides, or the history is asked for
+    shown.more_below = !fToEnd;
+    if (fAimed) {
+      shown.aim = fAimed->aim;
+      shown.aim_number = fAimNumber;
+      shown.aim_top = fAimed->aim_top;
+      shown.aim_line = fAimed->aim_line;
+    }
+    List::read(shown);
+  }
+  WindowSizes fSizes;
+  const M *fModel = nullptr;
+  std::optional<Of> fOf;
+  std::optional<Key> fFrom, fTo;
+  bool fToEnd = true, fSlide = false;
+  model::Revision fSeen = ~model::Revision{0};
+  std::uint64_t fAimNumber = 0;
+  std::optional<WindowTold<Key>> fAimed;
+};
+
 // A row longer than its room, moved sideways -- by a finger or a mouse
 // dragged along it, flicked to glide on, or a sideways wheel -- and cut to
 // its room. Up and down are left to the page round it: a gesture going more
