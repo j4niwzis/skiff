@@ -13,7 +13,7 @@ import gtest;
 namespace {
 
 struct dragged { float x; };
-struct list_marks {};
+struct list_marks { int room = 7; };
 struct jump_to_mark {};
 struct chosen { int key = 1; };
 struct item { std::string label; using ModelOpaque = void; };
@@ -38,6 +38,19 @@ TEST(Compose, DragAndRightPressKeepTheirActions) {
   auto left = button.onPointer(scene::phase::target{}, scene::pointer::down{0.0f, 0.0f, 1}, reply);
   EXPECT_FALSE(left);
   static_assert(std::same_as<decltype(button.onPress()), jump_to_mark>);
+  (void)scene::AnyNode::opsOf<decltype(button)>();
+  auto& work = scene::hostWork();
+  work.answerNow.reset();
+  work.answerType = nullptr;
+  scene::PointerHandler{}(button, scene::phase::target{},
+                          scene::pointer::down{0.0f, 0.0f, 3}, reply);
+  if constexpr (scene::kErasedWalks) {
+    ASSERT_TRUE(work.answerNow);
+    EXPECT_EQ(work.answerType, &scene::kTypeKey<list_marks>);
+    EXPECT_EQ(std::static_pointer_cast<const list_marks>(work.answerNow)->room, 7);
+  }
+  work.answerNow.reset();
+  work.answerType = nullptr;
   skiff::paint::defaultFont() = nullptr;
 }
 

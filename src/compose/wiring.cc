@@ -142,6 +142,7 @@ template <class Act, class N> OnDragAcross<Act, N> onDragAcross(Act act, N node)
 // the node itself is its target's, which the way back up does not reach:
 // taken there too; any other press there as the node takes it.
 template <class E, class N> struct OnRightPress : N {
+  using Answer = E;
   using Out = Union<OutOf<N>, model::Types<E>>;
   E fEvent;
   OnRightPress(E event, N node) : N(std::move(node)), fEvent(std::move(event)) {}
