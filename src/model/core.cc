@@ -161,10 +161,10 @@ template <class Key, class T> struct Keyed {
   // Its elements' values, and their keys, in the list's order: seen, not
   // copied.
   constexpr auto values() const {
-    return fItems | std::views::transform([](const Item &item) -> const T & { return item.second->fValue; });
+    return std::views::transform(fItems, [](const Item &item) -> const T & { return item.second->fValue; });
   }
   constexpr auto keys() const {
-    return fItems | std::views::transform([](const Item &item) -> const Key & { return item.first; });
+    return std::views::transform(fItems, [](const Item &item) -> const Key & { return item.first; });
   }
   // Walked as (key, value) pairs, in the list's order: for (auto &[k, v] : list).
   class Entry {
@@ -254,9 +254,7 @@ template <class Key, class T> struct Keyed {
       again[added[i].second] = true;
     }
     if (std::ranges::contains(again, true))
-      fItems = std::views::zip(fItems, again) | std::views::filter([](const auto &one) { return !std::get<1>(one); }) |
-               std::views::transform([](auto &&one) { return std::move(std::get<0>(one)); }) |
-               std::ranges::to<std::vector>();
+      fItems = std::ranges::to<std::vector>(std::views::transform(std::views::filter(std::views::zip(fItems, again), [](const auto &one) { return !std::get<1>(one); }), [](auto &&one) { return std::move(std::get<0>(one)); }));
     reindex();
   }
   // An element taken away; whether it was there.
@@ -292,8 +290,7 @@ template <class Key, class T> struct Keyed {
   // Stable: equal ones keep their order (std::ranges::sort over the
   // places, ties broken by place -- stable_sort is constexpr only from C++26).
   template <class By> constexpr void sortBy(By by) {
-    auto order = std::views::iota(std::size_t{0}, fItems.size()) |
-                 std::ranges::to<std::vector>();
+    auto order = std::ranges::to<std::vector>(std::views::iota(std::size_t{0}, fItems.size()));
     std::ranges::sort(order, [&](std::size_t a, std::size_t b) {
       const auto &x = by(fItems[a].second->fValue);
       const auto &y = by(fItems[b].second->fValue);
@@ -318,11 +315,9 @@ private:
     return at->second;
   }
   constexpr void reindex() {
-    fIndex = std::views::iota(std::size_t{0}, fItems.size()) |
-             std::views::transform([&](std::size_t i) {
+    fIndex = std::ranges::to<std::vector>(std::views::transform(std::views::iota(std::size_t{0}, fItems.size()), [&](std::size_t i) {
                return std::pair<Key, std::size_t>{fItems[i].first, i};
-             }) |
-             std::ranges::to<std::vector>();
+             }));
     std::ranges::sort(fIndex, std::ranges::less{},
                       &std::pair<Key, std::size_t>::first);
   }

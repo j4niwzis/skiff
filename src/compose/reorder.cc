@@ -210,8 +210,7 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
     const auto over = bar_at(at.x, at.y);
     const auto to = over.value_or(drag->from);
     auto order = lane(to, [&](auto& line) {
-      return line.rows.fRows | std::views::filter([&](const auto& row) { return row.fKey != drag->key; }) |
-          std::views::transform([](const auto& row) { return row.fKey; }) | std::ranges::to<std::vector>();
+      return std::ranges::to<std::vector>(std::views::transform(std::views::filter(line.rows.fRows, [&](const auto& row) { return row.fKey != drag->key; }), [](const auto& row) { return row.fKey; }));
     });
     const auto index = lane(to, [&](auto& line) {
       return std::ranges::count_if(line.rows.fRows, [&](const auto& row) {
@@ -222,10 +221,9 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
     order.insert(order.begin() + index, drag->key);
     fFrom = {at.x, at.y};
     fTo = lane(to, [&](auto& line) {
-      auto others = line.rows.fRows | std::views::filter([&](const auto& row) {
+      auto others = std::ranges::to<std::vector>(std::views::transform(std::views::filter(line.rows.fRows, [&](const auto& row) {
         return row.fKey != drag->key && row.fRow.visible();
-      }) | std::views::transform([&](const auto& row) { return line.shown_at(row.fRow.bounds()); }) |
-          std::ranges::to<std::vector>();
+      }), [&](const auto& row) { return line.shown_at(row.fRow.bounds()); }));
       const bool horizontal = to == ReorderBar::horizontal;
       const float step = (horizontal ? fGhostWidth : fGhostHeight) + line.spacing;
       if (static_cast<std::size_t>(index) < others.size()) return skia::SkPoint{others[index].centerX(), others[index].centerY()};
