@@ -1038,7 +1038,7 @@ private:
       if (link && link->picture) {
         // The picture, square, a little over the text's size, standing on
         // its baseline; nothing where the program has none (yet).
-        if (cuts[i] == link->first)
+        if (cuts[i] == link->first) {
           if (const skia::Sp<skia::SkImage> *picture = fPictures.picture(link->target);
               !(picture && *picture)) {
             waitFor(pictureWaitersOf(link->target));
@@ -1050,6 +1050,7 @@ private:
                                   skia::SkRect::MakeXYWH(at + (width - side) * 0.5f, y - fSize * 0.98f, side, side),
                                   skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &paint);
           }
+        }
         at += width;
         continue;
       }

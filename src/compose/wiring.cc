@@ -1204,13 +1204,14 @@ public:
       fSeen.reset();
       this->show();
     }
-    if (fRestore)
+    if (fRestore) {
       if (const auto *kept = this->row(fRestore->first); !kept)
         fRestore.reset();
       else if (!kept->bounds().isEmpty()) {
         const float top = this->toView(kept->bounds()).fTop - this->bounds().fTop;
         this->setCurrent(std::max(0.0f, this->current() + top - std::exchange(fRestore, std::nullopt)->second));
       }
+    }
     if (fUnseen && this->atEnd(40.0f))
       fUnseen = 0;
   }
