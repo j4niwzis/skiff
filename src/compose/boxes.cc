@@ -71,6 +71,23 @@ template <class Shown> struct Holding : Stacked {
       : Stacked(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY})), parts{.shown = Shown(which, std::forward<Args>(args)...)} {}
 };
 
+// A node made in another unit, held here through its table: what a
+// program's protocol makes of its own pages, compiled once where they are
+// made, never deduced where they are put. What it may ask for is said, not
+// seen (Out): its answers are kept by their path, as any erased node's are
+// outside a release build. Its node, when it is a T: shown().get<T>().
+template <class Out_> struct Erased : Stacked {
+  using Out = Out_;
+  struct parts_t {
+    scene::AnyNode shown;
+  } parts;
+  template <class Node>
+    requires std::derived_from<std::remove_cvref_t<Node>, scene::Node>
+  explicit Erased(Node node)
+      : Stacked(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY})), parts{.shown = scene::AnyNode(std::move(node))} {}
+  [[nodiscard]] scene::AnyNode &shown() noexcept { return parts.shown; }
+};
+
 // A node of its own drawing or input, its parts placed in it by their own
 // specs: its spec said where it is made.
 struct Specced : scene::Node {
