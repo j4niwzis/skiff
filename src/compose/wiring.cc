@@ -417,6 +417,161 @@ template <class Ask, class N> struct OnClickAt : N {
 };
 template <class Ask, class N> OnClickAt<Ask, N> onClickAt(Ask ask, N node) { return OnClickAt<Ask, N>(std::move(ask), std::move(node)); }
 
+// A list in a view that scrolls, made of a window of a longer one -- a
+// chat's messages, a thread's: its rows by their keys, each kept while the
+// facts it was made from are the same (MemoRows), the window chosen by
+// what reads the model (Shown: the window's items, and whether there is
+// more of the list above and below it). Near an edge with more beyond it,
+// it asks for its window to slide (ListEdge); told to aim at a key, it
+// brings that row into view -- stepping the view a page at a time toward a
+// row made but not laid out yet -- and answers that it has (ListAimed). It
+// keeps no list of its own and calls nothing.
+template <class Key> struct ListAimed {
+  Key key;
+  friend bool operator==(const ListAimed &, const ListAimed &) = default;
+};
+struct ListEdge {
+  bool older = false;  // the top; else the bottom
+  friend bool operator==(ListEdge, ListEdge) = default;
+};
+template <class Item, class Key> struct WindowShown {
+  std::vector<Item> items;
+  bool more_above = false, more_below = false;
+  // What to aim at, and the aim's number: a newer one aimed at again. Where
+  // in the view: its top this far under the view's top (a chat opened at
+  // what was read), else in the middle -- its top, where it is taller than
+  // the view; or, where the row says where a stretch of it is (`aim_line`,
+  // by Locate), that line at the view's upper middle.
+  std::optional<Key> aim;
+  std::uint64_t aim_number = 0;
+  std::optional<float> aim_top;
+  std::optional<std::string> aim_line;
+};
+// Where in a row a stretch of it is, as the row knows it: none by default.
+struct NoLocate {
+  template <class Row> std::optional<float> operator()(const Row &, const std::string &) const { return std::nullopt; }
+};
+template <class Key, class View, class Row, class Make, class Locate = NoLocate>
+class WindowList : public nodes::ScrollContainer<nodes::MemoRows<Key, View, Row, Make>> {
+public:
+  using Rows = nodes::MemoRows<Key, View, Row, Make>;
+  using Answer = std::variant<ListAimed<Key>, ListEdge>;
+  using Out = Union<OutOf<Rows>, model::Types<Answer>>;
+  explicit WindowList(Make make) : nodes::ScrollContainer<Rows>(Rows(std::move(make))) {}
+  [[nodiscard]] Rows &rows() { return std::get<0>(this->fChildren); }
+  [[nodiscard]] const Rows &rows() const { return std::get<0>(this->fChildren); }
+  // A row by its key, where it is made.
+  [[nodiscard]] typename Rows::Kept *row(const Key &key) {
+    const auto found = std::ranges::find(rows().fRows, key, &Rows::Kept::fKey);
+    return found == rows().fRows.end() ? nullptr : &*found;
+  }
+  template <class Item> void read(const WindowShown<Item, Key> &shown) {
+    if (rows().read(shown.items))
+      this->invalidateLayout();
+    fMoreAbove = shown.more_above;
+    fMoreBelow = shown.more_below;
+    if (shown.aim && shown.aim_number != fAimNumber) {
+      fAimNumber = shown.aim_number;
+      fAim = shown.aim;
+      fAimTop = shown.aim_top;
+      fAimLine = shown.aim_line;
+      fAimedAt.reset();
+      fAimFrames = 0;
+      scene::work::mark(this->fState.fId);
+    }
+    // Another window: the edges may be asked about again.
+    if (!rows().fRows.empty())
+      fWindow = std::pair{rows().fRows.front().fKey, rows().fRows.back().fKey};
+  }
+  [[nodiscard]] bool settling() const { return fAim.has_value() || nodes::ScrollContainer<Rows>::settling(); }
+  void update(double nowMs) {
+    nodes::ScrollContainer<Rows>::update(nowMs);
+    if (fAim) {
+      this->aimed();
+      return;
+    }
+    // Near an edge of what is made, with more beyond it: asked once for each
+    // window.
+    const float ahead = std::max(300.0f, this->bounds().height() * 1.5f);
+    if (fMoreAbove && this->current() <= ahead && fAsked != fWindow) {
+      fAsked = fWindow;
+      this->say(ListEdge{true});
+    } else if (fMoreBelow && this->current() >= this->extent() - ahead && fAsked != fWindow) {
+      fAsked = fWindow;
+      this->say(ListEdge{false});
+    }
+  }
+  std::optional<Answer> onPress() { return std::exchange(fDue, std::nullopt); }
+
+private:
+  // The row aimed at: in view once it is laid out; a page at a time toward
+  // it while it is made but not laid out; kept waiting while nothing is laid
+  // out yet, or it is not made yet (its window coming).
+  void aimed() {
+    auto &all = rows().fRows;
+    const auto found = std::ranges::find(all, *fAim, &Rows::Kept::fKey);
+    if (found == all.end()) {
+      if (fAimedAt)
+        fAim.reset();  // gone, once aimed at
+      return;
+    }
+    if (!found->bounds().isEmpty()) {
+      // Aimed again at each frame while what is above it moves it; let go
+      // once the view is still where it was aimed -- or after three seconds
+      // of frames, where it never settles. Its arrival said at the first aim,
+      // where a flash of it is seen.
+      const skia::SkRect view = this->bounds();
+      const skia::SkRect box = this->toView(found->bounds());
+      const float above = fAimTop ? *fAimTop : box.height() < view.height() ? (view.height() - box.height()) * 0.5f : 0.0f;
+      float to = std::max(0.0f, this->current() + (box.fTop - view.fTop) - above);
+      if (fAimLine)
+        if (const auto line = std::invoke(fLocate, found->fRow, *fAimLine))
+          to = std::max(0.0f, this->current() + (box.fTop + *line - view.fTop) - view.height() * 0.4f);
+      if (!fAimedAt) {
+        // Far away -- a window just made around it -- put there at once, not
+        // glided to through it; near, glided to.
+        if (std::abs(to - this->current()) > view.height() * 2.0f)
+          this->setCurrent(to);
+        else
+          this->scrollTo(to);
+        fAimedAt = to;
+        this->say(ListAimed<Key>{*fAim});
+      } else if (std::abs(to - *fAimedAt) > 1.0f) {
+        this->setCurrent(to);
+        fAimedAt = to;
+      } else if (!this->moving() || ++fAimFrames > 180) {
+        fAim.reset();
+      }
+      return;
+    }
+    if (this->moving())
+      return;
+    const auto laid = std::ranges::find_if(all, [](const auto &one) { return !one.bounds().isEmpty(); });
+    if (laid == all.end())
+      return;
+    const float page = this->bounds().height();
+    this->setCurrent(std::max(0.0f, this->current() + (found < laid ? -page : page)));
+    this->markDamaged();
+  }
+  void say(Answer answer) {
+    fDue = std::move(answer);
+    scene::pressLater(this->fState);
+  }
+  bool fMoreAbove = false, fMoreBelow = false;
+  std::optional<Key> fAim;
+  std::uint64_t fAimNumber = 0;
+  std::optional<float> fAimTop, fAimedAt;
+  std::optional<std::string> fAimLine;
+  int fAimFrames = 0;
+  [[no_unique_address]] Locate fLocate{};
+  std::optional<std::pair<Key, Key>> fWindow, fAsked;
+  std::optional<Answer> fDue;
+};
+template <class Key, class View, class Row, class Make, class Locate = NoLocate>
+WindowList<Key, View, Row, Make, Locate> window_list(Make make) {
+  return WindowList<Key, View, Row, Make, Locate>(std::move(make));
+}
+
 // A row longer than its room, moved sideways -- by a finger or a mouse
 // dragged along it, flicked to glide on, or a sideways wheel -- and cut to
 // its room. Up and down are left to the page round it: a gesture going more
