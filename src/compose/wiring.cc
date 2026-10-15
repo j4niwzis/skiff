@@ -330,6 +330,119 @@ template <class Want, class On, class List> auto spanned_for(On on, List list) {
   return projected<Want>(std::move(on), Spanned<List>(std::move(list)));
 }
 
+// A picture seen whole -- a viewer's: fitted in its room less a margin
+// (never larger than itself), zoomed and moved as what it reads says
+// (ZoomView, through projected), masked to its room. It answers what is
+// done to it, tagged by whose it is: the wheel ZoomBy, a drag on it while
+// zoomed in PanBy, a right press on it MenuAt (where, in its box); a press
+// off it `off`, one on it that is no drag `on` (a video paused or played).
+struct ZoomView {
+  float zoom = 1.0f, x = 0.0f, y = 0.0f;
+  friend bool operator==(const ZoomView &, const ZoomView &) = default;
+};
+template <class Tag> struct ZoomBy {
+  float factor = 1.0f;
+};
+template <class Tag> struct PanBy {
+  float dx = 0.0f, dy = 0.0f;
+};
+template <class Tag> struct MenuAt {
+  float x = 0.0f, y = 0.0f;
+};
+template <class Tag, class Off, class On, class Picture> struct Zoomable : Specced {
+  using Answer = std::variant<ZoomBy<Tag>, PanBy<Tag>, MenuAt<Tag>, Off, On>;
+  using Out = Union<OutOf<Picture>, model::Types<Answer>>;
+  using BindingChildren = std::tuple<Picture>;
+  Picture fPicture;
+  float fMargin;
+  Off fOff;
+  On fOn;
+  ZoomView fView;
+  bool fPressed = false, fMoved = false;
+  float fX = 0.0f, fY = 0.0f;
+  std::optional<Answer> fDue;
+  Zoomable(float margin, Off off, On on, Picture picture, scene::Spec spec)
+      : Specced(std::move(spec)), fPicture(std::move(picture)), fMargin(margin), fOff(std::move(off)), fOn(std::move(on)) {}
+  template <class Self, class F> void forEachChild(this Self &self, F &&f) { f(self.fPicture); }
+  void read(const ZoomView &now) {
+    if (fView == now)
+      return;
+    fView = now;
+    this->invalidateLayout();
+  }
+  // Where the picture goes: fitted, zoomed, moved -- laid out there.
+  [[nodiscard]] skia::SkRect where() const {
+    const auto *one = fPicture.image();
+    const skia::SkRect &box = this->fState.fBounds;
+    if (!one || !*one)
+      return skia::SkRect::MakeEmpty();
+    const float w = static_cast<float>((*one)->width()), h = static_cast<float>((*one)->height());
+    const float scale = std::min({1.0f, (box.width() - fMargin) / w, (box.height() - fMargin) / h}) * fView.zoom;
+    return skia::SkRect::MakeXYWH(box.centerX() - w * scale * 0.5f + fView.x, box.centerY() - h * scale * 0.5f + fView.y, w * scale,
+                                  h * scale);
+  }
+  void layoutChildren() {
+    const skia::SkRect at = this->where();
+    const skia::SkRect &box = this->fState.fBounds;
+    fPicture.apply({.x = at.fLeft - box.fLeft, .y = at.fTop - box.fTop, .width = at.width(), .height = at.height()});
+    scene::layoutChildrenInContentBox(*this);
+  }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  [[nodiscard]] bool onScroll(float ticks) {
+    this->say(ZoomBy<Tag>{std::pow(1.25f, ticks)});
+    return true;
+  }
+  using Specced::onPointer;
+  void onPointer(scene::phase::target, const scene::pointer::down &press, scene::PointerReply &reply) {
+    const bool on = this->where().contains(press.x, press.y);
+    reply.handle();
+    if (press.button == 3) {
+      if (on)
+        this->say(MenuAt<Tag>{press.x - this->fState.fBounds.fLeft, press.y - this->fState.fBounds.fTop});
+      return;
+    }
+    if (!on) {
+      this->say(fOff);
+      return;
+    }
+    fPressed = true;
+    fMoved = false;
+    fX = press.x;
+    fY = press.y;
+    reply.capturePointer();
+  }
+  void onPointer(scene::phase::target, const scene::pointer::move &at, scene::PointerReply &reply) {
+    if (!fPressed)
+      return;
+    if (!fMoved && std::hypot(at.x - fX, at.y - fY) < 4.0f)
+      return;
+    fMoved = true;
+    if (fView.zoom > 1.0f)
+      this->say(PanBy<Tag>{at.x - fX, at.y - fY});
+    fX = at.x;
+    fY = at.y;
+    reply.handle();
+  }
+  void onPointer(scene::phase::target, const scene::pointer::up &, scene::PointerReply &reply) {
+    if (!std::exchange(fPressed, false))
+      return;
+    reply.releasePointer();
+    if (!fMoved)
+      this->say(fOn);
+  }
+  std::optional<Answer> onPress() { return std::exchange(fDue, std::nullopt); }
+
+private:
+  void say(Answer answer) {
+    fDue = std::move(answer);
+    scene::pressLater(this->fState);
+  }
+};
+template <class Want, class Tag, class Compute, class Off, class On, class Picture>
+auto zoomable_for(Compute compute, float margin, Off off, On on, Picture picture, scene::Spec spec = {}) {
+  return projected<Want>(std::move(compute), Zoomable<Tag, Off, On, Picture>(margin, std::move(off), std::move(on), std::move(picture), std::move(spec)));
+}
+
 // A right press on a node -- a long press, on a phone -- answered by what
 // `ask(node, x, y)` makes of where it was: a message's menu, from what is
 // selected in it and the link pressed. Nothing asked, not taken.
