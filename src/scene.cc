@@ -6598,6 +6598,63 @@ template <class N> void draw(N &child, Painting &painting, skia::SkCanvas *canva
 template <class N> [[nodiscard]] NodeKind typeOf(N &) { return kindOf<N>(); }
 [[nodiscard]] inline NodeKind typeOf(AnyNodeRef &child) { return child.kind(); }
 inline State &stateOf(AnyNodeRef &child) { return child.state(); }
+
+// ---- a laid-out tree, told ---------------------------------------------
+//
+// What a tree came to after layout, one row a node, for a program or a test
+// to print where something is not where it should be: what the node is, the
+// named view it is in (SKIFF_NAMED), where it was laid out, how it is sized
+// along each axis, and whether it sticks out of its parent (as an Overflow
+// told). laidOutTree(root) gives the rows, laidOutText(root) the rows as
+// text, indented by depth.
+struct LaidOutNode {
+  std::size_t depth = 0;
+  NodeKind kind;
+  // The innermost named view it is in -- itself, where it is one (names).
+  std::string_view view;
+  bool names = false;
+  skia::SkRect bounds = skia::SkRect::MakeEmpty();
+  Axes relative;
+  Axes autoSize;
+  Axes grow;
+  bool visible = true;
+  bool outOfFlow = false;
+  bool overflows = false;
+};
+namespace detail {
+template <class N> void laidOutRows(N &node, std::size_t depth, std::string_view view, std::vector<LaidOutNode> &rows) {
+  const State &state = stateOf(node);
+  const bool names = state.fViewName != nullptr;
+  const std::string_view in = names ? std::string_view(state.fViewName) : view;
+  rows.push_back({.depth = depth, .kind = typeOf(node), .view = in, .names = names, .bounds = state.fBounds,
+                  .relative = state.fRelativeSizeAxes, .autoSize = state.fAutoSizeAxes, .grow = state.fGrowAxes,
+                  .visible = state.visible(), .outOfFlow = state.fOutOfFlow, .overflows = state.fOverflowTold});
+  eachChild(node, [&](auto &child) { laidOutRows(child, depth + 1, in, rows); });
+}
+inline std::string_view axesText(Axes axes) {
+  constexpr std::array<std::string_view, 4> kText{"-", "x", "y", "xy"};
+  return kText[(axes.template has<axis::x>() ? 1 : 0) + (axes.template has<axis::y>() ? 2 : 0)];
+}
+} // namespace detail
+template <class N> [[nodiscard]] std::vector<LaidOutNode> laidOutTree(N &root) {
+  std::vector<LaidOutNode> rows;
+  detail::laidOutRows(root, 0, {}, rows);
+  return rows;
+}
+// One row as text: "Kind [view] x,y w×h relative auto grow", and what else
+// it is -- hidden, out of flow, sticking out.
+[[nodiscard]] inline std::string laidOutLine(const LaidOutNode &row) {
+  return std::format("{:{}}{}{}{}{} at {},{} {}x{} relative {} auto {} grow {}{}{}{}", "", row.depth * 2, row.kind.name,
+                     row.view.empty() ? "" : (row.names ? " [" : " (in "), row.view,
+                     row.view.empty() ? "" : (row.names ? "]" : ")"), row.bounds.fLeft, row.bounds.fTop,
+                     row.bounds.width(), row.bounds.height(), detail::axesText(row.relative), detail::axesText(row.autoSize),
+                     detail::axesText(row.grow), row.visible ? "" : " hidden", row.outOfFlow ? " out-of-flow" : "",
+                     row.overflows ? " OVERFLOWS" : "");
+}
+template <class N> [[nodiscard]] std::string laidOutText(N &root) {
+  return laidOutTree(root) | std::views::transform([](const LaidOutNode &row) { return laidOutLine(row) + "\n"; }) | std::views::join |
+         std::ranges::to<std::string>();
+}
 inline void layout(AnyNodeRef &child, const skia::SkRect &box) {
   child.ops().fLayout(child.node(), box);
 }

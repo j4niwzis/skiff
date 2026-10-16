@@ -1308,4 +1308,12 @@ TEST(Compose, AStylesTextFieldsAreAsWideAsTheirColumn) {
   EXPECT_TRUE(scene::overflows().empty());
   (void)std::exchange(scene::overflows(), {});
   EXPECT_FLOAT_EQ(width, 560.0f);
+  // The tree as laid out, told a row a node: each field's view, as wide as
+  // its column's room.
+  const auto rows = scene::laidOutTree(tree.root());
+  EXPECT_EQ(std::ranges::count_if(rows, [](const scene::LaidOutNode &row) {
+    return row.names && row.view == "style_text_field" && row.bounds.width() == 560.0f;
+  }), 2);
+  EXPECT_TRUE(std::ranges::none_of(rows, &scene::LaidOutNode::overflows));
+  EXPECT_TRUE(scene::laidOutText(tree.root()).contains("[style_controls]"));
 }
