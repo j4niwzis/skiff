@@ -227,8 +227,11 @@ public:
       return;
     for (int round = 0; round < kRounds; ++round) {
       const Revision told = fRevision;
-      fTelling = std::exchange(fTouched, {});
-      fTellingTargets = std::exchange(fTargets, {});
+      // Swapped, not moved out: each keeps its storage from batch to batch.
+      fTelling.swap(fTouched);
+      fTouched.clear();
+      fTellingTargets.swap(fTargets);
+      fTargets.clear();
       if !consteval {
         std::ranges::sort(fTelling, std::less<const void *>{});
       }
