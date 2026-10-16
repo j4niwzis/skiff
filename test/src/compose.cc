@@ -1423,3 +1423,131 @@ TEST(Compose, AMarkMadeAroundANamedViewIsAsWideAsItsContent) {
   EXPECT_FLOAT_EQ(wide, 300.0f);
   EXPECT_TRUE(scene::overflows().empty());
 }
+
+// A node that asks, as it ticks, on its own behalf (a window list at its
+// top, asking for what is above it): its press found by its id, in a named
+// view, and delivered to the program by its type.
+namespace edge_press {
+namespace c = skiff::compose;
+struct AtTop {
+  bool older = true;
+};
+struct Seen {};
+struct Asker : scene::Node {
+  using Answer = std::variant<AtTop, Seen>;
+  int fTicks = 0;
+  Asker() { this->apply({.fillX = true, .height = 40.0f}); }
+  void update(double) {
+    if (++fTicks == 2)
+      scene::pressLater(this->fState);
+  }
+  [[nodiscard]] bool wantsTick() const { return fTicks < 3; }
+  [[nodiscard]] bool settling() const { return fTicks < 3; }
+  std::optional<Answer> onPress() { return Answer(AtTop{}); }
+};
+struct Asked {
+  int asked = 0;
+  void take(const AtTop &) { ++asked; }
+  void take(const Seen &) {}
+};
+inline auto view() {
+  return SKIFF_NAMED(timeline_list, c::column(c::vbox(0.0f, {.fill = true}), Asker()));
+}
+}  // namespace edge_press
+TEST(Compose, ANodeAskingOnItsOwnBehalfIsHeard) {
+  using namespace edge_press;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), view()));
+  model::Model<side_tests::ShownRoot, bind::NoReactions> m;
+  bind::Binding<decltype(m)> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  for (double at : {0.0, 16.0, 32.0, 48.0}) {
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 200.0f));
+    tree.update(at);
+  }
+  std::println("presses kept: {}", scene::hostWork().pressed.size());
+  ASSERT_EQ(scene::hostWork().pressed.size(), 1u);
+  edge_press::Asked program;
+  const auto path = scene::hostWork().pressed.front();
+  scene::hostWork().pressed.clear();
+  EXPECT_TRUE(bind::press(tree.root(), m, path, &program));
+  EXPECT_EQ(program.asked, 1);
+}
+
+// A window over a list (mux's timeline), scrolled to its top with nothing
+// above it held: it asks for what is older, and the program hears it.
+namespace window_edge {
+namespace c = skiff::compose;
+struct FeedTold {
+  std::optional<int> of;
+  c::WindowAim<std::string> aim;
+  friend bool operator==(const FeedTold &, const FeedTold &) = default;
+};
+struct Feed {
+  int count = 30;
+};
+struct FeedRoot {
+  model::Tracked<FeedTold> told;
+  model::Tracked<Feed> feed;
+};
+using FeedModel = model::Model<FeedRoot, bind::NoReactions>;
+using Item = std::tuple<std::string, int>;
+struct Src {
+  using Told = FeedTold;
+  static std::size_t count(const FeedModel &m, const Told &) { return static_cast<std::size_t>(m.root().feed.fValue.count); }
+  static std::string key(const FeedModel &, const Told &, std::size_t i) { return std::format("m{}", i); }
+  static std::optional<std::size_t> index(const FeedModel &m, const Told &t, const std::string &id) {
+    for (std::size_t i = 0; i < count(m, t); ++i)
+      if (key(m, t, i) == id)
+        return i;
+    return std::nullopt;
+  }
+  static bool counts(const FeedModel &, const Told &, std::size_t) { return false; }
+  static model::Revision revision(const FeedModel &m, const Told &) { return m.revision(); }
+  static std::vector<Item> items(const FeedModel &, const Told &, std::size_t from, std::size_t to, const std::optional<std::string> &) {
+    return std::views::iota(from, to) | std::views::transform([](std::size_t i) { return Item{std::format("m{}", i), static_cast<int>(i)}; }) |
+           std::ranges::to<std::vector>();
+  }
+};
+struct RowNode : scene::Node {
+  RowNode() { this->apply({.fillX = true, .height = 40.0f}); }
+};
+struct MakeFeedRow {
+  RowNode operator()(const Item &) const { return RowNode{}; }
+};
+struct Tag {};
+using FeedWindow = c::WindowFrom<Src, FeedModel, std::string, int, RowNode, MakeFeedRow, c::NoLocate, Tag>;
+struct Heard {
+  int older = 0;
+  void take(const c::ListEdge<Tag> &edge) { older += edge.older ? 1 : 0; }
+  void take(const c::ListAimed<std::string, Tag> &) {}
+  void take(const c::ListSeen<std::string, Tag> &) {}
+};
+}  // namespace window_edge
+TEST(Compose, AWindowAtItsTopAsksForWhatIsOlder) {
+  using namespace window_edge;
+  FeedWindow window(MakeFeedRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, FeedWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  Heard heard;
+  const auto frame = [&](double at) {
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    tree.update(at);
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  std::println("heard after opening: {}", heard.older);
+  // Scrolled up to its top, as by the wheel.
+  for (int notch = 0; notch < 60; ++notch)
+    (void)tree.dispatchPointer(scene::pointer::scroll{150.0f, 200.0f, 0.0f, 120.0f});
+  for (double t = 600.0; t < 2000.0; t += 16.0)
+    frame(t);
+  std::println("heard after scrolling up: {}", heard.older);
+  EXPECT_GE(heard.older, 1);
+}
