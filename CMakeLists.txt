@@ -307,6 +307,8 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC
 # `import skiff.scene` and `import skiff.nodes`.
 target_sources(${PROJECT_NAME} PUBLIC
   FILE_SET CXX_MODULES FILES ${skiff_sources})
+# SKIFF_NAMED, a macro: a header, as a module cannot export one.
+target_sources(${PROJECT_NAME} PUBLIC FILE_SET HEADERS BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/skiff/named.h)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD ${skiff_cxx_standard})
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_${skiff_cxx_standard})
@@ -398,6 +400,7 @@ if(SKIFF_INSTALL)
   install(TARGETS ${skiff_built}
     EXPORT skiffTargets
     FILE_SET CXX_MODULES DESTINATION ${CMAKE_INSTALL_LIBDIR}/skiff/modules
+    FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
   install(EXPORT skiffTargets
     NAMESPACE skiff::

@@ -1,9 +1,3 @@
-module;
-// The ABI's demangler, where there is one: what sticks out is told by the
-// names of the types as written.
-#if __has_include(<cxxabi.h>)
-#include <cxxabi.h>
-#endif
 export module skiff.nodes.flow;
 
 import std;
@@ -12,20 +6,7 @@ import skia;
 import skiff.paint;
 import skiff.scene;
 
-namespace skiff::nodes::flow_names {
-// A type's name as written, not as mangled, where the ABI can say it.
-inline std::string readable(const std::type_info &type) {
-#if __has_include(<cxxabi.h>)
-  int status = 0;
-  const std::unique_ptr<char, void (*)(void *)> said(abi::__cxa_demangle(type.name(), nullptr, nullptr, &status),
-                                                     std::free);
-  if (status == 0 && said) {
-    return said.get();
-  }
-#endif
-  return type.name();
-}
-} // namespace skiff::nodes::flow_names
+
 
 export namespace skiff::nodes {
 
@@ -342,7 +323,8 @@ template <class N> struct Flowing {
       }
       state.fOverflowTold = true;
       skiff::scene::tellOverflow(skiff::scene::Overflow{
-          flow_names::readable(skiff::scene::typeOf(child)), flow_names::readable(typeid(fNode)), x, y});
+          std::string(skiff::scene::typeOf(child).name), std::string(skiff::scene::typeOf(fNode).name), x, y,
+          skiff::scene::viewsLaidOut().empty() ? std::string() : std::string(skiff::scene::viewsLaidOut().back())});
     });
   }
 

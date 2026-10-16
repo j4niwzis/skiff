@@ -445,7 +445,7 @@ struct DerivedPart {
   // Where it reads no part: the root its compute takes (none: never).
   mrt::TypeKey fRoot;
   DerivedState (*fState)(void *);
-  const char *(*fName)();
+  std::string_view (*fName)();
 };
 void refreshDerived(void *node, const DerivedPart &part, const AnyModel &model) {
   // Computed from the whole root where it reads no part: only by the
@@ -499,7 +499,7 @@ template <class T> struct DerivedOf {
         D &node = *static_cast<D *>(n);
         return DerivedState{node.fSeen, node.fShown, node.fComputeErased};
       },
-      +[]() { return typeid(D).name(); }};
+      +[]() { return scene::nameOf<D>(); }};
   static constexpr ItselfPart kPart{+[](void *n, const AnyModel &model) {
     refreshDerived(std::addressof(static_cast<D &>(*static_cast<T *>(n))), kDerived, model);
   }};
@@ -682,7 +682,7 @@ public:
 
   void walk(scene::AnyNodeRef node) {
     if (tracing())
-      std::println(std::cerr, "[bind] refresh {} over {}", fChanged ? "targeted" : "whole", node.type().name());
+      std::println(std::cerr, "[bind] refresh {} over {}", fChanged ? "targeted" : "whole", node.kind().name);
     this->node(node, mrt::Place{}, nullptr);
   }
 
@@ -739,7 +739,7 @@ private:
       if (!inner)
         return;
       if (tracing())
-        std::println(std::cerr, "[bind] scope {} entered", node.type().name());
+        std::println(std::cerr, "[bind] scope {} entered", node.kind().name);
       if (fChanged == nullptr) {
         const auto seen = fModel.look(*inner);
         const model::Revision now = seen ? seen.fRevision : fModel.revision();
@@ -803,7 +803,7 @@ private:
   void show(scene::AnyNodeRef node, const BoundPart &part, const mrt::Seen &seen) {
     void *n = node.node();
     if (tracing())
-      std::println(std::cerr, "[bind] bound {} @{} {} at {} (seen {}, shown {})", node.type().name(), n, seen ? "seen" : "gone",
+      std::println(std::cerr, "[bind] bound {} @{} {} at {} (seen {}, shown {})", node.kind().name, n, seen ? "seen" : "gone",
                    seen.fRevision, part.fSeen(n), part.fShown(n));
     if (!seen || seen.fShape->fType != part.fValue) {
       if (!std::exchange(part.fIsGone(n), true))

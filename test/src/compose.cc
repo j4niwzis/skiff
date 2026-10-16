@@ -1,3 +1,4 @@
+#include "skiff/named.h"
 import std;
 import skia;
 import splice;
@@ -1164,4 +1165,28 @@ TEST(Compose, ABoxSizedByItsContentToldToGrowGrows) {
       c::column(c::vbox(0.0f, {.fillX = true, .height = 100.0f})), std::move(grown)));
   tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 600.0f));
   EXPECT_FLOAT_EQ(height, 500.0f);
+}
+
+// Names without RTTI: a type's last part, its arguments left out; a view
+// named where it is written goes by its own name in what the layout tells.
+namespace {
+struct WideNode : skiff::scene::Node {
+  WideNode() { this->apply({.width = 120.0f, .height = 10.0f}); }
+};
+} // namespace
+
+TEST(Compose, NamesAreShortAndNeedNoRtti) {
+  namespace c = skiff::compose;
+  namespace scene = skiff::scene;
+  static_assert(scene::nameOf<std::vector<int>>() == "vector");
+  static_assert(scene::nameOf<WideNode>() == "WideNode");
+  static_assert(scene::kindOf<int>() != scene::kindOf<long>());
+  auto narrow = SKIFF_NAMED(narrow_box, c::row(c::hbox(0.0f, {.width = 50.0f, .height = 20.0f}), WideNode()));
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(narrow)));
+  (void)std::exchange(scene::overflows(), {});
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 300.0f));
+  const auto told = std::exchange(scene::overflows(), {});
+  ASSERT_FALSE(told.empty());
+  EXPECT_EQ(told.front().node, "WideNode");
+  EXPECT_EQ(told.front().view, "narrow_box");
 }

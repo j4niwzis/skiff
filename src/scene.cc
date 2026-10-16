@@ -1699,10 +1699,133 @@ struct PillPicture {
 // grow to hold it and does not clip it: nothing the layout meant. The node
 // and its parent, by their types, and by how much on each axis -- told once
 // a node, until it fits again. A program logs it, a test fails on it.
+// ---- what a node is, without RTTI --------------------------------------------
+//
+// A type's name, as the compiler spells it in a function template's own
+// signature (__PRETTY_FUNCTION__: "... [T = mux::ui::accounts_side]"; MSVC's
+// __FUNCSIG__), cut at compile time to its last part with no template
+// arguments -- "Bound", "Text", "accounts_side". Only the cut name is kept in
+// the program; the signature is read in a constant expression and nothing
+// of it is emitted. With it, and an address that is one per type, nothing
+// in skiff needs typeid, and a program can be built without RTTI.
+namespace detail {
+template <class T> consteval std::string_view signatureOf() {
+#if defined(_MSC_VER) && !defined(__clang__)
+  return __FUNCSIG__;
+#else
+  return __PRETTY_FUNCTION__;
+#endif
+}
+// The type as spelled in the signature.
+consteval std::string_view spelledIn(std::string_view signature) {
+#if defined(_MSC_VER) && !defined(__clang__)
+  const std::size_t from = signature.find("signatureOf<") + 12;
+  const std::size_t to = signature.rfind(">(void)");
+#else
+  const std::size_t from = signature.find("T = ") + 4;
+  std::size_t to = signature.size();
+  // gcc goes on after it: "[with T = X; std::string_view = ...]".
+  int depth = 0;
+  for (std::size_t at = from; at < signature.size(); ++at) {
+    const char c = signature[at];
+    if (c == '<' || c == '(' || c == '[' || c == '{')
+      ++depth;
+    else if ((c == '>' || c == ')' || c == '}') && depth > 0)
+      --depth;
+    else if (c == ']' && depth == 0) {
+      to = at;
+      break;
+    } else if (c == ']')
+      --depth;
+    else if (c == ';' && depth == 0) {
+      to = at;
+      break;
+    }
+  }
+#endif
+  return signature.substr(from, to - from);
+}
+// Its last part at the outermost level -- past every "::" not inside
+// brackets -- with whatever is inside brackets left out.
+template <class Out> consteval std::size_t shortened(std::string_view spelled, Out out) {
+  std::size_t start = 0;
+  int depth = 0;
+  for (std::size_t at = 0; at + 1 < spelled.size(); ++at) {
+    const char c = spelled[at];
+    if (c == '<' || c == '(' || c == '[' || c == '{')
+      ++depth;
+    else if ((c == '>' || c == ')' || c == ']' || c == '}') && depth > 0)
+      --depth;
+    else if (depth == 0 && c == ':' && spelled[at + 1] == ':')
+      start = at + 2;
+  }
+  std::size_t length = 0;
+  depth = 0;
+  for (std::size_t at = start; at < spelled.size(); ++at) {
+    const char c = spelled[at];
+    if (c == '<' || c == '(' || c == '[' || c == '{') {
+      ++depth;
+      continue;
+    }
+    if ((c == '>' || c == ')' || c == ']' || c == '}') && depth > 0) {
+      --depth;
+      continue;
+    }
+    if (depth == 0) {
+      out(length, c);
+      ++length;
+    }
+  }
+  return length;
+}
+template <class T> consteval std::size_t shortLength() {
+  return shortened(spelledIn(signatureOf<T>()), [](std::size_t, char) {});
+}
+template <class T> consteval std::array<char, shortLength<T>()> shortChars() {
+  std::array<char, shortLength<T>()> chars{};
+  shortened(spelledIn(signatureOf<T>()), [&](std::size_t at, char c) { chars[at] = c; });
+  return chars;
+}
+template <class T> inline constexpr std::array<char, shortLength<T>()> kShortName = shortChars<T>();
+template <class T> inline constexpr char kKindKey = 0;
+} // namespace detail
+// A type's short name, without RTTI.
+template <class T> [[nodiscard]] constexpr std::string_view nameOf() noexcept {
+  return {detail::kShortName<T>.data(), detail::kShortName<T>.size()};
+}
+// Which kind of node: one key per type, and its name -- a view's own, where
+// it was named (SKIFF_NAMED: viewName()), else its type's.
+struct NodeKind {
+  const void *key = nullptr;
+  std::string_view name;
+  friend constexpr bool operator==(const NodeKind &a, const NodeKind &b) noexcept { return a.key == b.key; }
+};
+template <class T> [[nodiscard]] constexpr NodeKind kindOf() noexcept {
+  if constexpr (requires { std::string_view(T::viewName()); })
+    return {&detail::kKindKey<T>, std::string_view(T::viewName())};
+  else
+    return {&detail::kKindKey<T>, nameOf<T>()};
+}
+
+// The views being laid out, innermost last: each named view (SKIFF_NAMED)
+// says itself while its children are laid out, so what is told of them can
+// say where it is.
+inline std::vector<std::string_view> &viewsLaidOut() {
+  static std::vector<std::string_view> kept;
+  return kept;
+}
+struct ViewLaidOut {
+  explicit ViewLaidOut(std::string_view name) { viewsLaidOut().push_back(name); }
+  ~ViewLaidOut() { viewsLaidOut().pop_back(); }
+  ViewLaidOut(const ViewLaidOut &) = delete;
+  ViewLaidOut &operator=(const ViewLaidOut &) = delete;
+};
 struct Overflow {
   std::string node;
   std::string parent;
   float x = 0.0f, y = 0.0f;
+  // The innermost named view it was laid out in, where one was.
+  std::string view;
 };
 // What the layout has found sticking out since the program last read it:
 // the program drains it -- logs it, a test checks it. Held to a number, so
@@ -1716,7 +1839,7 @@ inline std::vector<Overflow> &overflows() {
 // what keeps them going. Kept only while a program asks (traceSettling);
 // it drains them, and they are held to a number.
 struct Settling {
-  const std::type_info *type = nullptr;
+  NodeKind kind;
   bool transform = false;
 };
 inline bool &traceSettling() {
@@ -1731,7 +1854,7 @@ inline std::vector<Settling> &settlers() {
 // repaints, and why. Kept only while a program asks (traceSettling), as
 // the settlers are.
 struct Damager {
-  const std::type_info *type = nullptr;
+  NodeKind kind;
   skia::SkRect rect = skia::SkRect::MakeEmpty();
   bool relaid = false;  // its layout was made again, not only its look
   bool moved = false;   // only moved: laid out elsewhere, or a child gone
@@ -1743,7 +1866,7 @@ inline std::vector<Damager> &damagers() {
 // What made a frame lay out: the nodes found not laid out, and why -- their
 // own layout undone, or their set of children changed. Kept while traced.
 struct Dirtier {
-  const std::type_info *type = nullptr;
+  NodeKind kind;
   bool children = false;  // its children changed; else its own layout was undone
   skia::SkRect bounds = skia::SkRect::MakeEmpty();
 };
@@ -4355,8 +4478,8 @@ template <class T> void drawDefault(T &node, Painting &painting, skia::SkCanvas 
 // program's thousands of node types no longer make thousands of copies of it.
 class ErasedNode;
 [[nodiscard]] inline StyleSubject styleSubject(ErasedNode &node, float viewportWidth);
-template <class N> [[nodiscard]] const std::type_info &typeOf(N &);
-[[nodiscard]] inline const std::type_info &typeOf(ErasedNode &node);
+template <class N> [[nodiscard]] NodeKind typeOf(N &);
+[[nodiscard]] inline NodeKind typeOf(ErasedNode &node);
 template <class F> bool childAt(ErasedNode &node, std::uint32_t place, F &&f);
 
 namespace walk {
@@ -4654,7 +4777,7 @@ template <class N> bool markDirty(N &child) {
   if (signature != state.fChildSignature) {
     state.fChildSignature = signature;
     if (traceSettling() && dirtiers().size() < 64) {
-      dirtiers().push_back({&typeOf(child), true, state.fBounds});
+      dirtiers().push_back({typeOf(child), true, state.fBounds});
     }
     state.fLayoutValid = false;
     // Repainted where a child that went was drawn -- not the whole: one that
@@ -4670,7 +4793,7 @@ template <class N> bool markDirty(N &child) {
     }
   }
   if (!state.fLayoutValid && !below && traceSettling() && dirtiers().size() < 64) {
-    dirtiers().push_back({&typeOf(child), false, state.fBounds});
+    dirtiers().push_back({typeOf(child), false, state.fBounds});
   }
   state.fSubtreeDirty = below || !state.fLayoutValid;
   // A pending move is the parent's to carry out: it lays out again, and this
@@ -4706,7 +4829,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
     damage = joined(state.fMovedDamage.makeOffset(state.fShiftX, state.fShiftY), state.fLayoutMoved);
     // Moved, laid out, or a child gone: said too, as from its node.
     if (!state.fDamaged && !damage.isEmpty() && traceSettling() && damagers().size() < 64) {
-      damagers().push_back({&typeOf(child), damage, true, true});
+      damagers().push_back({typeOf(child), damage, true, true});
     }
     if (state.fDamaged) {
       // Where it was drawn and where it will be: a shift moves it past both
@@ -4714,7 +4837,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
       damage = joined(joined(joined(damage, state.fBounds), state.fDrawnBounds),
                       state.fBounds.makeOffset(state.fShiftX, state.fShiftY));
       if (traceSettling() && damagers().size() < 64) {
-        damagers().push_back({&typeOf(child), damage, state.fRelaid});
+        damagers().push_back({typeOf(child), damage, state.fRelaid});
       }
     }
   }
@@ -5438,7 +5561,7 @@ template <class N> bool animating(N &child) {
   const bool transform = !child.fState.fTransforms.empty();
   if (transform || child.settling()) {
     if (traceSettling() && settlers().size() < 64) {
-      settlers().push_back({&typeOf(child), transform});
+      settlers().push_back({typeOf(child), transform});
     }
     return true;
   }
@@ -5914,7 +6037,7 @@ public:
     // The walks: the type's own in a release build, one table for every
     // node outside it (Walks).
     const Walks *fWalks;
-    const std::type_info &(*fType)();
+    NodeKind fKind;
     void (*fEachChild)(void *, void *context, AnyChildVisit visit);
     // The node's own hooks, which the walks made once (ErasedNode) call.
     void (*fTick)(void *, double);
@@ -6096,7 +6219,7 @@ private:
 #endif
       +[](void *n, Painting &painting, skia::SkCanvas *canvas, float alpha) { as<T>(n).draw(painting, canvas, alpha); },
       walksOf<T>(),
-      +[]() -> const std::type_info & { return typeid(T); },
+      kindOf<T>(),
       +[](void *n, void *context, AnyChildVisit visit) {
         eachChild(as<T>(n), [&](auto &child) { visitAsAny(child, context, visit); });
       },
@@ -6204,7 +6327,7 @@ public:
   [[nodiscard]] const AnyNode::Ops &ops() const noexcept { return *fOps; }
   [[nodiscard]] void *node() const noexcept { return fNode; }
   // The node's own type, for what names it.
-  [[nodiscard]] const std::type_info &type() const { return fOps->fType(); }
+  [[nodiscard]] NodeKind kind() const { return fOps->fKind; }
   // What binds it, as the binding layer said: nothing for most nodes.
   [[nodiscard]] const void *bindTable() const noexcept { return fOps->fBind; }
   // Its children, each seen the same way: eachChild over a ref, as over any
@@ -6361,7 +6484,7 @@ template <class T> void drawDefaultShared(T &node, Painting &painting, skia::SkC
 inline StyleSubject styleSubject(ErasedNode &node, float viewportWidth) {
   return node.fOps->fStyleSubject(node.fNode, viewportWidth);
 }
-inline const std::type_info &typeOf(ErasedNode &node) { return node.fOps->fType(); }
+inline NodeKind typeOf(ErasedNode &node) { return node.fOps->fKind; }
 template <class F> bool childAt(ErasedNode &node, std::uint32_t place, F &&f) {
   return node.fOps->fChildAt(node.fNode, place, const_cast<void *>(static_cast<const void *>(std::addressof(f))), +[](void *context, AnyNodeRef &child) {
     (*static_cast<std::remove_reference_t<F> *>(context))(child);
@@ -6467,8 +6590,8 @@ template <class N> void draw(N &child, Painting &painting, skia::SkCanvas *canva
 }
 
 // A child's own type, whether seen as itself or through an AnyNode.
-template <class N> [[nodiscard]] const std::type_info &typeOf(N &) { return typeid(N); }
-[[nodiscard]] inline const std::type_info &typeOf(AnyNodeRef &child) { return child.type(); }
+template <class N> [[nodiscard]] NodeKind typeOf(N &) { return kindOf<N>(); }
+[[nodiscard]] inline NodeKind typeOf(AnyNodeRef &child) { return child.kind(); }
 inline State &stateOf(AnyNodeRef &child) { return child.state(); }
 inline void layout(AnyNodeRef &child, const skia::SkRect &box) {
   child.ops().fLayout(child.node(), box);
