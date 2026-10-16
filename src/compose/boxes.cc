@@ -670,6 +670,13 @@ template <class E, class F> struct Handle {
   auto on(const E &, const P &here) const {
     return fAnswer(here);
   }
+  // Or given nothing: what it answers needs neither.
+  template <class P>
+    requires(std::invocable<const F &> && !std::invocable<const F &, const P &> &&
+             !std::invocable<const F &, const E &, const P &>)
+  auto on(const E &, const P &) const {
+    return fAnswer();
+  }
 };
 template <class E, class F> Handle<E, F> handle(F answer) { return {std::move(answer)}; }
 template <class... H> struct Handlers : H... {
