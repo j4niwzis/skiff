@@ -387,6 +387,46 @@ template <class N> [[nodiscard]] scene::State &state_of(N &node) { return node.f
 template <class N> [[nodiscard]] const scene::State &state_of(const N &node) { return node.fState; }
 [[nodiscard]] inline const scene::State &state_of(const Held &held) { return const_cast<Held &>(held).held().state(); }
 
+// What a view named where it is written (SKIFF_NAMED) is: what its
+// expression made, Base, as a type of its own, Self -- which says its name
+// (Self::viewName(), the macro's spelling of it). Adopted as it is made,
+// over held content; and while its parts are laid out it is the view they
+// are in, for what is told of them (an overflow).
+template <class Self, class Base> struct Named : Base {
+  explicit Named(Base made) : Base(std::move(made)) { adopted(static_cast<Base &>(*this)); }
+  void layoutChildren() {
+    const scene::ViewLaidOut here{Self::viewName()};
+    Base::layoutChildren();
+  }
+};
+
+// A part as a combinator keeps it. A view named where it was written
+// (SKIFF_NAMED) is a type of its own -- what the compiler names, what a
+// hook is overloaded on -- and, outside a release build, a wrapper over a
+// Held; given to a combinator, it is held as a part, so that what keeps it
+// is one type for every view and its tables are made once, not once for
+// each view it is given. Anything else is kept as it is.
+template <class N> struct PartOf {
+  using type = N;
+};
+template <class N>
+  requires(scene::kErasedCombinators && std::derived_from<N, Held> && !std::same_as<N, Held> &&
+           requires { N::viewName(); })
+struct PartOf<N> {
+  using type = Held;
+};
+template <class N> using part_t = typename PartOf<N>::type;
+template <class N> part_t<N> as_part(N node) { return part_t<N>(std::move(node)); }
+template <class N>
+  requires std::same_as<part_t<N>, N>
+std::vector<N> as_parts(std::vector<N> nodes) {
+  return nodes;
+}
+template <class N> std::vector<part_t<N>> as_parts(std::vector<N> nodes) {
+  return nodes | std::views::as_rvalue | std::views::transform([](N &&one) { return part_t<N>(std::move(one)); }) |
+         std::ranges::to<std::vector>();
+}
+
 // A wrapper that says its own size along some axes (in its measure):
 // over held content, the holder's -- which then fills it there; any other
 // node says it in its own state already.
@@ -406,7 +446,7 @@ template <class Tag, class N> struct Marked : N {
   Tag fTag;
   explicit Marked(N node, Tag tag = {}) : N(std::move(node)), fTag(std::move(tag)) { adopted(static_cast<N &>(*this)); }
 };
-template <class Tag, class N> auto marked(Tag tag, N node) { return erased(Marked<Tag, N>(std::move(node), std::move(tag))); }
+template <class Tag, class N> auto marked(Tag tag, N node) { return erased(Marked<Tag, part_t<N>>(as_part(std::move(node)), std::move(tag))); }
 
 // A node made by a combinator where it cannot be moved: made in place, held
 // outside a release build; a prvalue in one.
@@ -416,16 +456,6 @@ template <class N, class... Args> auto erased_made(Args &&...args) {
   else
     return N(std::forward<Args>(args)...);
 }
-// A view named where it is written (SKIFF_NAMED), as what it names was:
-// held where that was held -- the named type over it, a wrapper -- and
-// itself where it was concrete in every build (a mount, a scroll kept),
-// whose callers use what it is.
-template <class Base, class N>
-  requires std::same_as<Base, Held>
-Held named_view(N node) {
-  return Held(std::move(node));
-}
-template <class Base, class N> N named_view(N node) { return node; }
 // A node as a combinator returns it: itself in a release build; held,
 // outside one.
 template <class N> auto erased(N node) {
@@ -484,7 +514,9 @@ template <class N> struct Many : nodes::Stack {
       f(part);
   }
 };
-template <class N> auto many(Look look, std::vector<N> parts) { return erased(Many<N>(std::move(look), std::move(parts))); }
+template <class N> auto many(Look look, std::vector<N> parts) {
+  return erased(Many<part_t<N>>(std::move(look), as_parts(std::move(parts))));
+}
 
 // A stack of a list's parts made from what it reads -- a value projected
 // from the model or a Local's state, a search's results -- each element made
@@ -524,7 +556,7 @@ template <class N> struct Ticking : N {
   }
 };
 template <class N> auto keep_ticking(bool on, N node) {
-  return erased(Ticking<N>(on, std::move(node)));
+  return erased(Ticking<part_t<N>>(on, as_part(std::move(node))));
 }
 
 // A subtree whose drawing can be replayed until it is damaged.
@@ -589,21 +621,21 @@ namespace skiff::scene {
 export namespace skiff::compose {
 template <class... Parts> auto column(Look look, Parts... parts) {
   look.fHorizontal = false;
-  return erased(Box<Parts...>(std::move(look), std::move(parts)...));
+  return erased(Box<part_t<Parts>...>(std::move(look), as_part(std::move(parts))...));
 }
 template <class... Parts>
   requires(std::derived_from<Parts, scene::Node> && ...)
 auto column(Parts... parts) {
-  return erased(Box<Parts...>(vbox(), std::move(parts)...));
+  return erased(Box<part_t<Parts>...>(vbox(), as_part(std::move(parts))...));
 }
 template <class... Parts> auto row(Look look, Parts... parts) {
   look.fHorizontal = true;
-  return erased(Box<Parts...>(std::move(look), std::move(parts)...));
+  return erased(Box<part_t<Parts>...>(std::move(look), as_part(std::move(parts))...));
 }
 template <class... Parts>
   requires(std::derived_from<Parts, scene::Node> && ...)
 auto row(Parts... parts) {
-  return erased(Box<Parts...>(hbox(), std::move(parts)...));
+  return erased(Box<part_t<Parts>...>(hbox(), as_part(std::move(parts))...));
 }
 
 // A subtree whose presence and constructor arguments are model data. Made
@@ -666,12 +698,12 @@ Mounted<Content, Facts, Make> mount_now(Make make, const Facts &first, scene::Sp
 template <class Want, class N>
   requires std::move_constructible<N>
 auto bound(N node) {
-  return erased(bind::Bound<Want, N>(std::move(node)));
+  return erased(bind::Bound<Want, part_t<N>>(as_part(std::move(node))));
 }
 // A node shown what Compute makes of the model, as the parts it reads move.
 template <class... Reads, class Compute, class N>
 auto derived(Compute compute, N node) {
-  return erased(bind::Derived<Compute, N, Reads...>(std::move(node), std::move(compute)));
+  return erased(bind::Derived<Compute, part_t<N>, Reads...>(as_part(std::move(node)), std::move(compute)));
 }
 template <class Within, class Handlers, class N, class... Keys>
 bind::Scoped<Within, Handlers, N, Keys...> scoped(Handlers handlers, N node,
@@ -680,19 +712,19 @@ bind::Scoped<Within, Handlers, N, Keys...> scoped(Handlers handlers, N node,
   return bind::Scoped<Within, Handlers, N, Keys...>(std::move(handlers), std::move(node), std::move(keys)...);
 }
 template <class T, class N> auto local(N node, T initial = {}) {
-  return erased(bind::Local<T, bind::NoHandlers, N>({}, std::move(node), std::move(initial)));
+  return erased(bind::Local<T, bind::NoHandlers, part_t<N>>({}, as_part(std::move(node)), std::move(initial)));
 }
 template <class T, class Handlers, class N>
   requires std::derived_from<N, scene::Node>
 auto local(Handlers handlers, N node, T initial = {}) {
-  return erased(bind::Local<T, Handlers, N>(std::move(handlers), std::move(node),
+  return erased(bind::Local<T, Handlers, part_t<N>>(std::move(handlers), as_part(std::move(node)),
                                      std::move(initial)));
 }
 template <class T, class Handlers, class N>
 auto hidden(Handlers handlers, N node,
                                          T initial = {}) {
-  return erased(bind::Local<T, Handlers, N, true>(std::move(handlers),
-                                           std::move(node), std::move(initial)));
+  return erased(bind::Local<T, Handlers, part_t<N>, true>(std::move(handlers),
+                                           as_part(std::move(node)), std::move(initial)));
 }
 
 // A row made by a callable, from the element or from nothing.
@@ -784,7 +816,7 @@ template <class E, class N> struct OnClick : N {
   }
 };
 template <class E, class N> auto onClick(E event, N node, std::string label = {}) {
-  return erased(OnClick<E, N>(std::move(event), std::move(node), std::move(label)));
+  return erased(OnClick<E, part_t<N>>(std::move(event), as_part(std::move(node)), std::move(label)));
 }
 
 // Compute a typed answer at press time, for actions whose data can change
@@ -818,7 +850,7 @@ template <class Make, class N> struct OnPress : OnClick<model::Nothing, N> {
 template <class Make, class N>
   requires MakesPress<Make>
 auto onPress(Make make, N node, std::string label = {}) {
-  return erased(OnPress<Make, N>(std::move(make), std::move(node), std::move(label)));
+  return erased(OnPress<Make, part_t<N>>(std::move(make), as_part(std::move(node)), std::move(label)));
 }
 
 // What a node says of itself to assistive technology beyond its own
@@ -849,16 +881,16 @@ template <class N> struct Said : N {
 // A control named for assistive technology, and what it is for: a
 // checkbox beside its words.
 template <class N> auto named(std::string label, std::string hint, N node) {
-  Said<N> out(std::nullopt, false, std::move(node));
+  Said<part_t<N>> out(std::nullopt, false, as_part(std::move(node)));
   out.fLabel = std::move(label);
   out.fHint = std::move(hint);
   return erased(std::move(out));
 }
 template <class N> auto said(std::optional<scene::SemanticRole> role, bool chosen, N node) {
-  return erased(Said<N>(std::move(role), chosen, std::move(node)));
+  return erased(Said<part_t<N>>(std::move(role), chosen, as_part(std::move(node))));
 }
 template <class Want, class Compute, class N> auto chosen_for(Compute compute, std::optional<scene::SemanticRole> role, N node) {
-  return projected<Want>(std::move(compute), Said<N>(std::move(role), false, std::move(node)));
+  return projected<Want>(std::move(compute), Said<part_t<N>>(std::move(role), false, as_part(std::move(node))));
 }
 
 // Answers a key with a copy of its event: Esc, as a bar is let go.
@@ -878,7 +910,7 @@ template <class E, class N, class K> struct OnKey : N {
   }
 };
 template <class K, class E, class N> auto onKey(K key, E event, N node) {
-  return erased(OnKey<E, N, K>(key, std::move(event), std::move(node)));
+  return erased(OnKey<E, part_t<N>, K>(key, std::move(event), as_part(std::move(node))));
 }
 
 // Answers the keys `ask(press)` makes something of -- Enter and Shift+Enter
@@ -898,7 +930,7 @@ template <class Ask, class N> struct OnKeys : N {
     return answer;
   }
 };
-template <class Ask, class N> auto onKeys(Ask ask, N node) { return erased(OnKeys<Ask, N>(std::move(ask), std::move(node))); }
+template <class Ask, class N> auto onKeys(Ask ask, N node) { return erased(OnKeys<Ask, part_t<N>>(std::move(ask), as_part(std::move(node)))); }
 
 // What a node shows, read from the model: a text made from the parts it
 // reads (Reads), and a node shown or hidden as they say -- never set by
@@ -915,7 +947,7 @@ template <class N> struct ShownBy : N {
   void read(bool on) { this->setVisible(on); }
 };
 template <class... Reads, class Compute, class N> auto shown_if(Compute compute, N node) {
-  return erased(bind::Derived<Compute, ShownBy<N>, Reads...>(ShownBy<N>(std::move(node)), std::move(compute)));
+  return erased(bind::Derived<Compute, ShownBy<part_t<N>>, Reads...>(ShownBy<part_t<N>>(as_part(std::move(node))), std::move(compute)));
 }
 
 // Project a bound part into the value a node reads. Unlike derived, this
@@ -977,7 +1009,7 @@ auto projected(Compute compute, N node) {
   using Out = std::invoke_result_t<Compute &, const In &>;
   auto fn = erased_fn<Out(const In &)>(std::move(compute));
   return bound<Want>(
-      Projected<decltype(fn), N>(std::move(fn), std::move(node)));
+      Projected<decltype(fn), part_t<N>>(std::move(fn), as_part(std::move(node))));
 }
 // And as a part of the model says they do: `ask(now, press)` with the part
 // as last read -- in the phase given: on their way down (capture), before a
@@ -998,12 +1030,12 @@ template <class Phase, class K, class Ask, class N> struct KeysFor : N {
 };
 template <class Want, class Phase, class Compute, class Ask, class N> auto keys_for(Compute compute, Ask ask, N node) {
   using K = std::remove_cvref_t<std::invoke_result_t<Compute &, const typename bind::BoundValueT<Want>::type &>>;
-  return projected<Want>(std::move(compute), KeysFor<Phase, K, Ask, N>(std::move(ask), std::move(node)));
+  return projected<Want>(std::move(compute), KeysFor<Phase, K, Ask, part_t<N>>(std::move(ask), as_part(std::move(node))));
 }
 // Visibility projected from a bound part, including a scope or local model.
 template <class Want, class Compute, class N>
 auto shown_for(Compute compute, N node) {
-  return projected<Want>(std::move(compute), ShownBy<N>(std::move(node)));
+  return projected<Want>(std::move(compute), ShownBy<part_t<N>>(as_part(std::move(node))));
 }
 // A node shown what it reads by a function said where it is put --
 // `apply(node, value)` -- for a leaf with no read of its own: an icon's shape
@@ -1041,7 +1073,7 @@ template <class N> struct FocusedBy : N {
 };
 template <class Want, class Compute, class N>
 auto focused_by(Compute compute, N node) {
-  return projected<Want>(std::move(compute), FocusedBy<N>(std::move(node)));
+  return projected<Want>(std::move(compute), FocusedBy<part_t<N>>(as_part(std::move(node))));
 }
 template <class N> struct SpecOf : N {
   explicit SpecOf(N node) : N(std::move(node)) {}
@@ -1049,7 +1081,7 @@ template <class N> struct SpecOf : N {
 };
 template <class Want, class Compute, class N>
 auto spec_for(Compute compute, N node) {
-  return projected<Want>(std::move(compute), SpecOf<N>(std::move(node)));
+  return projected<Want>(std::move(compute), SpecOf<part_t<N>>(as_part(std::move(node))));
 }
 template <class Want, class Compute>
 auto text_for(Compute compute, nodes::Text text) {
@@ -1068,7 +1100,7 @@ template <class Compute, class N> struct Rekeyed : N {
 };
 template <class Want, class Compute, class N>
 auto rekeyed_by(Compute compute, N node) {
-  return bound<Want>(Rekeyed<Compute, N>(std::move(compute), std::move(node)));
+  return bound<Want>(Rekeyed<Compute, part_t<N>>(std::move(compute), as_part(std::move(node))));
 }
 
 // What sections show: their parts, one under another, the tabs of every
@@ -1509,7 +1541,7 @@ private:
   }
 };
 template <class Want, class Compute, class N> auto placed_at(Compute compute, N node) {
-  return projected<Want>(std::move(compute), PlacedAt<N>(std::move(node)));
+  return projected<Want>(std::move(compute), PlacedAt<part_t<N>>(as_part(std::move(node))));
 }
 
 // Where a popover opens, in window coordinates: at a point (a menu, at the
@@ -1578,7 +1610,7 @@ private:
   }
 };
 template <class Want, class Compute, class N> auto popped_at(Compute compute, float edge, N node) {
-  return projected<Want>(std::move(compute), Popped<N>(edge, std::move(node)));
+  return projected<Want>(std::move(compute), Popped<part_t<N>>(edge, as_part(std::move(node))));
 }
 
 

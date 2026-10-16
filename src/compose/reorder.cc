@@ -48,7 +48,7 @@ template <class Viewport, class Rows> struct ReorderLane {
 // as the walks see what it holds -- not handed it by a function that names
 // the parts of what it holds.
 template <class Tag, class N> using LaneMark = Marked<Tag, N>;
-template <class Tag, class N> auto reorder_lane(N node) { return erased(LaneMark<Tag, N>(std::move(node))); }
+template <class Tag, class N> auto reorder_lane(N node) { return erased(LaneMark<Tag, part_t<N>>(as_part(std::move(node)))); }
 // What a lanes function is given: the lanes found by their marks.
 template <class Surface> struct LanesFound {
   Surface *surface;

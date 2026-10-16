@@ -96,7 +96,7 @@ template <class E, class Make, class N> struct OnPointer : N {
 };
 template <class E, class Make, class N>
 auto onPointer(Make make, N node) {
-  return erased(OnPointer<E, Make, N>(std::move(make), std::move(node)));
+  return erased(OnPointer<E, Make, part_t<N>>(std::move(make), as_part(std::move(node))));
 }
 
 // A node dragged across: pressed, it takes the pointer, and each move until
@@ -136,7 +136,7 @@ template <class Act, class N> struct OnDragAcross : N {
   }
 };
 template <class Act, class N> auto onDragAcross(Act act, N node) {
-  return erased(OnDragAcross<Act, N>(std::move(act), std::move(node)));
+  return erased(OnDragAcross<Act, part_t<N>>(std::move(act), as_part(std::move(node))));
 }
 
 // The other button pressed on a node -- on it, or on what is in it --
@@ -166,7 +166,7 @@ template <class E, class N> struct OnRightPress : N {
   }
 };
 template <class E, class N> auto onRightPress(E event, N node) {
-  return erased(OnRightPress<E, N>(std::move(event), std::move(node)));
+  return erased(OnRightPress<E, part_t<N>>(std::move(event), as_part(std::move(node))));
 }
 
 // The pointer resting on a node: once it has rested there `ms`, what
@@ -208,7 +208,7 @@ private:
   }
 };
 template <class Act, class N> auto resting(double ms, Act act, N node) {
-  return erased(Resting<Act, N>(ms, std::move(act), std::move(node)));
+  return erased(Resting<Act, part_t<N>>(ms, std::move(act), as_part(std::move(node))));
 }
 
 // A node whose presses are held off while what it reads says so -- a list's
@@ -517,7 +517,7 @@ private:
   }
 };
 template <class Ask, class N> auto onRightPressAt(Ask ask, N node) {
-  return erased(OnRightPressAt<Ask, N>(std::move(ask), std::move(node)));
+  return erased(OnRightPressAt<Ask, part_t<N>>(std::move(ask), as_part(std::move(node))));
 }
 
 // A node that says as the pointer comes onto it and leaves it -- with its
@@ -541,7 +541,7 @@ template <class Act, class N> struct Hovering : Box<N> {
     return std::invoke(fAct, fOn, this->fState.fBounds.makeOffset(shift.x, shift.y));
   }
 };
-template <class Act, class N> auto hovering(Act act, N node) { return erased(Hovering<Act, N>(std::move(act), std::move(node))); }
+template <class Act, class N> auto hovering(Act act, N node) { return erased(Hovering<Act, part_t<N>>(std::move(act), as_part(std::move(node)))); }
 
 // A list whose items Up and Down go through, round, as a menu's: the focus
 // moved, the key taken; the other keys answered as `ask(press)` makes
@@ -564,7 +564,7 @@ template <class Ask, class N> struct MovesFocus : N {
     return answer;
   }
 };
-template <class Ask, class N> auto moves_focus(Ask ask, N node) { return erased(MovesFocus<Ask, N>(std::move(ask), std::move(node))); }
+template <class Ask, class N> auto moves_focus(Ask ask, N node) { return erased(MovesFocus<Ask, part_t<N>>(std::move(ask), as_part(std::move(node)))); }
 
 // A press answered with what `make` makes of a part of the model as it is
 // then -- a form's fields, kept in a Local, sent as they are when its button
@@ -584,7 +584,7 @@ template <class Want, class Make, class N> struct AskingFor : N {
   auto onPress() { return std::invoke(fMake, std::as_const(fNow)); }
 };
 template <class Want, class Make, class N> auto asking_for(Make make, N node) {
-  return erased(bind::Bound<Want, AskingFor<Want, Make, N>>(AskingFor<Want, Make, N>(std::move(make), std::move(node))));
+  return erased(bind::Bound<Want, AskingFor<Want, Make, part_t<N>>>(AskingFor<Want, Make, part_t<N>>(std::move(make), as_part(std::move(node)))));
 }
 
 // A flick across a node -- more across than up or down, past `reach` --
@@ -617,7 +617,7 @@ template <class Act, class N> struct Flicked : N {
   }
 };
 template <class Act, class N> auto flicked(float reach, Act act, N node) {
-  return erased(Flicked<Act, N>(reach, std::move(act), std::move(node)));
+  return erased(Flicked<Act, part_t<N>>(reach, std::move(act), as_part(std::move(node))));
 }
 
 // A node shown for a moment each time what it reads moves on -- a number,
@@ -651,7 +651,7 @@ template <class N> struct Fading : N {
   }
 };
 template <class Want, class Compute, class N> auto fading_for(Compute compute, double hold, N node) {
-  return projected<Want>(std::move(compute), Fading<N>(hold, std::move(node)));
+  return projected<Want>(std::move(compute), Fading<part_t<N>>(hold, as_part(std::move(node))));
 }
 
 // A node swiped to the left to do something with it -- a message answered,
@@ -744,7 +744,7 @@ template <class Act, class Mark, class Show, class N> struct Swiped : Box<N, Mar
 };
 template <class Act, class Mark, class Show, class N>
 auto swiped(float reach, float most, Act act, Show show, Mark mark, N node) {
-  return erased(Swiped<Act, Mark, Show, N>(reach, most, std::move(act), std::move(show), std::move(mark), std::move(node)));
+  return erased(Swiped<Act, Mark, Show, part_t<N>>(reach, most, std::move(act), std::move(show), std::move(mark), as_part(std::move(node))));
 }
 
 // A wash over a node in a colour, as the model says: held while it is said
@@ -789,7 +789,7 @@ private:
   }
 };
 template <class Want, class Compute, class N> auto washed_for(skia::SkColor colour, float held, float flash, Compute compute, N node) {
-  return projected<Want>(std::move(compute), Washed<N>(colour, held, flash, std::move(node)));
+  return projected<Want>(std::move(compute), Washed<part_t<N>>(colour, held, flash, as_part(std::move(node))));
 }
 
 // A node that comes in moving, where it is made so: from below, fading in,
@@ -821,11 +821,11 @@ template <class N, class Way = appear::below> struct Appearing : N {
     }
   }
 };
-template <class N> auto appearing(bool now, N node, float from = 12.0f) { return erased(Appearing<N>(now, from, std::move(node))); }
+template <class N> auto appearing(bool now, N node, float from = 12.0f) { return erased(Appearing<part_t<N>>(now, from, as_part(std::move(node)))); }
 // Coming in from a side: `from` pixels off to it (negative: from the left),
 // over `duration` milliseconds -- a page slid in as it is gone to.
 template <class N> auto appearing_across(bool now, N node, float from, float duration = 220.0f) {
-  return erased(Appearing<N, appear::across>(now, from, std::move(node), duration));
+  return erased(Appearing<part_t<N>, appear::across>(now, from, as_part(std::move(node)), duration));
 }
 
 // A node laid out, then arranged and settled by rules of its own -- a
@@ -881,7 +881,7 @@ template <class Ask, class N> struct OnClickAt : N {
   }
   std::optional<Answer> onPress() { return std::exchange(fAsked, std::nullopt); }
 };
-template <class Ask, class N> auto onClickAt(Ask ask, N node) { return erased(OnClickAt<Ask, N>(std::move(ask), std::move(node))); }
+template <class Ask, class N> auto onClickAt(Ask ask, N node) { return erased(OnClickAt<Ask, part_t<N>>(std::move(ask), as_part(std::move(node)))); }
 
 // A list in a view that scrolls, made of a window of a longer one -- a
 // chat's messages, a thread's: its rows by their keys, each kept while the
@@ -1594,7 +1594,7 @@ template <class... Parts> auto place(Look look, Par<Parts...> parts) {
       parts.fParts));
 }
 template <class N> auto place(Look look, N node) {
-  return erased(Box<N>(std::move(look), std::move(node)));
+  return erased(Box<part_t<N>>(std::move(look), as_part(std::move(node))));
 }
 
 } // namespace skiff::compose

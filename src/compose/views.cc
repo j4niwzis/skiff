@@ -212,7 +212,7 @@ template <class N> struct Slid : N {
   }
 };
 template <class Want, class Compute, class N> auto slid_for(Compute compute, N node) {
-  return projected<Want>(std::move(compute), Slid<N>(std::move(node)));
+  return projected<Want>(std::move(compute), Slid<part_t<N>>(as_part(std::move(node))));
 }
 
 // What lies under some layers drawn once, while anything over it moves (a
@@ -306,7 +306,7 @@ template <class Make, class N> struct TappedOff : N {
   }
 };
 template <class Make, class N> auto tapped_off(Make make, N node) {
-  return erased(TappedOff<Make, N>(std::move(make), std::move(node)));
+  return erased(TappedOff<Make, part_t<N>>(std::move(make), as_part(std::move(node))));
 }
 
 // A view's offset kept by the model: what it reads is where it is scrolled
@@ -409,7 +409,7 @@ template <class Key, class N> struct RestartedScroll : N {
 };
 template <class Key, class N> auto restarted_scroll(N node) {
   // Concrete in every build: what reads the model for it reads it as itself.
-  return RestartedScroll<Key, N>(std::move(node));
+  return RestartedScroll<Key, part_t<N>>(as_part(std::move(node)));
 }
 
 // A column can fill a narrow window or retain its requested width within
@@ -447,6 +447,6 @@ template <class N> struct ClampedWidth : N {
 };
 template <class N> auto clamped_width(WidthLimit limit, N node) {
   // Concrete in every build: what reads the model for it reads it as itself.
-  return ClampedWidth<N>(limit, std::move(node));
+  return ClampedWidth<part_t<N>>(limit, as_part(std::move(node)));
 }
 } // namespace skiff::compose

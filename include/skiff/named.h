@@ -6,8 +6,13 @@
 //     return SKIFF_NAMED(accounts_side, c::column(...));
 //   }
 //
+// What it does is compose::Named's (CRTP); the macro gives it its name.
 // The type is a struct deriving from what the expression made, so it is
-// everything that was: read, bound, wrapped and walked the same. It is what
+// everything that was: read, bound, wrapped and walked the same; returned
+// as itself in every build, so that what is overloaded on a view's type
+// tells views apart outside a release build too. Given to a combinator, it
+// is kept as a part (compose::as_part): held outside a release build, the
+// combinator made for Held as for every other view. It is what
 // the compiler names in its errors -- accounts_side, not the whole of the
 // composed type -- and what skiff names it by at run time (viewName()): in a
 // layout's report (the view a part that sticks out is in), in a trace. A local class's mangled name is its enclosing
@@ -21,13 +26,9 @@
 #define SKIFF_NAMED(name, ...)                                                                                          \
   [&] {                                                                                                                \
     auto skiff_named_made = [&] { return __VA_ARGS__; };                                                               \
-    using skiff_named_base = decltype(skiff_named_made());                                                             \
-    struct name : skiff_named_base {                                                                                   \
+    struct name : ::skiff::compose::Named<name, decltype(skiff_named_made())> {                                         \
+      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::Named;                                        \
       static constexpr const char *viewName() { return #name; }                                                        \
-      void layoutChildren() {                                                                                          \
-        const ::skiff::scene::ViewLaidOut here{viewName()};                                                            \
-        skiff_named_base::layoutChildren();                                                                            \
-      }                                                                                                                \
     };                                                                                                                 \
-    return ::skiff::compose::named_view<skiff_named_base>(name{skiff_named_made()});                                   \
+    return name(skiff_named_made());                                                                                   \
   }()
