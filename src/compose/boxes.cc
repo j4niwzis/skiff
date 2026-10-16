@@ -500,6 +500,18 @@ template <class Self> struct Named<Self, Held> : Held {
   using SeenAs = Held;
   explicit Named(Held made) : Held(std::move(made)) { this->held().state().fViewName = Self::viewName(); }
 };
+// Over a view named over held content in turn (a view made of a view of its
+// own, named once more): the same Held, named again -- the outer name the
+// view's. As a type of its own, deriving from the inner one, it was laid out
+// as a wrapper never adopted, 0 by 0, and what it holds in nothing.
+template <class Self, class Base>
+  requires NamedOverHeld<Base>
+struct Named<Self, Base> : Held {
+  using NamedOver = Held;
+  using NamedSelf = Self;
+  using SeenAs = Held;
+  explicit Named(Base made) : Held(static_cast<Held &&>(made)) { this->held().state().fViewName = Self::viewName(); }
+};
 
 template <class Tag, class N> struct Marked : N {
   // Found by this mark through whatever wraps it (scene::MarkOf).

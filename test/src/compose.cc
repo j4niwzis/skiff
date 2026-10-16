@@ -1324,3 +1324,26 @@ TEST(Compose, AStylesTextFieldsAreAsWideAsTheirColumn) {
   EXPECT_LE(field->bounds.fBottom, view->bounds.fBottom);
   EXPECT_TRUE(scene::laidOutText(tree.root()).contains("[style_controls]"));
 }
+
+// A view named over a view of its own (a page whose content is a named view
+// that closes it on Escape): the same Held, named again -- laid out as it,
+// filling what it is put in, the outer name the one told.
+namespace named_twice {
+namespace c = skiff::compose;
+inline auto inner(float *wide) {
+  return SKIFF_NAMED(closes_on_escape, c::column(c::vbox(0.0f, {.fill = true}), c::styled({.fillX = true}, MeasuredWidth(wide, {.height = 10.0f}))));
+}
+inline auto outer(float *wide) { return SKIFF_NAMED(accounts_view, inner(wide)); }
+}  // namespace named_twice
+TEST(Compose, AViewNamedOverANamedViewIsTheSameHeld) {
+  using namespace named_twice;
+  float wide = 0;
+  auto view = outer(&wide);
+  static_assert(compose::NamedOverHeld<decltype(view)> == scene::kErasedCombinators);
+  static_assert(std::same_as<compose::part_t<decltype(view)>, compose::Held> == scene::kErasedCombinators);
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(view)));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 200.0f));
+  EXPECT_FLOAT_EQ(wide, 300.0f);
+  const auto rows = scene::laidOutTree(tree.root());
+  EXPECT_TRUE(std::ranges::any_of(rows, [](const scene::LaidOutNode &row) { return row.names && row.view == "accounts_view"; }));
+}
