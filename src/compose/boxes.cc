@@ -400,7 +400,10 @@ template <class N> struct Many : nodes::Stack {
     this->fState.apply(look.fSpec);
     this->fStack.justify = look.fJustify;
   }
-  template <class Self, class F> void forEachChild(this Self &self, F &&f) { std::ranges::for_each(self.fParts, f); }
+  template <class Self, class F> void forEachChild(this Self &self, F &&f) {
+    for (auto &part : self.fParts)
+      f(part);
+  }
 };
 template <class N> auto many(Look look, std::vector<N> parts) { return erased(Many<N>(std::move(look), std::move(parts))); }
 
