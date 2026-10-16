@@ -859,16 +859,28 @@ template <class E, class F> struct Handle {
   auto on(const E &event, const P &here) const {
     return fAnswer(event, here);
   }
+  // Or given where it is alone. (Asked before the event alone, each check
+  // stopping at the first that holds: a generic handler of its place,
+  // asked whether it took the event, was instantiated with it -- an error,
+  // not a no.)
   template <class P>
-    requires(std::invocable<const F &, const P &> &&
-             !std::invocable<const F &, const E &, const P &>)
+    requires(!std::invocable<const F &, const E &, const P &> && std::invocable<const F &, const P &>)
   auto on(const E &, const P &here) const {
     return fAnswer(here);
   }
+  // Or given the event alone: what it answers needs nothing of where it is.
+  // (Without this, a handler of the event alone had no on() at all: a
+  // Local's never took what it handled.)
+  template <class P>
+    requires(!std::invocable<const F &, const E &, const P &> && !std::invocable<const F &, const P &> &&
+             std::invocable<const F &, const E &>)
+  auto on(const E &event, const P &) const {
+    return fAnswer(event);
+  }
   // Or given nothing: what it answers needs neither.
   template <class P>
-    requires(std::invocable<const F &> && !std::invocable<const F &, const P &> &&
-             !std::invocable<const F &, const E &, const P &>)
+    requires(!std::invocable<const F &, const E &, const P &> && !std::invocable<const F &, const P &> &&
+             !std::invocable<const F &, const E &> && std::invocable<const F &>)
   auto on(const E &, const P &) const {
     return fAnswer();
   }
