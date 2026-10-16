@@ -132,7 +132,7 @@ struct Held : Stacked {
     // A wrapper over held content, finished: its content's placement its own.
     if constexpr (std::derived_from<T, Held>)
       node.adopt();
-    fApply = +[](void *held, const scene::Spec &spec) { static_cast<T *>(held)->apply(spec); };
+    fSpecTo = +[](void *held, const scene::Spec &spec) { static_cast<T *>(held)->apply(spec); };
     parts.held = scene::AnyNode(std::forward<N>(node));
   }
   // Made in place: a node that is never moved (a mount whose content may
@@ -140,7 +140,7 @@ struct Held : Stacked {
   template <class N, class... Args>
     requires(std::derived_from<N, scene::Node> && !std::derived_from<N, Held>)
   explicit Held(std::in_place_type_t<N> which, Args &&...args) : Stacked(vbox(0.0f)) {
-    fApply = +[](void *held, const scene::Spec &spec) { static_cast<N *>(held)->apply(spec); };
+    fSpecTo = +[](void *held, const scene::Spec &spec) { static_cast<N *>(held)->apply(spec); };
     parts.held = scene::AnyNode(which, std::forward<Args>(args)...);
   }
   [[nodiscard]] scene::AnyNode &held() noexcept { return parts.held; }
@@ -150,13 +150,13 @@ struct Held : Stacked {
   // (this overload, Held itself); a wrapper over held content, split --
   // placement to the wrapper, the rest to the content, its size followed
   // again (the one below, for any type derived from it).
-  void apply(this Held &self, const scene::Spec &spec) { self.fApply(self.parts.held.ref().node(), spec); }
+  void apply(this Held &self, const scene::Spec &spec) { self.fSpecTo(self.parts.held.ref().node(), spec); }
   template <class Self> void apply(this Self &self, const scene::Spec &spec) {
-    scene::State &node = self.parts.held.state();
+    scene::State &node = self.Held::parts.held.state();
     // Its own size back first, so the spec and the following start from
     // what it says, not from how it was last made to fill the wrapper.
     self.restore(node);
-    self.fApply(self.parts.held.ref().node(), nodeSide(spec));
+    self.Held::fSpecTo(self.Held::parts.held.ref().node(), nodeSide(spec));
     self.fState.apply(placement(spec));
     if (spec.visible)
       self.fShown = *spec.visible;
@@ -255,7 +255,9 @@ struct Held : Stacked {
 
 private:
   // How the node held takes a spec, as its own type does.
-  void (*fApply)(void *, const scene::Spec &) = nullptr;
+  // How a spec reaches the node held -- named so no wrapper's own member
+  // (applied's apply) hides it.
+  void (*fSpecTo)(void *, const scene::Spec &) = nullptr;
   // Not a part: nothing walks it.
   own_t fOwn;
   // Shown, as the wrapper itself says.
@@ -867,16 +869,38 @@ template <class Compute, class N> struct Projected : N {
 // erased to its signature -- every call site that reads the same part the
 // same way then makes the same node type, its tables made once, not one
 // type for each lambda.
+// A closure that cannot be copied -- one holding a unique_ptr -- is kept
+// as one that moves only, as release keeps it; the result is the closure's
+// own, a reference staying a reference.
+template <class Sig> class MovedFn;
+template <class R, class... Args> class MovedFn<R(Args...)> {
+  struct Base {
+    virtual ~Base() = default;
+    virtual R call(Args... args) = 0;
+  };
+  template <class F> struct Of final : Base {
+    F fF;
+    explicit Of(F f) : fF(std::move(f)) {}
+    R call(Args... args) override { return std::invoke(fF, std::forward<Args>(args)...); }
+  };
+  std::unique_ptr<Base> fOf;
+
+public:
+  template <class F> explicit MovedFn(F f) : fOf(std::make_unique<Of<F>>(std::move(f))) {}
+  R operator()(Args... args) { return fOf->call(std::forward<Args>(args)...); }
+};
 template <class Sig, class F> auto erased_fn(F f) {
-  if constexpr (scene::kErasedCombinators)
+  if constexpr (!scene::kErasedCombinators)
+    return f;
+  else if constexpr (std::copy_constructible<F>)
     return std::function<Sig>(std::move(f));
   else
-    return f;
+    return MovedFn<Sig>(std::move(f));
 }
 template <class Want, class Compute, class N>
 auto projected(Compute compute, N node) {
   using In = typename bind::BoundValueT<Want>::type;
-  using Out = std::remove_cvref_t<std::invoke_result_t<Compute &, const In &>>;
+  using Out = std::invoke_result_t<Compute &, const In &>;
   auto fn = erased_fn<Out(const In &)>(std::move(compute));
   return bound<Want>(
       Projected<decltype(fn), N>(std::move(fn), std::move(node)));
