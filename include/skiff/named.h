@@ -29,5 +29,5 @@
         skiff_named_base::layoutChildren();                                                                            \
       }                                                                                                                \
     };                                                                                                                 \
-    return ::skiff::compose::erased(name{skiff_named_made()});                                                         \
+    return ::skiff::compose::named_view<skiff_named_base>(name{skiff_named_made()});                                   \
   }()

@@ -416,6 +416,16 @@ template <class N, class... Args> auto erased_made(Args &&...args) {
   else
     return N(std::forward<Args>(args)...);
 }
+// A view named where it is written (SKIFF_NAMED), as what it names was:
+// held where that was held -- the named type over it, a wrapper -- and
+// itself where it was concrete in every build (a mount, a scroll kept),
+// whose callers use what it is.
+template <class Base, class N>
+  requires std::same_as<Base, Held>
+Held named_view(N node) {
+  return Held(std::move(node));
+}
+template <class Base, class N> N named_view(N node) { return node; }
 // A node as a combinator returns it: itself in a release build; held,
 // outside one.
 template <class N> auto erased(N node) {
