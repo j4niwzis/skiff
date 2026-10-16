@@ -603,10 +603,10 @@ auto derived(Compute compute, N node) {
   return erased(bind::Derived<Compute, N, Reads...>(std::move(node), std::move(compute)));
 }
 template <class Within, class Handlers, class N, class... Keys>
-auto scoped(Handlers handlers, N node,
+bind::Scoped<Within, Handlers, N, Keys...> scoped(Handlers handlers, N node,
                                                   Keys... keys) {
-  return erased(bind::Scoped<Within, Handlers, N, Keys...>(
-      std::move(handlers), std::move(node), std::move(keys)...));
+  // Concrete in every build: what moves it (rekeyed_by) reads it as itself.
+  return bind::Scoped<Within, Handlers, N, Keys...>(std::move(handlers), std::move(node), std::move(keys)...);
 }
 template <class T, class N> auto local(N node, T initial = {}) {
   return erased(bind::Local<T, bind::NoHandlers, N>({}, std::move(node), std::move(initial)));
