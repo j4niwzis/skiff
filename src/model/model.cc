@@ -21,13 +21,12 @@ inline void (*takenIn(const TakenTable &table, rt::TypeKey type))(void *, void *
   return found == table.end() ? nullptr : found->second;
 }
 } // namespace detail
-// A model, its reactions, and the effects they asked for.
-template <class Root, class Reactions, class EffectOrDeduced = DeducedEffects> class Model {
+// A model, and its reactions: what they return answered as it is returned
+// -- an edit applied, an event routed to whoever takes it (answer, route).
+template <class Root, class Reactions> class Model {
 public:
-  using Effect = typename detail::EffectOf<Root, Reactions, EffectOrDeduced>::type;
   using RootType = Root;
   using ReactionsType = Reactions;
-  using EffectType = Effect;
 
   constexpr Model() = default;
   constexpr explicit Model(Root root, Reactions reactions = {})
@@ -43,7 +42,7 @@ public:
   // while this one goes on changing the model.
   constexpr Root snapshot() const { return fRoot; }
   constexpr Revision revision() const { return fRevision; }
-  constexpr Outbox<Effect> &outbox() { return fOutbox; }
+  constexpr const Reactions &reactions() const { return fReactions; }
   // What moved since they were last taken: by tracked place, the keys of
   // each one -- what a targeted refresh goes straight to.
   constexpr const Changes<Root> &changes() const { return fChanges; }
@@ -219,17 +218,31 @@ public:
     fBatchStart = fRevision;
     fTouched.clear();
   }
+  // Told in rounds: the parts the batch went through, each told once; and
+  // what the reactions' answers edited while they were told -- a want set
+  // back once it is done -- told in the round after, until a round edits
+  // nothing. A reaction is never told inside another's edit.
   constexpr void endBatch() {
     if (--fBatchDepth != 0)
       return;
-    if !consteval {
-      std::ranges::sort(fTouched, std::less<const void *>{});
+    for (int round = 0; round < kRounds; ++round) {
+      const Revision told = fRevision;
+      fTelling = std::exchange(fTouched, {});
+      fTellingTargets = std::exchange(fTargets, {});
+      if !consteval {
+        std::ranges::sort(fTelling, std::less<const void *>{});
+      }
+      tellAll<Path<>>(std::as_const(fRoot), detail::NoOwner{}, std::tuple<>{}, true);
+      if (std::exchange(fUntrackedEdit, false))
+        logged<Path<>>(std::tuple<>{});
+      fBatchStart = told;
+      if (fTouched.empty() && fTargets.empty() && !fUntrackedEdit)
+        break;
     }
-    tellAll<Path<>>(std::as_const(fRoot), detail::NoOwner{}, std::tuple<>{}, true);
-    fTargets.clear();
-    if (std::exchange(fUntrackedEdit, false))
-      logged<Path<>>(std::tuple<>{});
+    fTelling.clear();
+    fTellingTargets.clear();
     fTouched.clear();
+    fTargets.clear();
     fInBatch = false;
   }
 
@@ -273,9 +286,9 @@ private:
   // goes only where a revision moved in the batch.
   constexpr bool touched(const void *part) const {
     if consteval {
-      return std::ranges::contains(fTouched, part);
+      return std::ranges::contains(fTelling, part);
     } else {
-      return std::ranges::binary_search(fTouched, part, std::less<const void *>{});
+      return std::ranges::binary_search(fTelling, part, std::less<const void *>{});
     }
   }
   // And the innermost tracked places that moved logged, with their keys, by
@@ -294,7 +307,7 @@ private:
     }
   }
   constexpr bool target(const void *part) const {
-    return std::ranges::contains(fTargets, part);
+    return std::ranges::contains(fTellingTargets, part);
   }
   // Each returns whether it logged anything.
   template <class P, class N, class O, class Keys>
@@ -448,14 +461,14 @@ private:
       r.on(Changed<N>{}, At_<N, O, Keys>{n, o, k});
     }
   constexpr void react(const N &part, const O &owner, const Keys &keys) {
-    fOutbox.take(fReactions.on(Changed<N>{}, At_<N, O, Keys>{part, owner, keys}));
+    answer(fReactions.on(Changed<N>{}, At_<N, O, Keys>{part, owner, keys}));
   }
   template <class N, class O, class Keys>
     requires(!requires(const Reactions &r, const N &n, const O &o, const Keys &k) {
                r.on(Changed<N>{}, At_<N, O, Keys>{n, o, k});
              } && requires(const Reactions &r, const O &o) { r.on(Changed<N>{}, o); })
   constexpr void react(const N &, const O &owner, const Keys &) {
-    fOutbox.take(fReactions.on(Changed<N>{}, owner));
+    answer(fReactions.on(Changed<N>{}, owner));
   }
   template <class N, class O, class Keys>
   constexpr void react(const N &, const O &, const Keys &) {}
@@ -468,11 +481,11 @@ private:
     using Owner = std::remove_cvref_t<decltype(detail::ownerOf(part, owner))>;
     if constexpr (detail::FieldTellsAt<Reactions, C, I, N, Owner, Keys>) {
       if (touched(std::addressof(part)))
-        fOutbox.take(fReactions.on(MemberChanged<C, I>{},
-                                   At_<N, Owner, Keys>{part, detail::ownerOf(part, owner), keys}));
+        answer(fReactions.on(MemberChanged<C, I>{},
+                             At_<N, Owner, Keys>{part, detail::ownerOf(part, owner), keys}));
     } else if constexpr (detail::FieldTellsShort<Reactions, C, I, Owner>) {
       if (touched(std::addressof(part)))
-        fOutbox.take(fReactions.on(MemberChanged<C, I>{}, detail::ownerOf(part, owner)));
+        answer(fReactions.on(MemberChanged<C, I>{}, detail::ownerOf(part, owner)));
     }
     return false;
   }
@@ -501,15 +514,24 @@ private:
       r.on(Removed<T>{}, t, k);
     }
   constexpr void removed(const T &last, const K &key) {
-    fOutbox.take(fReactions.on(Removed<T>{}, last, key));
+    answer(fReactions.on(Removed<T>{}, last, key));
   }
   template <class T, class K> constexpr void removed(const T &, const K &) {}
 
   // What a handler answered, done: each edit applied below the innermost
   // of the scopes (from the one that took the event out) where its part is
-  // found once -- else in the whole model; an event passed up sent on.
+  // found once -- else in the whole model; an event passed up sent on. And
+  // what a reaction answered: an edit applied, an event -- a request of the
+  // program's -- routed as one sent in no scope is, to the reactions' own
+  // on(event); one there may not be, where it is optional; each of several.
   template <class... Scopes>
   constexpr void answer(Nothing, const Scopes &...) {}
+  template <class E> constexpr void answer(const std::optional<E> &maybe) {
+    if (maybe)
+      answer(*maybe);
+  }
+  template <class E> constexpr void answer(const Up<E> &up) { route(up.fEvent); }
+  template <class E> constexpr void answer(const E &event) { route(event); }
   template <class... A, class... Scopes>
   constexpr void answer(const std::tuple<A...> &all, const Scopes &...s) {
     std::apply([&](const auto &...each) { (answer(each, s...), ...); }, all);
@@ -534,13 +556,13 @@ private:
     answer(o, outer...);
   }
 
-  // One no scope takes, taken by the reactions themselves: what they ask
-  // for, an effect for the program to carry out (a dialog opened, a file
-  // written) -- where they take it.
+  // One no scope takes, taken by the reactions themselves -- the program's
+  // part of them, a request it carries out (a dialog opened, a file
+  // written) -- and what they answer, done in turn.
   template <class E>
     requires requires(const Reactions &r, const E &e) { r.on(e); }
   constexpr void route(const E &e) {
-    fOutbox.take(fReactions.on(e));
+    answer(fReactions.on(e));
   }
   template <class E> constexpr void route(const E &) {
     static_assert(false, "skiff::model: no scope this event was sent in, nor "
@@ -563,9 +585,12 @@ private:
     route(e, outer...);
   }
 
+  // As many rounds as a batch is told in, at most: answers that edit what
+  // is told again and again are a loop, not a model.
+  static constexpr int kRounds = 64;
+
   Root fRoot{};
   Reactions fReactions{};
-  Outbox<Effect> fOutbox;
   Revision fRevision = 0;
   // The batch under way: how deep, where its revisions began, and what its
   // edits went through.
@@ -576,6 +601,9 @@ private:
   bool fInBatch = false;
   Revision fBatchStart = 0;
   std::vector<const void *> fTouched;
+  // What the round being told went through, and was made at.
+  std::vector<const void *> fTelling;
+  std::vector<const void *> fTellingTargets;
   std::vector<rt::Place> fPlacesChanged;
   bool fLogsPlaces = false;
 };

@@ -60,6 +60,51 @@ struct WriteSettings {
   constexpr bool replaces(const WriteSettings &) const { return true; }
   constexpr bool operator==(const WriteSettings &) const = default;
 };
+// The program's part of a model's reactions, for a test: the requests they
+// answer with taken -- kept as a program keeps what it is asked, an effect
+// replacing an older one of its kind (replaces(), key()) -- to be looked at.
+template <class Effect> struct Log {
+  std::vector<Effect> fItems;
+  template <class E> constexpr void take(const E &effect) {
+    for (auto &each : fItems)
+      if (std::holds_alternative<E>(each) && replaces(effect, std::get<E>(each))) {
+        each = Effect(effect);
+        return;
+      }
+    fItems.push_back(Effect(effect));
+  }
+  constexpr std::vector<Effect> drain() { return std::exchange(fItems, {}); }
+  constexpr std::size_t size() const { return fItems.size(); }
+
+private:
+  template <class E>
+    requires requires(const E &e) { e.replaces(e); }
+  static constexpr bool replaces(const E &effect, const E &older) {
+    return effect.replaces(older);
+  }
+  template <class E>
+    requires(requires(const E &e) { e.key() == e.key(); } && !requires(const E &e) { e.replaces(e); })
+  static constexpr bool replaces(const E &effect, const E &older) {
+    return effect.key() == older.key();
+  }
+  template <class E> static constexpr bool replaces(const E &, const E &) { return false; }
+};
+// One on(request) for each request, not a template: the runtime layer finds
+// the events reactions take by their on(event)s, one type each.
+template <class Self, class E> struct Takes {
+  constexpr skiff::model::Nothing on(const E &effect) const {
+    static_cast<const Self &>(*this).log.take(effect);
+    return {};
+  }
+};
+template <class R, class Effect> struct Logged;
+template <class R, class... E>
+struct Logged<R, std::variant<E...>> : R, Takes<Logged<R, std::variant<E...>>, E>... {
+  mutable Log<std::variant<E...>> log;
+  using R::on;
+  using Takes<Logged<R, std::variant<E...>>, E>::on...;
+};
+
 using Effect = std::variant<SetMentionsSharing, WriteSettings>;
 
 struct Reactions {
@@ -103,7 +148,7 @@ static_assert(std::same_as<TypeAt<Root, PathTo<MentionsShared, Root>>,
 constexpr auto withOne() {
   Root root;
   root.settings.fValue.accounts.put("@me:a.org", AccountT{.who = "@me:a.org"});
-  return Model<Root, Reactions, Effect>(std::move(root));
+  return Model<Root, Logged<Reactions, Effect>>(std::move(root));
 }
 
 constexpr bool flipsAndReacts() {
@@ -119,7 +164,7 @@ constexpr bool flipsAndReacts() {
   (void)m.apply(Edit<Root, decltype(at)::PathType, Flip>{at, flip});
   (void)m.apply(Edit<Root, decltype(at)::PathType, Flip>{at, flip});
   // Three flips: three tellings, one write.
-  const auto out = m.outbox().drain();
+  const auto out = m.reactions().log.drain();
   return out.size() == 4 &&
          std::get<SetMentionsSharing>(out[0]).shared &&
          !std::get<SetMentionsSharing>(out[2]).shared &&
@@ -188,14 +233,14 @@ constexpr bool theLastOfAKindAndKeyStays() {
   Root root;
   root.settings.fValue.accounts.put("@a", AccountT{.who = "@a"});
   root.settings.fValue.accounts.put("@b", AccountT{.who = "@b"});
-  Model<Root, Telling, Told> m(std::move(root));
+  Model<Root, Logged<Telling, Told>> m(std::move(root));
   const auto a = placeOf<MentionsShared, Root>(std::string("@a"));
   const auto b = placeOf<MentionsShared, Root>(std::string("@b"));
   using P = decltype(a)::PathType;
   m.apply(Edit<Root, P, Flip>{a, flip});
   m.apply(Edit<Root, P, Flip>{b, flip});
   m.apply(Edit<Root, P, Flip>{a, flip});
-  const auto out = m.outbox().drain();
+  const auto out = m.reactions().log.drain();
   return out.size() == 2 && std::get<Tell>(out[0]).who == "@a" &&
          !std::get<Tell>(out[0]).shared && std::get<Tell>(out[1]).shared;
 }
@@ -214,9 +259,9 @@ struct OnRemoved {
 constexpr bool aTakenElementIsToldWhatItWas() {
   Root root;
   root.settings.fValue.accounts.put("@a", AccountT{.who = "A"});
-  Model<Root, OnRemoved, GoneEffect> m(std::move(root));
+  Model<Root, Logged<OnRemoved, GoneEffect>> m(std::move(root));
   m.apply(take<AccountT>(std::string("@a")));
-  const auto out = m.outbox().drain();
+  const auto out = m.reactions().log.drain();
   return out.size() == 1 && std::get<Gone>(out[0]).who == "A|@a";
 }
 static_assert(aTakenElementIsToldWhatItWas());
@@ -264,7 +309,7 @@ struct WithExternal {
   External<Timeline> timeline;
 };
 constexpr bool anExternalPartIsReadThroughTheModel() {
-  Model<WithExternal, Reactions, Effect> m;
+  Model<WithExternal, Logged<Reactions, Effect>> m;
   if (m.look<Timeline>())
     return false;  // pointing at nothing yet
   m.publish(share(Timeline{5}));
@@ -296,7 +341,7 @@ constexpr bool twoKeysOfOneTypeByTheirPlaces() {
   TwoLevels root;
   root.accounts.fValue.put("@a", AccountWithChats{});
   root.accounts.fValue.find("@a")->chats.put("!c", ChatT{{"hi"}});
-  Model<TwoLevels, NoReactions, Effect> m(std::move(root));
+  Model<TwoLevels, NoReactions> m(std::move(root));
   const auto at = placeOf<Topic, TwoLevels>(std::string("@a"), std::string("!c"));
   return at.key<0>() == "@a" && at.key<1>() == "!c" && m.look(at)->text == "hi";
 }
@@ -310,11 +355,11 @@ struct TakeByHand {
 constexpr bool removedIsToldHoweverTaken() {
   Root root;
   root.settings.fValue.accounts.put("@a", AccountT{.who = "A"});
-  Model<Root, OnRemoved, GoneEffect> m(std::move(root));
+  Model<Root, Logged<OnRemoved, GoneEffect>> m(std::move(root));
   const auto list = placeOf<Keyed<std::string, AccountT>, Root>();
   using P = decltype(list)::PathType;
   m.apply(Edit<Root, P, TakeByHand>{list, TakeByHand{"@a"}});
-  const auto out = m.outbox().drain();
+  const auto out = m.reactions().log.drain();
   return out.size() == 1 && std::get<Gone>(out[0]).who == "A|@a";
 }
 static_assert(removedIsToldHoweverTaken());
@@ -352,7 +397,7 @@ struct Ui {
   std::optional<Draft> editing;
 };
 constexpr bool partsThroughVariantsAndOptionals() {
-  Model<Ui, NoReactions, Effect> m;
+  Model<Ui, NoReactions> m;
   if (m.look<SettingsPage>() || !m.look<ChatsPage>() || m.look<Draft>())
     return false;
   using Page = std::variant<ChatsPage, SettingsPage>;
@@ -375,14 +420,14 @@ struct Counting {
 constexpr bool aBatchIsToldOnceAtTheEnd() {
   Root root;
   root.settings.fValue.accounts.put("@a", AccountT{.who = "@a"});
-  Model<Root, Counting, Effect> m(std::move(root));
+  Model<Root, Logged<Counting, Effect>> m(std::move(root));
   const auto shared = placeOf<MentionsShared, Root>(std::string("@a"));
   const auto sealed = placeOf<MentionsSealed, Root>(std::string("@a"));
   using P = decltype(shared)::PathType;
   using Q = decltype(sealed)::PathType;
   m.applyBatch(Edit<Root, P, Flip>{shared, flip}, Edit<Root, Q, Flip>{sealed, flip},
                Edit<Root, P, Flip>{shared, flip});
-  const auto out = m.outbox().drain();
+  const auto out = m.reactions().log.drain();
   // One telling of the account, of its last state; one write.
   return out.size() == 2 && !std::get<SetMentionsSharing>(out[0]).shared &&
          std::get<SetMentionsSharing>(out[0]).sealed && out[1] == Effect{WriteSettings{}};
@@ -451,10 +496,10 @@ struct Telling2 {
   constexpr auto on(Changed<Muted>, const auto &at) const { return Tell{"x", part(at).value}; }
 };
 constexpr bool lessToWrite() {
-  Model<Quiet, Telling2, Told> m;
+  Model<Quiet, Logged<Telling2, Told>> m;
   m.apply(edit(placeOf<Muted, Quiet>(), flip));
   m.apply(over<Named<"volume", int>>(setTo(Named<"volume", int>{7})));
-  const auto out = m.outbox().drain();
+  const auto out = m.reactions().log.drain();
   return m.look<Muted>()->value && m.look<Named<"volume", int>>()->value == 7 &&
          out.size() == 1 && std::get<Tell>(out[0]).shared;
 }
@@ -481,17 +526,16 @@ struct OnPreviews {
 };
 static_assert(std::same_as<PathTo<Field<&Shown::previews>, Chats>,
                            Path<Member<0>, At<std::string>, Member<1>>>);
-static_assert(std::same_as<EffectsOf<Chats, OnPreviews>, std::variant<SaidPreviews>>);
 constexpr bool fieldsByMemberPointer() {
   Chats root;
   root.chats.put("!a", Shown{});
-  Model<Chats, OnPreviews> m(std::move(root));
+  Model<Chats, Logged<OnPreviews, std::variant<SaidPreviews>>> m(std::move(root));
   m.apply(edit(placeOf<Field<&Shown::receipts>, Chats>(std::string("!a")), flip));
-  const bool quietForOthers = m.outbox().size() == 0;
+  const bool quietForOthers = m.reactions().log.size() == 0;
   m.apply(edit(placeOf<Field<&Shown::previews>, Chats>(std::string("!a")), flip));
   m.apply(edit(placeOf<Field<&Shown::typing>, Chats>(std::string("!a")),
                setTo(std::optional<bool>(true))));
-  const auto out = m.outbox().drain();
+  const auto out = m.reactions().log.drain();
   const Shown &now = m.root().chats.valueAt(0);
   return quietForOthers && out.size() == 1 && std::get<SaidPreviews>(out[0]).on &&
          std::get<SaidPreviews>(out[0]).chat == "!a" && now.receipts && now.previews &&
@@ -514,7 +558,8 @@ constexpr bool aListIsSeenAsRanges() {
 }
 static_assert(aListIsSeenAsRanges());
 
-// An event no scope takes, taken by the reactions: an effect asked for.
+// An event no scope takes, taken by the reactions: a request asked for, and
+// taken in turn.
 struct OpenDialog {
   int which = 0;
 };
@@ -525,27 +570,41 @@ struct TakesEvents {
   using Taken = Types<OpenDialog>;
   constexpr DialogOpened on(const OpenDialog &e) const { return {e.which}; }
 };
-static_assert(std::same_as<EffectsOf<Chats, TakesEvents>, std::variant<DialogOpened>>);
 constexpr bool eventsBecomeEffects() {
-  Model<Chats, TakesEvents> m;
+  Model<Chats, Logged<TakesEvents, std::variant<DialogOpened>>> m;
   m.send(OpenDialog{3});
-  const auto out = m.outbox().drain();
+  const auto out = m.reactions().log.drain();
   return out.size() == 1 && std::get<DialogOpened>(out[0]).which == 3;
 }
 static_assert(eventsBecomeEffects());
 
-// No effect type written: deduced from what the reactions return.
-static_assert(std::same_as<EffectsOf<Root, Reactions>, std::variant<SetMentionsSharing, WriteSettings>> ||
-              std::same_as<EffectsOf<Root, Reactions>, std::variant<WriteSettings, SetMentionsSharing>>);
-static_assert(std::same_as<EffectsOf<Root, OnRemoved>, std::variant<Gone>>);
+// What a reaction returns is answered as it is returned: a request,
+// routed to the reactions' own on(request), where the program takes it.
 constexpr bool deducedEffectsWork() {
   Root root;
   root.settings.fValue.accounts.put("@a", AccountT{.who = "A"});
-  Model<Root, OnRemoved> m(std::move(root));
+  Model<Root, Logged<OnRemoved, GoneEffect>> m(std::move(root));
   m.apply(take<AccountT>(std::string("@a")));
-  return m.outbox().size() == 1;
+  return m.reactions().log.size() == 1;
 }
 static_assert(deducedEffectsWork());
+
+// A reaction that answers with an edit: made at once, and what it changed
+// told in the round after -- never inside another reaction's telling --
+// until a round changes nothing.
+struct SetsBack {
+  mutable int told = 0;
+  constexpr auto on(Changed<AppTheme>, const AppTheme &now) const {
+    ++told;
+    return now.which == 1 ? std::optional(over<AppTheme>(setTo(AppTheme{2}))) : std::nullopt;
+  }
+};
+constexpr bool anAnswerThatEditsIsToldInTheNextRound() {
+  Model<Root, SetsBack> m;
+  m.apply(over<AppTheme>(setTo(AppTheme{1})));
+  return m.look<AppTheme>()->which == 2 && m.reactions().told == 2;
+}
+static_assert(anAnswerThatEditsIsToldInTheNextRound());
 } // namespace
 
 TEST(Model, ItsRulesHoldWhileItIsCompiled) { SUCCEED(); }
@@ -586,7 +645,7 @@ TEST(Model, ANewModelRebasesTheRevisionsOfItsSnapshot) {
   auto old = withOne();
   old.apply(over<AppTheme>(setTo(AppTheme{3})));
   old.apply(over<AppTheme>(setTo(AppTheme{4})));
-  Model<Root, Reactions, Effect> copy(old.snapshot());
+  Model<Root, Logged<Reactions, Effect>> copy(old.snapshot());
   EXPECT_EQ(copy.look<AppTheme>().fRevision, copy.revision());
   const auto before = copy.look<AppTheme>().fRevision;
   copy.apply(over<AppTheme>(setTo(AppTheme{5})));
@@ -614,9 +673,9 @@ TEST(Model, RemovalsBeforeTheModelExistsAreNotReportedByItsNextEdit) {
   Root root;
   root.settings.fValue.accounts.put("old", AccountT{.who = "old"});
   root.settings.fValue.accounts.take("old");
-  Model<Root, OnRemoved, GoneEffect> m(std::move(root));
+  Model<Root, Logged<OnRemoved, GoneEffect>> m(std::move(root));
   m.apply(put<AccountT>(std::string("new"), AccountT{.who = "new"}));
-  EXPECT_TRUE(m.outbox().drain().empty());
+  EXPECT_TRUE(m.reactions().log.drain().empty());
 }
 
 TEST(Model, EditPacksExecuteInOrderAndDoNotStopAtMissingParts) {

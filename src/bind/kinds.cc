@@ -265,7 +265,7 @@ template <class T, class Handlers, class Base, bool Hidden = false>
 struct Local : Base {
   using LocalOf = T;
   static constexpr bool kHidden = Hidden;
-  using Store = model::Model<T, NoReactions, std::variant<model::Nothing>>;
+  using Store = model::Model<T, NoReactions>;
   Local() = default;
   explicit Local(Handlers handlers, Base base, T initial = {})
       : Base(std::move(base)), fModel(std::move(initial)),

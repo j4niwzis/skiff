@@ -34,13 +34,58 @@ struct Invite {
   std::string id;
   const std::string &key() const { return id; }
 };
+// The program's part of a model's reactions, for a test: the requests they
+// answer with taken -- kept as a program keeps what it is asked, an effect
+// replacing an older one of its kind (replaces(), key()) -- to be looked at.
+template <class Effect> struct Log {
+  std::vector<Effect> fItems;
+  template <class E> constexpr void take(const E &effect) {
+    for (auto &each : fItems)
+      if (std::holds_alternative<E>(each) && replaces(effect, std::get<E>(each))) {
+        each = Effect(effect);
+        return;
+      }
+    fItems.push_back(Effect(effect));
+  }
+  constexpr std::vector<Effect> drain() { return std::exchange(fItems, {}); }
+  constexpr std::size_t size() const { return fItems.size(); }
+
+private:
+  template <class E>
+    requires requires(const E &e) { e.replaces(e); }
+  static constexpr bool replaces(const E &effect, const E &older) {
+    return effect.replaces(older);
+  }
+  template <class E>
+    requires(requires(const E &e) { e.key() == e.key(); } && !requires(const E &e) { e.replaces(e); })
+  static constexpr bool replaces(const E &effect, const E &older) {
+    return effect.key() == older.key();
+  }
+  template <class E> static constexpr bool replaces(const E &, const E &) { return false; }
+};
+// One on(request) for each request, not a template: the runtime layer finds
+// the events reactions take by their on(event)s, one type each.
+template <class Self, class E> struct Takes {
+  constexpr skiff::model::Nothing on(const E &effect) const {
+    static_cast<const Self &>(*this).log.take(effect);
+    return {};
+  }
+};
+template <class R, class Effect> struct Logged;
+template <class R, class... E>
+struct Logged<R, std::variant<E...>> : R, Takes<Logged<R, std::variant<E...>>, E>... {
+  mutable Log<std::variant<E...>> log;
+  using R::on;
+  using Takes<Logged<R, std::variant<E...>>, E>::on...;
+};
+
 struct Reactions {
   auto on(model::Changed<Invited>, const auto &at) const {
     return model::part(at).value ? std::optional(Invite{model::key<0>(at)}) : std::nullopt;
   }
 };
-using Model = model::Model<Root, Reactions>;  // effects: deduced
-static_assert(std::same_as<Model::Effect, std::variant<Invite>>);
+// What the reactions ask for, an Invite, taken by the program's part of them.
+using Model = model::Model<Root, Logged<Reactions, std::variant<Invite>>>;
 
 // Stand-ins for skiff-widgets' widgets.
 struct QueryChanged {
@@ -152,10 +197,10 @@ TEST(Picker, APickIsTheDialogsOwnAndItsResultBecomesAnInvite) {
   EXPECT_TRUE(bind::press(page, m, rowAt(1)));  // Bob
   EXPECT_EQ(dialogOf(page).fModel.template look<Selected>()->value, std::optional<std::string>("b"));
   EXPECT_FALSE(m.look(model::placeOf<Invited, Root>(std::string("b")))->value);
-  EXPECT_EQ(m.outbox().size(), 0u);
+  EXPECT_EQ(m.reactions().log.size(), 0u);
   EXPECT_TRUE(bind::press(page, m, kDone));
   EXPECT_TRUE(m.look(model::placeOf<Invited, Root>(std::string("b")))->value);
-  const auto effects = m.outbox().drain();
+  const auto effects = m.reactions().log.drain();
   ASSERT_EQ(effects.size(), 1u);
   EXPECT_EQ(std::get<Invite>(effects[0]).id, "b");
   binding.refresh(page, m);

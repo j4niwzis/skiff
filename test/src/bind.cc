@@ -36,13 +36,58 @@ struct Root {
 struct WriteSettings {
   bool replaces(const WriteSettings &) const { return true; }
 };
+// The program's part of a model's reactions, for a test: the requests they
+// answer with taken -- kept as a program keeps what it is asked, an effect
+// replacing an older one of its kind (replaces(), key()) -- to be looked at.
+template <class Effect> struct Log {
+  std::vector<Effect> fItems;
+  template <class E> constexpr void take(const E &effect) {
+    for (auto &each : fItems)
+      if (std::holds_alternative<E>(each) && replaces(effect, std::get<E>(each))) {
+        each = Effect(effect);
+        return;
+      }
+    fItems.push_back(Effect(effect));
+  }
+  constexpr std::vector<Effect> drain() { return std::exchange(fItems, {}); }
+  constexpr std::size_t size() const { return fItems.size(); }
+
+private:
+  template <class E>
+    requires requires(const E &e) { e.replaces(e); }
+  static constexpr bool replaces(const E &effect, const E &older) {
+    return effect.replaces(older);
+  }
+  template <class E>
+    requires(requires(const E &e) { e.key() == e.key(); } && !requires(const E &e) { e.replaces(e); })
+  static constexpr bool replaces(const E &effect, const E &older) {
+    return effect.key() == older.key();
+  }
+  template <class E> static constexpr bool replaces(const E &, const E &) { return false; }
+};
+// One on(request) for each request, not a template: the runtime layer finds
+// the events reactions take by their on(event)s, one type each.
+template <class Self, class E> struct Takes {
+  constexpr skiff::model::Nothing on(const E &effect) const {
+    static_cast<const Self &>(*this).log.take(effect);
+    return {};
+  }
+};
+template <class R, class Effect> struct Logged;
+template <class R, class... E>
+struct Logged<R, std::variant<E...>> : R, Takes<Logged<R, std::variant<E...>>, E>... {
+  mutable Log<std::variant<E...>> log;
+  using R::on;
+  using Takes<Logged<R, std::variant<E...>>, E>::on...;
+};
+
 using Effect = std::variant<WriteSettings>;
 struct Reactions {
   auto on(model::Changed<SettingsT>, const SettingsT &) const {
     return WriteSettings{};
   }
 };
-using Model = model::Model<Root, Reactions, Effect>;
+using Model = model::Model<Root, Logged<Reactions, Effect>>;
 
 struct Switch : scene::Node {
   bool fOn = false;
@@ -170,7 +215,7 @@ TEST(Bind, ADisappearingListClearsItsRowIndex) {
     model::Tracked<std::optional<SettingsT>> settings;
   };
   OptionalRoot root{{std::optional(twoAccounts().snapshot().settings.fValue)}};
-  model::Model<OptionalRoot, Reactions, Effect> m(std::move(root));
+  model::Model<OptionalRoot, Logged<Reactions, Effect>> m(std::move(root));
   Page page;
   bind::Binding<decltype(m)> binding;
   binding.refresh(page, m);
@@ -196,7 +241,7 @@ TEST(Bind, AChangeIsMadeWhereTheNodeIsAndOnlyItsRowReadsAgain) {
   EXPECT_EQ(rows[0].parts.receipts.fReads, 2);
   EXPECT_EQ(rows[1].parts.receipts.fReads, 1);
   // The settings changed: written, once.
-  EXPECT_EQ(m.outbox().drain().size(), 1u);
+  EXPECT_EQ(m.reactions().log.drain().size(), 1u);
 }
 
 TEST(Bind, AnEventIsTakenByTheRowsScope) {

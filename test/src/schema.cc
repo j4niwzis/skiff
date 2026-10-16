@@ -27,7 +27,7 @@ struct Root {
   std::optional<long> draft;
 };
 struct NoReactions {};
-using M = Model<Root, NoReactions, std::variant<Nothing>>;
+using M = Model<Root, NoReactions>;
 
 rt::Place mutedOf(std::string who) {
   return {*rt::pathTo(rt::shapeOf<Root>(), rt::wantOf<Field<&Account::muted>>()), {rt::AnyKey(std::move(who))}};
