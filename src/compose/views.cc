@@ -422,11 +422,23 @@ struct WidthLimit {
   bool whole = false;
   friend bool operator==(const WidthLimit&, const WidthLimit&) = default;
 };
+// Its width its own, not a share of its parent's: a node's own width taken
+// off its relative axes; over held content, the wrapper's -- adopted first,
+// so that what it holds keeps filling it. Taken off the content instead, as
+// it was, the content of a held column lost its fill and was laid out 0
+// wide: the side column's rows with no text, its space bar gone.
+inline void ownWidth(Held &over) {
+  over.adopt();
+  scene::State &mine = over.fState;
+  mine.fRelativeSizeAxes = mine.fRelativeSizeAxes.template without<scene::axis::x>();
+  mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<scene::axis::x>();
+}
+template <class N> void ownWidth(N &node) {
+  node.apply({.relativeSize = node.fState.fRelativeSizeAxes.template without<scene::axis::x>()});
+}
 template <class N> struct ClampedWidth : N {
   WidthLimit fLimit;
-  ClampedWidth(WidthLimit limit, N node) : N(std::move(node)), fLimit(limit) {
-    this->apply({.relativeSize = this->fState.fRelativeSizeAxes.template without<scene::axis::x>()});
-  }
+  ClampedWidth(WidthLimit limit, N node) : N(std::move(node)), fLimit(limit) { ownWidth(static_cast<N &>(*this)); }
   void read(const WidthLimit& limit) {
     if (limit == fLimit) return;
     fLimit = limit;

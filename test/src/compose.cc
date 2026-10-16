@@ -1097,3 +1097,26 @@ TEST(Compose, AColumnSlidingInKeepsItsFill) {
   EXPECT_FLOAT_EQ(icon, 24.0f);
   EXPECT_FLOAT_EQ(text, 280.0f - 40.0f - 24.0f - 16.0f);
 }
+
+// A column whose width is clamped to what is wanted, over content that fills
+// it: the rows in it as wide as the clamp. Outside a release build, held
+// content lost its fill to the clamp and was laid out 0 wide.
+TEST(Compose, AClampedColumnsRowsAreAsWideAsTheClamp) {
+  namespace c = skiff::compose;
+  namespace scene = skiff::scene;
+  float icon = 0.0f, text = 0.0f;
+  auto row = c::row(c::hbox(16.0f, {.fillX = true, .height = 46.0f, .padding = {0.0f, 20.0f, 0.0f, 20.0f}}),
+      MeasuredWidth(&icon, {.width = 24.0f, .height = 24.0f}),
+      c::styled({.grow = scene::axes::kX, .alignSelf = scene::align::kMiddle}, MeasuredWidth(&text, {.height = 20.0f})));
+  struct Open {
+    bool on = false;
+  };
+  auto side = c::clamped_width(c::WidthLimit{.wanted = 300.0f},
+      c::local<Open>(c::column(c::vbox(0.0f, {.fill = true}),
+          c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(row)))));
+  scene::Scene tree(c::row(c::hbox(0.0f, {.fill = true}), std::move(side),
+                           c::column(c::vbox(0.0f, {.fillY = true, .grow = scene::axes::kX}))));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 900.0f, 600.0f));
+  EXPECT_FLOAT_EQ(icon, 24.0f);
+  EXPECT_FLOAT_EQ(text, 300.0f - 40.0f - 24.0f - 16.0f);
+}
