@@ -8,6 +8,19 @@ import :effects;
 import :schema;
 
 export namespace skiff::model {
+namespace detail {
+// A list of types with none in it: a root that holds no lists.
+template <class L> inline constexpr bool IsEmptyTypes = false;
+template <> inline constexpr bool IsEmptyTypes<Types<>> = true;
+// For an erased change: each list type a root holds, and how what was
+// taken from one is told -- the model passed erased, so that the table and
+// its lookup are one type for every model.
+using TakenTable = std::vector<std::pair<rt::TypeKey, void (*)(void *, void *)>>;
+inline void (*takenIn(const TakenTable &table, rt::TypeKey type))(void *, void *) {
+  const auto found = std::ranges::find(table, type, &TakenTable::value_type::first);
+  return found == table.end() ? nullptr : found->second;
+}
+} // namespace detail
 // A model, its reactions, and the effects they asked for.
 template <class Root, class Reactions, class EffectOrDeduced = DeducedEffects> class Model {
 public:
@@ -85,8 +98,11 @@ public:
     if (there) {
       fTargets.push_back(walked->fPart);
       change.fApply(walked->fPart, change.fFn.get(), fRevision);
-      if (const auto list = takenOf().find(change.fPart); list != takenOf().end())
-        list->second(*this, walked->fPart);
+      // A list a part was taken from: its removals told. Only where the
+      // root holds lists at all.
+      if constexpr (!detail::IsEmptyTypes<typename detail::KeyedListsIn<Root>::type>)
+        if (const auto told = detail::takenIn(takenOf(), change.fPart))
+          told(this, walked->fPart);
       for (Revision *each : walked->fRevisions) { *each = fRevision; }
       fTouched.append_range(walked->fTouched);
       if (walked->fRevisions.empty())
@@ -463,17 +479,13 @@ private:
 
   // For an erased change: each list type the root holds, and how what was
   // taken from one is told (taken), by the list's type.
-  using TakenTable = std::vector<std::pair<rt::TypeKey, void (*)(Model &, void *)>>;
-  template <class... L> static TakenTable takenTableOf(Types<L...>) {
-    return {{rt::keyOf<L>(), +[](Model &m, void *list) { m.taken(*static_cast<L *>(list)); }}...};
+  // The same table type for every model (its model passed erased), so the
+  // lookup in it is made once, not again for each root.
+  template <class... L> static detail::TakenTable takenTableOf(Types<L...>) {
+    return {{rt::keyOf<L>(), +[](void *m, void *list) { static_cast<Model *>(m)->taken(*static_cast<L *>(list)); }}...};
   }
-  struct TakenLookup {
-    TakenTable fTable;
-    auto find(rt::TypeKey type) const { return std::ranges::find(fTable, type, &TakenTable::value_type::first); }
-    auto end() const { return fTable.end(); }
-  };
-  static const TakenLookup &takenOf() {
-    static const TakenLookup made{takenTableOf(typename detail::KeyedListsIn<Root>::type{})};
+  static const detail::TakenTable &takenOf() {
+    static const detail::TakenTable made = takenTableOf(typename detail::KeyedListsIn<Root>::type{});
     return made;
   }
 
