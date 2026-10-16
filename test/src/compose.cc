@@ -748,7 +748,7 @@ TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
   struct FlipLocal {};
   const auto makeLocal = [] {
     return local<Expanded>(
-        handlers(handle<FlipLocal>([] { return model::over<Expanded>(model::flip); })),
+        handlers(handle<FlipLocal>([](const FlipLocal &) { return model::over<Expanded>(model::flip); })),
         onClick(FlipLocal{}, bound<Expanded>(Chevron{})));
   };
   using local_t = decltype(makeLocal());
