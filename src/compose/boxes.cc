@@ -152,6 +152,12 @@ struct Held : Stacked {
   // again (the one below, for any type derived from it).
   void apply(this Held &self, const scene::Spec &spec) { self.fSpecTo(self.parts.held.ref().node(), spec); }
   template <class Self> void apply(this Self &self, const scene::Spec &spec) {
+    // Adopted first, where it is not yet: a wrapper that says a spec of its
+    // own as it is made (appearing's start, faded and shifted) said it
+    // before erased() adopted it, and restore() then put back a size never
+    // recorded -- nothing: the content lost its fill and was laid out 0
+    // wide, a slid-in column with every row's text gone.
+    self.adopt();
     scene::State &node = self.parts.held.state();
     // Its own size back first, so the spec and the following start from
     // what it says, not from how it was last made to fill the wrapper.

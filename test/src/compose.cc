@@ -1063,3 +1063,37 @@ TEST(Compose, APageViewKeptScrolledIsStillToldItsFacts) {
   binding.refresh(view, m);
   EXPECT_EQ(shown, 7) << "its offset read tells it no facts";
 }
+
+// A column sliding in (appearing_across) keeps its fill: a row in it is as
+// wide as the place it slides into, and a text growing in the row gets what
+// the row leaves. Outside a release build the slide's starting spec reached
+// the column before the wrapper was adopted, and it was laid out 0 wide.
+namespace {
+struct MeasuredWidth : skiff::scene::Node {
+  float *fWidth = nullptr;
+  explicit MeasuredWidth(float *width, skiff::scene::Spec spec = {}) : fWidth(width) { this->apply(spec); }
+  void layoutChildren() { *fWidth = this->fState.bounds().width(); }
+};
+} // namespace
+
+TEST(Compose, AColumnSlidingInKeepsItsFill) {
+  namespace c = skiff::compose;
+  namespace scene = skiff::scene;
+  float icon = 0.0f, text = 0.0f;
+  auto row = c::row(c::hbox(16.0f, {.fillX = true, .height = 46.0f, .padding = {0.0f, 20.0f, 0.0f, 20.0f}}),
+      MeasuredWidth(&icon, {.width = 24.0f, .height = 24.0f}),
+      c::styled({.grow = scene::axes::kX, .alignSelf = scene::align::kMiddle}, MeasuredWidth(&text, {.height = 20.0f})));
+  auto sliding = c::appearing_across(true,
+      c::column(c::vbox(0.0f, {.fill = true}), c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(row))),
+      36.0f, 220.0f);
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(sliding)));
+  const auto view = skia::SkRect::MakeXYWH(0.0f, 0.0f, 280.0f, 600.0f);
+  for (double at : {0.0, 300.0, 600.0}) {
+    tree.layoutIfNeeded(view);
+    tree.update(at);
+    tree.layoutIfNeeded(view);
+    (void)tree.finishFrame();
+  }
+  EXPECT_FLOAT_EQ(icon, 24.0f);
+  EXPECT_FLOAT_EQ(text, 280.0f - 40.0f - 24.0f - 16.0f);
+}
