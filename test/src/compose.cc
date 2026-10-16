@@ -1551,3 +1551,64 @@ TEST(Compose, AWindowAtItsTopAsksForWhatIsOlder) {
   std::println("heard after scrolling up: {}", heard.older);
   EXPECT_GE(heard.older, 1);
 }
+
+// A picture fitted over a named view (mux's: Fitted over its picture_box):
+// the wrapper's size its own, the view filling it -- with a Held& helper
+// beside a catch-all, the named view took the catch-all, and the picture
+// was laid out 0 by 0, the caption alone shown.
+namespace fitted_named {
+namespace c = skiff::compose;
+struct NoRatio {
+  std::optional<float> operator()(auto &) const { return std::nullopt; }
+};
+inline auto box(float *wide) {
+  return SKIFF_NAMED(picture_box, c::column(c::vbox(0.0f, {}), c::styled({.fill = true}, MeasuredWidth(wide))));
+}
+}  // namespace fitted_named
+TEST(Compose, AFittedNamedViewIsFilledByItsContent) {
+  using namespace fitted_named;
+  float wide = 0;
+  using box_t = decltype(box(nullptr));
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::Fitted<NoRatio, box_t>(c::Fit{.width = 1100.0f, .height = 720.0f, .most = 430.0f}, NoRatio{}, box(&wide))));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 600.0f, 600.0f));
+  EXPECT_FLOAT_EQ(wide, 430.0f);
+}
+
+// Rows coming in moving (a message that has just come): made after the
+// window is open, they fade in and are seen, whole, once they are still.
+namespace window_arrive {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct MakeArriving {
+  compose::Held operator()(const Item &) const { return compose::Held(c::appearing(true, RowNode{})); }
+};
+using ArrivingWindow = c::WindowFrom<Src, FeedModel, std::string, int, compose::Held, MakeArriving, c::NoLocate, Tag>;
+}  // namespace window_arrive
+TEST(Compose, RowsComingInMovingAreSeenOnceStill) {
+  using namespace window_arrive;
+  ArrivingWindow window(MakeArriving{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, ArrivingWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 3}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  Heard heard;
+  const auto frame = [&](double at) {
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    tree.update(at);
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    (void)tree.finishFrame();
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  // Two more come.
+  (void)m.apply(model::edit(model::placeOf<Feed, FeedRoot>(), model::setTo(Feed{.count = 5})));
+  binding.refresh(tree.root(), m);
+  for (double at = 600.0; at < 1600.0; at += 16.0)
+    frame(at);
+  const auto rows = scene::laidOutTree(tree.root());
+  std::print("{}", scene::laidOutText(tree.root()));
+  EXPECT_TRUE(std::ranges::none_of(rows, [](const scene::LaidOutNode &row) { return row.alpha < 1.0f; }));
+}

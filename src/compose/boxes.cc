@@ -478,7 +478,14 @@ template <class N> std::vector<part_t<N>> as_parts(std::vector<N> nodes) {
 // A wrapper that says its own size along some axes (in its measure):
 // over held content, the holder's -- which then fills it there; any other
 // node says it in its own state already.
-inline void sizedHere(Held &over, scene::Axes axes) { over.ownAxes(axes); }
+// (Constrained, not a Held& beside a catch-all: a type derived from Held --
+// a view named over it -- took the catch-all as the closer match, and
+// nothing was owned: its content never filled it, a picture 0 by 0.)
+template <class N>
+  requires std::derived_from<N, Held>
+void sizedHere(N &over, scene::Axes axes) {
+  static_cast<Held &>(over).ownAxes(axes);
+}
 template <class N> void sizedHere(N &, scene::Axes) {}
 
 // A node marked where it is made -- Tag says what it is, and what it

@@ -6653,6 +6653,8 @@ struct LaidOutNode {
   bool visible = true;
   bool outOfFlow = false;
   bool overflows = false;
+  // How opaque it is drawn, as itself: below 1, said in the text.
+  float alpha = 1.0f;
 };
 namespace detail {
 template <class N>
@@ -6664,7 +6666,8 @@ template <class N> void laidOutRows(N &node, std::size_t depth, std::string_view
   const std::string_view in = names ? std::string_view(state.fViewName) : view;
   rows.push_back({.depth = depth, .kind = typeOf(node), .view = in, .names = names, .bounds = state.fBounds,
                   .relative = state.fRelativeSizeAxes, .autoSize = state.fAutoSizeAxes, .grow = state.fGrowAxes,
-                  .visible = state.visible(), .outOfFlow = state.fOutOfFlow, .overflows = state.fOverflowTold});
+                  .visible = state.visible(), .outOfFlow = state.fOutOfFlow, .overflows = state.fOverflowTold,
+                  .alpha = state.fAlpha});
   eachChild(node, [&](auto &child) { laidOutRows(child, depth + 1, in, rows); });
 }
 // Held as itself in a part, seen through: one row, its content's.
@@ -6687,12 +6690,12 @@ template <class N> [[nodiscard]] std::vector<LaidOutNode> laidOutTree(N &root) {
 // One row as text: "Kind [view] x,y w×h relative auto grow", and what else
 // it is -- hidden, out of flow, sticking out.
 [[nodiscard]] inline std::string laidOutLine(const LaidOutNode &row) {
-  return std::format("{:{}}{}{}{}{} at {},{} {}x{} relative {} auto {} grow {}{}{}{}", "", row.depth * 2, row.kind.name,
+  return std::format("{:{}}{}{}{}{} at {},{} {}x{} relative {} auto {} grow {}{}{}{}{}", "", row.depth * 2, row.kind.name,
                      row.view.empty() ? "" : (row.names ? " [" : " (in "), row.view,
                      row.view.empty() ? "" : (row.names ? "]" : ")"), row.bounds.fLeft, row.bounds.fTop,
                      row.bounds.width(), row.bounds.height(), detail::axesText(row.relative), detail::axesText(row.autoSize),
                      detail::axesText(row.grow), row.visible ? "" : " hidden", row.outOfFlow ? " out-of-flow" : "",
-                     row.overflows ? " OVERFLOWS" : "");
+                     row.alpha < 1.0f ? std::format(" alpha {:.2f}", row.alpha) : std::string(), row.overflows ? " OVERFLOWS" : "");
 }
 template <class N> [[nodiscard]] std::string laidOutText(N &root) {
   return laidOutTree(root) | std::views::transform([](const LaidOutNode &row) { return laidOutLine(row) + "\n"; }) | std::views::join |
