@@ -60,5 +60,20 @@ Widgets with rules that name their parts by position (the message bubble,
 the info cards) are a flat `Box` of their parts: one static type for the
 widget, as a `Text` is one, its parts held.
 
-Combinators whose result another one reads as itself stay concrete in every
-build: `window_list`, `spanned_for`, `page_view`, `styled`, `visible`.
+Combinators whose node another one reads as itself stay concrete in every
+build -- transitionally:
+
+- read by a widget around them: `window_list` (by `spanned_for`),
+  `spanned_for` (by `with_way_down`), `page_view` (by `kept_scroll`);
+- read by the binder around them (`bound`, `derived`, `projected`): `mount`,
+  `mount_now`, `listed`, `sections`, `clamped_width`, `remembered_scroll`,
+  `restarted_scroll`, `virtual_rows`, `with_model`, `arranged`,
+  `with_way_down`;
+- a leaf's own options: `styled`, `visible`, `wrapped`, `elided`, `primary`,
+  `on_now`, `with_cursor`, `recorded`.
+
+The binder or widget immediately around such a node erases, so no chain of
+static types forms: at most `Binder<Reader<Held>>`. The end state fuses each
+reader with its binding -- `mount_for<Want>`, `clamped_width_for<Want>` and
+the like, which bind and erase in one call -- leaving only the leaf options
+concrete.
