@@ -194,10 +194,18 @@ struct Held : Stacked {
     self.restore(node);
     self.fSpecTo(self.parts.held.ref().node(), nodeSide(spec));
     // A grow said takes the place of the size the wrapper followed from
-    // its content's (State::apply, for a node of its own).
-    if (spec.grow)
-      self.fState.fAutoSizeAxes = self.fState.fAutoSizeAxes.except(*spec.grow);
-    self.fState.apply(placement(spec));
+    // its content's (State::apply, for a node of its own) -- but not of a
+    // fill the content says: a fill stays, and the grow means nothing there.
+    // Kept against the relative axis the wrapper followed, it was told as
+    // two sizes at once on every wrapper so made.
+    scene::Spec placed = placement(spec);
+    if (spec.grow) {
+      const scene::Axes grow = spec.grow->except(node.fRelativeSizeAxes);
+      self.fState.fAutoSizeAxes = self.fState.fAutoSizeAxes.except(grow);
+      self.fState.fRelativeSizeAxes = self.fState.fRelativeSizeAxes.except(grow);
+      placed.grow = grow;
+    }
+    self.fState.apply(placed);
     if (spec.visible)
       self.fShown = *spec.visible;
     self.followSize(node);

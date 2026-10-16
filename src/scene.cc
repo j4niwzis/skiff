@@ -2451,6 +2451,10 @@ public:
   const char *fViewName = nullptr;
   // Told already that it sticks out of its parent: told once, until it fits.
   bool fOverflowTold = false;
+  // Two ways of sizing an axis said at once, and which one was kept: told
+  // where the node is next laid out -- what it is, and the view it is in --
+  // not where the spec is applied, which knows neither.
+  std::string_view fSizingConflict;
   Cursor fCursor = cursor::arrow{};
   float fCornerRadius = 0.0f;
   std::optional<Corners> fCorners;
@@ -2813,15 +2817,13 @@ public:
     // Sizing an axis both from the parent and from the children asks for two
     // numbers at once: say which, and keep the relative one.
     if (fRelativeSizeAxes.any(fAutoSizeAxes)) {
-      std::println(std::cerr,
-                   "[scene] relative and automatic sizing on the same axis");
+      fSizingConflict = "relative and automatic sizing on the same axis";
       fAutoSizeAxes = axes::kNone;
     }
     // A flow writes a grown child's size; anything else claiming the axis
     // would be overwritten every frame.
     if (fGrowAxes.any(fRelativeSizeAxes | fAutoSizeAxes)) {
-      std::println(std::cerr,
-                   "[scene] growing and sized another way on the same axis");
+      fSizingConflict = "growing and sized another way on the same axis";
       fGrowAxes = axes::kNone;
     }
     const auto after = this->commonValues();
@@ -4078,6 +4080,10 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   state.fLastConstraint = parent;
   work::reach(state.fId);
   ++walkCounts().laidOut;
+  if (!state.fSizingConflict.empty()) {
+    std::println(std::cerr, "[scene] {}: {}{}{}", std::exchange(state.fSizingConflict, {}), typeOf(node).name,
+                 viewsLaidOut().empty() ? "" : " in ", viewsLaidOut().empty() ? std::string_view() : std::string_view(viewsLaidOut().back()));
+  }
   // Where it was: taken before an auto-sized node is given a provisional box
   // to lay its children out in, which is not where it was drawn. Compared
   // with that box, every relayout of one -- a list's flow of rows -- was a
