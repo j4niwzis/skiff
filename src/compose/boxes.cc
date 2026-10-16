@@ -387,19 +387,6 @@ template <class N> [[nodiscard]] scene::State &state_of(N &node) { return node.f
 template <class N> [[nodiscard]] const scene::State &state_of(const N &node) { return node.fState; }
 [[nodiscard]] inline const scene::State &state_of(const Held &held) { return const_cast<Held &>(held).held().state(); }
 
-// What a view named where it is written (SKIFF_NAMED) is: what its
-// expression made, Base, as a type of its own, Self -- which says its name
-// (Self::viewName(), the macro's spelling of it). Adopted as it is made,
-// over held content; and while its parts are laid out it is the view they
-// are in, for what is told of them (an overflow).
-template <class Self, class Base> struct Named : Base {
-  explicit Named(Base made) : Base(std::move(made)) { adopted(static_cast<Base &>(*this)); }
-  void layoutChildren() {
-    const scene::ViewLaidOut here{Self::viewName()};
-    Base::layoutChildren();
-  }
-};
-
 // A part as a combinator keeps it. A view named where it was written
 // (SKIFF_NAMED) is a type of its own -- what the compiler names, what a
 // hook is overloaded on -- and, outside a release build, a wrapper over a
@@ -440,6 +427,20 @@ template <class N> void sizedHere(N &, scene::Axes) {}
 // several kinds in one variant), a wrapper takes its content's place at once.
 inline void adopted(Held &over) { over.adopt(); }
 template <class N> void adopted(N &) {}
+
+// What a view named where it is written (SKIFF_NAMED) is: what its
+// expression made, Base, as a type of its own, Self -- which says its name
+// (Self::viewName(), the macro's spelling of it). Adopted as it is made,
+// over held content; and while its parts are laid out it is the view they
+// are in, for what is told of them (an overflow).
+template <class Self, class Base> struct Named : Base {
+  explicit Named(Base made) : Base(std::move(made)) { adopted(static_cast<Base &>(*this)); }
+  void layoutChildren() {
+    const scene::ViewLaidOut here{Self::viewName()};
+    Base::layoutChildren();
+  }
+};
+
 template <class Tag, class N> struct Marked : N {
   // Found by this mark through whatever wraps it (scene::MarkOf).
   using MarkedAs = Marked<Tag, N>;
