@@ -210,6 +210,7 @@ struct Held : Stacked {
   // The rest of what a node is told by hand: Held itself passes it to its
   // node, a wrapper takes it itself -- never Held's own state, which no walk
   // sees.
+  void setVisible(this Held &self, bool on) { self.apply({.visible = on}); }
   void setPosition(this Held &self, float x, float y) { self.apply({.x = x, .y = y}); }
   void setSize(this Held &self, float width, float height) { self.apply({.width = width, .height = height}); }
   void setPadding(this Held &self, scene::Margin padding) { self.apply({.padding = padding}); }

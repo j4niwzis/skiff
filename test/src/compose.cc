@@ -1235,3 +1235,13 @@ TEST(Compose, NamesAreShortAndNeedNoRtti) {
   EXPECT_EQ(told.front().node, "WideNode");
   EXPECT_EQ(told.front().view, "narrow_box");
 }
+
+// What a caller asks of a named view -- shown or not, where it is -- it
+// answers as what it names does.
+TEST(Compose, ANamedViewAnswersWhatItsContentDoes) {
+  namespace c = skiff::compose;
+  auto shown = SKIFF_NAMED(shown_row, c::row(c::hbox(0.0f, {.width = 10.0f, .height = 10.0f}), WideNode()));
+  shown.setVisible(false);
+  shown.setPosition(1.0f, 2.0f);
+  EXPECT_FALSE(shown.visible());
+}
