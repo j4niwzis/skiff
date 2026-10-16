@@ -108,6 +108,13 @@ template <class Out_> struct Erased : Stacked {
 // wrapper is and the content fills it; growing, the wrapper grows and the
 // content fills it; any other way, the wrapper is as big as the content. A
 // spec given it later goes the same way.
+// A type named where it was written over held content (SKIFF_NAMED outside a
+// release build): the Held it is, to the walks and to whatever calls it --
+// not a wrapper of its own (no table made for it, nothing adopted).
+template <class N>
+concept NamedOverHeld = requires { typename N::NamedOver; } && std::derived_from<N, Stacked>;
+template <class Self>
+concept HeldWrapper = !NamedOverHeld<Self>;
 struct Held : Stacked {
   // What it holds is not known here: walked, and taken to hold a Local, as
   // any node naming its children itself is.
@@ -125,8 +132,13 @@ struct Held : Stacked {
   struct parts_t {
     scene::AnyNode held;
   } parts;
+  // A view named over held content: the Held it is, moved -- no wrapper.
   template <class N>
-    requires(std::derived_from<std::remove_cvref_t<N>, scene::Node> && !std::same_as<std::remove_cvref_t<N>, Held>)
+    requires NamedOverHeld<std::remove_cvref_t<N>>
+  explicit Held(N &&node) : Held(static_cast<Held &&>(node)) {}
+  template <class N>
+    requires(std::derived_from<std::remove_cvref_t<N>, scene::Node> && !std::same_as<std::remove_cvref_t<N>, Held> &&
+             !NamedOverHeld<std::remove_cvref_t<N>>)
   explicit Held(N &&node) : Stacked(vbox(0.0f)) {
     using T = std::remove_cvref_t<N>;
     // A wrapper over held content, finished: its content's placement its own.
@@ -163,7 +175,9 @@ struct Held : Stacked {
   // placement to the wrapper, the rest to the content, its size followed
   // again (the one below, for any type derived from it).
   void apply(this Held &self, const scene::Spec &spec) { self.fSpecTo(self.parts.held.ref().node(), spec); }
-  template <class Self> void apply(this Self &self, const scene::Spec &spec) {
+  template <class Self>
+    requires HeldWrapper<Self>
+  void apply(this Self &self, const scene::Spec &spec) {
     // Adopted first, where it is not yet: a wrapper that says a spec of its
     // own as it is made (appearing's start, faded and shifted) said it
     // before erased() adopted it, and restore() then put back a size never
@@ -190,7 +204,9 @@ struct Held : Stacked {
     self.followSize(node);
     self.invalidateLayout();
   }
-  template <class Self> void setVisible(this Self &self, bool on) { self.apply({.visible = on}); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  void setVisible(this Self &self, bool on) { self.apply({.visible = on}); }
   // The rest of what a node is told by hand: Held itself passes it to its
   // node, a wrapper takes it itself -- never Held's own state, which no walk
   // sees.
@@ -202,32 +218,64 @@ struct Held : Stacked {
   void setAlpha(this Held &self, float alpha) { self.apply({.alpha = alpha}); }
   void markDamaged(this Held &self) { self.parts.held.state().markDamaged(); }
   void invalidateLayout(this Held &self) { self.parts.held.state().invalidateLayout(); }
-  template <class Self> void setPosition(this Self &self, float x, float y) { self.fState.setPosition(x, y); }
-  template <class Self> void setSize(this Self &self, float width, float height) { self.fState.setSize(width, height); }
-  template <class Self> void setPadding(this Self &self, scene::Margin padding) { self.fState.setPadding(padding); }
-  template <class Self> void setMargin(this Self &self, scene::Margin margin) { self.fState.setMargin(margin); }
-  template <class Self> void setScale(this Self &self, float scale) { self.fState.setScale(scale); }
-  template <class Self> void setAlpha(this Self &self, float alpha) { self.fState.setAlpha(alpha); }
-  template <class Self> void markDamaged(this Self &self) { self.fState.markDamaged(); }
-  template <class Self> void invalidateLayout(this Self &self) { self.fState.invalidateLayout(); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  void setPosition(this Self &self, float x, float y) { self.fState.setPosition(x, y); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  void setSize(this Self &self, float width, float height) { self.fState.setSize(width, height); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  void setPadding(this Self &self, scene::Margin padding) { self.fState.setPadding(padding); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  void setMargin(this Self &self, scene::Margin margin) { self.fState.setMargin(margin); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  void setScale(this Self &self, float scale) { self.fState.setScale(scale); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  void setAlpha(this Self &self, float alpha) { self.fState.setAlpha(alpha); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  void markDamaged(this Self &self) { self.fState.markDamaged(); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  void invalidateLayout(this Self &self) { self.fState.invalidateLayout(); }
   // What is asked of it as a node: Held itself is not in the tree, so the
   // node it holds answers -- as the walks see it; a wrapper answers itself.
   [[nodiscard]] const scene::State &state(this const Held &self) { return self.parts.held.ref().state(); }
-  template <class Self> [[nodiscard]] const scene::State &state(this const Self &self) { return self.fState; }
+  template <class Self>
+    requires HeldWrapper<Self>
+  [[nodiscard]] const scene::State &state(this const Self &self) { return self.fState; }
   [[nodiscard]] bool visible(this const Held &self) { return self.state().visible(); }
-  template <class Self> [[nodiscard]] bool visible(this const Self &self) { return self.fState.visible(); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  [[nodiscard]] bool visible(this const Self &self) { return self.fState.visible(); }
   [[nodiscard]] const skia::SkRect &bounds(this const Held &self) { return self.state().bounds(); }
-  template <class Self> [[nodiscard]] const skia::SkRect &bounds(this const Self &self) { return self.fState.bounds(); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  [[nodiscard]] const skia::SkRect &bounds(this const Self &self) { return self.fState.bounds(); }
   [[nodiscard]] scene::NodeId id(this const Held &self) { return self.state().id(); }
   [[nodiscard]] bool focused(this const Held &self) { return self.state().focused(); }
-  template <class Self> [[nodiscard]] bool focused(this const Self &self) { return self.fState.focused(); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  [[nodiscard]] bool focused(this const Self &self) { return self.fState.focused(); }
   [[nodiscard]] bool hovered(this const Held &self) { return self.state().hovered(); }
-  template <class Self> [[nodiscard]] bool hovered(this const Self &self) { return self.fState.hovered(); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  [[nodiscard]] bool hovered(this const Self &self) { return self.fState.hovered(); }
   [[nodiscard]] bool selected(this const Held &self) { return self.state().selected(); }
   [[nodiscard]] bool disabled(this const Held &self) { return self.state().disabled(); }
-  template <class Self> [[nodiscard]] bool disabled(this const Self &self) { return self.fState.disabled(); }
-  template <class Self> [[nodiscard]] bool selected(this const Self &self) { return self.fState.selected(); }
-  template <class Self> [[nodiscard]] scene::NodeId id(this const Self &self) { return self.fState.id(); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  [[nodiscard]] bool disabled(this const Self &self) { return self.fState.disabled(); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  [[nodiscard]] bool selected(this const Self &self) { return self.fState.selected(); }
+  template <class Self>
+    requires HeldWrapper<Self>
+  [[nodiscard]] scene::NodeId id(this const Self &self) { return self.fState.id(); }
   // A wrapper as the walks see it: shown while it says it is and its
   // content is -- content that hides itself later (a mount emptied, a part
   // shown as the model says) hides the wrapper with it.
@@ -377,14 +425,21 @@ private:
 } // namespace skiff::compose
 namespace skiff::scene {
 template <> inline constexpr bool kSeenThrough<compose::Held> = true;
+template <class N>
+  requires compose::NamedOverHeld<N>
+inline constexpr bool kSeenAsBase<N> = true;
 } // namespace skiff::scene
 export namespace skiff::compose {
 // A node's state as the walks see it: a Held's, its node's; any other node's
 // -- a wrapper over held content too -- its own. For a node's own rules over
 // its parts (a bubble placing its time), whatever each part is.
 template <class N> [[nodiscard]] scene::State &state_of(N &node) { return node.fState; }
+template <NamedOverHeld N> [[nodiscard]] scene::State &state_of(N &node) { return static_cast<Held &>(node).held().state(); }
 [[nodiscard]] inline scene::State &state_of(Held &held) { return held.held().state(); }
 template <class N> [[nodiscard]] const scene::State &state_of(const N &node) { return node.fState; }
+template <NamedOverHeld N> [[nodiscard]] const scene::State &state_of(const N &node) {
+  return const_cast<Held &>(static_cast<const Held &>(node)).held().state();
+}
 [[nodiscard]] inline const scene::State &state_of(const Held &held) { return const_cast<Held &>(held).held().state(); }
 
 // A part as a combinator keeps it. A view named where it was written
@@ -430,15 +485,17 @@ template <class N> void adopted(N &) {}
 
 // What a view named where it is written (SKIFF_NAMED) is: what its
 // expression made, Base, as a type of its own, Self -- which says its name
-// (Self::viewName(), the macro's spelling of it). Adopted as it is made,
-// over held content; and while its parts are laid out it is the view they
-// are in, for what is told of them (an overflow).
+// (Self::viewName(), the macro's spelling of it), written into the state of
+// what it names: while that is laid out it is the view its parts are in,
+// for what is told of them (an overflow).
 template <class Self, class Base> struct Named : Base {
-  explicit Named(Base made) : Base(std::move(made)) { adopted(static_cast<Base &>(*this)); }
-  void layoutChildren() {
-    const scene::ViewLaidOut here{Self::viewName()};
-    Base::layoutChildren();
-  }
+  explicit Named(Base made) : Base(std::move(made)) { state_of(static_cast<Base &>(*this)).fViewName = Self::viewName(); }
+};
+// Over held content (outside a release build): seen as the Held it is.
+template <class Self> struct Named<Self, Held> : Held {
+  using NamedOver = Held;
+  using SeenAs = Held;
+  explicit Named(Held made) : Held(std::move(made)) { this->held().state().fViewName = Self::viewName(); }
 };
 
 template <class Tag, class N> struct Marked : N {

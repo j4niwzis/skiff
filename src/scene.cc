@@ -1815,10 +1815,18 @@ inline std::vector<std::string_view> &viewsLaidOut() {
   return kept;
 }
 struct ViewLaidOut {
-  explicit ViewLaidOut(std::string_view name) { viewsLaidOut().push_back(name); }
-  ~ViewLaidOut() { viewsLaidOut().pop_back(); }
+  // Nothing noted for a node that is no view (no name).
+  explicit ViewLaidOut(const char *name) : fName(name) {
+    if (fName != nullptr)
+      viewsLaidOut().push_back(fName);
+  }
+  ~ViewLaidOut() {
+    if (fName != nullptr)
+      viewsLaidOut().pop_back();
+  }
   ViewLaidOut(const ViewLaidOut &) = delete;
   ViewLaidOut &operator=(const ViewLaidOut &) = delete;
+  const char *fName;
 };
 struct Overflow {
   std::string node;
@@ -2438,6 +2446,9 @@ public:
   // earlier in the tree) and does not move in memory while followed.
   const State *fFollow = nullptr;
   bool fMasking = false; // clip children to these bounds
+  // The view it is the top of, where it was named where it was written
+  // (SKIFF_NAMED): noted while it is laid out, for what is told of its parts.
+  const char *fViewName = nullptr;
   // Told already that it sticks out of its parent: told once, until it fits.
   bool fOverflowTold = false;
   Cursor fCursor = cursor::arrow{};
@@ -4037,6 +4048,7 @@ inline void noteMoved(State &state) {
 
 template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   State &state = node.fState;
+  const ViewLaidOut inView{state.fViewName};
   ++walkCounts().layout;
   notePass(state);
   // Placed against another node, when asked: a dropdown list belongs to the
@@ -5942,6 +5954,10 @@ template <class T> struct BindTableOf {
   static constexpr const void *value = nullptr;
 };
 
+// A node type the walks see as another, its base, outside a release build:
+// one table for every stack of parts, whatever its parts (compose's Box),
+// rather than one made for each. Said by specializing this for the type.
+template <class T> inline constexpr bool kSeenAsBase = false;
 class AnyNode {
 public:
   AnyNode() = default;
@@ -5952,6 +5968,9 @@ public:
     if constexpr (kSeenThrough<std::remove_cvref_t<T>>) {
       // What it holds, held here in its place.
       *this = std::move(node.seenThrough());
+    } else if constexpr (kSeenAsBase<std::remove_cvref_t<T>>) {
+      // Held as the base it is seen as: no table made for its own type.
+      *this = AnyNode(static_cast<typename std::remove_cvref_t<T>::SeenAs &&>(node));
     } else {
       fNode = new std::remove_cvref_t<T>(std::forward<T>(node));
       fOps = &opsOf<std::remove_cvref_t<T>>();
@@ -6292,10 +6311,6 @@ template <class T> [[nodiscard]] const AnyNode::Ops *tableOf() noexcept {
 // A node seen through the table of its walks, and not owned: what every walk
 // takes for a child it does not know the type of -- an AnyNode's, or,
 // outside a release build (kErasedWalks), any child at all.
-// A node type the walks see as another, its base, outside a release build:
-// one table for every stack of parts, whatever its parts (compose's Box),
-// rather than one made for each. Said by specializing this for the type.
-template <class T> inline constexpr bool kSeenAsBase = false;
 
 class AnyNodeRef {
 public:
