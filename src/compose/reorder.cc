@@ -176,7 +176,10 @@ struct ReorderBars : Box<Surface, std::optional<std::invoke_result_t<Make&, cons
     bool starting = false;
     auto& drag = *fDrag;
     const auto scroll = [&](float delta) {
-      lane(ReorderBar::horizontal, [&](auto& line) { line.view.scroll_by(delta); });
+      // The bar across scrolls: only it has a way along.
+      auto lanes = fLanes(LanesFound<Surface>{&surface()});
+      if (auto& across = std::get<0>(lanes))
+        across->view.scroll_by(delta);
     };
     if (drag.scrolling) {
       scroll(drag.last_x - at.x);
