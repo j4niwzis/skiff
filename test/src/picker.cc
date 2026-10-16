@@ -9,7 +9,8 @@ import skiff.compose;
 #include "gtest/gtest-macros.h"
 
 // A people picker, written with the combinators and run: a field's query
-// goes through a debounce into the list (>>), beside the Invite button (+,
+// goes through a debounce -- of what the field sends, found from it -- into
+// the list (>>), beside the Invite button (+,
 // placed apart); the dialog's selection is its own (local); what it picks
 // leaves it as an event (Up), and the page makes that an edit of the model,
 // whose reaction asks to invite (its effect type deduced).
@@ -131,7 +132,7 @@ auto inviteDialog() {
                })),
       // (Parenthesised: + binds tighter than >>, and the button is beside
       // the pipe, not fed by it.)
-      place(vbox(8), (Field{} >> debounce<QueryChanged>(250) >> PeopleList{}) +
+      place(vbox(8), (Field{} >> debounce(250) >> PeopleList{}) +
                          onClick(Done{}, Pad{})));
 }
 auto peoplePage() {

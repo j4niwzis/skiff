@@ -117,5 +117,31 @@ template <class M> struct Debounce : scene::Node {
 template <class M> Debounce<M> debounce(double quietMs) {
   return Debounce<M>(quietMs);
 }
+// The same, its message what feeds it: `a >> debounce(250)` debounces what
+// a sends, found from a (its Out), not said again.
+struct DebounceOf {
+  double fQuiet = 300.0;
+};
+inline DebounceOf debounce(double quietMs) { return {quietMs}; }
+template <class L> struct OnlyMessageOf {
+  static_assert(false, "skiff::compose: debounce(ms) after something that sends more than one kind of "
+                       "message, or none: say which, debounce<M>(ms)");
+};
+template <class M> struct OnlyMessageOf<model::Types<M>> {
+  using type = M;
+};
+// A press answered with maybe one, or several: each one of them.
+template <class M> struct OnlyMessageOf<model::Types<std::optional<M>>> {
+  using type = M;
+};
+template <class M> struct OnlyMessageOf<model::Types<std::vector<M>>> {
+  using type = M;
+};
+template <class A>
+  requires std::derived_from<A, scene::Node>
+auto operator>>(A from, DebounceOf d) {
+  using M = typename OnlyMessageOf<OutOf<A>>::type;
+  return Pipe<A, Debounce<M>>(std::move(from), Debounce<M>(d.fQuiet));
+}
 
 } // namespace skiff::compose
