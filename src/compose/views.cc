@@ -348,13 +348,22 @@ template <class Want, class Tell, class N> auto kept_scroll(Tell tell, N node) {
 
 // Each list has its own offset. setCurrent retains the requested offset
 // until the new contents are laid out, even when the old list was shorter.
-template <class Key, class N> struct RememberedScroll : Box<N> {
+// View is the view that scrolls: N itself, or a view under what binds it --
+// found as the walks see it, marked where it is wrapped (Marked).
+template <class Key, class N, class View = N> struct RememberedScroll : Box<N> {
   std::optional<Key> fKey;
   std::vector<std::pair<Key, float>> fPositions;
   explicit RememberedScroll(N node)
       : Box<N>(vbox(0.0f, {.fill = true}), std::move(node)) {}
-  N& view() { return std::get<0>(this->fParts); }
-  const N& view() const { return std::get<0>(this->fParts); }
+  View& view() {
+    View* found = nullptr;
+    scene::forEachNode<View>(std::get<0>(this->fParts), [&](View& one) {
+      if (found == nullptr)
+        found = &one;
+    });
+    return *found;
+  }
+  const View& view() const { return const_cast<RememberedScroll&>(*this).view(); }
   float current() const { return view().current(); }
   float extent() const { return view().extent(); }
   void setCurrent(float offset) { view().setCurrent(offset); this->invalidateLayout(); }
@@ -372,9 +381,10 @@ template <class Key, class N> struct RememberedScroll : Box<N> {
     this->setCurrent(saved == fPositions.end() ? 0.0f : saved->second);
   }
 };
-template <class Key, class N> auto remembered_scroll(N node) {
+template <class Key, class View = void, class N> auto remembered_scroll(N node) {
   // Concrete in every build: what reads the model for it reads it as itself.
-  return RememberedScroll<Key, N>(std::move(node));
+  using seen = std::conditional_t<std::is_void_v<View>, N, View>;
+  return RememberedScroll<Key, N, seen>(std::move(node));
 }
 
 // Search results start at their top for each new result generation. A
