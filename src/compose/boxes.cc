@@ -152,11 +152,11 @@ struct Held : Stacked {
   // again (the one below, for any type derived from it).
   void apply(this Held &self, const scene::Spec &spec) { self.fSpecTo(self.parts.held.ref().node(), spec); }
   template <class Self> void apply(this Self &self, const scene::Spec &spec) {
-    scene::State &node = self.Held::parts.held.state();
+    scene::State &node = self.parts.held.state();
     // Its own size back first, so the spec and the following start from
     // what it says, not from how it was last made to fill the wrapper.
     self.restore(node);
-    self.Held::fSpecTo(self.Held::parts.held.ref().node(), nodeSide(spec));
+    self.fSpecTo(self.parts.held.ref().node(), nodeSide(spec));
     self.fState.apply(placement(spec));
     if (spec.visible)
       self.fShown = *spec.visible;
