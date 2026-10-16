@@ -3290,6 +3290,10 @@ struct MarkOf<T> {
 // it holds is, in its place -- seen through, by its seenThrough() (an
 // AnyNode&). Said by specializing this for the type (compose's Held).
 template <class T> inline constexpr bool kSeenThrough = false;
+// A node type the walks see as another, its base, outside a release build:
+// one table for every stack of parts, whatever its parts (compose's Box),
+// rather than one made for each. Said by specializing this for the type.
+template <class T> inline constexpr bool kSeenAsBase = false;
 
 // A node type that is also a range -- it has begin() and end() -- is walked
 // as a range of children unless it says it is a node:
@@ -3493,6 +3497,13 @@ template <class T, class F> bool childAt(T &node, std::uint32_t place, F &&f) {
 template <class N> [[nodiscard]] State &stateOf(N &child) {
   return child.fState;
 }
+// One the walks see through, or see as its base (a Held, a view named over
+// one), held as itself in a part -- a variant of pieces, a Box's typed parts:
+// the state of what it holds, as its layout is; its own was never set, and a
+// flow placing it by that measured it as nothing.
+template <class N>
+  requires(kSeenThrough<N> || kSeenAsBase<N>)
+[[nodiscard]] State &stateOf(N &child);
 [[nodiscard]] State &stateOf(AnyNodeRef &child);
 
 // ---- default handling --------------------------------------------------------
@@ -4494,6 +4505,9 @@ template <class T> void drawDefault(T &node, Painting &painting, skia::SkCanvas 
 class ErasedNode;
 [[nodiscard]] inline StyleSubject styleSubject(ErasedNode &node, float viewportWidth);
 template <class N> [[nodiscard]] NodeKind typeOf(N &);
+template <class N>
+  requires(kSeenThrough<N> || kSeenAsBase<N>)
+[[nodiscard]] NodeKind typeOf(N &);
 [[nodiscard]] inline NodeKind typeOf(ErasedNode &node);
 template <class F> bool childAt(ErasedNode &node, std::uint32_t place, F &&f);
 
@@ -5957,10 +5971,6 @@ template <class T> struct BindTableOf {
   static constexpr const void *value = nullptr;
 };
 
-// A node type the walks see as another, its base, outside a release build:
-// one table for every stack of parts, whatever its parts (compose's Box),
-// rather than one made for each. Said by specializing this for the type.
-template <class T> inline constexpr bool kSeenAsBase = false;
 class AnyNode {
 public:
   AnyNode() = default;
@@ -6609,8 +6619,18 @@ template <class N> void draw(N &child, Painting &painting, skia::SkCanvas *canva
 
 // A child's own type, whether seen as itself or through an AnyNode.
 template <class N> [[nodiscard]] NodeKind typeOf(N &) { return kindOf<N>(); }
+template <class N>
+  requires(kSeenThrough<N> || kSeenAsBase<N>)
+[[nodiscard]] NodeKind typeOf(N &child) {
+  return AnyNodeRef::of(child).kind();
+}
 [[nodiscard]] inline NodeKind typeOf(AnyNodeRef &child) { return child.kind(); }
 inline State &stateOf(AnyNodeRef &child) { return child.state(); }
+template <class N>
+  requires(kSeenThrough<N> || kSeenAsBase<N>)
+State &stateOf(N &child) {
+  return AnyNodeRef::of(child).state();
+}
 
 // ---- a laid-out tree, told ---------------------------------------------
 //
@@ -6635,6 +6655,9 @@ struct LaidOutNode {
   bool overflows = false;
 };
 namespace detail {
+template <class N>
+  requires(kSeenThrough<N> || kSeenAsBase<N>)
+void laidOutRows(N &node, std::size_t depth, std::string_view view, std::vector<LaidOutNode> &rows);
 template <class N> void laidOutRows(N &node, std::size_t depth, std::string_view view, std::vector<LaidOutNode> &rows) {
   const State &state = stateOf(node);
   const bool names = state.fViewName != nullptr;
@@ -6643,6 +6666,13 @@ template <class N> void laidOutRows(N &node, std::size_t depth, std::string_view
                   .relative = state.fRelativeSizeAxes, .autoSize = state.fAutoSizeAxes, .grow = state.fGrowAxes,
                   .visible = state.visible(), .outOfFlow = state.fOutOfFlow, .overflows = state.fOverflowTold});
   eachChild(node, [&](auto &child) { laidOutRows(child, depth + 1, in, rows); });
+}
+// Held as itself in a part, seen through: one row, its content's.
+template <class N>
+  requires(kSeenThrough<N> || kSeenAsBase<N>)
+void laidOutRows(N &node, std::size_t depth, std::string_view view, std::vector<LaidOutNode> &rows) {
+  AnyNodeRef seen = AnyNodeRef::of(node);
+  laidOutRows(seen, depth, view, rows);
 }
 inline std::string_view axesText(Axes axes) {
   constexpr std::array<std::string_view, 4> kText{"-", "x", "y", "xy"};

@@ -1379,3 +1379,28 @@ TEST(Compose, AClampedSideIsAsWideAsItsColumn) {
   EXPECT_FLOAT_EQ(wide, 253.0f);
   EXPECT_FLOAT_EQ(chat, 470.0f - 253.0f);
 }
+
+// A named view held as itself in a typed part (a Box of its type, as a
+// variant of message pieces holds one): placed and measured by its content,
+// as it is laid out -- by its own state, never set, it was nothing.
+namespace typed_part {
+namespace c = skiff::compose;
+inline auto piece(float *wide) {
+  return SKIFF_NAMED(code_piece, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+                                           c::styled({.fillX = true}, MeasuredWidth(wide, {.height = 10.0f}))));
+}
+}  // namespace typed_part
+TEST(Compose, ANamedViewInATypedPartIsMeasuredByItsContent) {
+  using namespace typed_part;
+  float wide = 0;
+  using piece_t = decltype(piece(nullptr));
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+                              c::Box<piece_t>(c::vbox(4.0f, {.fillX = true, .autoSize = scene::axes::kY}), piece(&wide))));
+  (void)std::exchange(scene::overflows(), {});
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 200.0f));
+  EXPECT_FLOAT_EQ(wide, 300.0f);
+  EXPECT_TRUE(scene::overflows().empty());
+  const auto rows = scene::laidOutTree(tree.root());
+  EXPECT_EQ(std::ranges::count_if(rows, [](const scene::LaidOutNode &row) { return row.names && row.view == "code_piece"; }), 1);
+  EXPECT_TRUE(std::ranges::none_of(rows, &scene::LaidOutNode::overflows));
+}
