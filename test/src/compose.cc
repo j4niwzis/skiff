@@ -1120,3 +1120,28 @@ TEST(Compose, AClampedColumnsRowsAreAsWideAsTheClamp) {
   EXPECT_FLOAT_EQ(icon, 24.0f);
   EXPECT_FLOAT_EQ(text, 300.0f - 40.0f - 24.0f - 16.0f);
 }
+
+// A part told to grow -- shown as the model says, made to take what its
+// column leaves -- takes that, and not the whole column: outside a release
+// build its wrapper followed its filling content and the grow was dropped
+// as a second size on the same axis.
+TEST(Compose, APartToldToGrowTakesWhatIsLeft) {
+  namespace c = skiff::compose;
+  namespace scene = skiff::scene;
+  struct Tall : scene::Node {
+    float *fHeight;
+    explicit Tall(float *h) : fHeight(h) { this->apply({.fill = true}); }
+    void layoutChildren() { *fHeight = this->fState.bounds().height(); }
+  };
+  struct Showing {
+    bool on = true;
+  };
+  float height = 0.0f;
+  auto grown = c::styled({.fillX = true, .grow = scene::axes::kY},
+      c::shown_for<Showing>([](const Showing &now) { return now.on; },
+          c::column(c::vbox(0.0f, {.fill = true}), Tall(&height))));
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::column(c::vbox(0.0f, {.fillX = true, .height = 100.0f})), std::move(grown)));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 600.0f));
+  EXPECT_FLOAT_EQ(height, 500.0f);
+}
