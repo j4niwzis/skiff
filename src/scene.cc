@@ -2715,20 +2715,10 @@ public:
     }
     if (spec.grow) {
       fGrowAxes = *spec.grow;
-      // A grow said is how the node is sized along those axes from now on:
-      // what sized it there before -- its parent's share, its children --
-      // goes, unless this same spec says that too. Kept, the check below
-      // dropped the newer grow instead, and a part a combinator had made
-      // to size itself (a box as tall as its content) and was then told to
-      // take what its column leaves stayed as it was made.
-      Axes said{};
-      if (spec.relativeSize)
-        said = *spec.relativeSize;
-      if (spec.fill || spec.fillX)
-        said = said.with<axis::x>();
-      if (spec.fill || spec.fillY)
-        said = said.with<axis::y>();
-      fRelativeSizeAxes = fRelativeSizeAxes.except(spec.grow->except(said));
+      // A grow said takes the place of a size from the content on that axis
+      // (a box as tall as what it holds, made so by a combinator, told to
+      // take what its column leaves). A fill stays: a grow across the way
+      // of what holds the node means nothing, and a fill there is its size.
       if (!spec.autoSize)
         fAutoSizeAxes = fAutoSizeAxes.except(*spec.grow);
     }

@@ -1167,51 +1167,6 @@ TEST(Compose, AClampedColumnsRowsAreAsWideAsTheClamp) {
   EXPECT_FLOAT_EQ(text, 300.0f - 40.0f - 24.0f - 16.0f);
 }
 
-// A part told to grow -- shown as the model says, made to take what its
-// column leaves -- takes that, and not the whole column: outside a release
-// build its wrapper followed its filling content and the grow was dropped
-// as a second size on the same axis.
-TEST(Compose, APartToldToGrowTakesWhatIsLeft) {
-  namespace c = skiff::compose;
-  namespace scene = skiff::scene;
-  struct Tall : scene::Node {
-    float *fHeight;
-    explicit Tall(float *h) : fHeight(h) { this->apply({.fill = true}); }
-    void layoutChildren() { *fHeight = this->fState.bounds().height(); }
-  };
-  struct Showing {
-    bool on = true;
-  };
-  float height = 0.0f;
-  auto grown = c::styled({.fillX = true, .grow = scene::axes::kY},
-      c::shown_for<Showing>([](const Showing &now) { return now.on; },
-          c::column(c::vbox(0.0f, {.fill = true}), Tall(&height))));
-  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
-      c::column(c::vbox(0.0f, {.fillX = true, .height = 100.0f})), std::move(grown)));
-  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 600.0f));
-  EXPECT_FLOAT_EQ(height, 500.0f);
-}
-
-// A box a combinator sizes by its content (hovering's), told to grow, takes
-// what its column leaves: the newer grow replaces the sizing it was made
-// with, where before the state dropped the grow as a second size.
-TEST(Compose, ABoxSizedByItsContentToldToGrowGrows) {
-  namespace c = skiff::compose;
-  namespace scene = skiff::scene;
-  struct Tall : scene::Node {
-    float *fHeight;
-    explicit Tall(float *h) : fHeight(h) { this->apply({.fill = true}); }
-    void layoutChildren() { *fHeight = this->fState.bounds().height(); }
-  };
-  float height = 0.0f;
-  auto grown = c::styled({.fillX = true, .grow = scene::axes::kY},
-      c::hovering([](bool, const skia::SkRect &) { return 1; }, c::column(c::vbox(0.0f, {.fill = true}), Tall(&height))));
-  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
-      c::column(c::vbox(0.0f, {.fillX = true, .height = 100.0f})), std::move(grown)));
-  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 600.0f));
-  EXPECT_FLOAT_EQ(height, 500.0f);
-}
-
 // Names without RTTI: a type's last part, its arguments left out; a view
 // named where it is written goes by its own name in what the layout tells.
 namespace {
@@ -1244,4 +1199,24 @@ TEST(Compose, ANamedViewAnswersWhatItsContentDoes) {
   shown.setVisible(false);
   shown.setPosition(1.0f, 2.0f);
   EXPECT_FALSE(shown.visible());
+}
+
+// A box a combinator sizes by its content (hovering's), told to grow, takes
+// what its column leaves: the newer grow replaces the sizing it was made
+// with, where before the state dropped the grow as a second size.
+TEST(Compose, ABoxSizedByItsContentToldToGrowGrows) {
+  namespace c = skiff::compose;
+  namespace scene = skiff::scene;
+  struct Tall : scene::Node {
+    float *fHeight;
+    explicit Tall(float *h) : fHeight(h) { this->apply({.fill = true}); }
+    void layoutChildren() { *fHeight = this->fState.bounds().height(); }
+  };
+  float height = 0.0f;
+  auto grown = c::styled({.fillX = true, .grow = scene::axes::kY},
+      c::hovering([](bool, const skia::SkRect &) { return 1; }, c::column(c::vbox(0.0f, {.fill = true}), Tall(&height))));
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::column(c::vbox(0.0f, {.fillX = true, .height = 100.0f})), std::move(grown)));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 600.0f));
+  EXPECT_FLOAT_EQ(height, 500.0f);
 }

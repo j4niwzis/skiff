@@ -189,15 +189,10 @@ struct Held : Stacked {
     // what it says, not from how it was last made to fill the wrapper.
     self.restore(node);
     self.fSpecTo(self.parts.held.ref().node(), nodeSide(spec));
-    // A grow said now is the wrapper's way along that axis: whatever it
-    // followed of its content there before -- the parent's share, the
-    // content's own size -- goes, or the state drops the grow as asking for
-    // two sizes at once, and a part made to take what its column leaves
-    // took the whole column instead.
-    if (spec.grow) {
-      self.template yieldAxis<scene::axis::x>(*spec.grow);
-      self.template yieldAxis<scene::axis::y>(*spec.grow);
-    }
+    // A grow said takes the place of the size the wrapper followed from
+    // its content's (State::apply, for a node of its own).
+    if (spec.grow)
+      self.fState.fAutoSizeAxes = self.fState.fAutoSizeAxes.except(*spec.grow);
     self.fState.apply(placement(spec));
     if (spec.visible)
       self.fShown = *spec.visible;
@@ -384,13 +379,6 @@ private:
     this->followAxis<scene::axis::x>(node, node.fWidth, this->fState.fWidth);
     this->followAxis<scene::axis::y>(node, node.fHeight, this->fState.fHeight);
   }
-  template <class Axis> void yieldAxis(const scene::Axes &grow) {
-    if (!grow.template has<Axis>())
-      return;
-    scene::State &mine = this->fState;
-    mine.fRelativeSizeAxes = mine.fRelativeSizeAxes.template without<Axis>();
-    mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<Axis>();
-  }
   template <class Axis> void followAxis(scene::State &node, float &nodeSize, float &mySize) {
     scene::State &mine = this->fState;
     // Its own size along the axes it says it on, the content filling it.
@@ -403,19 +391,16 @@ private:
       nodeSize = 1.0f;
       return;
     }
-    // Growing first: a wrapper that grows along an axis is sized there by
-    // its flow, and its content fills it, whatever the content said.
-    if (mine.fGrowAxes.template has<Axis>() || node.fGrowAxes.template has<Axis>()) {
-      mine.fGrowAxes = mine.fGrowAxes.template with<Axis>();
-      mine.fRelativeSizeAxes = mine.fRelativeSizeAxes.template without<Axis>();
-      mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<Axis>();
-      node.fGrowAxes = node.fGrowAxes.template without<Axis>();
-      node.fRelativeSizeAxes = node.fRelativeSizeAxes.template with<Axis>();
-      nodeSize = 1.0f;
-    } else if (node.fRelativeSizeAxes.template has<Axis>()) {
+    if (node.fRelativeSizeAxes.template has<Axis>()) {
       mine.fRelativeSizeAxes = mine.fRelativeSizeAxes.template with<Axis>();
       mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<Axis>();
       mySize = nodeSize;
+      nodeSize = 1.0f;
+    } else if (mine.fGrowAxes.template has<Axis>() || node.fGrowAxes.template has<Axis>()) {
+      mine.fGrowAxes = mine.fGrowAxes.template with<Axis>();
+      mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<Axis>();
+      node.fGrowAxes = node.fGrowAxes.template without<Axis>();
+      node.fRelativeSizeAxes = node.fRelativeSizeAxes.template with<Axis>();
       nodeSize = 1.0f;
     } else {
       mine.fRelativeSizeAxes = mine.fRelativeSizeAxes.template without<Axis>();
