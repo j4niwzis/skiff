@@ -214,6 +214,14 @@ struct Held : Stacked {
   template <class Self>
     requires HeldWrapper<Self>
   void setVisible(this Self &self, bool on) { self.apply({.visible = on}); }
+  // Laid out as itself, a wrapper over held content (one made around a
+  // named view or a Held by a type of the program's -- a mark, a bound part
+  // -- that no combinator erased): adopted first, where nothing adopted it,
+  // or it is laid out by a state never set, 0 by 0, and its content sticks
+  // out of it.
+  template <class Self>
+    requires HeldWrapper<Self>
+  void measure(this Self &self, const skia::SkRect &) { self.adopt(); }
   // The rest of what a node is told by hand: Held itself passes it to its
   // node, a wrapper takes it itself -- never Held's own state, which no walk
   // sees.
@@ -478,8 +486,6 @@ template <class N> void sizedHere(N &, scene::Axes) {}
 // as the walks see it (scene::findNode): never named by where it is.
 // Over held content, made where it is needed (a mark, an alternative of
 // several kinds in one variant), a wrapper takes its content's place at once.
-inline void adopted(Held &over) { over.adopt(); }
-template <class N> void adopted(N &) {}
 // A node a combinator makes concrete in every build (a scope, a node with
 // a model of its own) over what may be held content: outside a release
 // build it is then a wrapper over that content, never erased -- adopted
@@ -525,7 +531,7 @@ template <class Tag, class N> struct Marked : N {
   // Found by this mark through whatever wraps it (scene::MarkOf).
   using MarkedAs = Marked<Tag, N>;
   Tag fTag;
-  explicit Marked(N node, Tag tag = {}) : N(std::move(node)), fTag(std::move(tag)) { adopted(static_cast<N &>(*this)); }
+  explicit Marked(N node, Tag tag = {}) : N(std::move(node)), fTag(std::move(tag)) { over_held(static_cast<N &>(*this)); }
 };
 template <class Tag, class N> auto marked(Tag tag, N node) { return erased(Marked<Tag, part_t<N>>(as_part(std::move(node)), std::move(tag))); }
 

@@ -1404,3 +1404,22 @@ TEST(Compose, ANamedViewInATypedPartIsMeasuredByItsContent) {
   EXPECT_EQ(std::ranges::count_if(rows, [](const scene::LaidOutNode &row) { return row.names && row.view == "code_piece"; }), 1);
   EXPECT_TRUE(std::ranges::none_of(rows, &scene::LaidOutNode::overflows));
 }
+
+// A mark made by the program around a named view (mux's code pieces,
+// marked to be found): a wrapper no combinator erased, adopted where it is
+// laid out -- unadopted, it was 0 by 0 and its content stuck out of it.
+namespace marked_part {
+struct code_kind {};
+}  // namespace marked_part
+TEST(Compose, AMarkMadeAroundANamedViewIsAsWideAsItsContent) {
+  using namespace typed_part;
+  float wide = 0;
+  using piece_t = decltype(piece(nullptr));
+  using marked_t = compose::Marked<marked_part::code_kind, piece_t>;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+                              c::Box<marked_t>(c::vbox(4.0f, {.fillX = true, .autoSize = scene::axes::kY}), marked_t(piece(&wide)))));
+  (void)std::exchange(scene::overflows(), {});
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 200.0f));
+  EXPECT_FLOAT_EQ(wide, 300.0f);
+  EXPECT_TRUE(scene::overflows().empty());
+}
