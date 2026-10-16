@@ -3125,6 +3125,21 @@ private:
 class AnyNode;
 class AnyNodeRef;
 struct Node;
+// A node marked -- a base of its own (MarkedAs) it is found by, wherever
+// wrappers have been laid over it by inheritance: its table says the mark
+// and how to reach it from the node, so a walk finds the mark through any
+// type that derives from it.
+template <class T> inline constexpr char kMarkKey = 0;
+template <class T> struct MarkOf {
+  static constexpr const void *key = nullptr;
+  static void *as(void *) { return nullptr; }
+};
+template <class T>
+  requires requires { typename T::MarkedAs; }
+struct MarkOf<T> {
+  static constexpr const void *key = &kMarkKey<typename T::MarkedAs>;
+  static void *as(void *node) { return static_cast<void *>(static_cast<typename T::MarkedAs *>(static_cast<T *>(node))); }
+};
 // A node type that is not itself in the tree, outside a release build: what
 // it holds is, in its place -- seen through, by its seenThrough() (an
 // AnyNode&). Said by specializing this for the type (compose's Held).
@@ -5835,7 +5850,9 @@ public:
   }
   // The node, when it is a T.
   template <class T> [[nodiscard]] T *get() noexcept {
-    return fOps == &opsOf<T>() ? static_cast<T *>(fNode) : nullptr;
+    if (fOps == &opsOf<T>())
+      return static_cast<T *>(fNode);
+    return fOps != nullptr && fOps->fMarkKey == &kMarkKey<T> ? static_cast<T *>(fOps->fAsMarked(fNode)) : nullptr;
   }
   [[nodiscard]] State &state() { return fOps->fState(fNode); }
 
@@ -5909,6 +5926,9 @@ public:
 #endif
     // What binds it (skiffBindTable), for the binding's walks at run time.
     const void *fBind;
+    // The mark it carries (MarkOf), and the way from it to its mark.
+    const void *fMarkKey;
+    void *(*fAsMarked)(void *);
   };
   [[nodiscard]] const Ops &ops() const noexcept { return *fOps; }
   [[nodiscard]] void *node() const noexcept { return fNode; }
@@ -6091,6 +6111,8 @@ private:
       },
 #endif
       BindTableOf<T>::value,
+      MarkOf<T>::key,
+      &MarkOf<T>::as,
   };
 
 
@@ -6151,8 +6173,11 @@ public:
     }
   }
   // The node, when it is a T.
+  // The node, when it is a T -- or carries the mark T through what wraps it.
   template <class T> [[nodiscard]] T *get() noexcept {
-    return fOps == tableOf<T>() ? static_cast<T *>(fNode) : nullptr;
+    if (fOps == tableOf<T>())
+      return static_cast<T *>(fNode);
+    return fOps->fMarkKey == &kMarkKey<T> ? static_cast<T *>(fOps->fAsMarked(fNode)) : nullptr;
   }
   [[nodiscard]] State &state() { return fOps->fState(fNode); }
   [[nodiscard]] bool settling() const { return fOps->fSettling(fNode); }
@@ -6194,10 +6219,18 @@ template <class T> T *findIn(AnyNodeRef &node) {
   });
   return found;
 }
-template <class T> T *findTyped(T &node) { return node.fState.fVisible ? &node : nullptr; }
-template <class T, class N> T *findTyped(N &node);
+template <class T, class N>
+  requires std::derived_from<N, T>
+T *findTyped(N &node) {
+  return node.fState.fVisible ? static_cast<T *>(&node) : nullptr;
+}
+template <class T, class N>
+  requires(!std::derived_from<N, T>)
+T *findTyped(N &node);
 template <class T> T *findTyped(AnyNodeRef &node) { return findIn<T>(node); }
-template <class T, class N> T *findTyped(N &node) {
+template <class T, class N>
+  requires(!std::derived_from<N, T>)
+T *findTyped(N &node) {
   if (!stateOf(node).fVisible)
     return nullptr;
   T *found = nullptr;
@@ -6217,9 +6250,15 @@ template <class T, class F> void eachIn(AnyNodeRef &node, F &f) {
   }
   node.forEachChild([&](AnyNodeRef &child) { eachIn<T>(child, f); });
 }
-template <class T, class F> void eachTyped(T &node, F &f) { f(node); }
+template <class T, class N, class F>
+  requires std::derived_from<N, T>
+void eachTyped(N &node, F &f) {
+  f(static_cast<T &>(node));
+}
 template <class T, class F> void eachTyped(AnyNodeRef &node, F &f) { eachIn<T>(node, f); }
-template <class T, class N, class F> void eachTyped(N &node, F &f) {
+template <class T, class N, class F>
+  requires(!std::derived_from<N, T>)
+void eachTyped(N &node, F &f) {
   eachChild(node, [&](auto &child) { eachTyped<T>(child, f); });
 }
 template <class T, class N, class F> void forEachNode(N &root, F &&f) {

@@ -342,6 +342,8 @@ template <class N> [[nodiscard]] scene::State &state_of(N &node) { return node.f
 inline void adopted(Held &over) { over.adopt(); }
 template <class N> void adopted(N &) {}
 template <class Tag, class N> struct Marked : N {
+  // Found by this mark through whatever wraps it (scene::MarkOf).
+  using MarkedAs = Marked<Tag, N>;
   Tag fTag;
   explicit Marked(N node, Tag tag = {}) : N(std::move(node)), fTag(std::move(tag)) { adopted(static_cast<N &>(*this)); }
 };
