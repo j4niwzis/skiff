@@ -1315,5 +1315,12 @@ TEST(Compose, AStylesTextFieldsAreAsWideAsTheirColumn) {
     return row.names && row.view == "style_text_field" && row.bounds.width() == 560.0f;
   }), 2);
   EXPECT_TRUE(std::ranges::none_of(rows, &scene::LaidOutNode::overflows));
+  // Each field's view holds the field, its label empty or not: as tall as
+  // the label, the gap and the field.
+  const auto view = std::ranges::find_if(rows, [](const scene::LaidOutNode &row) { return row.names && row.view == "style_text_field"; });
+  ASSERT_NE(view, rows.end());
+  const auto field = std::ranges::find_if(view, rows.end(), [](const scene::LaidOutNode &row) { return row.kind.name == "Bound"; });
+  ASSERT_NE(field, rows.end());
+  EXPECT_LE(field->bounds.fBottom, view->bounds.fBottom);
   EXPECT_TRUE(scene::laidOutText(tree.root()).contains("[style_controls]"));
 }

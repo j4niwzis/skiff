@@ -3994,7 +3994,7 @@ template <class T> [[nodiscard]] skia::SkRect childBounds(T &node) {
 // node as wide: a quote filling its bubble made every bubble with one the
 // widest there is.
 template <class Axis, class T> [[nodiscard]] skia::SkRect flowBounds(T &node) {
-  skia::SkRect content = skia::SkRect::MakeEmpty();
+  std::optional<skia::SkRect> content;
   eachChild(node, [&](auto &child) {
     const State &state = stateOf(child);
     // With its margin: the room a flow gives a child is its box and its
@@ -4003,11 +4003,18 @@ template <class Axis, class T> [[nodiscard]] skia::SkRect flowBounds(T &node) {
     // followed it was put over its end.
     if (state.fVisible && !state.fOutOfFlow && !state.fRelativeSizeAxes.template has<Axis>()) {
       const Margin &m = state.fMargin;
-      content = joined(content, skia::SkRect::MakeLTRB(state.fBounds.fLeft - m.fLeft, state.fBounds.fTop - m.fTop,
-                                                       state.fBounds.fRight + m.fRight, state.fBounds.fBottom + m.fBottom));
+      const auto box = skia::SkRect::MakeLTRB(state.fBounds.fLeft - m.fLeft, state.fBounds.fTop - m.fTop,
+                                              state.fBounds.fRight + m.fRight, state.fBounds.fBottom + m.fBottom);
+      // An empty child counted where it is, as a point: it takes its place
+      // in the flow, and a gap after it. Skipped as empty, a column whose
+      // label had no text yet measured from the field below it, and came
+      // out short by the gap between them -- the field past its end.
+      content = content ? skia::SkRect::MakeLTRB(std::min(content->fLeft, box.fLeft), std::min(content->fTop, box.fTop),
+                                                 std::max(content->fRight, box.fRight), std::max(content->fBottom, box.fBottom))
+                        : box;
     }
   });
-  return content;
+  return content.value_or(skia::SkRect::MakeEmpty());
 }
 
 template <class N> void layout(N &child, const skia::SkRect &parentBox);
