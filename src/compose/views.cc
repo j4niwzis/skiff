@@ -327,6 +327,13 @@ template <class Tell, class N> struct KeptScroll : N {
     fTold = at;
     this->setCurrent(at);
   }
+  // What the view itself reads -- a page view's facts, told it by what
+  // holds it -- kept: not hidden by the offset's read.
+  template <class T>
+    requires(!std::same_as<T, float> && requires(N &view, const T &value) { view.read(value); })
+  void read(const T &value) {
+    N::read(value);
+  }
   [[nodiscard]] bool wantsTick() const {
     if constexpr (requires(const N &view) { view.wantsTick(); })
       return N::wantsTick() || this->current() != fTold;
@@ -343,7 +350,9 @@ template <class Tell, class N> struct KeptScroll : N {
   Answer onPress() { return std::invoke(fTell, fTold); }
 };
 template <class Want, class Tell, class N> auto kept_scroll(Tell tell, N node) {
-  return bound<Want>(KeptScroll<Tell, N>(std::move(tell), std::move(node)));
+  // Concrete in every build: what holds the view tells it what it shows
+  // (a dialog its page view's facts), and reads it as itself.
+  return bind::Bound<Want, KeptScroll<Tell, N>>(KeptScroll<Tell, N>(std::move(tell), std::move(node)));
 }
 
 // Each list has its own offset. setCurrent retains the requested offset

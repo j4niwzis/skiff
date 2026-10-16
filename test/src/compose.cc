@@ -1023,3 +1023,43 @@ TEST(Compose, ANodeReadingTwoModelsItselfIsRefreshedByEach) {
   EXPECT_EQ(node.fByModel, 1);
   EXPECT_EQ(node.fByRoot, 1);
 }
+
+// A page view kept scrolled where the model says -- a settings box -- is
+// still told its facts by what holds it (a dialog), in every build: the
+// offset's read does not hide the view's.
+namespace {
+struct KeptPage : skiff::scene::Node {};
+struct KeptScrolled {
+  float at = 0.0f;
+};
+struct KeptRoot {
+  skiff::model::Tracked<KeptScrolled> scrolled;
+};
+struct KeptSaidAt {
+  int operator()(float) const { return 1; }
+};
+auto keptPages(int *shown) {
+  using page_t = std::variant<KeptPage>;
+  auto show = [shown](page_t &, const int &facts) { *shown = facts; };
+  auto same = [](const int &a, const int &b) { return a == b; };
+  auto side = [](const int &) { return 1.0f; };
+  auto pin = [](const int &) { return std::optional<skiff::scene::Spec>(); };
+  return skiff::compose::kept_scroll<skiff::model::Field<&KeptScrolled::at>>(KeptSaidAt{},
+      skiff::compose::page_view<int, page_t>(show, same, side, pin, page_t(std::in_place_index<0>), {.fill = true}));
+}
+} // namespace
+
+TEST(Compose, APageViewKeptScrolledIsStillToldItsFacts) {
+  int shown = -1;
+  auto view = keptPages(&shown);
+  static_assert(requires { view.read(3); }, "told its facts, as a dialog tells them");
+  view.read(3);
+  EXPECT_EQ(shown, 3);
+  view.read(7);
+  EXPECT_EQ(shown, 7);
+  using M = skiff::model::Model<KeptRoot, skiff::bind::NoReactions>;
+  M m{KeptRoot{}};
+  skiff::bind::Binding<M> binding;
+  binding.refresh(view, m);
+  EXPECT_EQ(shown, 7) << "its offset read tells it no facts";
+}
