@@ -1145,3 +1145,23 @@ TEST(Compose, APartToldToGrowTakesWhatIsLeft) {
   tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 600.0f));
   EXPECT_FLOAT_EQ(height, 500.0f);
 }
+
+// A box a combinator sizes by its content (hovering's), told to grow, takes
+// what its column leaves: the newer grow replaces the sizing it was made
+// with, where before the state dropped the grow as a second size.
+TEST(Compose, ABoxSizedByItsContentToldToGrowGrows) {
+  namespace c = skiff::compose;
+  namespace scene = skiff::scene;
+  struct Tall : scene::Node {
+    float *fHeight;
+    explicit Tall(float *h) : fHeight(h) { this->apply({.fill = true}); }
+    void layoutChildren() { *fHeight = this->fState.bounds().height(); }
+  };
+  float height = 0.0f;
+  auto grown = c::styled({.fillX = true, .grow = scene::axes::kY},
+      c::hovering([](bool, const skia::SkRect &) { return 1; }, c::column(c::vbox(0.0f, {.fill = true}), Tall(&height))));
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::column(c::vbox(0.0f, {.fillX = true, .height = 100.0f})), std::move(grown)));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 600.0f));
+  EXPECT_FLOAT_EQ(height, 500.0f);
+}

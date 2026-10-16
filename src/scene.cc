@@ -192,6 +192,10 @@ public:
     return (fBits & other.fBits) != 0;
   }
   [[nodiscard]] constexpr bool none() const noexcept { return fBits == 0; }
+  // These flags, but those of `other`.
+  [[nodiscard]] constexpr Flags except(Flags other) const noexcept {
+    return Flags(static_cast<Bits>(fBits & ~other.fBits));
+  }
   friend constexpr bool operator==(Flags, Flags) noexcept = default;
 
 private:
@@ -2577,6 +2581,22 @@ public:
     }
     if (spec.grow) {
       fGrowAxes = *spec.grow;
+      // A grow said is how the node is sized along those axes from now on:
+      // what sized it there before -- its parent's share, its children --
+      // goes, unless this same spec says that too. Kept, the check below
+      // dropped the newer grow instead, and a part a combinator had made
+      // to size itself (a box as tall as its content) and was then told to
+      // take what its column leaves stayed as it was made.
+      Axes said{};
+      if (spec.relativeSize)
+        said = *spec.relativeSize;
+      if (spec.fill || spec.fillX)
+        said = said.with<axis::x>();
+      if (spec.fill || spec.fillY)
+        said = said.with<axis::y>();
+      fRelativeSizeAxes = fRelativeSizeAxes.except(spec.grow->except(said));
+      if (!spec.autoSize)
+        fAutoSizeAxes = fAutoSizeAxes.except(*spec.grow);
     }
     if (spec.minWidth) {
       fMinWidth = *spec.minWidth;

@@ -145,6 +145,18 @@ struct Held : Stacked {
   }
   [[nodiscard]] scene::AnyNode &held() noexcept { return parts.held; }
   [[nodiscard]] scene::AnyNode &seenThrough() noexcept { return parts.held; }
+  // Along these axes the wrapper says its own size -- a width clamped to
+  // what is wanted, a picture fitted -- and its content fills it there,
+  // whatever the content would have been: followed again now, and kept
+  // through every spec given it later.
+  void ownAxes(scene::Axes axes) {
+    adopt();
+    fOwnAxes = axes;
+    scene::State &node = parts.held.state();
+    restore(node);
+    followSize(node);
+    invalidateLayout();
+  }
 
   // A spec: held, all of it to the node held, as that node takes one
   // (this overload, Held itself); a wrapper over held content, split --
@@ -279,6 +291,8 @@ private:
   bool fShown = true;
   // Its content's placement folded in already.
   bool fAdopted = false;
+  // The axes it sizes itself along (ownAxes).
+  scene::Axes fOwnAxes{};
   [[nodiscard]] static scene::Spec placement(const scene::Spec &spec) {
     return {.place = spec.place, .anchor = spec.anchor, .origin = spec.origin, .x = spec.x, .y = spec.y,
             .grow = spec.grow, .shrink = spec.shrink, .minWidth = spec.minWidth, .maxWidth = spec.maxWidth,
@@ -330,6 +344,16 @@ private:
   }
   template <class Axis> void followAxis(scene::State &node, float &nodeSize, float &mySize) {
     scene::State &mine = this->fState;
+    // Its own size along the axes it says it on, the content filling it.
+    if (fOwnAxes.template has<Axis>()) {
+      mine.fRelativeSizeAxes = mine.fRelativeSizeAxes.template without<Axis>();
+      mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<Axis>();
+      node.fGrowAxes = node.fGrowAxes.template without<Axis>();
+      node.fAutoSizeAxes = node.fAutoSizeAxes.template without<Axis>();
+      node.fRelativeSizeAxes = node.fRelativeSizeAxes.template with<Axis>();
+      nodeSize = 1.0f;
+      return;
+    }
     // Growing first: a wrapper that grows along an axis is sized there by
     // its flow, and its content fills it, whatever the content said.
     if (mine.fGrowAxes.template has<Axis>() || node.fGrowAxes.template has<Axis>()) {
@@ -362,6 +386,12 @@ template <class N> [[nodiscard]] scene::State &state_of(N &node) { return node.f
 [[nodiscard]] inline scene::State &state_of(Held &held) { return held.held().state(); }
 template <class N> [[nodiscard]] const scene::State &state_of(const N &node) { return node.fState; }
 [[nodiscard]] inline const scene::State &state_of(const Held &held) { return const_cast<Held &>(held).held().state(); }
+
+// A wrapper that says its own size along some axes (in its measure):
+// over held content, the holder's -- which then fills it there; any other
+// node says it in its own state already.
+inline void sizedHere(Held &over, scene::Axes axes) { over.ownAxes(axes); }
+template <class N> void sizedHere(N &, scene::Axes) {}
 
 // A node marked where it is made -- Tag says what it is, and what it
 // carries (a link's address) -- for what holds it to find it by its mark,
@@ -491,7 +521,8 @@ template <class N> auto keep_ticking(bool on, N node) {
 template <class N>
   requires std::derived_from<N, scene::Node>
 N recorded(N node, bool on = true) {
-  node.fState.setRecorded(on);
+  // On the node as the walks see it: a Held's, its node's.
+  state_of(node).setRecorded(on);
   return node;
 }
 
@@ -499,7 +530,8 @@ N recorded(N node, bool on = true) {
 template <class N>
   requires std::derived_from<N, scene::Node>
 N with_cursor(scene::Cursor shape, N node) {
-  node.fState.setCursor(shape);
+  // On the node as the walks see it: a Held's, its node's.
+  state_of(node).setCursor(shape);
   return node;
 }
 
@@ -1358,7 +1390,9 @@ struct Fit {
 template <class Ratio, class N> struct Fitted : N {
   Fit fFit;
   Ratio fRatio;
-  Fitted(Fit fit, Ratio ratio, N node) : N(std::move(node)), fFit(fit), fRatio(std::move(ratio)) {}
+  Fitted(Fit fit, Ratio ratio, N node) : N(std::move(node)), fFit(fit), fRatio(std::move(ratio)) {
+    sizedHere(static_cast<N &>(*this), scene::axes::kBoth);
+  }
   void measure(const skia::SkRect &parent) {
     if (fFit.cell) {
       this->fState.fWidth = fFit.cell->first;

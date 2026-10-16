@@ -427,12 +427,7 @@ struct WidthLimit {
 // so that what it holds keeps filling it. Taken off the content instead, as
 // it was, the content of a held column lost its fill and was laid out 0
 // wide: the side column's rows with no text, its space bar gone.
-inline void ownWidth(Held &over) {
-  over.adopt();
-  scene::State &mine = over.fState;
-  mine.fRelativeSizeAxes = mine.fRelativeSizeAxes.template without<scene::axis::x>();
-  mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<scene::axis::x>();
-}
+inline void ownWidth(Held &over) { over.ownAxes(scene::axes::kX); }
 template <class N> void ownWidth(N &node) {
   node.apply({.relativeSize = node.fState.fRelativeSizeAxes.template without<scene::axis::x>()});
 }
