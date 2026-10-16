@@ -903,8 +903,10 @@ template <class N> struct FocusedBy : N {
   std::uint64_t fSeen = 0;
   explicit FocusedBy(N node) : N(std::move(node)) {}
   void read(std::uint64_t asked) {
+    // The node that takes the keys: over held content, what it holds -- the
+    // field itself -- not this wrapper.
     if (asked != 0 && asked != fSeen)
-      scene::work::focusWanted() = this->fState.fId;
+      scene::work::focusWanted() = state_of(static_cast<N &>(*this)).fId;
     fSeen = asked;
   }
 };
