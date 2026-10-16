@@ -333,6 +333,8 @@ export namespace skiff::compose {
 // its parts (a bubble placing its time), whatever each part is.
 template <class N> [[nodiscard]] scene::State &state_of(N &node) { return node.fState; }
 [[nodiscard]] inline scene::State &state_of(Held &held) { return held.held().state(); }
+template <class N> [[nodiscard]] const scene::State &state_of(const N &node) { return node.fState; }
+[[nodiscard]] inline const scene::State &state_of(const Held &held) { return const_cast<Held &>(held).held().state(); }
 
 // A node marked where it is made -- Tag says what it is, and what it
 // carries (a link's address) -- for what holds it to find it by its mark,
