@@ -1347,3 +1347,35 @@ TEST(Compose, AViewNamedOverANamedViewIsTheSameHeld) {
   const auto rows = scene::laidOutTree(tree.root());
   EXPECT_TRUE(std::ranges::any_of(rows, [](const scene::LaidOutNode &row) { return row.names && row.view == "accounts_view"; }));
 }
+
+// A clamped width in a column as wide as it, beside a growing part (mux's
+// chats screen: the side, then the chat): as wide as the column it made --
+// laid out a second time in that column's own width, it clamped itself to a
+// share of it and came out narrower.
+namespace side_tests {
+namespace c = skiff::compose;
+struct SideUp {
+  bool up = true;
+};
+struct ShownRoot {
+  skiff::model::Tracked<SideUp> shown;
+};
+inline auto side(float *wide) {
+  return SKIFF_NAMED(side_column, c::projected<SideUp>([](const SideUp &) { return c::WidthLimit{.wanted = 253.0f}; },
+      c::clamped_width({}, c::column(c::vbox(0.0f, {.fill = true}), c::styled({.fillX = true}, MeasuredWidth(wide, {.height = 20.0f}))))));
+}
+}  // namespace side_tests
+TEST(Compose, AClampedSideIsAsWideAsItsColumn) {
+  using namespace side_tests;
+  float wide = 0, chat = 0;
+  scene::Scene tree(c::row(c::hbox(0.0f, {.fill = true}),
+      c::shown_for<SideUp>([](const SideUp &now) { return now.up; }, c::column(c::vbox(0.0f, {.fillY = true, .autoSize = scene::axes::kX}), side(&wide))),
+      c::shown_for<SideUp>([](const SideUp &now) { return now.up; },
+          c::column(c::vbox(0.0f, {.fillY = true, .grow = scene::axes::kX}), c::styled({.fillX = true}, MeasuredWidth(&chat, {.height = 20.0f}))))));
+  model::Model<ShownRoot, bind::NoReactions> m;
+  bind::Binding<decltype(m)> binding;
+  binding.refresh(tree.root(), m);
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 470.0f, 285.0f));
+  EXPECT_FLOAT_EQ(wide, 253.0f);
+  EXPECT_FLOAT_EQ(chat, 470.0f - 253.0f);
+}

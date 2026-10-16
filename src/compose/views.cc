@@ -441,13 +441,24 @@ template <class N> struct ClampedWidth : N {
   void read(const WidthLimit& limit) {
     if (limit == fLimit) return;
     fLimit = limit;
+    // Measured again from the box it is given next, not the room it had.
+    fPass = 0;
     this->invalidateLayout();
   }
+  // Clamped to the room it has: the widest box a layout pass gives it. A
+  // column as wide as it lays it out twice -- in the room, then in its own
+  // width -- and clamped to that second box, a share of its own width, it
+  // came out narrower than the column it had made: the side 240 wide in a
+  // column of 253, its colour stopping short of the edge beside it.
   void measure(const skia::SkRect& parent) {
-    this->fState.fWidth = fLimit.whole ? parent.width()
-        : std::clamp(fLimit.wanted, std::min(fLimit.least, parent.width()),
-                     std::max(fLimit.least, parent.width() * fLimit.share));
+    const std::uint64_t pass = scene::work::layoutPass();
+    fRoom = fPass == pass ? std::max(fRoom, parent.width()) : parent.width();
+    fPass = pass;
+    this->fState.fWidth = fLimit.whole ? fRoom
+        : std::clamp(fLimit.wanted, std::min(fLimit.least, fRoom), std::max(fLimit.least, fRoom * fLimit.share));
   }
+  std::uint64_t fPass = 0;
+  float fRoom = 0.0f;
 };
 template <class N> auto clamped_width(WidthLimit limit, N node) {
   // Concrete in every build: what reads the model for it reads it as itself.
