@@ -197,6 +197,8 @@ struct Held : Stacked {
   [[nodiscard]] bool hovered(this const Held &self) { return self.state().hovered(); }
   template <class Self> [[nodiscard]] bool hovered(this const Self &self) { return self.fState.hovered(); }
   [[nodiscard]] bool selected(this const Held &self) { return self.state().selected(); }
+  [[nodiscard]] bool disabled(this const Held &self) { return self.state().disabled(); }
+  template <class Self> [[nodiscard]] bool disabled(this const Self &self) { return self.fState.disabled(); }
   template <class Self> [[nodiscard]] bool selected(this const Self &self) { return self.fState.selected(); }
   template <class Self> [[nodiscard]] scene::NodeId id(this const Self &self) { return self.fState.id(); }
   // A wrapper as the walks see it: shown while it says it is and its
