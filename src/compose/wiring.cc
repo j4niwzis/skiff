@@ -858,7 +858,8 @@ template <class Policy, class N> struct Arranged : N {
   void update(double) { Policy::settle(static_cast<N &>(*this), fRules); }
 };
 template <class Policy, class N> auto arranged(typename Policy::State rules, N node) {
-  return erased(Arranged<Policy, N>(std::move(rules), std::move(node)));
+  // Concrete in every build: what reads the model for it reads it as itself.
+  return Arranged<Policy, N>(std::move(rules), std::move(node));
 }
 
 // A press at a place in a node, asked of it there -- a quote in a text,
@@ -1398,7 +1399,8 @@ template <class List, class Corner, class Tell> struct WithWayDown : Box<List, C
   }
 };
 template <class List, class Corner, class Tell> auto with_way_down(Look look, List list, Corner corner, Tell tell) {
-  return erased(WithWayDown<List, Corner, Tell>(std::move(look), std::move(list), std::move(corner), std::move(tell)));
+  // Concrete in every build: what reads the model for it reads it as itself.
+  return WithWayDown<List, Corner, Tell>(std::move(look), std::move(list), std::move(corner), std::move(tell));
 }
 
 // A row longer than its room, moved sideways -- by a finger or a mouse

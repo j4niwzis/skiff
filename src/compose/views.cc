@@ -42,7 +42,8 @@ template <class M, class Told, class Compute, class N> struct WithModel : N {
   }
 };
 template <class M, class Told, class Compute, class N> auto with_model(Compute compute, N node) {
-  return erased(WithModel<M, Told, Compute, N>(std::move(compute), std::move(node)));
+  // Concrete in every build: what reads the model for it reads it as itself.
+  return WithModel<M, Told, Compute, N>(std::move(compute), std::move(node));
 }
 
 // The plate around a focusable field follows that field's focus. The
@@ -164,7 +165,8 @@ template <class Item, class Height, class N> struct VirtualRows : N {
 };
 template <class Item, class Height, class N>
 auto virtual_rows(Height height, N node, VirtualRowsOptions options = {}) {
-  return erased(VirtualRows<Item, Height, N>(std::move(height), options, std::move(node)));
+  // Concrete in every build: what reads the model for it reads it as itself.
+  return VirtualRows<Item, Height, N>(std::move(height), options, std::move(node));
 }
 
 // One pane at a time, as a phone shows them: which is up, and whether the
@@ -371,7 +373,8 @@ template <class Key, class N> struct RememberedScroll : Box<N> {
   }
 };
 template <class Key, class N> auto remembered_scroll(N node) {
-  return erased(RememberedScroll<Key, N>(std::move(node)));
+  // Concrete in every build: what reads the model for it reads it as itself.
+  return RememberedScroll<Key, N>(std::move(node));
 }
 
 // Search results start at their top for each new result generation. A
@@ -386,7 +389,8 @@ template <class Key, class N> struct RestartedScroll : N {
   }
 };
 template <class Key, class N> auto restarted_scroll(N node) {
-  return erased(RestartedScroll<Key, N>(std::move(node)));
+  // Concrete in every build: what reads the model for it reads it as itself.
+  return RestartedScroll<Key, N>(std::move(node));
 }
 
 // A column can fill a narrow window or retain its requested width within
@@ -416,6 +420,7 @@ template <class N> struct ClampedWidth : N {
   }
 };
 template <class N> auto clamped_width(WidthLimit limit, N node) {
-  return erased(ClampedWidth<N>(limit, std::move(node)));
+  // Concrete in every build: what reads the model for it reads it as itself.
+  return ClampedWidth<N>(limit, std::move(node));
 }
 } // namespace skiff::compose

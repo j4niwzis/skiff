@@ -192,6 +192,12 @@ struct Held : Stacked {
   [[nodiscard]] const skia::SkRect &bounds(this const Held &self) { return self.state().bounds(); }
   template <class Self> [[nodiscard]] const skia::SkRect &bounds(this const Self &self) { return self.fState.bounds(); }
   [[nodiscard]] scene::NodeId id(this const Held &self) { return self.state().id(); }
+  [[nodiscard]] bool focused(this const Held &self) { return self.state().focused(); }
+  template <class Self> [[nodiscard]] bool focused(this const Self &self) { return self.fState.focused(); }
+  [[nodiscard]] bool hovered(this const Held &self) { return self.state().hovered(); }
+  template <class Self> [[nodiscard]] bool hovered(this const Self &self) { return self.fState.hovered(); }
+  [[nodiscard]] bool selected(this const Held &self) { return self.state().selected(); }
+  template <class Self> [[nodiscard]] bool selected(this const Self &self) { return self.fState.selected(); }
   template <class Self> [[nodiscard]] scene::NodeId id(this const Self &self) { return self.fState.id(); }
   // A wrapper as the walks see it: shown while it says it is and its
   // content is -- content that hides itself later (a mount emptied, a part
@@ -420,7 +426,8 @@ template <class Make, class N> struct Listed : Many<N> {
   }
 };
 template <class Element, class Make> auto listed(Look look, Make make) {
-  return erased(Listed<Make, std::invoke_result_t<Make &, const Element &>>(std::move(look), std::move(make)));
+  // Concrete in every build: what reads its elements for it reads it as itself.
+  return Listed<Make, std::invoke_result_t<Make &, const Element &>>(std::move(look), std::move(make));
 }
 
 // A node shown, or there but hidden.
@@ -568,13 +575,15 @@ template <class Content, class Facts, class Make> struct Mounted : Specced {
   const Content *shown() const { return fContent ? &*fContent : nullptr; }
 };
 template <class Content, class Facts, class Make>
-auto mount(Make make, scene::Spec spec = {},
+Mounted<Content, Facts, Make> mount(Make make, scene::Spec spec = {},
                                     bool floats = false) {
-  return erased_made<Mounted<Content, Facts, Make>>(std::move(make), std::move(spec), floats);
+  // Concrete in every build: what reads the model for it (bound, derived,
+  // projected) reads it as itself.
+  return Mounted<Content, Facts, Make>(std::move(make), std::move(spec), floats);
 }
 template <class Content, class Facts, class Make>
-auto mount_now(Make make, const Facts &first, scene::Spec spec = {}) {
-  return erased_made<Mounted<Content, Facts, Make>>(std::move(make), first, std::move(spec));
+Mounted<Content, Facts, Make> mount_now(Make make, const Facts &first, scene::Spec spec = {}) {
+  return Mounted<Content, Facts, Make>(std::move(make), first, std::move(spec));
 }
 
 // ---- the model's kinds, around a node ------------------------------------
@@ -1253,8 +1262,9 @@ struct OnlyBrings {
 };
 template <class Element, class MakeTab, class MakePart, class MakeStrip, class OnTab = OnlyBrings>
 auto sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip &makeStrip, OnTab onTab = {}) {
-  return erased(Sections<Element, MakeTab, MakePart, MakeStrip, OnTab>(std::move(look), std::move(parts), std::move(makeTab),
-                                                                std::move(makePart), makeStrip, std::move(onTab)));
+  // Concrete in every build: what reads the model for it reads it as itself.
+  return Sections<Element, MakeTab, MakePart, MakeStrip, OnTab>(std::move(look), std::move(parts), std::move(makeTab),
+                                                                std::move(makePart), makeStrip, std::move(onTab));
 }
 
 // A picture sized as a chat sizes one: its own size, or its picture's own
