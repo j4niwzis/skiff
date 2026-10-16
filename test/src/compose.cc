@@ -1612,3 +1612,35 @@ TEST(Compose, RowsComingInMovingAreSeenOnceStill) {
   std::print("{}", scene::laidOutText(tree.root()));
   EXPECT_TRUE(std::ranges::none_of(rows, [](const scene::LaidOutNode &row) { return row.alpha < 1.0f; }));
 }
+
+
+// A row that comes in moving, made after the frame's tick (as the bindings
+// read a model that changed): the frame that lays it out asks for another,
+// so that its coming plays rather than waiting for something else to wake
+// the window.
+TEST(Compose, AFrameAfterARowIsMadeAsksForAnother) {
+  using namespace window_arrive;
+  ArrivingWindow window(MakeArriving{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, ArrivingWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 3}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  Heard heard;
+  bool wants = true;
+  for (double at = 0.0; at < 2000.0 && wants; at += 16.0) {
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    // What it answered, delivered as a program does after each frame.
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    wants = tree.finishFrame().fWantsAnotherFrame;
+  }
+  ASSERT_FALSE(wants) << "settled";
+  // A message comes: read after the tick, as an event's change is.
+  (void)m.apply(model::edit(model::placeOf<Feed, FeedRoot>(), model::setTo(Feed{.count = 4})));
+  tree.update(2100.0);
+  binding.refresh(tree.root(), m);
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+  EXPECT_TRUE(tree.finishFrame().fWantsAnotherFrame);
+}

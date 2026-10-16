@@ -6973,8 +6973,14 @@ public:
       }
     }
     // Another frame where anything the tick came to still moves, or the
-    // walk down the ticking set finds one.
-    return {std::move(moves), damage, fTickAnimating || walk::animating(this->walked()), walk::wakeAt(this->walked()),
+    // walk down the ticking set finds one -- or where nodes were made since
+    // the last tick: the next goes everywhere and finds them. Made after it
+    // (a message come, its row made as the bindings read the model), one
+    // that comes in moving was in no ticking set yet, the frame said it was
+    // done, and it stayed where it began -- unseen -- until something else
+    // woke the window.
+    const bool born = work::bornGeneration() != fTickedBorn;
+    return {std::move(moves), damage, born || fTickAnimating || walk::animating(this->walked()), walk::wakeAt(this->walked()),
             fewRects(std::move(pieces))};
   }
   [[nodiscard]] bool hasFrameWork() {
@@ -7359,8 +7365,10 @@ private:
   // its current frame goes by.
   std::uint64_t fWalkedGeneration = 0;
   std::uint64_t fWalkGeneration = 0;
-  // The births this scene's tick last went everywhere for.
-  std::uint64_t fTickedBorn = 0;
+  // The births this scene's tick last went everywhere for: at first, those
+  // made with it (its root, made just before), which its first frame lays
+  // out -- not births a frame has to ask another for.
+  std::uint64_t fTickedBorn = work::bornGeneration();
   NodeId fCapture = 0;
   // Whether the last tick came to something still moving.
   bool fTickAnimating = false;
