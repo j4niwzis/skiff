@@ -43,7 +43,9 @@ template <class M, class Told, class Compute, class N> struct WithModel : N {
 };
 template <class M, class Told, class Compute, class N> auto with_model(Compute compute, N node) {
   // Concrete in every build: what reads the model for it reads it as itself.
-  return WithModel<M, Told, Compute, N>(std::move(compute), std::move(node));
+  WithModel<M, Told, Compute, N> made(std::move(compute), std::move(node));
+  over_held(made);
+  return made;
 }
 
 // The plate around a focusable field follows that field's focus. The
@@ -166,7 +168,9 @@ template <class Item, class Height, class N> struct VirtualRows : N {
 template <class Item, class Height, class N>
 auto virtual_rows(Height height, N node, VirtualRowsOptions options = {}) {
   // Concrete in every build: what reads the model for it reads it as itself.
-  return VirtualRows<Item, Height, N>(std::move(height), options, std::move(node));
+  VirtualRows<Item, Height, N> made(std::move(height), options, std::move(node));
+  over_held(made);
+  return made;
 }
 
 // One pane at a time, as a phone shows them: which is up, and whether the

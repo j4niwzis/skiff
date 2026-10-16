@@ -1220,3 +1220,92 @@ TEST(Compose, ABoxSizedByItsContentToldToGrowGrows) {
   tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 600.0f));
   EXPECT_FLOAT_EQ(height, 500.0f);
 }
+
+// A plain node pressed in a bound one -- a theme card, setting the theme
+// its card binds -- changes the bound part: in a build that erases the
+// bound node's content (the pressed node is then not the bound one) as in
+// one that does not.
+namespace theme_tests {
+struct Look {
+  int theme = 0;
+};
+struct Root {
+  skiff::model::Tracked<Look> look;
+};
+using field = skiff::model::Field<&Look::theme>;
+inline auto card(int theme) {
+  namespace c = skiff::compose;
+  return SKIFF_NAMED(theme_card, c::bound<field>(c::onClick(skiff::bind::own(skiff::model::setTo(theme)),
+                                                           c::column(c::vbox(0.0f, {.width = 10.0f, .height = 10.0f})))));
+}
+}  // namespace theme_tests
+TEST(Compose, APlainPressInABoundNamedViewChangesTheBoundPart) {
+  namespace c = skiff::compose;
+  // The second card, at whatever depth the build holds its press: the
+  // scope is its row where nothing is erased, holds it where it is.
+  const std::array paths{scene::Path{1}, scene::Path{1, 0}, scene::Path{0, 1}, scene::Path{0, 1, 0}, scene::Path{0, 1, 0, 0}};
+  const auto themes = paths | std::views::transform([](const scene::Path &path) {
+    model::Model<theme_tests::Root, bind::NoReactions> m;
+    auto page = c::scoped<theme_tests::Look>(c::handlers(), c::row(c::hbox(0.0f, {.width = 40.0f, .height = 10.0f}),
+                                                                   theme_tests::card(1), theme_tests::card(2)));
+    bind::refresh(page, m);
+    (void)bind::press(page, m, path);
+    return m.root().look.fValue.theme;
+  }) | std::ranges::to<std::vector>();
+  EXPECT_EQ(std::ranges::count(themes, 2), 1);
+  EXPECT_EQ(std::ranges::count(themes, 1), 0);
+}
+
+// mux's appearance page: a style's text fields, in a padded column of a
+// scope in a scope, each a named column of a label and a bound field.
+namespace style_tests {
+namespace c = skiff::compose;
+struct Style {
+  std::string font;
+  std::string code;
+};
+struct Look {
+  Style style;
+  int theme = 0;
+};
+struct Root {
+  skiff::model::Tracked<Look> look;
+};
+struct Field : scene::Node {
+  float *fWidth = nullptr;
+  explicit Field(float *width) : fWidth(width) {
+    fState.fRelativeSizeAxes = scene::axes::kX;
+    fState.fWidth = 1.0f;
+    fState.fHeight = 30.0f;
+  }
+  void layoutChildren() { *fWidth = this->fState.bounds().width(); }
+  void read(const std::string &) {}
+};
+template <auto Member> inline auto text_field(float *width) {
+  return SKIFF_NAMED(style_text_field, c::column(c::vbox(4.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+      nodes::Text("Label", 13.0f, 0xff000000u),
+      c::bound<skiff::model::Field<Member>>(c::styled({.fillX = true, .height = 36.0f},
+          Field(width)))));
+}
+inline auto controls(float *width) {
+  return SKIFF_NAMED(style_controls, c::scoped<Style>(c::handlers(), c::column(
+      c::vbox(8.0f, {.fillX = true, .autoSize = scene::axes::kY, .padding = {8.0f, 20.0f, 8.0f, 20.0f}}),
+      nodes::Text("FONTS AND THEME", 13.0f, 0xff000000u, true),
+      text_field<&Style::font>(width), text_field<&Style::code>(width))));
+}
+}  // namespace style_tests
+TEST(Compose, AStylesTextFieldsAreAsWideAsTheirColumn) {
+  using namespace style_tests;
+  float width = 0;
+  auto page = c::Box(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+      std::make_unique<decltype(c::scoped<style_tests::Look>(c::handlers(), controls(&width)))>(c::scoped<style_tests::Look>(c::handlers(), controls(&width))));
+  scene::Scene tree(std::move(page));
+  model::Model<style_tests::Root, bind::NoReactions> m;
+  bind::Binding<decltype(m)> binding;
+  binding.refresh(tree.root(), m);
+  (void)std::exchange(scene::overflows(), {});
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 600.0f, 400.0f));
+  EXPECT_TRUE(scene::overflows().empty());
+  (void)std::exchange(scene::overflows(), {});
+  EXPECT_FLOAT_EQ(width, 560.0f);
+}

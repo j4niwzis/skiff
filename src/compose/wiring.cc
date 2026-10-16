@@ -859,7 +859,9 @@ template <class Policy, class N> struct Arranged : N {
 };
 template <class Policy, class N> auto arranged(typename Policy::State rules, N node) {
   // Concrete in every build: what reads the model for it reads it as itself.
-  return Arranged<Policy, N>(std::move(rules), std::move(node));
+  Arranged<Policy, N> made(std::move(rules), std::move(node));
+  over_held(made);
+  return made;
 }
 
 // A press at a place in a node, asked of it there -- a quote in a text,

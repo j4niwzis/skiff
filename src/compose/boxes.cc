@@ -111,8 +111,12 @@ template <class Out_> struct Erased : Stacked {
 // A type named where it was written over held content (SKIFF_NAMED outside a
 // release build): the Held it is, to the walks and to whatever calls it --
 // not a wrapper of its own (no table made for it, nothing adopted).
+// The view itself (the type SKIFF_NAMED makes, Self), not a wrapper made
+// over one: a scope over a named view inherits its NamedOver, and taken for
+// the Held it names would lose the scope.
 template <class N>
-concept NamedOverHeld = requires { typename N::NamedOver; } && std::derived_from<N, Stacked>;
+concept NamedOverHeld = requires { typename N::NamedOver; } && std::same_as<typename N::NamedSelf, N> &&
+                        std::derived_from<N, Stacked>;
 template <class Self>
 concept HeldWrapper = !NamedOverHeld<Self>;
 struct Held : Stacked {
@@ -468,6 +472,18 @@ template <class N> void sizedHere(N &, scene::Axes) {}
 // several kinds in one variant), a wrapper takes its content's place at once.
 inline void adopted(Held &over) { over.adopt(); }
 template <class N> void adopted(N &) {}
+// A node a combinator makes concrete in every build (a scope, a node with
+// a model of its own) over what may be held content: outside a release
+// build it is then a wrapper over that content, never erased -- adopted
+// here, as erased() adopts the others, or it is laid out with none of its
+// content's fill and sizing, a 0-by-0 box its content sticks out of.
+template <class N>
+  requires std::derived_from<N, Held>
+N &over_held(N &made) {
+  static_cast<Held &>(made).adopt();
+  return made;
+}
+template <class N> N &over_held(N &made) { return made; }
 
 // What a view named where it is written (SKIFF_NAMED) is: what its
 // expression made, Base, as a type of its own, Self -- which says its name
@@ -480,6 +496,7 @@ template <class Self, class Base> struct Named : Base {
 // Over held content (outside a release build): seen as the Held it is.
 template <class Self> struct Named<Self, Held> : Held {
   using NamedOver = Held;
+  using NamedSelf = Self;
   using SeenAs = Held;
   explicit Named(Held made) : Held(std::move(made)) { this->held().state().fViewName = Self::viewName(); }
 };
@@ -753,7 +770,9 @@ template <class Within, class Handlers, class N, class... Keys>
 bind::Scoped<Within, Handlers, N, Keys...> scoped(Handlers handlers, N node,
                                                   Keys... keys) {
   // Concrete in every build: what moves it (rekeyed_by) reads it as itself.
-  return bind::Scoped<Within, Handlers, N, Keys...>(std::move(handlers), std::move(node), std::move(keys)...);
+  bind::Scoped<Within, Handlers, N, Keys...> made(std::move(handlers), std::move(node), std::move(keys)...);
+  over_held(made);
+  return made;
 }
 template <class T, class N> auto local(N node, T initial = {}) {
   return erased(bind::Local<T, bind::NoHandlers, part_t<N>>({}, as_part(std::move(node)), std::move(initial)));

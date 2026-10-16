@@ -968,6 +968,21 @@ private:
   std::vector<Served> fParts;
   bool fReached = false;
   bool fMissed = false;
+  // The part the nearest bound node above the one the walk is at binds:
+  // what a node below it that binds nothing itself changes as its own.
+  const mrt::Want *fBoundAbove = nullptr;
+  // Kept while the walk is below a bound node, given back as it leaves.
+  struct BoundAbove {
+    Pressing *fSelf;
+    const mrt::Want *fWas;
+    BoundAbove(Pressing *self, const mrt::Want *now) : fSelf(self), fWas(self->fBoundAbove) {
+      if (now != nullptr)
+        self->fBoundAbove = now;
+    }
+    BoundAbove(const BoundAbove &) = delete;
+    BoundAbove &operator=(const BoundAbove &) = delete;
+    ~BoundAbove() { fSelf->fBoundAbove = fWas; }
+  };
 
   // A part's way below a place, where it is in this model once.
   std::optional<mrt::Place> below(const mrt::Place &here, const mrt::Want &want, std::vector<mrt::AnyKey> keys = {}) const {
@@ -1011,6 +1026,7 @@ private:
       end(node, place, around);
       return;
     }
+    const BoundAbove bound{this, table != nullptr && table->fBound != nullptr ? &table->fBound->fWant : nullptr};
     if (table != nullptr && table->fEach != nullptr && owns(table->fEach->fList)) {
       const std::size_t i = path[at];
       if (i >= table->fEach->fCount(node.node()))
@@ -1052,18 +1068,27 @@ private:
       std::visit([&](const auto &one) { this->take(one, here, frames); }, each);
   }
   void take(const OwnEdit &edit, const mrt::Place &here, const PressFrame *frames) {
-    if (!edit.fWant) {
-      if (!fModel.apply(here, edit.fChange))
+    if (edit.fWant) {
+      if (!this->ownAt(*edit.fWant, edit, here, frames))
         fMissed = true;
       return;
     }
-    // A Local's state, where it has the part.
-    for (const PressFrame *frame = frames; frame != nullptr; frame = frame->fOuter)
-      if (std::visit([&](const auto &one) { return this->ownInLocal(one, edit); }, frame->fKind))
-        return;
-    const auto place = owns(*edit.fWant) ? below(here, *edit.fWant) : std::nullopt;
-    if (!place || !fModel.apply(*place, edit.fChange))
+    // A node that binds nothing itself, in a bound one: the bound one's part
+    // -- as a release build has it, where the bound node is the pressed one
+    // made around it, not a node holding it erased.
+    if (fBoundAbove != nullptr && this->ownAt(*fBoundAbove, edit, here, frames))
+      return;
+    if (!fModel.apply(here, edit.fChange))
       fMissed = true;
+  }
+  // A change of the part `want` names, made where it is: a Local's state,
+  // where one around has it; else the model's, below here.
+  bool ownAt(const mrt::Want &want, const OwnEdit &edit, const mrt::Place &here, const PressFrame *frames) {
+    for (const PressFrame *frame = frames; frame != nullptr; frame = frame->fOuter)
+      if (std::visit([&](const auto &one) { return this->ownInLocal(one, want, edit); }, frame->fKind))
+        return true;
+    const auto place = owns(want) ? below(here, want) : std::nullopt;
+    return place && fModel.apply(*place, edit.fChange);
   }
   bool intoLocalEnd(const ScopeAt &, const Sent &, const PressFrame *) { return false; }
   bool intoLocalEnd(const LocalAt &, const Sent &, const PressFrame *) { return false; }
@@ -1076,13 +1101,13 @@ private:
     route(event, &local);
     return true;
   }
-  bool ownInLocal(const PipeAt &, const OwnEdit &) { return false; }
-  bool ownInLocal(const ScopeAt &, const OwnEdit &) { return false; }
-  bool ownInLocal(const LocalAt &local, const OwnEdit &edit) {
-    const auto way = mrt::pathTo(*local.fModel.fRoot, *edit.fWant);
-    if (!way)
+  bool ownInLocal(const PipeAt &, const mrt::Want &, const OwnEdit &) { return false; }
+  bool ownInLocal(const ScopeAt &, const mrt::Want &, const OwnEdit &) { return false; }
+  bool ownInLocal(const LocalAt &local, const mrt::Want &want, const OwnEdit &edit) {
+    const auto way = mrt::pathTo(*local.fModel.fRoot, want);
+    // (Not where the part is of another type than the change's.)
+    if (!way || !local.fModel.apply(mrt::Place{*way, {}}, edit.fChange))
       return false;
-    (void)local.fModel.apply(mrt::Place{*way, {}}, edit.fChange);
     ++localEpoch();
     return true;
   }
