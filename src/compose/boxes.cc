@@ -863,10 +863,23 @@ template <class Compute, class N> struct Projected : N {
     readNested(static_cast<N &>(*this), value);
   }
 };
+// A function a combinator keeps: itself in a release build; outside one,
+// erased to its signature -- every call site that reads the same part the
+// same way then makes the same node type, its tables made once, not one
+// type for each lambda.
+template <class Sig, class F> auto erased_fn(F f) {
+  if constexpr (scene::kErasedCombinators)
+    return std::function<Sig>(std::move(f));
+  else
+    return f;
+}
 template <class Want, class Compute, class N>
 auto projected(Compute compute, N node) {
+  using In = typename bind::BoundValueT<Want>::type;
+  using Out = std::remove_cvref_t<std::invoke_result_t<Compute &, const In &>>;
+  auto fn = erased_fn<Out(const In &)>(std::move(compute));
   return bound<Want>(
-      Projected<Compute, N>(std::move(compute), std::move(node)));
+      Projected<decltype(fn), N>(std::move(fn), std::move(node)));
 }
 // And as a part of the model says they do: `ask(now, press)` with the part
 // as last read -- in the phase given: on their way down (capture), before a
@@ -908,7 +921,10 @@ template <class Apply, class N> struct Applied : N {
 };
 template <class Want, class Compute, class Apply, class N>
 auto applied(Compute compute, Apply apply, N node) {
-  return projected<Want>(std::move(compute), Applied<Apply, N>(std::move(apply), std::move(node)));
+  using In = typename bind::BoundValueT<Want>::type;
+  using Out = std::remove_cvref_t<std::invoke_result_t<Compute &, const In &>>;
+  auto fn = erased_fn<void(N &, const Out &)>(std::move(apply));
+  return projected<Want>(std::move(compute), Applied<decltype(fn), N>(std::move(fn), std::move(node)));
 }
 // A field given the keys as the model says: each new request -- a count the
 // model raises for it, `compute(value)` -- asks its scene to focus it at its
