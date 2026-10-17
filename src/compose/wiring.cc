@@ -175,6 +175,10 @@ template <class E, class N> auto onRightPress(E event, N node) {
 // model like any press. The node is held, not derived from: its own press
 // (a cell's click) stays its own. Frames are asked for only while it counts.
 template <class Act, class N> struct Resting : Box<N> {
+  // What it answers (onPress) is what it says on its own, not a click's:
+  // taken for one, a click anywhere in it answered so -- a message clicked
+  // was answered (the swipe's reply).
+  [[nodiscard]] bool onClick(float, float) const { return false; }
   using Out = Union<OutOf<N>, model::Types<std::remove_cvref_t<std::invoke_result_t<Act &, bool>>>>;
   double fMs = 0.0;
   Act fAct;
@@ -247,6 +251,10 @@ template <class Key, class Tag = void> struct ListSpan {
   friend bool operator==(const ListSpan &, const ListSpan &) = default;
 };
 template <class List> struct Spanned : Box<List> {
+  // What it answers (onPress) is what it says on its own, not a click's:
+  // taken for one, a click anywhere in it answered so -- a message clicked
+  // was answered (the swipe's reply).
+  [[nodiscard]] bool onClick(float, float) const { return false; }
   using Key = std::remove_cvref_t<decltype(std::declval<List &>().rows().fRows.front().fKey)>;
   using Span = ListSpan<Key, typename List::ListTag>;
   using Out = Union<OutOf<List>, model::Types<Span>>;
@@ -344,6 +352,10 @@ template <class Key> struct Fetched {
   friend bool operator==(const Fetched &, const Fetched &) = default;
 };
 template <class Key, class Ask, class Contents> struct Fetching : nodes::ScrollContainer<Contents> {
+  // What it answers (onPress) is what it says on its own, not a click's:
+  // taken for one, a click anywhere in it answered so -- a message clicked
+  // was answered (the swipe's reply).
+  [[nodiscard]] bool onClick(float, float) const { return false; }
   using Answer = std::invoke_result_t<const Ask &>;
   Ask fAsk;
   std::optional<Fetched<Key>> fNow;
@@ -396,6 +408,10 @@ template <class Tag> struct MenuAt {
   float x = 0.0f, y = 0.0f;
 };
 template <class Tag, class Off, class On, class Picture> struct Zoomable : Specced {
+  // What it answers (onPress) is what it says on its own, not a click's:
+  // taken for one, a click anywhere in it answered so -- a message clicked
+  // was answered (the swipe's reply).
+  [[nodiscard]] bool onClick(float, float) const { return false; }
   using Answer = std::variant<ZoomBy<Tag>, PanBy<Tag>, MenuAt<Tag>, Off, On>;
   using Out = Union<OutOf<Picture>, model::Types<Answer>>;
   using BindingChildren = std::tuple<Picture>;
@@ -524,6 +540,10 @@ template <class Ask, class N> auto onRightPressAt(Ask ask, N node) {
 // box, in window coordinates: what `act(on, box)` answers (a list opening
 // beside it, from there).
 template <class Act, class N> struct Hovering : Box<N> {
+  // What it answers (onPress) is what it says on its own, not a click's:
+  // taken for one, a click anywhere in it answered so -- a message clicked
+  // was answered (the swipe's reply).
+  [[nodiscard]] bool onClick(float, float) const { return false; }
   using Out = Union<OutOf<N>, model::Types<std::remove_cvref_t<std::invoke_result_t<Act &, bool, const skia::SkRect &>>>>;
   Act fAct;
   bool fOn = false;
@@ -669,6 +689,10 @@ template <class Want, class Compute, class N> auto fading_for(Compute compute, d
 // (`show(mark, share)`): an arrow filling as it gets there. The node is
 // held, not derived from: its own presses stay its own.
 template <class Act, class Mark, class Show, class N> struct Swiped : Box<N, Mark> {
+  // What it answers (onPress) is what it says on its own, not a click's:
+  // taken for one, a click anywhere in it answered so -- a message clicked
+  // was answered (the swipe's reply).
+  [[nodiscard]] bool onClick(float, float) const { return false; }
   using Out = Union<OutOf<N>, model::Types<std::remove_cvref_t<std::invoke_result_t<Act &>>>>;
   Act fAct;
   Show fShow;
@@ -983,6 +1007,10 @@ struct NoLocate {
 template <class Key, class View, class Row, class Make, class Locate = NoLocate, class Tag = void>
 class WindowList : public nodes::ScrollContainer<nodes::MemoRows<Key, View, Row, Make>> {
 public:
+  // What it answers (onPress) is what it says on its own, not a click's:
+  // taken for one, a click anywhere in it answered so -- a message clicked
+  // was answered (the swipe's reply).
+  [[nodiscard]] bool onClick(float, float) const { return false; }
   using Rows = nodes::MemoRows<Key, View, Row, Make>;
   using BindingChildren = std::tuple<Rows>;
   using Aimed = ListAimed<Key, Tag>;
@@ -1457,6 +1485,10 @@ private:
 // tick's press), for the program to keep and the corner to read. What is
 // pressed in the corner answers as it says.
 template <class List, class Corner, class Tell> struct WithWayDown : Box<List, Corner> {
+  // What it answers (onPress) is what it says on its own, not a click's:
+  // taken for one, a click anywhere in it answered so -- a message clicked
+  // was answered (the swipe's reply).
+  [[nodiscard]] bool onClick(float, float) const { return false; }
   using Answer = std::remove_cvref_t<std::invoke_result_t<Tell &, bool, std::size_t>>;
   using Out = Union<OutOf<Box<List, Corner>>, model::Types<Answer>>;
   Tell fTell;

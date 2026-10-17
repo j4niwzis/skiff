@@ -333,9 +333,14 @@ struct Held : Stacked {
     take(mine.fMaxWidth, node.fMaxWidth, 0.0f);
     take(mine.fMinHeight, node.fMinHeight, 0.0f);
     take(mine.fMaxHeight, node.fMaxHeight, 0.0f);
-    // Its content's own visibility stays the content's, followed as it is
-    // seen (walkedState); the wrapper's is its own.
-    fShown = mine.fVisible;
+    // Hidden as it was made -- visible(false, ...) said before the wrapper
+    // was put over it -- the wrapper starts hidden, and what shows it later
+    // (shown_if over it, reading the model) shows it: kept the content's,
+    // it was hidden under every wrapper for good -- a call button never
+    // seen. What the content says of itself after that stays its own,
+    // followed as it is seen (walkedState).
+    fShown = mine.fVisible && node.fVisible;
+    node.fVisible = true;
     // How it is drawn -- its alpha, its scale, its shift -- stays the
     // content's: it is a node of its own under the wrapper, drawn so. Taken
     // over, a fade under way froze: a message coming in -- faded in, then

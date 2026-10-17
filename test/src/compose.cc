@@ -2193,3 +2193,136 @@ TEST(Compose, RowsComingInAsMuxMakesThemAreSeenOnceStill) {
   std::print("{}", scene::laidOutText(tree.root()));
   EXPECT_TRUE(std::ranges::none_of(rows, [](const scene::LaidOutNode &row) { return row.alpha < 1.0f; }));
 }
+
+// A message's row, as mux makes it: a right press anywhere in it -- on its
+// text, which can be selected -- asks the row's menu; a click alone does
+// not answer the swipe.
+namespace row_menu {
+namespace c = skiff::compose;
+struct Menu {
+  int at = 0;
+};
+struct Ask {
+  std::optional<Menu> operator()(auto &, float, float) const { return Menu{1}; }
+};
+struct Reply {};
+struct Show {
+  void operator()(nodes::Text &, float) const {}
+};
+inline auto row() {
+  nodes::Text words("hello there", 13.0f, 0xff000000u);
+  words.setSelectable(true);
+  // Its size said: this test's fonts measure nothing.
+  words.apply({.width = 200.0f, .height = 20.0f});
+  auto inner = c::row(c::hbox(8.0f, {.fillX = true, .autoSize = scene::axes::kY}), c::column(c::vbox(0.0f, {.autoSize = scene::axes::kBoth}), std::move(words)));
+  auto mark = c::styled({.place = scene::anchor::kCentreRight, .width = 28.0f, .height = 28.0f}, nodes::Text("", 12.0f, 0u));
+  return c::onRightPressAt(Ask{}, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+                                            c::swiped(48.0f, 120.0f, [] { return Reply{}; }, Show{}, std::move(mark), std::move(inner))));
+}
+}  // namespace row_menu
+TEST(Compose, ARightPressOnARowsTextAsksItsMenuAndAClickNoReply) {
+  using namespace row_menu;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), row()));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 400.0f));
+  (void)tree.finishFrame();
+  scene::hostWork().answers.clear();
+  scene::hostWork().pressed.clear();
+  (void)tree.dispatchPointer(scene::pointer::down{20.0f, 8.0f, 3});
+  (void)tree.dispatchPointer(scene::pointer::up{20.0f, 8.0f, 3});
+  const std::size_t menus = scene::hostWork().answers.size();
+  std::println("answers after a right press: {}, presses: {}", menus, scene::hostWork().pressed.size());
+  if constexpr (scene::kErasedWalks)
+    EXPECT_EQ(menus, 1u);
+  scene::hostWork().answers.clear();
+  scene::hostWork().pressed.clear();
+  (void)tree.dispatchPointer(scene::pointer::down{20.0f, 8.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::up{20.0f, 8.0f, 1});
+  std::println("after a click: answers {}, presses {}", scene::hostWork().answers.size(), scene::hostWork().pressed.size());
+  EXPECT_TRUE(scene::hostWork().pressed.empty());
+  scene::hostWork().answers.clear();
+  scene::hostWork().pressed.clear();
+}
+
+namespace row_menu_parts {
+namespace c = skiff::compose;
+struct Probe : scene::Node {
+  Probe() { this->apply({.width = 100.0f, .height = 40.0f}); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+};
+template <class N> std::size_t rightPressed(N node) {
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(node)));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 400.0f));
+  (void)tree.finishFrame();
+  scene::hostWork().answers.clear();
+  (void)tree.dispatchPointer(scene::pointer::down{20.0f, 8.0f, 3});
+  (void)tree.dispatchPointer(scene::pointer::up{20.0f, 8.0f, 3});
+  return std::exchange(scene::hostWork().answers, {}).size();
+}
+}  // namespace row_menu_parts
+TEST(Compose, ARightPressIsAnsweredThroughEachLayerOfARow) {
+  using namespace row_menu_parts;
+  using row_menu::Ask;
+  const auto alone = rightPressed(c::onRightPressAt(Ask{}, Probe()));
+  const auto overColumn = rightPressed(c::onRightPressAt(Ask{}, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), Probe())));
+  const auto overSwipe = rightPressed(c::onRightPressAt(Ask{}, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+      c::swiped(48.0f, 120.0f, [] { return row_menu::Reply{}; }, row_menu::Show{}, nodes::Text("", 12.0f, 0u), Probe()))));
+  std::println("right press answered: alone {}, over a column {}, over a swipe {}", alone, overColumn, overSwipe);
+  if constexpr (scene::kErasedWalks) {
+    EXPECT_EQ(alone, 1u);
+    EXPECT_EQ(overColumn, 1u);
+    EXPECT_EQ(overSwipe, 1u);
+  }
+}
+
+TEST(Compose, ARightPressOnSelectableTextIsAnsweredAbove) {
+  using namespace row_menu_parts;
+  using row_menu::Ask;
+  const auto text = [](bool selectable) {
+    nodes::Text words("hello there", 13.0f, 0xff000000u);
+    words.setSelectable(selectable);
+    words.apply({.width = 200.0f, .height = 20.0f});
+    return words;
+  };
+  const auto plain = rightPressed(c::onRightPressAt(Ask{}, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), text(false))));
+  const auto selectable = rightPressed(c::onRightPressAt(Ask{}, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), text(true))));
+  std::println("right press on text answered: plain {}, selectable {}", plain, selectable);
+  if constexpr (scene::kErasedWalks)
+    EXPECT_EQ(selectable, 1u);
+}
+
+// A button hidden as it is made and shown by what it reads -- mux's call
+// button, shown_if(callable, visible(false, button)): shown once the model
+// says so, and pressed.
+namespace shown_later {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Pressed {};
+struct Probe : scene::Node {
+  Probe() { this->apply({.width = 40.0f, .height = 40.0f}); }
+};
+inline auto button() {
+  return c::shown_if<FeedTold>([](const FeedTold &now) { return now.of == 2; },
+                               c::visible(false, c::styled({.alignSelf = scene::align::kStart}, c::onClick(Pressed{}, Probe()))));
+}
+}  // namespace shown_later
+TEST(Compose, AButtonHiddenAsItIsMadeIsShownByWhatItReads) {
+  using namespace shown_later;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), button()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  const auto pressedAt = [&] {
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 300.0f));
+    (void)tree.finishFrame();
+    scene::hostWork().pressed.clear();
+    (void)tree.dispatchPointer(scene::pointer::down{10.0f, 10.0f, 1});
+    (void)tree.dispatchPointer(scene::pointer::up{10.0f, 10.0f, 1});
+    return std::exchange(scene::hostWork().pressed, {}).size();
+  };
+  EXPECT_EQ(pressedAt(), 0u);
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(), model::setTo(FeedTold{.of = 2})));
+  binding.refresh(tree.root(), m);
+  std::print("{}", scene::laidOutText(tree.root()));
+  EXPECT_EQ(pressedAt(), 1u);
+}
