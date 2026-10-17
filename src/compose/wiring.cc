@@ -637,9 +637,15 @@ template <class N> struct Fading : N {
     this->apply({.alpha = 1.0f});
     scene::work::mark(this->fState.fId);
   }
-  [[nodiscard]] bool settling() const { return fFade.value() > 0.0f; }
-  [[nodiscard]] bool wantsTick() const { return settling(); }
+  [[nodiscard]] bool settling() const { return fFade.value() > 0.0f || N::settling(); }
+  [[nodiscard]] bool wantsTick() const {
+    if constexpr (requires(const N &node) { node.wantsTick(); })
+      return fFade.value() > 0.0f || N::wantsTick();
+    else
+      return fFade.value() > 0.0f;
+  }
   void update(double nowMs) {
+    N::update(nowMs);
     if (fFade.value() <= 0.0f)
       return;
     if (fUntil == 0.0)
@@ -794,9 +800,17 @@ template <class N> struct Washed : N {
     }
     paint();
   }
-  [[nodiscard]] bool settling() const { return fFading.moving(); }
-  [[nodiscard]] bool wantsTick() const { return settling(); }
+  // With the time of what it wraps, where that is its base -- as Slid's: a
+  // wash's own hooks hid a fade's under it, never ticked, its row unseen.
+  [[nodiscard]] bool settling() const { return fFading.moving() || N::settling(); }
+  [[nodiscard]] bool wantsTick() const {
+    if constexpr (requires(const N &node) { node.wantsTick(); })
+      return fFading.moving() || N::wantsTick();
+    else
+      return fFading.moving();
+  }
   void update(double nowMs) {
+    N::update(nowMs);
     if (fFading.step(nowMs))
       paint();
   }
@@ -833,9 +847,15 @@ template <class N, class Way = appear::below> struct Appearing : N {
     fIn.setTarget(1.0f);
     this->apply(appearing_spec(Way{}, 0.0f, fFrom));
   }
-  [[nodiscard]] bool settling() const { return fIn.moving(); }
-  [[nodiscard]] bool wantsTick() const { return settling(); }
+  [[nodiscard]] bool settling() const { return fIn.moving() || N::settling(); }
+  [[nodiscard]] bool wantsTick() const {
+    if constexpr (requires(const N &node) { node.wantsTick(); })
+      return fIn.moving() || N::wantsTick();
+    else
+      return fIn.moving();
+  }
   void update(double nowMs) {
+    N::update(nowMs);
     if (fIn.step(nowMs)) {
       const float shown = fIn.value();
       this->apply(appearing_spec(Way{}, shown, (1.0f - shown) * fFrom));
@@ -874,9 +894,17 @@ template <class Policy, class N> struct Arranged : N {
     this->nodes::Stack::layoutChildren();
     Policy::arrange(static_cast<N &>(*this), fRules);
   }
-  [[nodiscard]] bool settling() const { return Policy::settling(static_cast<const N &>(*this), fRules); }
-  [[nodiscard]] bool wantsTick() const { return settling(); }
-  void update(double) { Policy::settle(static_cast<N &>(*this), fRules); }
+  [[nodiscard]] bool settling() const { return Policy::settling(static_cast<const N &>(*this), fRules) || N::settling(); }
+  [[nodiscard]] bool wantsTick() const {
+    if constexpr (requires(const N &node) { node.wantsTick(); })
+      return Policy::settling(static_cast<const N &>(*this), fRules) || N::wantsTick();
+    else
+      return Policy::settling(static_cast<const N &>(*this), fRules);
+  }
+  void update(double nowMs) {
+    N::update(nowMs);
+    Policy::settle(static_cast<N &>(*this), fRules);
+  }
 };
 template <class Policy, class N> auto arranged(typename Policy::State rules, N node) {
   // Concrete in every build: what reads the model for it reads it as itself.

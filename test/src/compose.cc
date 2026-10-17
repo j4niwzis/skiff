@@ -2144,3 +2144,52 @@ TEST(Compose, RowsComingInAroundHeldContentAreSeenOnceStill) {
   std::print("{}", scene::laidOutText(tree.root()));
   EXPECT_TRUE(std::ranges::none_of(rows, [](const scene::LaidOutNode &row) { return row.alpha < 1.0f; }));
 }
+
+// A row that comes in as mux makes its message rows: named, washed for the
+// marks it reads, fading in around what is held off while rows are being
+// selected, that around held content -- seen whole once still, with only
+// the frames the window asks for.
+namespace window_arrive_mux {
+namespace c = skiff::compose;
+using namespace window_edge;
+inline auto mux_row(bool arrives) {
+  auto row = compose::Held(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), RowNode{}));
+  return SKIFF_NAMED(message_row, c::washed_for<FeedTold>(0xff3080ffu, 56.0f, 80.0f, [](const FeedTold &) { return c::Wash{}; },
+      c::appearing(arrives, c::held_off_for<FeedTold>([](const FeedTold &) { return false; }, std::move(row)))));
+}
+using mux_row_t = decltype(mux_row(false));
+struct MakeMuxRow {
+  mux_row_t operator()(const Item &) const { return mux_row(true); }
+};
+using MuxRowWindow = c::WindowFrom<Src, FeedModel, std::string, int, mux_row_t, MakeMuxRow, c::NoLocate, Tag>;
+}  // namespace window_arrive_mux
+TEST(Compose, RowsComingInAsMuxMakesThemAreSeenOnceStill) {
+  using namespace window_arrive_mux;
+  MuxRowWindow window(MakeMuxRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, MuxRowWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 3}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  Heard heard;
+  bool wants = true;
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    wants = tree.finishFrame().fWantsAnotherFrame;
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  (void)m.apply(model::edit(model::placeOf<Feed, FeedRoot>(), model::setTo(Feed{.count = 5})));
+  wants = true;
+  int frames = 0;
+  for (double at = 600.0; at < 1600.0 && wants; at += 16.0, ++frames)
+    frame(at);
+  std::println("frames after it came: {}", frames);
+  const auto rows = scene::laidOutTree(tree.root());
+  std::print("{}", scene::laidOutText(tree.root()));
+  EXPECT_TRUE(std::ranges::none_of(rows, [](const scene::LaidOutNode &row) { return row.alpha < 1.0f; }));
+}

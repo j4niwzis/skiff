@@ -103,7 +103,8 @@ template <class Out_> struct Erased : Stacked {
 // its own, with that content its only child: its base is Held (Self below),
 // and it stands where its content stood. As it is erased, the content's
 // placement is folded into it (where it stands, its margin, how it is
-// aligned, what bounds its size, how it is drawn as a whole); its size is
+// aligned, what bounds its size -- not how it is drawn, its alpha, scale
+// and shift, which stay the content's, a node drawn under it); its size is
 // the content's own, followed axis by axis -- relative to the parent, the
 // wrapper is and the content fills it; growing, the wrapper grows and the
 // content fills it; any other way, the wrapper is as big as the content. A
@@ -335,10 +336,12 @@ struct Held : Stacked {
     // Its content's own visibility stays the content's, followed as it is
     // seen (walkedState); the wrapper's is its own.
     fShown = mine.fVisible;
-    mine.fAlpha *= std::exchange(node.fAlpha, 1.0f);
-    mine.fScale *= std::exchange(node.fScale, 1.0f);
-    mine.fShiftX += std::exchange(node.fShiftX, 0.0f);
-    mine.fShiftY += std::exchange(node.fShiftY, 0.0f);
+    // How it is drawn -- its alpha, its scale, its shift -- stays the
+    // content's: it is a node of its own under the wrapper, drawn so. Taken
+    // over, a fade under way froze: a message coming in -- faded in, then
+    // washed for its marks -- had the wash take the fade's start, alpha 0,
+    // and the fade then moved an alpha no one drew with. Every message that
+    // came stayed unseen, a gap where it was.
     mine.fGrowAxes = mine.fGrowAxes | node.fGrowAxes;
     mine.fShrinkAxes = mine.fShrinkAxes | node.fShrinkAxes;
     this->followSize(node);
