@@ -2688,3 +2688,32 @@ TEST(Compose, AFlashLeavingARowDoesNotFlashItAgain) {
   EXPECT_EQ(lit(1), 0);
   EXPECT_GT(lit(2), 0);
 }
+
+namespace waiting_picture_box {
+struct NoRules {
+  struct State {
+    friend bool operator==(const State &, const State &) = default;
+  };
+  static void prepare(auto &, State &) {}
+  static void arrange(auto &, State &) {}
+  static bool settling(const auto &, const State &) { return false; }
+  static void settle(auto &, State &) {}
+};
+}  // namespace waiting_picture_box
+// A right press on a message's picture -- pressed to open it in the viewer:
+// asks the row's menu, as anywhere else in the row.
+TEST(Compose, ARightPressOnARowsPictureAsksItsMenu) {
+  using namespace waiting_picture_box;
+  using row_menu::Ask;
+  auto picture = SKIFF_NAMED(picture_view, c::onClick(Open{}, fitted_t(c::Fit{.width = 200.0f, .height = 100.0f, .most = 430.0f, .least = 100.0f}, NoRatio{}, box()), "Open picture"));
+  picture.apply({.alpha = 0.9f});
+  const auto answered = row_menu_parts::rightPressed(c::onRightPressAt(Ask{}, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+      c::swiped(48.0f, 120.0f, [] { return row_menu::Reply{}; }, row_menu::Show{}, nodes::Text("", 12.0f, 0u),
+                c::onClickAt([](auto &, float, float) { return std::optional<int>(); },
+                             c::row(c::hbox(8.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+                                    // The bubble, held as mux holds it (made in its own unit).
+                                    compose::Held(c::arranged<NoRules>(NoRules::State{}, c::column(c::vbox(2.0f, {.autoSize = scene::axes::kBoth}), std::move(picture))))))))));
+  std::println("right press on a picture answered: {}", answered);
+  if constexpr (scene::kErasedWalks)
+    EXPECT_EQ(answered, 1u);
+}
