@@ -2717,3 +2717,43 @@ TEST(Compose, ARightPressOnARowsPictureAsksItsMenu) {
   if constexpr (scene::kErasedWalks)
     EXPECT_EQ(answered, 1u);
 }
+
+// A row swiped far, under what watches the whole screen for a flick (mux's
+// chats screen): let go, it goes back -- its lift its own, not taken by the
+// flick on its way down.
+namespace swipe_under_flick {
+struct Flick {
+  std::optional<int> operator()(bool) const { return 1; }
+};
+}  // namespace swipe_under_flick
+TEST(Compose, ARowSwipedFarUnderAFlickIsLetGo) {
+  using namespace swipe_follow;
+  auto row = c::swiped(48.0f, 120.0f, [] { return Answered{}; }, [](nodes::Text &, float) {}, nodes::Text("", 12.0f, 0u), ShiftProbe());
+  scene::Scene tree(c::flicked(90.0f, swipe_under_flick::Flick{}, c::column(c::vbox(0.0f, {.fill = true}), std::move(row))));
+  const auto view = skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 200.0f);
+  const auto frame = [&](double at) {
+    tree.update(at);
+    tree.layoutIfNeeded(view);
+    (void)tree.finishFrame();
+  };
+  for (double at = 0.0; at < 200.0; at += 16.0)
+    frame(at);
+  ShiftProbe *probe = scene::findNode<ShiftProbe>(tree.root());
+  ASSERT_NE(probe, nullptr);
+  scene::hostWork().pressed.clear();
+  scene::hostWork().answers.clear();
+  (void)tree.dispatchPointer(scene::pointer::down{250.0f, 20.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::move{235.0f, 20.0f});
+  frame(216.0);
+  (void)tree.dispatchPointer(scene::pointer::move{140.0f, 20.0f});
+  frame(232.0);
+  (void)tree.dispatchPointer(scene::pointer::up{140.0f, 20.0f, 1});
+  const auto replied = scene::hostWork().pressed.size();
+  for (double at = 248.0; at < 900.0; at += 16.0)
+    frame(at);
+  std::println("swiped far: replied {}, shift after {}", replied, probe->fState.fShiftX);
+  EXPECT_EQ(replied, 1u);
+  EXPECT_FLOAT_EQ(probe->fState.fShiftX, 0.0f);
+  scene::hostWork().pressed.clear();
+  scene::hostWork().answers.clear();
+}

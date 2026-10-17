@@ -625,7 +625,10 @@ template <class Act, class N> struct Flicked : N {
   }
   std::optional<Answer> onPointer(scene::phase::capture, const scene::pointer::up &lift, scene::PointerReply &reply) {
     const auto from = std::exchange(fFrom, std::nullopt);
-    if (!from)
+    // Held by what is under it -- a message swiped to answer it: the drag
+    // is that one's, and so is its lift. Taken here first, on its way down,
+    // the swipe never heard it, and stuck to the pointer.
+    if (!from || reply.fCaptured)
       return std::nullopt;
     const float dx = lift.x - from->fX, dy = lift.y - from->fY;
     if (std::abs(dx) < fReach || std::abs(dy) > std::abs(dx) * 0.5f)
