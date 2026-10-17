@@ -1815,6 +1815,13 @@ TEST(Compose, AWindowAimedAsItsViewShrinksComesToRestOnce) {
     frame(t);
   offsets.clear();
   aim("m12", 3, 4200.0);
+  // Near the end, glided to, as the bar opens: Ctrl+Up's.
+  aim("m29", 4, 5700.0);
+  height = 400.0f;
+  for (double t = 7200.0; t < 7800.0; t += 16.0)
+    frame(t);
+  offsets.clear();
+  aim("m25", 5, 7800.0);
   // Back and forth: the offset's direction turned more than once an aim.
   int turns = 0;
   for (std::size_t i = 2; i < offsets.size(); ++i)
@@ -1822,7 +1829,7 @@ TEST(Compose, AWindowAimedAsItsViewShrinksComesToRestOnce) {
       ++turns;
   std::println("offsets: {}", offsets | std::views::stride(4));
   EXPECT_LE(turns, 1);
-  EXPECT_EQ(heard.aimed, 3);
+  EXPECT_EQ(heard.aimed, 5);
   EXPECT_FALSE(list->settling());
 }
 
