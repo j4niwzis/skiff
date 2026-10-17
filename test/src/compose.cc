@@ -2628,3 +2628,63 @@ TEST(Compose, ACardPoppedAtThePointerGoesThere) {
   EXPECT_FLOAT_EQ(left, 150.0f);
   EXPECT_FLOAT_EQ(top, 120.0f);
 }
+
+// A row flashed, then another: the first does not flash again as the flash
+// leaves it (Ctrl+Up lit two messages at each step).
+namespace wash_once {
+namespace c = skiff::compose;
+using namespace window_edge;
+// Which row was painted with what wash, as it was: the rows' own record.
+inline std::vector<std::pair<int, skia::SkColor>> &painted() {
+  static std::vector<std::pair<int, skia::SkColor>> kept;
+  return kept;
+}
+struct Probe : scene::Node {
+  int fWhich = 0;
+  explicit Probe(int which) : fWhich(which) { scene::Node::apply({.width = 100.0f, .height = 40.0f}); }
+  void apply(const scene::Spec &spec) {
+    if (spec.background)
+      painted().emplace_back(fWhich, *spec.background);
+    scene::Node::apply(spec);
+  }
+};
+inline auto row(int which) {
+  return c::washed_for<FeedTold>(0xff3080ffu, 56.0f, 80.0f,
+                                 [which](const FeedTold &now) { return c::Wash{.flash = now.aim.key == std::to_string(which) ? now.aim.number : 0}; },
+                                 Probe(which));
+}
+}  // namespace wash_once
+TEST(Compose, AFlashLeavingARowDoesNotFlashItAgain) {
+  using namespace wash_once;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), row(1), row(2)));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  double at = 0.0;
+  const auto frames = [&](double until) {
+    for (; at < until; at += 16.0) {
+      binding.refresh(tree.root(), m);
+      tree.update(at);
+      tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 300.0f));
+      (void)tree.finishFrame();
+    }
+  };
+  const auto aim = [&](std::string key, std::uint64_t number) {
+    (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(),
+                              model::setTo(FeedTold{.of = 1, .aim = {.key = std::move(key), .number = number}})));
+  };
+  frames(200.0);
+  aim("1", 1);
+  frames(2000.0);  // its flash done
+  painted().clear();
+  aim("2", 2);
+  frames(2100.0);
+  // Flashing now: the second only -- not the first, flashed again as the
+  // flash left it.
+  const auto lit = [](int which) {
+    return std::ranges::count_if(painted(), [&](const auto &one) { return one.first == which && one.second != 0; });
+  };
+  std::println("painted lit: first {}, second {}", lit(1), lit(2));
+  EXPECT_EQ(lit(1), 0);
+  EXPECT_GT(lit(2), 0);
+}

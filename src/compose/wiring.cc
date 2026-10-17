@@ -814,7 +814,10 @@ template <class N> struct Washed : N {
   bool fRead = false;
   Washed(skia::SkColor colour, float held, float flash, N node) : N(std::move(node)), fColour(colour), fHeld(held), fFlash(flash) {}
   void read(const Wash &now) {
-    const bool flashed = fRead && now.flash != fNow.flash;
+    // A new flash for it -- not its last one let go: the flash gone on to
+    // another row read here as 0, a change, and this one flashed again --
+    // Ctrl+Up lit the message it went to and the one before.
+    const bool flashed = fRead && now.flash != 0 && now.flash != fNow.flash;
     fRead = true;
     fNow = now;
     if (flashed) {
