@@ -8,6 +8,7 @@ import skiff.model;
 import skiff.bind;
 import skiff.compose;
 import skiff.nodes;
+import skiff.paint;
 
 #include "gtest/gtest-macros.h"
 
@@ -3149,4 +3150,341 @@ TEST(Compose, AViewedListOpensBesideItsRow) {
   std::println("viewed list at {},{}", left, top);
   EXPECT_FLOAT_EQ(left, 150.0f + 120.0f - 6.0f);
   EXPECT_FLOAT_EQ(top, 150.0f);
+}
+
+// The call button as mux's chat head holds it: named, shown by what it
+// reads, hidden as it is made, in a row sized by its buttons, in the head's
+// row -- shown, it is as big as it is, and pressed.
+namespace head_button {
+namespace c = skiff::compose;
+using namespace window_edge;
+using shown_later::Pressed;
+using shown_later::Probe;
+inline auto button() {
+  return SKIFF_NAMED(extend, c::shown_if<FeedTold>([](const FeedTold &now) { return now.of == 2; },
+                                                   c::visible(false, c::styled({.alignSelf = scene::align::kMiddle}, c::onClick(Pressed{}, Probe())))));
+}
+inline auto head() {
+  const auto chat = [](const Feed &) { return true; };
+  return c::shown_for<Feed>(chat, c::column(c::vbox(0.0f, {.fillX = true, .height = 56.0f}),
+      c::onClick(Pressed{}, c::row(c::hbox(12.0f, {.fillX = true, .grow = scene::axes::kY}),
+                c::column(c::vbox(3.0f, {.autoSize = scene::axes::kY, .grow = scene::axes::kX, .alignSelf = scene::align::kMiddle}), Probe()),
+                c::shown_for<Feed>(chat, c::row(c::hbox(12.0f, {.autoSize = scene::axes::kBoth, .alignSelf = scene::align::kMiddle}), button())),
+                c::shown_for<Feed>(chat, c::styled({.alignSelf = scene::align::kMiddle}, Probe()))))));
+}
+}  // namespace head_button
+TEST(Compose, ACallButtonInAChatHeadIsShownAndPressed) {
+  using namespace head_button;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), head()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  const auto frame = [&] {
+    binding.refresh(tree.root(), m);
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+    (void)tree.finishFrame();
+  };
+  frame();
+  frame();
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(), model::setTo(FeedTold{.of = 2})));
+  frame();
+  frame();
+  std::print("{}", scene::laidOutText(tree.root()));
+  float left = -1.0f, top = -1.0f, width = 0.0f;
+  scene::forEachNode<c::OnClick<Pressed, c::part_t<Probe>>>(tree.root(), [&](auto &one) {
+    left = one.bounds().fLeft;
+    top = one.bounds().fTop;
+    width = one.bounds().width();
+  });
+  std::println("call button at {},{} {} wide", left, top, width);
+  EXPECT_FLOAT_EQ(width, 40.0f);
+  scene::hostWork().pressed.clear();
+  (void)tree.dispatchPointer(scene::pointer::down{left + 5.0f, top + 5.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::up{left + 5.0f, top + 5.0f, 1});
+  EXPECT_EQ(std::exchange(scene::hostWork().pressed, {}).size(), 1u);
+}
+
+// The same button, its part held as mux's shown model holds a plugin's
+// layer: in a list of aggregates, a head and a tail, under the root.
+namespace nested_button {
+namespace c = skiff::compose;
+using namespace window_edge;
+template <class... Parts> struct List {};
+template <class Head, class... Rest> struct List<Head, Rest...> {
+  Head head;
+  List<Rest...> tail;
+};
+struct Root {
+  model::Tracked<Feed> feed;
+  List<model::Tracked<FeedTold>> layers;
+};
+using Model = model::Model<Root, bind::NoReactions>;
+}  // namespace nested_button
+TEST(Compose, ACallButtonReadFromANestedPartIsShown) {
+  using namespace head_button;
+  using nested_button::Model;
+  using nested_button::Root;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), head()));
+  Model m{Root{.feed = {Feed{}}, .layers = {.head = {FeedTold{.of = 1}}}}};
+  bind::Binding<Model> binding;
+  const auto frame = [&] {
+    binding.refresh(tree.root(), m);
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+    (void)tree.finishFrame();
+  };
+  frame();
+  frame();
+  (void)m.apply(model::edit(model::placeOf<FeedTold, Root>(), model::setTo(FeedTold{.of = 2})));
+  frame();
+  frame();
+  float width = 0.0f;
+  bool shown = false;
+  scene::forEachNode<c::OnClick<shown_later::Pressed, c::part_t<shown_later::Probe>>>(tree.root(), [&](auto &one) {
+    width = one.bounds().width();
+  });
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.bounds.width() == 40.0f && one.bounds.fLeft == 308.0f)
+      shown = shown || one.visible;
+  std::println("nested call button {} wide, shown {}", width, shown);
+  EXPECT_TRUE(shown);
+}
+
+// A panel mounted as the model asks, placed by another part it reads --
+// mux's emoji panel, by the window's shape: placed and sized at once, not
+// left as made (the top left corner) until that other part moves.
+namespace placed_panel {
+namespace c = skiff::compose;
+using namespace window_edge;
+inline auto panel() {
+  return c::column(c::vbox(0.0f, {.fill = true}),
+      c::spec_for<Feed>([](const Feed &now) {
+        return scene::Spec{.place = scene::anchor::kTopLeft, .x = 150.0f, .y = static_cast<float>(now.count) * 4.0f, .width = 200.0f,
+                           .height = 100.0f, .background = 0xffeeeeeeu};
+      },
+          c::column(c::vbox(0.0f, {}), shown_later::Probe())));
+}
+}  // namespace placed_panel
+TEST(Compose, APanelMountedAsAskedIsPlacedByWhatItReadsAtOnce) {
+  using namespace window_edge;
+  using panel_t = decltype(placed_panel::panel());
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::projected<FeedTold>([](const FeedTold &now) { return now.of == 2 ? std::optional(true) : std::nullopt; },
+                             c::mount<panel_t, bool>([](bool) { return std::tuple{placed_panel::panel()}; }, {.fill = true}))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 600.0f, 400.0f));
+    (void)tree.finishFrame();
+  };
+  double at = 0.0;
+  for (; at < 100.0; at += 16.0)
+    frame(at);
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(), model::setTo(FeedTold{.of = 2})));
+  for (int i = 0; i < 3; ++i, at += 16.0)
+    frame(at);
+  std::print("{}", scene::laidOutText(tree.root()));
+  bool placed = false;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.visible && one.bounds.fLeft == 150.0f && one.bounds.fTop == 120.0f && one.bounds.width() == 200.0f)
+      placed = true;
+  std::println("panel placed: {}", placed);
+  EXPECT_TRUE(placed);
+}
+
+// mux's settings button whose words are read (action_said: Expand, then
+// Collapse): a spec read over a press over a row its words size, at the end
+// of a tile's row -- pressed where it is drawn, its words read in after it
+// was made, empty.
+namespace said_button {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Expand {};
+// Words as a text has them, with no font here: as wide as they are long,
+// measured where they are read -- none as made.
+struct Words : scene::Node {
+  Words() { this->apply({.width = 0.0f, .height = 14.0f}); }
+  void read(const std::string &now) {
+    this->apply({.width = 7.0f * static_cast<float>(now.size()), .height = 14.0f});
+    this->invalidateLayout();
+  }
+};
+inline auto button() {
+  return SKIFF_NAMED(action_said, c::spec_for<Feed>([](const Feed &) { return scene::Spec{.alpha = 1.0f, .disabled = false}; },
+      c::onPress([] { return Expand{}; },
+          c::row(c::hbox(0.0f, {.height = 32.0f, .relativeSize = scene::axes::kNone, .autoSize = scene::axes::kX,
+                                .alignSelf = scene::align::kMiddle, .padding = {0.0f, 12.0f, 0.0f, 12.0f}, .background = 0xffddddddu}),
+                 c::projected<Feed>([](const Feed &now) { return now.count == 30 ? std::string("Expand") : std::string("Collapse"); },
+                                    c::styled({.alignSelf = scene::align::kMiddle}, Words()))))));
+}
+inline auto tile() {
+  return c::row(c::hbox(12.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+      c::column(c::vbox(4.0f, {.relativeSize = scene::axes::kNone, .autoSize = scene::axes::kY, .grow = scene::axes::kX}),
+                shown_later::Probe()),
+      c::styled({.alignSelf = scene::align::kMiddle}, button()));
+}
+}  // namespace said_button
+TEST(Compose, AButtonWhoseWordsAreReadIsPressedWhereItIsDrawn) {
+  using namespace said_button;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), tile()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  // Laid out once before its words are read: a page shown, then its facts.
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+  (void)tree.finishFrame();
+  for (int i = 0; i < 3; ++i) {
+    binding.refresh(tree.root(), m);
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+    (void)tree.finishFrame();
+  }
+  std::print("{}", scene::laidOutText(tree.root()));
+  // The plate, as drawn: the widest node 32 high.
+  float left = 0.0f, top = 0.0f, width = 0.0f;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.bounds.height() == 32.0f && one.bounds.width() > width) {
+      left = one.bounds.fLeft;
+      top = one.bounds.fTop;
+      width = one.bounds.width();
+    }
+  scene::hostWork().answers.clear();
+  scene::hostWork().pressed.clear();
+  (void)tree.dispatchPointer(scene::pointer::move{left + width / 2.0f, top + 16.0f});
+  (void)tree.dispatchPointer(scene::pointer::down{left + width / 2.0f, top + 16.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::up{left + width / 2.0f, top + 16.0f, 1});
+  const auto took = scene::hostWork().answers.size() + scene::hostWork().pressed.size();
+  std::println("said button at {},{} {} wide: {} answer(s)", left, top, width, took);
+  EXPECT_GT(width, 24.0f);
+  EXPECT_EQ(took, 1u);
+}
+
+// The same, with a text as mux's: its words read into a Text made empty,
+// measured with a font.
+namespace said_text {
+namespace c = skiff::compose;
+using namespace window_edge;
+inline auto button() {
+  return SKIFF_NAMED(action_said, c::spec_for<Feed>([](const Feed &) { return scene::Spec{.alpha = 1.0f, .disabled = false}; },
+      c::onPress([] { return said_button::Expand{}; },
+          c::row(c::hbox(0.0f, {.height = 32.0f, .relativeSize = scene::axes::kNone, .autoSize = scene::axes::kX,
+                                .alignSelf = scene::align::kMiddle, .padding = {0.0f, 12.0f, 0.0f, 12.0f}, .background = 0xffddddddu}),
+                 c::text_for<Feed>([](const Feed &now) { return now.count == 30 ? std::string("Expand") : std::string("Collapse"); },
+                                   c::styled({.alignSelf = scene::align::kMiddle}, nodes::Text("", 12.0f, 0xff000000u)))))));
+}
+inline auto tile() {
+  return c::row(c::hbox(12.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+      c::column(c::vbox(4.0f, {.relativeSize = scene::axes::kNone, .autoSize = scene::axes::kY, .grow = scene::axes::kX}),
+                shown_later::Probe()),
+      c::styled({.alignSelf = scene::align::kMiddle}, button()));
+}
+}  // namespace said_text
+TEST(Compose, AButtonWhoseTextIsReadIsPressedWhereItIsDrawn) {
+  using namespace said_text;
+  skia::SkFont font;
+  paint::defaultFont() = &font;
+  struct cleanup {
+    ~cleanup() { paint::defaultFont() = nullptr; }
+  } clear;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), tile()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+  (void)tree.finishFrame();
+  for (int i = 0; i < 3; ++i) {
+    binding.refresh(tree.root(), m);
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+    (void)tree.finishFrame();
+  }
+  std::print("{}", scene::laidOutText(tree.root()));
+  float left = 0.0f, top = 0.0f, width = 0.0f, words = 0.0f;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root())) {
+    if (one.bounds.height() == 32.0f && one.bounds.width() > width) {
+      left = one.bounds.fLeft;
+      top = one.bounds.fTop;
+      width = one.bounds.width();
+    }
+  }
+  scene::forEachNode<nodes::Text>(tree.root(), [&](auto &one) { words = std::max(words, one.bounds().width()); });
+  scene::hostWork().answers.clear();
+  scene::hostWork().pressed.clear();
+  const float x = left + width - 14.0f;  // on the words' end, past the padding
+  (void)tree.dispatchPointer(scene::pointer::move{x, top + 16.0f});
+  (void)tree.dispatchPointer(scene::pointer::down{x, top + 16.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::up{x, top + 16.0f, 1});
+  const auto took = scene::hostWork().answers.size() + scene::hostWork().pressed.size();
+  std::println("text button at {},{} {} wide, words {}: {} answer(s)", left, top, width, words, took);
+  EXPECT_GT(width, 24.0f);
+  EXPECT_EQ(took, 1u);
+}
+
+// The same button in mux's settings card: masked, its tile over a list of
+// rows mounted as the facts say, hidden until it is expanded.
+namespace said_card {
+namespace c = skiff::compose;
+using namespace window_edge;
+using row_t = decltype(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), shown_later::Probe()));
+inline auto rows() {
+  return c::projected<Feed>([](const Feed &now) { return std::optional<int>(now.count); },
+                            c::mount<row_t, int>([](int) { return std::tuple{c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), shown_later::Probe())}; },
+                                                 {.fillX = true, .autoSize = scene::axes::kY}));
+}
+inline auto card() {
+  return c::column(c::vbox(16.0f, {.fillX = true, .autoSize = scene::axes::kY, .padding = {12.0f, 12.0f, 12.0f, 12.0f}, .cornerRadius = 10.0f,
+                                   .background = 0xffeeeeeeu, .masking = true}),
+                   said_text::tile(), c::shown_for<Feed>([](const Feed &now) { return now.first != 0; }, rows()));
+}
+}  // namespace said_card
+TEST(Compose, AButtonWhoseTextIsReadInACardIsPressedWhereItIsDrawn) {
+  using namespace said_card;
+  skia::SkFont font;
+  paint::defaultFont() = &font;
+  struct cleanup {
+    ~cleanup() { paint::defaultFont() = nullptr; }
+  } clear;
+  scene::Scene tree(c::column(c::vbox(32.0f, {.fill = true, .padding = {16.0f, 16.0f, 16.0f, 16.0f}}), said_card::card()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+  (void)tree.finishFrame();
+  for (int i = 0; i < 3; ++i) {
+    binding.refresh(tree.root(), m);
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+    (void)tree.finishFrame();
+  }
+  std::print("{}", scene::laidOutText(tree.root()));
+  float left = 0.0f, top = 0.0f, width = 0.0f;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.bounds.height() == 32.0f && one.bounds.width() > width) {
+      left = one.bounds.fLeft;
+      top = one.bounds.fTop;
+      width = one.bounds.width();
+    }
+  scene::hostWork().answers.clear();
+  scene::hostWork().pressed.clear();
+  const float x = left + width - 14.0f;
+  (void)tree.dispatchPointer(scene::pointer::move{x, top + 16.0f});
+  (void)tree.dispatchPointer(scene::pointer::down{x, top + 16.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::up{x, top + 16.0f, 1});
+  const auto took = scene::hostWork().answers.size() + scene::hostWork().pressed.size();
+  std::println("card button at {},{} {} wide: {} answer(s)", left, top, width, took);
+  EXPECT_EQ(took, 1u);
+  // Expanded, as the press asks: its list shown under the tile.
+  (void)m.apply(model::edit(model::placeOf<Feed, FeedRoot>(), model::setTo(Feed{.count = 31, .first = 1})));
+  for (int i = 0; i < 3; ++i) {
+    binding.refresh(tree.root(), m);
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+    (void)tree.finishFrame();
+  }
+  std::print("{}", scene::laidOutText(tree.root()));
+  bool listed = false;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.visible && one.bounds.width() == 40.0f && one.bounds.height() == 40.0f && one.bounds.fTop > top + 32.0f)
+      listed = true;
+  std::println("expanded list shown: {}", listed);
+  EXPECT_TRUE(listed);
 }

@@ -800,7 +800,12 @@ private:
     const auto place = below(here, part.fWant);
     if (!place)
       return;
-    if (fChanged == nullptr || onTheWay(*place))
+    // Where it moved -- or, never shown, at once: made since the last walk
+    // (mounted by this one, as the model asked -- the emoji panel opened),
+    // a node passed by here until its own part moved again was left as it
+    // was made: the panel's place and size never read, drawn in the top
+    // left corner, wrongly sized.
+    if (fChanged == nullptr || !part.fShown(node.node()) || onTheWay(*place))
       show(node, part, fModel.look(*place));
   }
   void show(scene::AnyNodeRef node, const BoundPart &part, const mrt::Seen &seen) {
