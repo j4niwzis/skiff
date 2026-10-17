@@ -1375,8 +1375,11 @@ private:
     // paged in at the top -- made too. Held by its first key alone, the
     // window stayed where that key went, what came above it never shown,
     // and its ends the same: the next page never asked for.
+    // A step of it at a time, as it slides: a page of history taken in at
+    // once made and laid out every row of it in one frame, the window
+    // frozen; the rest come as the view nears its top again.
     if (fAtStart)
-      from = 0;
+      from = from > fSizes.step ? from - fSizes.step : 0;
     if (to - from > fSizes.most)
       from = to - fSizes.most;
     return {from, to};

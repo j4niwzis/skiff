@@ -251,7 +251,12 @@ public:
     fLastBox = box;
     fLastOffset = offset;
     const std::uint64_t laidBefore = scene::walkCounts().laidOut;
-    scene::eachChild(*this, [&](auto &child) { scene::layout(child, box); });
+    scene::eachChild(*this, [&](auto &child) {
+      scene::layout(child, box);
+      fListWaits = fListWaits || scene::stateOf(child).fChildrenWaiting;
+    });
+    if (fListWaits)
+      scene::work::moving().push_back(fState.fId);  // the frame that lays them out, asked for
     // Anything in it laid out again, or the view another size: what was
     // drawn ahead no longer shows what is there.
     if (scene::walkCounts().laidOut != laidBefore || box != boxBefore) {
@@ -376,6 +381,14 @@ public:
       fState.fMovedDamage = skiff::scene::joined(
           fState.fMovedDamage, skia::SkRect::MakeLTRB(view.fRight - 1.0f, view.fBottom - 1.0f, view.fRight, view.fBottom));
     }
+    // Rows its list only moved while its width moved: laid out now, at the
+    // width it holds -- or moved again, where it moves still.
+    if (std::exchange(fListWaits, false))
+      skiff::scene::eachChild(*this, [](auto &contents) {
+        skiff::scene::State &list = skiff::scene::stateOf(contents);
+        if (std::exchange(list.fChildrenWaiting, false))
+          list.invalidateLayout();
+      });
     if (fScroll.advance(dt)) {
       this->scrolled();
     }
@@ -388,9 +401,13 @@ public:
       }
     }
   }
-  [[nodiscard]] bool settling() const { return fScroll.moving(); }
+  [[nodiscard]] bool settling() const { return fScroll.moving() || this->listWaits(); }
   // Ticked while it moves, or a finger holds it: at rest, nothing to step.
-  [[nodiscard]] bool wantsTick() const { return fScroll.moving() || fScroll.dragging() || fEdgeSpeed != 0.0f || fAheadDue; }
+  [[nodiscard]] bool wantsTick() const {
+    return fScroll.moving() || fScroll.dragging() || fEdgeSpeed != 0.0f || fAheadDue || this->listWaits();
+  }
+  // Whether its list has rows it only moved, to be laid out at its width.
+  [[nodiscard]] bool listWaits() const { return fListWaits; }
   // When it next wants a frame on its own: where it waits to draw ahead.
   [[nodiscard]] double wakeAt() const {
     return fAheadDue ? fAheadAtMs : std::numeric_limits<double>::infinity();
@@ -760,6 +777,9 @@ private:
   static constexpr float kEdgeSpeed = 0.01f;
   float fEdgeSpeed = 0.0f;
   bool fToEnd = false;
+  // Its list has rows it only moved while its width moved (State's
+  // fChildrenWaiting): laid out at the next frame.
+  bool fListWaits = false;
   std::optional<float> fJumpTo;
   bool fToEndGlide = true;
   bool fCopies = true;

@@ -148,6 +148,21 @@ template <class N> struct Flowing {
     spl::visit([this](const auto &along) { lay(along); }, fOptions.direction);
   }
 
+  // A scrolled list's rows out of view while its width moves -- a column
+  // dragged wider, at every frame of the drag: not laid out again at each
+  // width, every bubble's text wrapped again, but kept as they were laid
+  // out and only moved; laid out at the width once it holds (the list's
+  // scroll view asks for that frame). Rows in view, and a screen above and
+  // below, are laid out as ever.
+  bool fMayWait = false;
+  std::vector<const skiff::scene::State *> fWaiting;
+  [[nodiscard]] bool waits(const skiff::scene::State &child, const skia::SkRect &childBox) const {
+    const skiff::scene::State &self = skiff::scene::stateOf(fNode);
+    return fMayWait && self.fInView && child.fLayoutValid && !child.fSubtreeDirty && !child.fBounds.isEmpty() &&
+           child.fLastConstraint.width() != childBox.width() && !skia::SkRect::Intersects(child.fBounds, *self.fInView);
+  }
+  [[nodiscard]] bool waiting(const skiff::scene::State &child) const { return std::ranges::contains(fWaiting, &child); }
+
   // The children that show, laid out at their own size in the box; what the
   // placing is worked out from.
   std::vector<skiff::scene::State *> measured(const skia::SkRect &box) {
@@ -155,7 +170,10 @@ template <class N> struct Flowing {
     skiff::scene::eachChild(fNode, [&](auto &child) {
       skiff::scene::State &state = skiff::scene::stateOf(child);
       if (inFlow(state)) {
-        skiff::scene::layout(child, boxFor(state, box));
+        if (const skia::SkRect childBox = boxFor(state, box); this->waits(state, childBox))
+          fWaiting.push_back(&state);
+        else
+          skiff::scene::layout(child, childBox);
         shown.push_back(&state);
       }
     });
@@ -177,6 +195,16 @@ template <class N> struct Flowing {
         return;
       }
       state.arrange(places[at].first, places[at].second);
+      if (this->waiting(state)) {
+        // Moved where it goes, as it is: laid out at the width later.
+        const skia::SkRect to = boxFor(state, box);
+        const float dx = to.fLeft + state.fMargin.fLeft + places[at].first - state.fBounds.fLeft;
+        const float dy = to.fTop + state.fMargin.fTop + places[at].second - state.fBounds.fTop;
+        state.fPlacementDirty = false;
+        skiff::scene::shiftSubtree(child, dx, dy);
+        ++at;
+        return;
+      }
       skiff::scene::layout(child, boxFor(state, box));
       ++at;
     });
@@ -190,7 +218,15 @@ template <class N> struct Flowing {
   void lay(direction::vertical) {
     const skia::SkRect box = skiff::scene::stateOf(fNode).contentBox();
     grow<skiff::scene::axis::y>(box, fOptions.spacingY);
+    skiff::scene::State &self = skiff::scene::stateOf(fNode);
+    if (self.fFlowPass != skiff::scene::work::layoutPass()) {
+      self.fFlowPass = skiff::scene::work::layoutPass();
+      self.fFlowMoved = self.fInView.has_value() && self.fFlowWidth >= 0.0f && self.fFlowWidth != box.width();
+      self.fFlowWidth = box.width();
+    }
+    fMayWait = self.fFlowMoved;
     const auto shown = measured(box);
+    self.fChildrenWaiting = !fWaiting.empty();
     float used = 0.0f;
     for (const skiff::scene::State *state : shown) {
       used += state->fBounds.height() + state->fMargin.totalY();
@@ -404,6 +440,18 @@ template <class N> struct Flowing {
   // Children that grow take an equal share of what the rest leave along the
   // axis, written before anything is placed.
   template <class Axis> void grow(const skia::SkRect &box, float spacing) {
+    // None grows -- most flows, a list of rows among them: nothing to hand
+    // out, and nothing laid out for it. Each child was laid out here first,
+    // to see what was taken, and then again where it was placed -- the rows
+    // of a list at every width it was dragged through, those out of view too.
+    bool any = false;
+    skiff::scene::eachChild(fNode, [&](auto &child) {
+      const skiff::scene::State &state = skiff::scene::stateOf(child);
+      any = any || (inFlow(state) && state.fGrowAxes.template has<Axis>());
+    });
+    if (!any) {
+      return;
+    }
     int growers = 0;
     int visible = 0;
     float taken = 0.0f;

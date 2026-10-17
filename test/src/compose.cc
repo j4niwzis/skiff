@@ -2765,3 +2765,71 @@ TEST(Compose, ARowSwipedFarUnderAFlickIsLetGo) {
   scene::hostWork().pressed.clear();
   scene::hostWork().answers.clear();
 }
+
+// A long list as its width is dragged: only the rows near the view laid out
+// again at each width, the rest once the width holds -- and then all of
+// them at it.
+namespace dragged_width {
+namespace c = skiff::compose;
+using namespace window_edge;
+inline int &measures() {
+  static int kept = 0;
+  return kept;
+}
+struct CountingRow : scene::Node {
+  CountingRow() { this->apply({.fillX = true, .height = 40.0f}); }
+  void measure(const skia::SkRect &) { ++measures(); }
+};
+struct MakeCounting {
+  CountingRow operator()(const Item &) const { return CountingRow{}; }
+};
+using CountingWindow = c::WindowFrom<Src, FeedModel, std::string, int, CountingRow, MakeCounting, c::NoLocate, Tag>;
+}  // namespace dragged_width
+TEST(Compose, AListDraggedWiderLaysOutTheRowsInViewThenAll) {
+  using namespace dragged_width;
+  CountingWindow window(MakeCounting{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, CountingWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 60}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  float width = 300.0f;
+  bool wants = true;
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, width, 400.0f));
+    wants = tree.finishFrame().fWantsAnotherFrame;
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  // Dragged: a new width at each frame.
+  int most = 0;
+  double at = 600.0;
+  for (int step = 0; step < 10; ++step, at += 16.0) {
+    width += 7.0f;
+    measures() = 0;
+    frame(at);
+    most = std::max(most, measures());
+  }
+  // Let go: the frames it asks for, then every row at the width.
+  measures() = 0;
+  wants = true;
+  int frames = 0;
+  for (; wants && frames < 20; at += 16.0, ++frames)
+    frame(at);
+  const int after = measures();
+  float narrowest = 1e9f, widest = 0.0f;
+  scene::forEachNode<CountingRow>(tree.root(), [&](CountingRow &row) {
+    narrowest = std::min(narrowest, row.bounds().width());
+    widest = std::max(widest, row.bounds().width());
+  });
+  std::println("dragged: at most {} rows laid out a frame; after, {} in {} frames; rows {}..{} wide (list {})", most, after, frames, narrowest,
+               widest, width);
+  // Fewer than all 60, at every step of the drag (twice each, for the list
+  // sized by its rows is laid out twice): those in view, a screen around.
+  EXPECT_LT(most, 2 * 60);
+  EXPECT_LE(most, 2 * 30);
+  EXPECT_FLOAT_EQ(narrowest, width);
+  EXPECT_FLOAT_EQ(widest, width);
+}

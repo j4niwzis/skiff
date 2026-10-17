@@ -3165,6 +3165,15 @@ public:
   // the walks a frame makes visit only the children that reach into it.
   // Layout still sees them all.
   std::optional<skia::SkRect> fInView;
+  // A scrolled list's: the width it was last laid out at, and whether some
+  // of its rows -- out of view while that width moved, a column dragged
+  // wider -- were only moved, not laid out at it: laid out once it holds.
+  float fFlowWidth = -1.0f;
+  bool fChildrenWaiting = false;
+  // Decided once a pass -- a list sized by its rows is laid out twice in
+  // one, its width the same at the second: whether its width moved.
+  std::uint64_t fFlowPass = 0;
+  bool fFlowMoved = false;
   // The children, as they were last time: a variant that switched, a row
   // added to a vector. Compared each frame; a different set is laid out and
   // repainted.
