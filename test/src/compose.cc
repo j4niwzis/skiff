@@ -1586,6 +1586,9 @@ struct MakeArriving {
   compose::Held operator()(const Item &) const { return compose::Held(c::appearing(true, RowNode{})); }
 };
 using ArrivingWindow = c::WindowFrom<Src, FeedModel, std::string, int, compose::Held, MakeArriving, c::NoLocate, Tag>;
+struct Plain {
+  static constexpr auto styles = scene::makeStyleSheet().rule(scene::selectAny(), {.alpha = 1.0f});
+};
 }  // namespace window_arrive
 TEST(Compose, RowsComingInMovingAreSeenOnceStill) {
   using namespace window_arrive;
@@ -1933,4 +1936,152 @@ TEST(Compose, AWindowGlidingToARowAsRowsGrowGoesOneWay) {
   EXPECT_LE(turns, 1);
   EXPECT_EQ(heard.aimed, 1);
   EXPECT_FALSE(list->settling());
+}
+
+// mux's picture in a message, as it is put together: its preview and its
+// picture -- marked, under what turns while it comes -- fill the fitted box,
+// both ways: laid out 0 high, neither is drawn, so neither is asked for, and
+// the box's plate shows alone, grey.
+namespace picture_like {
+namespace c = skiff::compose;
+struct ShownImage : scene::Node {
+  [[nodiscard]] const skia::Sp<skia::SkImage> *image() const { return nullptr; }
+};
+struct Turning : scene::Node {
+  Turning() { this->apply({.width = 20.0f, .height = 20.0f}); }
+};
+struct PictureTag {};
+struct NoRatio {
+  std::optional<float> operator()(auto &) const { return std::nullopt; }
+};
+inline auto picture_box() {
+  auto preview = c::visible(true, c::styled({.fill = true, .cornerRadius = 10.0f}, ShownImage()));
+  auto picture = c::Marked<PictureTag, ShownImage>(c::visible(true, c::styled({.fill = true, .cornerRadius = 10.0f}, ShownImage())));
+  auto loader = c::visible(false, c::styled({.place = scene::anchor::kCentre}, Turning()));
+  return SKIFF_NAMED(picture_box, c::column(c::vbox(0.0f, {.cornerRadius = 10.0f, .background = 0xff808080u, .masking = true}),
+                                            std::move(preview), c::while_coming(c::vbox(0.0f, {.fill = true}), std::move(picture), std::move(loader))));
+}
+using fitted_t = c::Fitted<NoRatio, decltype(picture_box())>;
+struct Open {};
+}  // namespace picture_like
+TEST(Compose, APictureAsMuxMakesItIsFilledByItsImages) {
+  using namespace picture_like;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::onClick(Open{}, fitted_t(c::Fit{.width = 1100.0f, .height = 720.0f, .most = 430.0f, .least = 100.0f}, NoRatio{}, picture_box()))));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 600.0f, 600.0f));
+  int seen = 0;
+  const auto filled = [&](auto &one) {
+    const auto box = one.bounds();
+    std::println("image {}: {} x {}", seen, box.width(), box.height());
+    EXPECT_FLOAT_EQ(box.width(), 430.0f);
+    EXPECT_FLOAT_EQ(box.height(), 281.0f);
+    ++seen;
+  };
+  scene::forEachNode<ShownImage>(tree.root(), filled);
+  scene::forEachNode<c::Marked<PictureTag, ShownImage>>(tree.root(), filled);
+  EXPECT_EQ(seen, 2);
+}
+
+// Rows come in moving, and the pointer moves before the next frame: the
+// restyle after its event walks the new rows without ticking them. Taken
+// as seen there, they were never ticked -- in no ticking set, their fade-in
+// held at its start, a gap in the list where they are.
+TEST(Compose, RowsComingInAsThePointerMovesAreTicked) {
+  using namespace window_arrive;
+  ArrivingWindow window(MakeArriving{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, ArrivingWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 3}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  Heard heard;
+  const auto frame = [&](double at) {
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    (void)tree.finishFrame();
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  (void)m.apply(model::edit(model::placeOf<Feed, FeedRoot>(), model::setTo(Feed{.count = 5})));
+  binding.refresh(tree.root(), m);
+  (void)tree.dispatchPointer(scene::pointer::move{150.0f, 170.0f});
+  (void)tree.dispatchPointer(scene::pointer::move{151.0f, 185.0f});
+  // And restyled whole, as a hover over a styled row's parent restyles all
+  // under it.
+  tree.setStyleSheet<window_arrive::Plain>();
+  for (double at = 600.0; at < 1600.0; at += 16.0)
+    frame(at);
+  const auto rows = scene::laidOutTree(tree.root());
+  std::print("{}", scene::laidOutText(tree.root()));
+  EXPECT_TRUE(std::ranges::none_of(rows, [](const scene::LaidOutNode &row) { return row.alpha < 1.0f; }));
+}
+
+// mux's message row: the avatar hangs at the row's bottom left, out of its
+// flow -- the row as tall as its bubble, the avatar not making it taller.
+namespace face_row {
+namespace c = skiff::compose;
+struct Face : scene::Node {
+  Face() { this->apply({.width = 40.0f, .height = 40.0f}); }
+};
+struct Bubble : scene::Node {
+  Bubble() { this->apply({.width = 100.0f, .height = 20.0f}); }
+};
+struct OpenFace {
+  int operator()() const { return 1; }
+};
+inline auto row() {
+  auto face = c::visible(true, c::styled({.place = scene::anchor::kBottomLeft, .x = -48.0f, .y = -1.0f, .alpha = 1.0f},
+                                         c::onPress(OpenFace{}, Face(), "name")));
+  return c::row(c::justified(c::hbox(8.0f, {.fillX = true, .autoSize = scene::axes::kY, .padding = {1.0f, 0.0f, 1.0f, 48.0f}}),
+                             nodes::justify::start{}),
+                std::move(face), compose::Held(Bubble()));
+}
+}  // namespace face_row
+TEST(Compose, AFaceOutOfARowsFlowLeavesItAsTallAsItsBubble) {
+  using namespace face_row;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), row())));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 400.0f));
+  std::print("{}", scene::laidOutText(tree.root()));
+  const Bubble *bubble = scene::findNode<Bubble>(tree.root());
+  ASSERT_NE(bubble, nullptr);
+  EXPECT_FLOAT_EQ(bubble->bounds().fTop, 1.0f);
+  EXPECT_FLOAT_EQ(bubble->bounds().fLeft, 48.0f);
+  int faces = 0;
+  scene::forEachNode<c::OnPress<OpenFace, c::part_t<Face>>>(tree.root(), [&](auto &face) {
+    ++faces;
+    EXPECT_FLOAT_EQ(face.bounds().fBottom, bubble->bounds().fBottom - 1.0f);
+    EXPECT_FLOAT_EQ(face.bounds().fLeft, 0.0f);
+  });
+  EXPECT_EQ(faces, 1);
+}
+
+// A row the chat's settings hide, as mux makes one: hidden where it is made,
+// then wrapped -- coming in, held off -- and still out of the list's flow,
+// no gap where it is.
+namespace hidden_row {
+namespace c = skiff::compose;
+struct Line : scene::Node {
+  Line() { this->apply({.fillX = true, .height = 40.0f}); }
+};
+struct Asked {
+  std::optional<int> operator()(auto &, float, float) const { return 1; }
+};
+inline auto row(bool shown) {
+  auto inner = c::onRightPressAt(Asked{}, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), Line()));
+  inner.setVisible(shown);
+  return compose::Held(c::appearing(false, std::move(inner)));
+}
+}  // namespace hidden_row
+TEST(Compose, AHiddenRowWrappedTakesNoRoom) {
+  using namespace hidden_row;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+                              c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), row(true), row(false), row(true))));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+  std::print("{}", scene::laidOutText(tree.root()));
+  std::vector<float> tops;
+  scene::forEachNode<Line>(tree.root(), [&](Line &one) { tops.push_back(one.bounds().fTop); });
+  ASSERT_EQ(tops.size(), 3u);
+  EXPECT_FLOAT_EQ(tops[2], 40.0f);
 }
