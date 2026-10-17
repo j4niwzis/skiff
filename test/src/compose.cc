@@ -3488,3 +3488,149 @@ TEST(Compose, AButtonWhoseTextIsReadInACardIsPressedWhereItIsDrawn) {
   std::println("expanded list shown: {}", listed);
   EXPECT_TRUE(listed);
 }
+
+// mux's emoji panel, as it is made: a card placed and sized by the window's
+// shape it reads (spec_for), over a flick across it, its tabs over a panel
+// that grows to fill it -- its groups' bar along its bottom -- and the
+// plugins' pages. The card as big as said, everything in it inside it.
+namespace emoji_card {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Flick {};
+inline auto panel() {
+  return c::column(c::vbox(0.0f, {.fillX = true, .grow = scene::axes::kY}),
+                   c::styled({.fillX = true, .grow = scene::axes::kY}, shown_later::Probe()),
+                   c::row(c::hbox(4.0f, {.fillX = true, .height = 30.0f, .background = 0xff0000ffu}), shown_later::Probe()));
+}
+inline auto card() {
+  auto card = c::spec_for<Feed>([](const Feed &) {
+    return scene::Spec{.place = scene::anchor::kTopLeft, .x = 40.0f, .y = 100.0f, .width = 345.0f, .height = 400.0f, .cornerRadius = 8.0f,
+                       .background = 0xffffffffu};
+  },
+      c::flicked(90.0f, [](bool) { return std::optional<Flick>(); },
+          c::column(c::vbox(0.0f, {}),
+              c::row(c::hbox(4.0f, {.fillX = true, .height = 36.0f}), shown_later::Probe()),
+              c::styled({.fillX = true, .grow = scene::axes::kY, .masking = true}, panel()),
+              // The plugins' pages: there only while one is the page -- shown
+              // beside the emoji, it grew too and took half the card.
+              c::column(c::vbox(0.0f, {.fillX = true, .grow = scene::axes::kY, .visible = false})))));
+  return c::column(c::vbox(0.0f, {.fill = true}), std::move(card));
+}
+}  // namespace emoji_card
+TEST(Compose, AnEmojiCardIsAsBigAsItsShapeSaysAndHoldsItsParts) {
+  using namespace emoji_card;
+  using card_t = decltype(emoji_card::card());
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::projected<FeedTold>([](const FeedTold &now) { return now.of == 2 ? std::optional(true) : std::nullopt; },
+                             c::mount<card_t, bool>([](bool) { return std::tuple{emoji_card::card()}; }, {.fill = true}))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  const auto frame = [&] {
+    binding.refresh(tree.root(), m);
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 800.0f, 600.0f));
+    (void)tree.finishFrame();
+  };
+  frame();
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(), model::setTo(FeedTold{.of = 2})));
+  frame();
+  frame();
+  std::print("{}", scene::laidOutText(tree.root()));
+  float cardTop = -1.0f, cardHigh = 0.0f, barBottom = 0.0f;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root())) {
+    if (one.bounds.width() == 345.0f && one.bounds.fLeft == 40.0f && one.bounds.height() > cardHigh) {
+      cardTop = one.bounds.fTop;
+      cardHigh = one.bounds.height();
+    }
+    if (one.bounds.height() == 30.0f)
+      barBottom = std::max(barBottom, one.bounds.fBottom);
+  }
+  std::println("emoji card at {} {} high, groups bar to {}", cardTop, cardHigh, barBottom);
+  EXPECT_FLOAT_EQ(cardTop, 100.0f);
+  EXPECT_FLOAT_EQ(cardHigh, 400.0f);
+  EXPECT_FLOAT_EQ(barBottom, 500.0f);
+}
+
+// mux's emoji panel at its size: its groups, ~1900 cells in all -- each a
+// named view, resting over a press over its glyph -- in sections that
+// scroll, a strip of tabs under them. What a frame does, idle, hovered,
+// scrolled: nodes ticked and laid out, and its time.
+namespace emoji_grid {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Group {
+  std::string name;
+  int count = 0;
+};
+struct Rest {
+  shown_later::Pressed operator()(bool) const { return {}; }
+};
+inline auto cell(int) {
+  return SKIFF_NAMED(emoji_cell, c::resting(500.0, Rest{},
+      c::onPress([] { return shown_later::Pressed{}; },
+          c::row(c::justified(c::hbox(0.0f, {.width = 37.0f, .height = 37.0f, .cornerRadius = 6.0f, .hoverBackground = 0xffeeeeeeu}),
+                              nodes::justify::middle{}),
+                 c::styled({.alignSelf = scene::align::kMiddle}, nodes::Text("x", 22.0f, 0xff000000u))), "e")));
+}
+using cell_t = decltype(cell(0));
+inline auto section(const Group &one) {
+  return c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+      c::styled({.fillX = true, .height = 32.0f}, nodes::Text(one.name, 13.0f, 0xff000000u)),
+      c::styled({.fillX = true, .autoSize = scene::axes::kY},
+          nodes::Flow<std::vector<cell_t>>({.direction = nodes::direction::horizontal{}, .spacingX = 0.0f, .spacingY = 0.0f, .wrap = true},
+                                           std::views::iota(0, one.count) | std::views::transform(cell) | std::ranges::to<std::vector>())));
+}
+inline auto tab(const Group &one) {
+  return c::styled({.width = 30.0f, .height = 30.0f, .grow = scene::axes::kX, .shrink = scene::axes::kX, .minWidth = 0.0f},
+                   nodes::Text(one.name.substr(0, 1), 16.0f, 0xff000000u));
+}
+inline auto panel() {
+  auto groups = c::sections<Group>(c::vbox(4.0f, {.fill = true}), c::vbox(0.0f), tab, section,
+                                   c::in_row<Group>(c::hbox(0.0f, {.fillX = true, .height = 36.0f})));
+  return c::column(c::vbox(0.0f, {.fill = true}),
+      c::projected<Feed>([](const Feed &) {
+        std::vector<Group> all = std::views::iota(0, 10) | std::views::transform([](int g) { return Group{std::format("Group {}", g), 190}; }) |
+                                 std::ranges::to<std::vector>();
+        return c::SectionsShown<Group>{all, all, true};
+      }, std::move(groups)));
+}
+}  // namespace emoji_grid
+TEST(Compose, AnEmojiGridOfItsSizeDoesLittleAFrame) {
+  using namespace emoji_grid;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), c::styled({.width = 345.0f, .height = 400.0f}, panel())));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  double at = 0.0;
+  const auto frame = [&] {
+    const auto start = std::chrono::steady_clock::now();
+    const scene::WalkCounts before = scene::walkCounts();
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 345.0f, 400.0f));
+    const bool more = tree.finishFrame().fWantsAnotherFrame;
+    at += 16.0;
+    const scene::WalkCounts now = scene::walkCounts();
+    return std::tuple{std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), now.tick - before.tick,
+                      now.layout - before.layout, now.laidOut - before.laidOut, more};
+  };
+  for (int i = 0; i < 3; ++i) {
+    const auto [ms, ticked, layouts, laid, more] = frame();
+    std::println("first frames: {:.1f} ms, ticked {}, layouts {}, laid out {}, wants more {}", ms, ticked, layouts, laid, more);
+  }
+  for (int i = 0; i < 3; ++i) {
+    const auto [ms, ticked, layouts, laid, more] = frame();
+    std::println("idle: {:.1f} ms, ticked {}, layouts {}, laid out {}, wants more {}", ms, ticked, layouts, laid, more);
+  }
+  for (int i = 0; i < 4; ++i) {
+    (void)tree.dispatchPointer(scene::pointer::move{20.0f + 37.0f * static_cast<float>(i), 60.0f});
+    const auto [ms, ticked, layouts, laid, more] = frame();
+    std::println("hovered: {:.1f} ms, ticked {}, layouts {}, laid out {}, wants more {}", ms, ticked, layouts, laid, more);
+  }
+  for (int i = 0; i < 4; ++i) {
+    (void)tree.dispatchPointer(scene::pointer::scroll{100.0f, 200.0f, 0.0f, -120.0f});
+    const auto [ms, ticked, layouts, laid, more] = frame();
+    std::println("scrolled: {:.1f} ms, ticked {}, layouts {}, laid out {}, wants more {}", ms, ticked, layouts, laid, more);
+  }
+  const auto [ms, ticked, layouts, laid, more] = frame();
+  EXPECT_LT(laid, 200u);
+}
