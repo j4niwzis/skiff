@@ -686,6 +686,10 @@ template <class Act, class Mark, class Show, class N> struct Swiped : Box<N, Mar
   void onPointer(scene::phase::capture, const scene::pointer::move &at, scene::PointerReply &reply) {
     if (fDragging) {
       fShift.jump(std::clamp(at.x - fX, -fMost, 0.0f));
+      // Ticked to follow: its tick moves the node and fills the arrow, and
+      // where the walk goes only where things changed, damage alone did not
+      // bring it there -- the row stood still under the finger, stuck.
+      scene::work::mark(this->fState.fId);
       this->markDamaged();
       reply.handle();
       return;
@@ -707,6 +711,7 @@ template <class Act, class Mark, class Show, class N> struct Swiped : Box<N, Mar
       return;
     fDragging = true;
     fShift.jump(std::clamp(dx, -fMost, 0.0f));
+    scene::work::mark(this->fState.fId);
     reply.capturePointer();
     reply.suppressHover();
     reply.handle();
@@ -729,6 +734,22 @@ template <class Act, class Mark, class Show, class N> struct Swiped : Box<N, Mar
     fShift.setTarget(0.0f);
     scene::work::mark(this->fState.fId);
     reply.releasePointer();
+  }
+  // Holding the pointer, it is what the pointer goes to: the moves and the
+  // letting go come to it as their target, not on their way down -- taken
+  // the same. (On the way down alone, it followed the first move and no
+  // other, and was never let go: stuck where it was.)
+  void onPointer(scene::phase::target, const scene::pointer::move &at, scene::PointerReply &reply) {
+    if (fDragging)
+      this->onPointer(scene::phase::capture{}, at, reply);
+  }
+  void onPointer(scene::phase::target, const scene::pointer::up &up, scene::PointerReply &reply) {
+    if (fDragging)
+      this->onPointer(scene::phase::capture{}, up, reply);
+  }
+  void onPointer(scene::phase::target, const scene::pointer::cancel &cancel, scene::PointerReply &reply) {
+    if (fDragging)
+      this->onPointer(scene::phase::capture{}, cancel, reply);
   }
   auto onPress() { return std::invoke(fAct); }
   [[nodiscard]] bool settling() const { return fShift.moving() || fShift.value() != fDrawn; }

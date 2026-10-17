@@ -1644,3 +1644,42 @@ TEST(Compose, AFrameAfterARowIsMadeAsksForAnother) {
   tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
   EXPECT_TRUE(tree.finishFrame().fWantsAnotherFrame);
 }
+
+// A row swiped to answer it: it follows the finger as it is dragged -- its
+// tick moves it, so a drag has to bring the walk to it -- and goes back
+// when let go.
+namespace swipe_follow {
+namespace c = skiff::compose;
+// What is pressed in the row (a message's text): a swipe is taken on its
+// way down to it.
+struct ShiftProbe : scene::Node {
+  ShiftProbe() { this->apply({.fillX = true, .height = 40.0f}); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+};
+struct Answered {};
+}  // namespace swipe_follow
+TEST(Compose, ASwipedRowFollowsTheFinger) {
+  using namespace swipe_follow;
+  auto row = c::swiped(48.0f, 72.0f, [] { return Answered{}; }, [](nodes::Text &, float) {}, nodes::Text("", 12.0f, 0u), ShiftProbe());
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(row)));
+  const auto view = skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 200.0f);
+  const auto frame = [&](double at) {
+    tree.update(at);
+    tree.layoutIfNeeded(view);
+    (void)tree.finishFrame();
+  };
+  for (double at = 0.0; at < 200.0; at += 16.0)
+    frame(at);
+  ShiftProbe *probe = scene::findNode<ShiftProbe>(tree.root());
+  ASSERT_NE(probe, nullptr);
+  (void)tree.dispatchPointer(scene::pointer::down{200.0f, 20.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::move{185.0f, 20.0f});
+  frame(216.0);
+  (void)tree.dispatchPointer(scene::pointer::move{150.0f, 20.0f});
+  frame(232.0);
+  EXPECT_FLOAT_EQ(probe->fState.fShiftX, -50.0f);
+  (void)tree.dispatchPointer(scene::pointer::up{150.0f, 20.0f, 1});
+  for (double at = 248.0; at < 800.0; at += 16.0)
+    frame(at);
+  EXPECT_FLOAT_EQ(probe->fState.fShiftX, 0.0f);
+}
