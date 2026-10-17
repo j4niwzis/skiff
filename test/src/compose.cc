@@ -1795,17 +1795,25 @@ TEST(Compose, AWindowAimedAsItsViewShrinksComesToRestOnce) {
     frame(at);
   FeedWindow *list = scene::findNode<bind::Bound<FeedTold, FeedWindow>>(tree.root());
   ASSERT_NE(list, nullptr);
-  std::vector<float> offsets;
+  // Back and forth: the offset's direction turned, within one aim.
+  int turns = 0;
   const auto aim = [&](std::string key, std::uint64_t number, double from) {
     (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(),
                               model::setTo(FeedTold{.of = 1, .aim = {.key = std::move(key), .number = number}})));
     binding.refresh(tree.root(), m);
+    std::vector<float> offsets;
     for (double t = from; t < from + 1500.0; t += 16.0) {
       if (height > 350.0f)
         height -= 5.0f;
       frame(t);
       offsets.push_back(list->current());
     }
+    // From the second step on: a jump there and the bottom then kept as
+    // the bar opens is not a swing.
+    for (std::size_t i = 3; i < offsets.size(); ++i)
+      if ((offsets[i] - offsets[i - 1]) * (offsets[i - 1] - offsets[i - 2]) < -0.01f)
+        ++turns;
+    std::println("offsets: {}", offsets | std::views::take(16));
   };
   aim("m29", 1, 600.0);
   aim("m28", 2, 2100.0);
@@ -1813,23 +1821,23 @@ TEST(Compose, AWindowAimedAsItsViewShrinksComesToRestOnce) {
   height = 400.0f;
   for (double t = 3600.0; t < 4200.0; t += 16.0)
     frame(t);
-  offsets.clear();
   aim("m12", 3, 4200.0);
   // Near the end, glided to, as the bar opens: Ctrl+Up's.
   aim("m29", 4, 5700.0);
   height = 400.0f;
   for (double t = 7200.0; t < 7800.0; t += 16.0)
     frame(t);
-  offsets.clear();
   aim("m25", 5, 7800.0);
-  // Back and forth: the offset's direction turned more than once an aim.
-  int turns = 0;
-  for (std::size_t i = 2; i < offsets.size(); ++i)
-    if ((offsets[i] - offsets[i - 1]) * (offsets[i - 1] - offsets[i - 2]) < -0.01f)
-      ++turns;
-  std::println("offsets: {}", offsets | std::views::stride(4));
-  EXPECT_LE(turns, 1);
-  EXPECT_EQ(heard.aimed, 5);
+  // Further up, still glided to: a long glide's steps are large.
+  aim("m29", 6, 9300.0);
+  height = 400.0f;
+  for (double t = 10800.0; t < 11400.0; t += 16.0)
+    frame(t);
+  aim("m9", 7, 11400.0);
+  // One way: aimed from where the row is on the screen, the target was off
+  // by each frame's step of the glide, and the view swung about the row.
+  EXPECT_EQ(turns, 0);
+  EXPECT_EQ(heard.aimed, 7);
   EXPECT_FALSE(list->settling());
 }
 
@@ -2091,4 +2099,48 @@ TEST(Compose, AHiddenRowWrappedTakesNoRoom) {
   scene::forEachNode<Line>(tree.root(), [&](Line &one) { tops.push_back(one.bounds().fTop); });
   ASSERT_EQ(tops.size(), 3u);
   EXPECT_FLOAT_EQ(tops[2], 40.0f);
+}
+
+// As mux makes a row that comes in: its fade-in around a node that is held
+// (held_off_for, erased outside a release build) -- the fade a wrapper over
+// held content, ticked as itself all the same, and the row seen whole.
+namespace window_arrive_held {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct MakeArrivingHeld {
+  compose::Held operator()(const Item &) const {
+    return compose::Held(c::appearing(true, compose::Held(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), RowNode{}))));
+  }
+};
+using ArrivingHeldWindow = c::WindowFrom<Src, FeedModel, std::string, int, compose::Held, MakeArrivingHeld, c::NoLocate, Tag>;
+}  // namespace window_arrive_held
+TEST(Compose, RowsComingInAroundHeldContentAreSeenOnceStill) {
+  using namespace window_arrive_held;
+  ArrivingHeldWindow window(MakeArrivingHeld{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, ArrivingHeldWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 3}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  Heard heard;
+  bool wants = true;
+  const auto frame = [&](double at) {
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    wants = tree.finishFrame().fWantsAnotherFrame;
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  (void)m.apply(model::edit(model::placeOf<Feed, FeedRoot>(), model::setTo(Feed{.count = 5})));
+  binding.refresh(tree.root(), m);
+  // Only the frames the window asks for, as a window at rest makes them:
+  // the first, woken by what came.
+  wants = true;
+  for (double at = 600.0; at < 1600.0 && wants; at += 16.0)
+    frame(at);
+  const auto rows = scene::laidOutTree(tree.root());
+  std::print("{}", scene::laidOutText(tree.root()));
+  EXPECT_TRUE(std::ranges::none_of(rows, [](const scene::LaidOutNode &row) { return row.alpha < 1.0f; }));
 }

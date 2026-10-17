@@ -1047,13 +1047,18 @@ private:
       // once the view is still where it was aimed -- or after three seconds
       // of frames, where it never settles. Its arrival said at the first aim,
       // where a flash of it is seen.
+      // Where it is in the contents, not on the screen: the screen's place
+      // is the last layout's offset, and the view has moved since -- a
+      // glide's step this frame. Added to the offset as it is now, the
+      // target was off by that step at every frame of a glide, aimed again
+      // each frame: the view swung up and down about the row.
       const skia::SkRect view = this->bounds();
-      const skia::SkRect box = this->toView(found->bounds());
+      const skia::SkRect box = found->bounds();
       const float above = fAimTop ? *fAimTop : box.height() < view.height() ? (view.height() - box.height()) * 0.5f : 0.0f;
-      float to = std::max(0.0f, this->current() + (box.fTop - view.fTop) - above);
+      float to = std::max(0.0f, (box.fTop - view.fTop) - above);
       if (fAimLine)
         if (const auto line = std::invoke(fLocate, found->fRow, *fAimLine))
-          to = std::max(0.0f, this->current() + (box.fTop + *line - view.fTop) - view.height() * 0.4f);
+          to = std::max(0.0f, (box.fTop + *line - view.fTop) - view.height() * 0.4f);
       if (!fAimedAt) {
         // Far away -- a window just made around it -- put there at once, not
         // glided to through it; near, glided to.
