@@ -39,8 +39,13 @@ public:
   // Activates on release inside, not on the press: a press that turns into
   // a scroll must not have clicked.
   using Node::onPointer;
-  void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::down &,
+  // By the main button only: another -- a right press, a message's menu --
+  // goes on to what holds it. Taken here, a right press on a quote or a
+  // reaction in a message never reached the message's menu.
+  void onPointer(skiff::scene::phase::target, const skiff::scene::pointer::down &press,
                  skiff::scene::PointerReply &reply) {
+    if (press.button > 1)
+      return;
     fArmed = true;
     reply.handle();
   }

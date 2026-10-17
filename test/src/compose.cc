@@ -2326,3 +2326,305 @@ TEST(Compose, AButtonHiddenAsItIsMadeIsShownByWhatItReads) {
   std::print("{}", scene::laidOutText(tree.root()));
   EXPECT_EQ(pressedAt(), 1u);
 }
+
+// mux's chats screen and its keys: named, its keys asked on their way down
+// (keys_for, capture) and on their way up (onKeys) -- a key the field with
+// the focus does not take answered once, not twice (Ctrl+Up stepped two
+// messages).
+namespace screen_keys_once {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Field : scene::Node {
+  Field() { this->apply({.width = 200.0f, .height = 30.0f}); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+  [[nodiscard]] bool focusable() const { return true; }
+  [[nodiscard]] bool takesFocusOnPress() const { return true; }
+};
+struct Up {};
+struct Caught {};
+struct UpKeys {
+  std::optional<Up> operator()(const scene::key::down &press) const {
+    return press.key == scene::keys::kUp ? std::optional<Up>(Up{}) : std::nullopt;
+  }
+};
+struct CaptureKeys {
+  std::optional<Caught> operator()(const int &, const scene::key::down &) const { return std::nullopt; }
+};
+inline auto screen() {
+  return SKIFF_NAMED(keys_screen, c::keys_for<FeedTold, scene::phase::capture>([](const FeedTold &) { return 0; }, CaptureKeys{},
+      c::onKeys(UpKeys{}, c::column(c::vbox(0.0f, {.fill = true}), Field()))));
+}
+}  // namespace screen_keys_once
+TEST(Compose, AKeyNoFieldTakesIsAnsweredOnceByTheScreen) {
+  using namespace screen_keys_once;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), screen()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  tree.update(0.0);
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 300.0f));
+  (void)tree.finishFrame();
+  (void)tree.dispatchPointer(scene::pointer::down{10.0f, 10.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::up{10.0f, 10.0f, 1});
+  scene::hostWork().answers.clear();
+  scene::hostWork().pressed.clear();
+  (void)tree.dispatchKey(scene::key::down{scene::keys::kUp, scene::modifiers::kControl});
+  const std::size_t answered = scene::hostWork().answers.size() + scene::hostWork().pressed.size();
+  std::println("focused {}, a key answered {} times", tree.focusedId(), answered);
+  // Kept to be delivered outside a release build; sent at once, carried,
+  // in one -- never twice.
+  EXPECT_LE(answered, 1u);
+  scene::hostWork().answers.clear();
+  scene::hostWork().pressed.clear();
+}
+
+// The row's menu, asked by a right press, delivered: taken by the program
+// (the sink given), not only kept.
+namespace row_menu_delivered {
+struct Heard {
+  int menus = 0;
+  void take(const row_menu::Menu &) { ++menus; }
+  void take(const row_menu::Reply &) {}
+};
+}  // namespace row_menu_delivered
+TEST(Compose, ARowsMenuAskedByARightPressIsDelivered) {
+  using namespace row_menu_delivered;
+  using namespace window_edge;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), row_menu::row()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  tree.update(0.0);
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 400.0f));
+  (void)tree.finishFrame();
+  scene::hostWork().answers.clear();
+  (void)tree.dispatchPointer(scene::pointer::down{20.0f, 8.0f, 3});
+  (void)tree.dispatchPointer(scene::pointer::up{20.0f, 8.0f, 3});
+  row_menu_delivered::Heard heard;
+  for (const auto &one : std::exchange(scene::hostWork().answers, {}))
+    std::println("delivered: {}", bind::answer(tree.root(), m, one, &heard));
+  if constexpr (scene::kErasedWalks)
+    EXPECT_EQ(heard.menus, 1);
+}
+
+// A key's answer delivered as mux delivers what was kept: to each model in
+// turn until one says it took it -- taken once, and said so by the first.
+namespace screen_keys_delivered {
+struct Heard {
+  int ups = 0;
+  void take(const screen_keys_once::Up &) { ++ups; }
+  void take(const screen_keys_once::Caught &) {}
+};
+}  // namespace screen_keys_delivered
+TEST(Compose, AScreensKeyAnswerIsTakenOnceAcrossModels) {
+  using namespace screen_keys_once;
+  using namespace screen_keys_delivered;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), screen()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  FeedModel other{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  tree.update(0.0);
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 300.0f));
+  (void)tree.finishFrame();
+  (void)tree.dispatchPointer(scene::pointer::down{10.0f, 10.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::up{10.0f, 10.0f, 1});
+  scene::hostWork().answers.clear();
+  scene::hostWork().pressed.clear();
+  (void)tree.dispatchKey(scene::key::down{scene::keys::kUp, scene::modifiers::kControl});
+  screen_keys_delivered::Heard heard;
+  for (const auto &one : std::exchange(scene::hostWork().answers, {})) {
+    const bool first = bind::answer(tree.root(), m, one, &heard);
+    const bool second = !first && bind::answer(tree.root(), other, one, &heard);
+    std::println("taken by the first model: {}, the second: {}, heard {}", first, second, heard.ups);
+  }
+  EXPECT_LE(heard.ups, 1);
+}
+
+// A message's picture whose thumbnail comes after it was first drawn: woken
+// where it waits, it finds it -- laid out again, repainted.
+namespace waiting_picture {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Store {
+  static inline skia::Sp<skia::SkImage> image;
+  static inline scene::Waiters waiting;
+};
+struct FromStore {
+  std::string key;
+  const skia::Sp<skia::SkImage> *operator()() const { return &Store::image; }
+  scene::Waiters &waiters() const { return Store::waiting; }
+};
+using Picture = nodes::Image<FromStore>;
+struct PictureTag {};
+struct MakePictureRow {
+  compose::Held operator()(const Item &) const {
+    return compose::Held(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+                                   c::Marked<PictureTag, Picture>(c::visible(true, c::styled({.width = 100.0f, .height = 80.0f}, Picture({"k"}))))));
+  }
+};
+using PictureWindow = c::WindowFrom<Src, FeedModel, std::string, int, compose::Held, MakePictureRow, c::NoLocate, Tag>;
+}  // namespace waiting_picture
+TEST(Compose, APictureThatComesLaterIsDrawn) {
+  using namespace waiting_picture;
+  PictureWindow window(MakePictureRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, PictureWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 2}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  Heard heard;
+  bool wants = true;
+  skia::SkRect damage = skia::SkRect::MakeEmpty();
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    const auto done = tree.finishFrame();
+    wants = done.fWantsAnotherFrame;
+    damage = scene::joined(damage, done.fDamage);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  std::println("waiting before it came: {}", !Store::waiting.empty());
+  // It comes: put where it is looked up, those waiting woken -- as mux's
+  // cache does -- and the frames the window then asks for.
+  auto surface = skia::Raster(skia::SkImageInfo::MakeN32Premul(8, 8));
+  Store::image = surface->makeImageSnapshot();
+  Store::waiting.wake();
+  damage = skia::SkRect::MakeEmpty();
+  wants = true;
+  int frames = 0;
+  for (double at = 600.0; at < 1600.0 && (wants || frames < 1); at += 16.0, ++frames)
+    frame(at);
+  std::println("frames after it came: {}, repainted {} x {}", frames, damage.width(), damage.height());
+  EXPECT_FALSE(damage.isEmpty());
+  Store::image = nullptr;
+}
+
+// The same, the picture as mux's picture_box holds it: fitted, pressed to
+// open, its preview under it, the picture marked under what turns while it
+// comes.
+namespace waiting_picture_box {
+namespace c = skiff::compose;
+using namespace window_edge;
+using waiting_picture::Picture;
+using waiting_picture::PictureTag;
+struct Polled {
+  std::string key;
+  const skia::Sp<skia::SkImage> *operator()() const { return nullptr; }
+};
+struct Turning : scene::Node {
+  Turning() { this->apply({.width = 20.0f, .height = 20.0f}); }
+  [[nodiscard]] const skia::Sp<skia::SkImage> *image() const { return nullptr; }
+};
+struct NoRatio {
+  std::optional<float> operator()(auto &) const { return std::nullopt; }
+};
+inline auto box() {
+  // Over the box, out of its flow, as mux now places it: in the flow, the
+  // picture went under it, past the box's bottom, cut off.
+  auto preview = c::visible(true, c::styled({.place = scene::anchor::kTopLeft, .fill = true, .cornerRadius = 10.0f}, nodes::Image<Polled>({"k"})));
+  auto picture = c::Marked<PictureTag, Picture>(c::visible(true, c::styled({.fill = true, .cornerRadius = 10.0f}, Picture({"k"}))));
+  auto loader = c::visible(false, c::styled({.place = scene::anchor::kCentre}, Turning()));
+  return SKIFF_NAMED(picture_box, c::column(c::vbox(0.0f, {.cornerRadius = 10.0f, .background = 0xff808080u, .masking = true}),
+                                            std::move(preview), c::while_coming(c::vbox(0.0f, {.fill = true}), std::move(picture), std::move(loader))));
+}
+using fitted_t = c::Fitted<NoRatio, decltype(box())>;
+struct Open {};
+struct MakeBoxRow {
+  compose::Held operator()(const Item &) const {
+    return compose::Held(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+        c::onClick(Open{}, fitted_t(c::Fit{.width = 100.0f, .height = 80.0f, .most = 430.0f, .least = 100.0f}, NoRatio{}, box()))));
+  }
+};
+using BoxWindow = c::WindowFrom<Src, FeedModel, std::string, int, compose::Held, MakeBoxRow, c::NoLocate, Tag>;
+}  // namespace waiting_picture_box
+TEST(Compose, APictureInMuxsBoxThatComesLaterIsDrawn) {
+  using namespace waiting_picture_box;
+  using waiting_picture::Store;
+  BoxWindow window(MakeBoxRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, BoxWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 2}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  Heard heard;
+  bool wants = true;
+  skia::SkRect damage = skia::SkRect::MakeEmpty();
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    const auto done = tree.finishFrame();
+    wants = done.fWantsAnotherFrame;
+    damage = scene::joined(damage, done.fDamage);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  std::println("box: waiting before it came: {}", !Store::waiting.empty());
+  auto surface = skia::Raster(skia::SkImageInfo::MakeN32Premul(8, 8));
+  Store::image = surface->makeImageSnapshot();
+  Store::waiting.wake();
+  damage = skia::SkRect::MakeEmpty();
+  wants = true;
+  int frames = 0;
+  for (double at = 600.0; at < 1600.0 && (wants || frames < 1); at += 16.0, ++frames)
+    frame(at);
+  std::println("box: frames after it came: {}, repainted {} x {}", frames, damage.width(), damage.height());
+  std::print("{}", scene::laidOutText(tree.root()));
+  EXPECT_FALSE(damage.isEmpty());
+  Store::image = nullptr;
+}
+
+// A card popped at the pointer -- a message's menu: at the pointer once laid
+// out, with only the frames it asks for -- not left where it was first laid
+// out, in the window's top left corner.
+namespace popped_menu {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Card : scene::Node {
+  Card() { this->apply({.width = 120.0f, .height = 90.0f}); }
+};
+inline auto menu() {
+  return c::column(c::vbox(0.0f, {.fill = true}),
+                   c::popped_at<FeedTold>([](const FeedTold &now) -> std::optional<c::PopAt> {
+                     if (now.of != 2)
+                       return std::nullopt;
+                     return c::PopAt{.from = skia::SkRect::MakeXYWH(150.0f, 120.0f, 0.0f, 0.0f)};
+                   }, 8.0f, c::styled({}, Card())));
+}
+}  // namespace popped_menu
+TEST(Compose, ACardPoppedAtThePointerGoesThere) {
+  using namespace popped_menu;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), menu()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  bool wants = true;
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 600.0f, 400.0f));
+    wants = tree.finishFrame().fWantsAnotherFrame;
+  };
+  for (double at = 0.0; at < 200.0; at += 16.0)
+    frame(at);
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(), model::setTo(FeedTold{.of = 2})));
+  wants = true;
+  for (double at = 200.0; at < 1200.0 && wants; at += 16.0)
+    frame(at);
+  float left = -1.0f, top = -1.0f;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.outOfFlow) {
+      left = one.bounds.fLeft;
+      top = one.bounds.fTop;
+    }
+  std::print("{}", scene::laidOutText(tree.root()));
+  EXPECT_FLOAT_EQ(left, 150.0f);
+  EXPECT_FLOAT_EQ(top, 120.0f);
+}
