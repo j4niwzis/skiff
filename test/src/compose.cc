@@ -2833,3 +2833,27 @@ TEST(Compose, AListDraggedWiderLaysOutTheRowsInViewThenAll) {
   EXPECT_FLOAT_EQ(narrowest, width);
   EXPECT_FLOAT_EQ(widest, width);
 }
+
+// A window list at rest asks for no frames: nothing in it settles for ever.
+TEST(Compose, AWindowAtRestAsksForNoFrames) {
+  using namespace window_edge;
+  FeedWindow window(MakeFeedRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, FeedWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 60}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  Heard heard;
+  bool wants = true;
+  for (double at = 0.0; at < 3000.0; at += 16.0) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    // What it answered, delivered as a program does: kept undelivered, it
+    // would settle for ever, its answers waiting.
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    wants = tree.finishFrame().fWantsAnotherFrame;
+  }
+  EXPECT_FALSE(wants);
+}
