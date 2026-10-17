@@ -3037,3 +3037,116 @@ TEST(Compose, HistoryAtTheTopIsNotCountedAsUnseen) {
   EXPECT_EQ(afterHistory, 0u);
   EXPECT_EQ(list->unseen(), 1u);
 }
+
+// A button hidden -- the way down, at the end already: all it drew is
+// repainted, the badge standing out over its top too.
+namespace badge_hidden {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Plate : scene::Node {
+  Plate() { this->apply({.width = 42.0f, .height = 42.0f, .background = 0xff808080u}); }
+};
+struct Badge : scene::Node {
+  Badge() { this->apply({.place = scene::anchor::kTopCentre, .y = -10.0f, .width = 20.0f, .height = 18.0f, .background = 0xffff0000u}); }
+};
+}  // namespace badge_hidden
+TEST(Compose, AHiddenButtonRepaintsItsBadgeToo) {
+  using namespace badge_hidden;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true, .padding = {40.0f, 40.0f, 40.0f, 40.0f}}),
+      c::shown_for<FeedTold>([](const FeedTold &now) { return now.of == 1; },
+                             c::column(c::vbox(0.0f, {.autoSize = scene::axes::kBoth}), Plate(), Badge()))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  const auto frame = [&] {
+    binding.refresh(tree.root(), m);
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 300.0f));
+    return tree.finishFrame().fDamage;
+  };
+  (void)frame();
+  (void)frame();
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(), model::setTo(FeedTold{.of = 2})));
+  const skia::SkRect damage = frame();
+  std::println("repainted as hidden: {},{} to {},{}", damage.fLeft, damage.fTop, damage.fRight, damage.fBottom);
+  // The badge stood 10 over the plate's top, at 30.
+  EXPECT_LE(damage.fTop, 30.0f);
+}
+
+// A menu's 'Viewed' row hovered: the list of who viewed opens beside the
+// row, where the row is in the window -- not in a corner.
+namespace viewed_list {
+namespace c = skiff::compose;
+struct MenuState {
+  bool on = false;
+  float left = 0.0f, top = 0.0f, right = 0.0f, bottom = 0.0f;
+  friend bool operator==(const MenuState &, const MenuState &) = default;
+};
+struct Hovered {
+  bool on = false;
+  skia::SkRect box;
+};
+struct Says {
+  Hovered operator()(bool on, const skia::SkRect &box) const { return {on, box}; }
+};
+struct Events {
+  auto on(const Hovered &one, const MenuState &now) const {
+    auto next = now;
+    next.on = one.on;
+    if (one.on) {
+      next.left = one.box.fLeft;
+      next.top = one.box.fTop;
+      next.right = one.box.fRight;
+      next.bottom = one.box.fBottom;
+    }
+    return model::over<MenuState>(model::setTo(std::move(next)));
+  }
+};
+struct Sized : scene::Node {
+  Sized(float w, float h) { this->apply({.width = w, .height = h}); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+};
+inline auto menu() {
+  const c::PopAt at{.from = skia::SkRect::MakeXYWH(150.0f, 120.0f, 0.0f, 0.0f)};
+  return c::local<MenuState>(Events{}, c::column(c::vbox(0.0f, {.fill = true}),
+      c::popped_at<MenuState>([at](const MenuState &) { return std::optional(at); }, 8.0f,
+          c::column(c::vbox(0.0f, {.autoSize = scene::axes::kBoth}), Sized(120.0f, 30.0f), c::hovering(Says{}, Sized(120.0f, 24.0f)))),
+      c::popped_at<MenuState>([](const MenuState &now) -> std::optional<c::PopAt> {
+        if (!now.on)
+          return std::nullopt;
+        return c::PopAt{.from = skia::SkRect::MakeLTRB(now.left, now.top, now.right, now.bottom), .beside = true, .overlap = 6.0f};
+      }, 8.0f, c::hovering(c::vbox(0.0f, {.autoSize = scene::axes::kBoth}), Says{}, Sized(100.0f, 80.0f)))));
+}
+struct Sink {};
+}  // namespace viewed_list
+TEST(Compose, AViewedListOpensBesideItsRow) {
+  using namespace viewed_list;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), menu()));
+  window_edge::FeedModel m{window_edge::FeedRoot{.told = {window_edge::FeedTold{.of = 1}}, .feed = {window_edge::Feed{}}}};
+  bind::Binding<window_edge::FeedModel> binding;
+  window_edge::Heard heard;
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 600.0f, 400.0f));
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    (void)tree.finishFrame();
+  };
+  double at = 0.0;
+  for (; at < 300.0; at += 16.0)
+    frame(at);
+  // Over the row: 150 + 10 across, 120 + 30 + 10 down.
+  (void)tree.dispatchPointer(scene::pointer::move{160.0f, 160.0f});
+  for (; at < 800.0; at += 16.0)
+    frame(at);
+  std::print("{}", scene::laidOutText(tree.root()));
+  float left = -1.0f, top = -1.0f;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.outOfFlow && one.visible && one.bounds.width() == 100.0f) {
+      left = one.bounds.fLeft;
+      top = one.bounds.fTop;
+    }
+  std::println("viewed list at {},{}", left, top);
+  EXPECT_FLOAT_EQ(left, 150.0f + 120.0f - 6.0f);
+  EXPECT_FLOAT_EQ(top, 150.0f);
+}

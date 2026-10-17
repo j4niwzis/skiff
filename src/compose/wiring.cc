@@ -548,6 +548,9 @@ template <class Act, class N> struct Hovering : Box<N> {
   Act fAct;
   bool fOn = false;
   Hovering(Act act, N node) : Box<N>(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(node)), fAct(std::move(act)) {}
+  // In a box of its own: one put somewhere by itself -- a list popped beside
+  // a row -- sized as what it holds, not filling across its parent.
+  Hovering(Look look, Act act, N node) : Box<N>(std::move(look), std::move(node)), fAct(std::move(act)) {}
   [[nodiscard]] bool hoverChangesAppearance() const { return true; }
   [[nodiscard]] bool wantsTick() const { return this->hovered() != fOn; }
   void update(double) {
@@ -562,6 +565,9 @@ template <class Act, class N> struct Hovering : Box<N> {
   }
 };
 template <class Act, class N> auto hovering(Act act, N node) { return erased(Hovering<Act, part_t<N>>(std::move(act), as_part(std::move(node)))); }
+template <class Act, class N> auto hovering(Look look, Act act, N node) {
+  return erased(Hovering<Act, part_t<N>>(std::move(look), std::move(act), as_part(std::move(node))));
+}
 
 // A list whose items Up and Down go through, round, as a menu's: the focus
 // moved, the key taken; the other keys answered as `ask(press)` makes

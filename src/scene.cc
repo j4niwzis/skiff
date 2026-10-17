@@ -4871,9 +4871,13 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
     }
     if (state.fDamaged) {
       // Where it was drawn and where it will be: a shift moves it past both
-      // its laid-out bounds and its last drawn ones.
-      damage = joined(joined(joined(damage, state.fBounds), state.fDrawnBounds),
-                      state.fBounds.makeOffset(state.fShiftX, state.fShiftY));
+      // its laid-out bounds and its last drawn ones -- and all it reached as
+      // it was last drawn, what of it stood out of its box (a badge over a
+      // button's top): hidden, or drawn otherwise, that was left on the
+      // screen, the button half gone.
+      damage = joined(joined(joined(joined(damage, state.fBounds), state.fDrawnBounds),
+                             state.fBounds.makeOffset(state.fShiftX, state.fShiftY)),
+                      state.fReach.makeOffset(state.fShiftX, state.fShiftY));
       if (traceSettling() && damagers().size() < 64) {
         damagers().push_back({typeOf(child), damage, state.fRelaid});
       }
