@@ -1503,7 +1503,7 @@ struct Src {
         return i;
     return std::nullopt;
   }
-  static bool counts(const FeedModel &, const Told &, std::size_t) { return false; }
+  static bool counts(const FeedModel &, const Told &, std::size_t) { return true; }
   static model::Revision revision(const FeedModel &m, const Told &) { return m.revision(); }
   static std::vector<Item> items(const FeedModel &m, const Told &t, std::size_t from, std::size_t to, const std::optional<std::string> &) {
     return std::views::iota(from, to) | std::views::transform([&](std::size_t i) { return Item{key(m, t, i), static_cast<int>(i)}; }) |
@@ -2993,4 +2993,47 @@ TEST(Compose, AMenuMountedAsAskedIsSeenWithTheFramesItAsks) {
       seen = true;
   std::println("menu seen: {} after {} frames", seen, frames);
   EXPECT_TRUE(seen);
+}
+
+// Away from the end, history come at the top is not counted as come: only
+// what comes after the newest.
+TEST(Compose, HistoryAtTheTopIsNotCountedAsUnseen) {
+  using namespace window_edge;
+  FeedWindow window(MakeFeedRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, FeedWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 40}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  Heard heard;
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    (void)tree.finishFrame();
+  };
+  double at = 0.0;
+  for (; at < 600.0; at += 16.0)
+    frame(at);
+  // Scrolled up, away from the end.
+  for (int notch = 0; notch < 10; ++notch)
+    (void)tree.dispatchPointer(scene::pointer::scroll{150.0f, 200.0f, 0.0f, 120.0f});
+  for (; at < 1600.0; at += 16.0)
+    frame(at);
+  auto *list = scene::findNode<bind::Bound<FeedTold, FeedWindow>>(tree.root());
+  ASSERT_NE(list, nullptr);
+  // A page of history above.
+  (void)m.apply(model::edit(model::placeOf<Feed, FeedRoot>(), model::setTo(Feed{.count = 60, .first = -20})));
+  for (; at < 2200.0; at += 16.0)
+    frame(at);
+  const std::size_t afterHistory = list->unseen();
+  // And one that comes at the end.
+  (void)m.apply(model::edit(model::placeOf<Feed, FeedRoot>(), model::setTo(Feed{.count = 61, .first = -20})));
+  for (; at < 2800.0; at += 16.0)
+    frame(at);
+  std::println("unseen after history: {}, after one more: {}", afterHistory, list->unseen());
+  EXPECT_EQ(afterHistory, 0u);
+  EXPECT_EQ(list->unseen(), 1u);
 }

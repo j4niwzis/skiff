@@ -664,6 +664,14 @@ public:
     if (!fArmed) {
       return;
     }
+    // Something under it holds the pointer -- a message swiped to answer
+    // it, begun on this very drag: the drag is its. Asked only once this had
+    // begun to move the list, both went on together, and this, taking every
+    // move and the release on their way down, left the swipe stuck.
+    if (!fScroll.dragging() && reply.fCaptured && reply.fTarget != fState.fId) {
+      fArmed = false;
+      return;
+    }
     // Held still a while before moving: the press was for what is under it
     // -- a selection being begun in a text -- not for scrolling.
     if (!fScroll.dragging() && std::chrono::steady_clock::now() - fPressedAt > kHoldBeforeSelecting) {

@@ -820,7 +820,10 @@ template <class N> struct Washed : N {
     // A new flash for it -- not its last one let go: the flash gone on to
     // another row read here as 0, a change, and this one flashed again --
     // Ctrl+Up lit the message it went to and the one before.
-    const bool flashed = fRead && now.flash != 0 && now.flash != fNow.flash;
+    // Made while it is flashed -- a far jump's window made again around it
+    // as what is around it comes: flashed as it is made too, or the flash,
+    // begun on the row it took the place of, was lost.
+    const bool flashed = now.flash != 0 && (!fRead || now.flash != fNow.flash);
     fRead = true;
     fNow = now;
     if (flashed) {
@@ -1292,7 +1295,7 @@ public:
           fRestore = kept->second.at;
         }
       fOpened = true;
-      fCountWas.reset();
+      fNewestWas.reset();
     }
     fTold = told;
     fSeen.reset();
@@ -1417,9 +1420,13 @@ private:
     // source counts it (Source::counts) -- what the way down says.
     const bool atEnd = this->atEnd(40.0f);
     const std::size_t count = Source::count(*fModel, *fTold);
-    if (fCountWas && !atEnd && count > *fCountWas)
-      fUnseen += static_cast<std::size_t>(std::ranges::count_if(std::views::iota(*fCountWas, count), [&](std::size_t i) { return Source::counts(*fModel, *fTold, i); }));
-    fCountWas = count;
+    // Those after the newest it had: not those past its length then -- a
+    // page of history come at the top made it longer too, and the newest,
+    // read already, were counted as come.
+    if (fNewestWas && !atEnd)
+      if (const auto was = Source::index(*fModel, *fTold, *fNewestWas); was && *was + 1 < count)
+        fUnseen += static_cast<std::size_t>(std::ranges::count_if(std::views::iota(*was + 1, count), [&](std::size_t i) { return Source::counts(*fModel, *fTold, i); }));
+    fNewestWas = count > 0 ? std::optional<Key>(Source::key(*fModel, *fTold, count - 1)) : std::nullopt;
     WindowShown<Item, Key> shown{.items = Source::items(*fModel, *fTold, from, to, newest),
                                  // At the top: the window slides, or the history is asked for.
                                  .more_above = true,
@@ -1475,7 +1482,8 @@ private:
   };
   std::map<typename decltype(Told::of)::value_type, Left> fLeft;
   std::optional<std::pair<Key, float>> fRestore;
-  std::optional<std::size_t> fCountWas;
+  // The newest of the list as it was last shown: those after it have come.
+  std::optional<Key> fNewestWas;
   bool fOpened = false;
   std::size_t fUnseen = 0;
   WindowSizes fSizes;
