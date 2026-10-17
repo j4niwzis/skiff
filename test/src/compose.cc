@@ -1485,6 +1485,7 @@ struct FeedTold {
 };
 struct Feed {
   int count = 30;
+  int first = 0;  // the oldest's number: lower, history come in above
 };
 struct FeedRoot {
   model::Tracked<FeedTold> told;
@@ -1495,7 +1496,7 @@ using Item = std::tuple<std::string, int>;
 struct Src {
   using Told = FeedTold;
   static std::size_t count(const FeedModel &m, const Told &) { return static_cast<std::size_t>(m.root().feed.fValue.count); }
-  static std::string key(const FeedModel &, const Told &, std::size_t i) { return std::format("m{}", i); }
+  static std::string key(const FeedModel &m, const Told &, std::size_t i) { return std::format("m{}", m.root().feed.fValue.first + static_cast<int>(i)); }
   static std::optional<std::size_t> index(const FeedModel &m, const Told &t, const std::string &id) {
     for (std::size_t i = 0; i < count(m, t); ++i)
       if (key(m, t, i) == id)
@@ -1504,8 +1505,8 @@ struct Src {
   }
   static bool counts(const FeedModel &, const Told &, std::size_t) { return false; }
   static model::Revision revision(const FeedModel &m, const Told &) { return m.revision(); }
-  static std::vector<Item> items(const FeedModel &, const Told &, std::size_t from, std::size_t to, const std::optional<std::string> &) {
-    return std::views::iota(from, to) | std::views::transform([](std::size_t i) { return Item{std::format("m{}", i), static_cast<int>(i)}; }) |
+  static std::vector<Item> items(const FeedModel &m, const Told &t, std::size_t from, std::size_t to, const std::optional<std::string> &) {
+    return std::views::iota(from, to) | std::views::transform([&](std::size_t i) { return Item{key(m, t, i), static_cast<int>(i)}; }) |
            std::ranges::to<std::vector>();
   }
 };
@@ -1519,8 +1520,9 @@ struct Tag {};
 using FeedWindow = c::WindowFrom<Src, FeedModel, std::string, int, RowNode, MakeFeedRow, c::NoLocate, Tag>;
 struct Heard {
   int older = 0;
+  int aimed = 0;
   void take(const c::ListEdge<Tag> &edge) { older += edge.older ? 1 : 0; }
-  void take(const c::ListAimed<std::string, Tag> &) {}
+  void take(const c::ListAimed<std::string, Tag> &) { ++aimed; }
   void take(const c::ListSeen<std::string, Tag> &) {}
 };
 }  // namespace window_edge
@@ -1682,4 +1684,253 @@ TEST(Compose, ASwipedRowFollowsTheFinger) {
   for (double at = 248.0; at < 800.0; at += 16.0)
     frame(at);
   EXPECT_FLOAT_EQ(probe->fState.fShiftX, 0.0f);
+}
+
+TEST(Compose, AWindowAimedAtARowSaysSoAndComesToRest) {
+  using namespace window_edge;
+  FeedWindow window(MakeFeedRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, FeedWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  Heard heard;
+  const auto frame = [&](double at) {
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    tree.update(at);
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    binding.refresh(tree.root(), m);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(),
+                            model::setTo(FeedTold{.of = 1, .aim = {.key = std::string("m5"), .number = 1}})));
+  binding.refresh(tree.root(), m);
+  for (double t = 600.0; t < 4000.0; t += 16.0)
+    frame(t);
+  std::println("aimed heard: {}", heard.aimed);
+  EXPECT_EQ(heard.aimed, 1);
+}
+
+// mux's timeline as it is put together: the window under a spanned_for,
+// named, under with_way_down -- aimed at a row, it says so.
+namespace timeline_like {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Corner : scene::Node {
+  Corner() { this->apply({.place = scene::anchor::kBottomRight, .width = 10.0f, .height = 10.0f}); }
+};
+struct Tell {
+  bool operator()(bool, std::size_t) const { return true; }
+};
+inline auto timeline() {
+  FeedWindow window(MakeFeedRow{});
+  window.setCopiesOnScroll(false);
+  window.apply({.fill = true});
+  return SKIFF_NAMED(timeline_list, c::spanned_for<FeedTold>([](const FeedTold &) { return false; }, bind::Bound<FeedTold, FeedWindow>(std::move(window))));
+}
+}  // namespace timeline_like
+struct HeardAll : window_edge::Heard {
+  using Heard::take;
+  void take(bool) {}
+  void take(const compose::ListSpan<std::string, window_edge::Tag> &) {}
+};
+TEST(Compose, ATimelineAsMuxMakesItSaysItIsAimed) {
+  using namespace timeline_like;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+                              c::projected<FeedTold>([](const FeedTold &) { return false; },
+                                                     c::with_way_down(c::vbox(0.0f, {.fill = true}), timeline(), Corner(), Tell{}))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 30}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  HeardAll heard;
+  const auto frame = [&](double at) {
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    (void)tree.finishFrame();
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    binding.refresh(tree.root(), m);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(),
+                            model::setTo(FeedTold{.of = 1, .aim = {.key = std::string("m5"), .number = 1}})));
+  binding.refresh(tree.root(), m);
+  for (double t = 600.0; t < 4000.0; t += 16.0)
+    frame(t);
+  std::println("timeline aimed heard: {}", heard.aimed);
+  EXPECT_EQ(heard.aimed, 1);
+}
+
+// Ctrl+Up in mux: at the end, the newest row aimed at as a bar opens under
+// the list (the answer's) -- the view goes there and stays, not back and
+// forth; and, the aim done, the top asks for what is older again.
+TEST(Compose, AWindowAimedAsItsViewShrinksComesToRestOnce) {
+  using namespace timeline_like;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+                              c::projected<FeedTold>([](const FeedTold &) { return false; },
+                                                     c::with_way_down(c::vbox(0.0f, {.fill = true}), timeline(), Corner(), Tell{}))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 30}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  HeardAll heard;
+  float height = 400.0f;
+  const auto frame = [&](double at) {
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, height));
+    (void)tree.finishFrame();
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    binding.refresh(tree.root(), m);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  FeedWindow *list = scene::findNode<bind::Bound<FeedTold, FeedWindow>>(tree.root());
+  ASSERT_NE(list, nullptr);
+  std::vector<float> offsets;
+  const auto aim = [&](std::string key, std::uint64_t number, double from) {
+    (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(),
+                              model::setTo(FeedTold{.of = 1, .aim = {.key = std::move(key), .number = number}})));
+    binding.refresh(tree.root(), m);
+    for (double t = from; t < from + 1500.0; t += 16.0) {
+      if (height > 350.0f)
+        height -= 5.0f;
+      frame(t);
+      offsets.push_back(list->current());
+    }
+  };
+  aim("m29", 1, 600.0);
+  aim("m28", 2, 2100.0);
+  // One in the middle, glided to as the bar opens again.
+  height = 400.0f;
+  for (double t = 3600.0; t < 4200.0; t += 16.0)
+    frame(t);
+  offsets.clear();
+  aim("m12", 3, 4200.0);
+  // Back and forth: the offset's direction turned more than once an aim.
+  int turns = 0;
+  for (std::size_t i = 2; i < offsets.size(); ++i)
+    if ((offsets[i] - offsets[i - 1]) * (offsets[i - 1] - offsets[i - 2]) < -0.01f)
+      ++turns;
+  std::println("offsets: {}", offsets | std::views::stride(4));
+  EXPECT_LE(turns, 1);
+  EXPECT_EQ(heard.aimed, 3);
+  EXPECT_FALSE(list->settling());
+}
+
+// History paged in above a window at the list's start: made, and the next
+// page asked for -- held by its first key, the window stayed where that key
+// went and never asked again.
+TEST(Compose, AWindowAtTheStartTakesInWhatComesAbove) {
+  using namespace window_edge;
+  FeedWindow window(MakeFeedRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, FeedWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  Heard heard;
+  const auto frame = [&](double at) {
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    tree.update(at);
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    binding.refresh(tree.root(), m);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  for (int notch = 0; notch < 60; ++notch)
+    (void)tree.dispatchPointer(scene::pointer::scroll{150.0f, 200.0f, 0.0f, 120.0f});
+  for (double t = 600.0; t < 2000.0; t += 16.0)
+    frame(t);
+  ASSERT_GE(heard.older, 1);
+  const int asked = heard.older;
+  // A page of the history come, above what is held.
+  (void)m.apply(model::edit(model::placeOf<Feed, FeedRoot>(), model::setTo(Feed{.count = 50, .first = -20})));
+  binding.refresh(tree.root(), m);
+  for (double t = 2000.0; t < 3000.0; t += 16.0)
+    frame(t);
+  auto *list = scene::findNode<bind::Bound<FeedTold, FeedWindow>>(tree.root());
+  ASSERT_NE(list, nullptr);
+  EXPECT_NE(list->row("m-20"), nullptr);
+  // Scrolled up to it: the next page asked for.
+  for (int notch = 0; notch < 60; ++notch)
+    (void)tree.dispatchPointer(scene::pointer::scroll{150.0f, 200.0f, 0.0f, 120.0f});
+  for (double t = 3000.0; t < 4500.0; t += 16.0)
+    frame(t);
+  EXPECT_GT(heard.older, asked);
+}
+
+// Rows measured taller once laid out -- a message's text, its picture --
+// as the view glides to one: still one way, not past it and back.
+namespace window_grow {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct GrowingRow : scene::Node {
+  GrowingRow() { this->apply({.fillX = true, .height = 40.0f}); }
+  int fLaid = 0;
+  [[nodiscard]] bool wantsTick() const { return fLaid < 3; }
+  [[nodiscard]] bool settling() const { return fLaid < 3; }
+  void update(double) {
+    if (fLaid >= 3 || this->bounds().isEmpty())
+      return;
+    if (++fLaid == 3) {
+      this->apply({.fillX = true, .height = 70.0f});
+      this->invalidateLayout();
+    }
+  }
+};
+struct MakeGrowing {
+  GrowingRow operator()(const Item &) const { return GrowingRow{}; }
+};
+using GrowWindow = c::WindowFrom<Src, FeedModel, std::string, int, GrowingRow, MakeGrowing, c::NoLocate, Tag>;
+}  // namespace window_grow
+TEST(Compose, AWindowGlidingToARowAsRowsGrowGoesOneWay) {
+  using namespace window_grow;
+  GrowWindow window(MakeGrowing{});
+  window.setCopiesOnScroll(false);
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, GrowWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 60}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  Heard heard;
+  float height = 400.0f;
+  const auto frame = [&](double at) {
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, height));
+    (void)tree.finishFrame();
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    binding.refresh(tree.root(), m);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  auto *list = scene::findNode<bind::Bound<FeedTold, GrowWindow>>(tree.root());
+  ASSERT_NE(list, nullptr);
+  std::vector<float> offsets;
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(),
+                            model::setTo(FeedTold{.of = 1, .aim = {.key = std::string("m50"), .number = 1}})));
+  binding.refresh(tree.root(), m);
+  for (double t = 600.0; t < 2600.0; t += 16.0) {
+    if (height > 350.0f)
+      height -= 5.0f;
+    frame(t);
+    offsets.push_back(list->current());
+  }
+  int turns = 0;
+  for (std::size_t i = 2; i < offsets.size(); ++i)
+    if ((offsets[i] - offsets[i - 1]) * (offsets[i - 1] - offsets[i - 2]) < -0.01f)
+      ++turns;
+  std::println("growing offsets: {}", offsets | std::views::take(40));
+  EXPECT_LE(turns, 1);
+  EXPECT_EQ(heard.aimed, 1);
+  EXPECT_FALSE(list->settling());
 }

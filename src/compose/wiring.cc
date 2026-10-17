@@ -1063,12 +1063,30 @@ private:
           this->scrollTo(to);
         fAimedAt = to;
         this->say(Aimed{*fAim});
+      } else if (++fAimFrames > 180) {
+        // Three seconds of frames since it was first aimed at: let go,
+        // whether or not the view ever came to rest -- counted only while
+        // it was still, a row above that never settled had it aimed at
+        // again at every frame, for ever, the view jerking with it.
+        fAim.reset();
       } else if (std::abs(to - *fAimedAt) > 1.0f) {
-        this->setCurrent(to);
+        // Moved under the aim: a glide under way turned there, not stopped
+        // and jumped -- the view lurched at each move; at rest, put there.
+        if (this->moving())
+          this->scrollTo(to);
+        else
+          this->setCurrent(to);
         fAimedAt = to;
-      } else if (!this->moving() || ++fAimFrames > 180) {
+      } else if (!this->moving()) {
         fAim.reset();
       }
+      return;
+    }
+    // Paged toward for three seconds of frames at most: a row that is
+    // never laid out (hidden) had the view paged back and forth past it
+    // for ever.
+    if (++fAimFrames > 180) {
+      fAim.reset();
       return;
     }
     if (this->moving())
@@ -1188,10 +1206,11 @@ public:
       // Where the list left was scrolled to, and its window: kept for it --
       // at its end, it comes back at its end.
       if (fTold && fTold->of)
-        fLeft.insert_or_assign(*fTold->of, Left{this->atEnd(40.0f) ? std::nullopt : this->topRow(), fFrom, fTo, fToEnd});
+        fLeft.insert_or_assign(*fTold->of, Left{this->atEnd(40.0f) ? std::nullopt : this->topRow(), fFrom, fTo, fToEnd, fAtStart});
       fFrom.reset();
       fTo.reset();
       fToEnd = true;
+      fAtStart = false;
       fShownLast.reset();
       fShownEnd = false;
       fUnseen = 0;
@@ -1202,6 +1221,7 @@ public:
           fFrom = kept->second.from;
           fTo = kept->second.to;
           fToEnd = kept->second.toEnd;
+          fAtStart = kept->second.atStart;
           fRestore = kept->second.at;
         }
       fOpened = true;
@@ -1284,6 +1304,12 @@ private:
     if (fFrom)
       if (const auto at = Source::index(*fModel, *fTold, *fFrom); at && *at <= to)
         from = *at;
+    // Made from the list's start: what comes in above it -- the history
+    // paged in at the top -- made too. Held by its first key alone, the
+    // window stayed where that key went, what came above it never shown,
+    // and its ends the same: the next page never asked for.
+    if (fAtStart)
+      from = 0;
     if (to - from > fSizes.most)
       from = to - fSizes.most;
     return {from, to};
@@ -1295,6 +1321,7 @@ private:
     fFrom = from < count ? std::optional<Key>(Source::key(*fModel, *fTold, from)) : std::nullopt;
     fTo = to > 0 ? std::optional<Key>(Source::key(*fModel, *fTold, to - 1)) : std::nullopt;
     fToEnd = to == count;
+    fAtStart = from == 0;
   }
   void show() {
     if (!ready())
@@ -1374,7 +1401,7 @@ private:
   struct Left {
     std::optional<std::pair<Key, float>> at;
     std::optional<Key> from, to;
-    bool toEnd = true;
+    bool toEnd = true, atStart = false;
   };
   std::map<typename decltype(Told::of)::value_type, Left> fLeft;
   std::optional<std::pair<Key, float>> fRestore;
@@ -1385,7 +1412,7 @@ private:
   const M *fModel = nullptr;
   std::optional<Told> fTold;
   std::optional<Key> fFrom, fTo;
-  bool fToEnd = true, fSlide = false, fAimNew = false, fShownEnd = false;
+  bool fToEnd = true, fAtStart = false, fSlide = false, fAimNew = false, fShownEnd = false;
   std::optional<Key> fShownLast;
   std::optional<model::Revision> fSeen;
 };
