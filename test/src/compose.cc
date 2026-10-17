@@ -2616,8 +2616,16 @@ TEST(Compose, ACardPoppedAtThePointerGoesThere) {
     frame(at);
   (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(), model::setTo(FeedTold{.of = 2})));
   wants = true;
-  for (double at = 200.0; at < 1200.0 && wants; at += 16.0)
+  // Seen only where it goes: never drawn first in the corner it is laid out
+  // in before its place is known.
+  int seenElsewhere = 0;
+  for (double at = 200.0; at < 1200.0 && wants; at += 16.0) {
     frame(at);
+    for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+      if (one.outOfFlow && one.visible && one.alpha > 0.0f && (one.bounds.fLeft != 150.0f || one.bounds.fTop != 120.0f))
+        ++seenElsewhere;
+  }
+  EXPECT_EQ(seenElsewhere, 0);
   float left = -1.0f, top = -1.0f;
   for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
     if (one.outOfFlow) {

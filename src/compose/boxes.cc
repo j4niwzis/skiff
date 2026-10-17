@@ -1674,27 +1674,48 @@ struct PopAt {
 };
 template <class N> struct Popped : N {
   std::optional<PopAt> fAt;
+  bool fPlaced = false;
   float fEdge;
   Popped(float edge, N node) : N(std::move(node)), fEdge(edge) {
     this->fState.apply({.place = scene::anchor::kTopLeft});
     this->setVisible(false);
   }
+  // Opened: unseen, and ticked, until it is where it goes -- laid out first
+  // where its place is not known yet (its size is not), it was drawn there,
+  // in the top left corner, and said it was settled: moved only when
+  // something else ticked it.
   void read(const std::optional<PopAt> &at) {
     if (fAt == at)
       return;
     fAt = at;
+    fPlaced = false;
     this->setVisible(at.has_value());
+    if (at)
+      this->apply({.alpha = 0.0f});
     this->invalidateLayout();
+    scene::work::mark(this->fState.fId);
   }
-  [[nodiscard]] bool settling() const { return fAt.has_value() && this->target() != this->now(); }
-  void update(double) {
-    if (!fAt)
+  [[nodiscard]] bool settling() const {
+    return (fAt.has_value() && (!fPlaced || this->target() != this->now())) || N::settling();
+  }
+  [[nodiscard]] bool wantsTick() const {
+    if constexpr (requires(const N &node) { node.wantsTick(); })
+      return (fAt.has_value() && !fPlaced) || N::wantsTick();
+    else
+      return fAt.has_value() && !fPlaced;
+  }
+  void update(double nowMs) {
+    N::update(nowMs);
+    if (!fAt || this->fState.fBounds.isEmpty())
       return;
     const skia::SkPoint want = this->target();
-    if (want == this->now())
+    if (want != this->now()) {
+      const skia::SkRect box = this->fState.fLastConstraint;
+      this->setPosition(want.fX - box.fLeft, want.fY - box.fTop);
       return;
-    const skia::SkRect box = this->fState.fLastConstraint;
-    this->setPosition(want.fX - box.fLeft, want.fY - box.fTop);
+    }
+    if (!std::exchange(fPlaced, true))
+      this->apply({.alpha = 1.0f});
   }
 
 private:
