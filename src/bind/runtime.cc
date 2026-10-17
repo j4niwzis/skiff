@@ -784,8 +784,11 @@ private:
   void bound(scene::AnyNodeRef node, const BoundPart &part, const mrt::Place &here, const LocalFrame *frames) {
     for (const LocalFrame *frame = frames; frame != nullptr; frame = frame->fOuter) {
       if (const auto way = mrt::pathTo(*frame->fModel.fRoot, part.fWant)) {
-        // A Local's: shown by the walk over the whole tree only.
-        if (fChanged == nullptr)
+        // A Local's: shown by the walk over the whole tree -- and, made since
+        // (mounted by this walk, as the model asked: a menu opened), at once
+        // in any walk. Left to the next whole walk, a menu made as a press
+        // asked for it was hidden until something else refreshed the window.
+        if (fChanged == nullptr || !part.fShown(node.node()))
           show(node, part, frame->fModel.look(mrt::Place{*way, {}}));
         return;
       }

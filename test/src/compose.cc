@@ -2857,3 +2857,140 @@ TEST(Compose, AWindowAtRestAsksForNoFrames) {
   }
   EXPECT_FALSE(wants);
 }
+
+// A message's menu as mux makes it: a card popped at the press, read from
+// the menu's own local state -- seen, at its place, with only the frames it
+// asks for.
+namespace local_menu {
+namespace c = skiff::compose;
+struct MenuState {
+  int unrolled = 0;
+  friend bool operator==(const MenuState &, const MenuState &) = default;
+};
+struct Card : scene::Node {
+  Card() { this->apply({.width = 120.0f, .height = 90.0f}); }
+};
+inline auto menu(float x, float y) {
+  const c::PopAt at{.from = skia::SkRect::MakeXYWH(x, y, 0.0f, 0.0f)};
+  return c::local<MenuState>(c::column(c::vbox(0.0f, {.fill = true}),
+      c::popped_at<MenuState>([at](const MenuState &) { return std::optional(at); }, 8.0f, c::styled({}, Card()))));
+}
+}  // namespace local_menu
+TEST(Compose, AMenuInItsLocalStateIsSeenAtItsPlace) {
+  using namespace local_menu;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), menu(150.0f, 120.0f)));
+  window_edge::FeedModel m{window_edge::FeedRoot{.told = {window_edge::FeedTold{.of = 1}}, .feed = {window_edge::Feed{}}}};
+  bind::Binding<window_edge::FeedModel> binding;
+  bool wants = true;
+  int frames = 0;
+  for (double at = 0.0; at < 1000.0 && (wants || frames < 2); at += 16.0, ++frames) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 600.0f, 400.0f));
+    wants = tree.finishFrame().fWantsAnotherFrame;
+  }
+  std::print("{}", scene::laidOutText(tree.root()));
+  bool seen = false;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.outOfFlow && one.visible && one.alpha > 0.0f && one.bounds.fLeft == 150.0f && one.bounds.fTop == 120.0f)
+      seen = true;
+  EXPECT_TRUE(seen);
+}
+
+// A right press anywhere over a message's row, as mux makes one -- its
+// avatar out of the flow, its bubble held, a name, the words (selectable),
+// the time over the bubble's corner -- asks the row's menu: no point of it
+// left without.
+namespace row_grid {
+namespace c = skiff::compose;
+struct Face : scene::Node {
+  Face() { this->apply({.width = 40.0f, .height = 40.0f}); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+};
+struct OpenFace {
+  int operator()() const { return 1; }
+};
+struct NoLine {
+  std::optional<int> operator()(auto &, float, float) const { return std::nullopt; }
+};
+inline auto row() {
+  nodes::Text name("Someone", 13.0f, 0xff000000u, true);
+  name.apply({.width = 120.0f, .height = 16.0f});
+  nodes::Text words("hello there, a regular message", 13.0f, 0xff000000u);
+  words.setSelectable(true);
+  words.apply({.width = 220.0f, .height = 36.0f});
+  nodes::Text time("12:44", 11.0f, 0xff000000u);
+  time.apply({.place = scene::anchor::kBottomRight, .width = 40.0f, .height = 14.0f, .y = 2.0f});
+  auto bubble = compose::Held(c::column(c::vbox(2.0f, {.autoSize = scene::axes::kBoth, .padding = {6.0f, 10.0f, 6.0f, 10.0f},
+                                                        .cornerRadius = 12.0f, .background = 0xffeeeeeeu}),
+                                        std::move(name), std::move(words), std::move(time)));
+  auto face = c::styled({.place = scene::anchor::kBottomLeft, .x = -48.0f, .y = -1.0f}, c::onPress(OpenFace{}, Face(), "face"));
+  auto inner = c::onClickAt(NoLine{}, c::row(c::justified(c::hbox(8.0f, {.fillX = true, .autoSize = scene::axes::kY,
+                                                                          .padding = {8.0f, 0.0f, 1.0f, 48.0f}}),
+                                                          nodes::justify::start{}),
+                                             std::move(face), std::move(bubble)));
+  return c::onRightPressAt(row_menu::Ask{}, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+      c::swiped(48.0f, 120.0f, [] { return row_menu::Reply{}; }, row_menu::Show{}, nodes::Text("", 12.0f, 0u), std::move(inner))));
+}
+}  // namespace row_grid
+TEST(Compose, ARightPressAnywhereOnARowAsksItsMenu) {
+  using namespace row_grid;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), row()));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 400.0f));
+  (void)tree.finishFrame();
+  float bottom = 0.0f;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.depth == 1)
+      bottom = std::max(bottom, one.bounds.fBottom);
+  std::print("{}", scene::laidOutText(tree.root()));
+  std::vector<std::string> missed;
+  for (float y = 2.0f; y < bottom; y += 6.0f)
+    for (float x = 2.0f; x < 400.0f; x += 12.0f) {
+      scene::hostWork().answers.clear();
+      (void)tree.dispatchPointer(scene::pointer::down{x, y, 3});
+      (void)tree.dispatchPointer(scene::pointer::up{x, y, 3});
+      if (scene::hostWork().answers.empty())
+        missed.push_back(std::format("{},{}", x, y));
+    }
+  scene::hostWork().answers.clear();
+  std::println("row to {}: no menu at {} points: {}", bottom, missed.size(), missed | std::views::take(20));
+  if constexpr (scene::kErasedWalks)
+    EXPECT_TRUE(missed.empty());
+}
+
+// A menu made as the model asks for it -- mounted then, as mux's window
+// mounts its menu -- seen at its place with only the frames the window
+// then asks for, not once something else lays the window out.
+TEST(Compose, AMenuMountedAsAskedIsSeenWithTheFramesItAsks) {
+  using namespace local_menu;
+  using namespace window_edge;
+  using menu_t = decltype(local_menu::menu(0.0f, 0.0f));
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::projected<FeedTold>([](const FeedTold &now) { return now.of == 2 ? std::optional(true) : std::nullopt; },
+                             c::mount<menu_t, bool>([](bool) { return std::tuple{local_menu::menu(150.0f, 120.0f)}; }, {.fill = true}))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  bool wants = true;
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 600.0f, 400.0f));
+    wants = tree.finishFrame().fWantsAnotherFrame;
+  };
+  double at = 0.0;
+  for (; at < 300.0; at += 16.0)
+    frame(at);
+  // Asked for, as an event's answer is taken: then the frames it asks for.
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(), model::setTo(FeedTold{.of = 2})));
+  wants = true;
+  int frames = 0;
+  for (; wants && frames < 60; at += 16.0, ++frames)
+    frame(at);
+  std::print("{}", scene::laidOutText(tree.root()));
+  bool seen = false;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.outOfFlow && one.visible && one.alpha > 0.0f && one.bounds.fLeft == 150.0f && one.bounds.fTop == 120.0f)
+      seen = true;
+  std::println("menu seen: {} after {} frames", seen, frames);
+  EXPECT_TRUE(seen);
+}
