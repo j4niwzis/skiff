@@ -177,6 +177,10 @@ struct Scoped : Base {
   model::Revision fSeen = 0;
   std::uint64_t fEpoch = 0;
   bool fShown = false;
+  // Something under it reads a part from beyond it -- from the root, a part
+  // its own does not hold: walked whenever the model moved, not only where
+  // its part did, or that read was never made again.
+  bool fReadsBeyond = false;
 };
 
 // How a row is made for an element: from it where the row is made so, else

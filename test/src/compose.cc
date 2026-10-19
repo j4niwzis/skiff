@@ -1693,6 +1693,45 @@ TEST(Compose, AWindowGoingOnAtItsBottomAsksForWhatIsNewer) {
   EXPECT_GE(heard.newer, 1);
 }
 
+// A part read in a scope that does not hold it -- each level's choices,
+// read where one level's are edited (mux's room events): found from the
+// root, where it is there once, and read again as it changes.
+namespace read_from_root {
+namespace c = skiff::compose;
+using namespace window_edge;
+inline std::string &said_now() {
+  static std::string kept;
+  return kept;
+}
+struct Said : scene::Node {
+  void read(const std::string &now) { said_now() = now; }
+};
+inline auto scoped_page() {
+  return c::scoped<Feed>(c::handlers(), c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+      c::projected<FeedTold>([](const FeedTold &now) { return now.of && *now.of > 5 ? std::string("Collapse") : std::string("Expand"); }, Said())));
+}
+}  // namespace read_from_root
+TEST(Compose, APartNotInAScopeIsReadFromTheRoot) {
+  using namespace read_from_root;
+  said_now() = "?";
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), scoped_page()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  const auto frame = [&] {
+    binding.refresh(tree.root(), m);
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+    (void)tree.finishFrame();
+  };
+  frame();
+  const std::string before = said_now();
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(), model::setTo(FeedTold{.of = 9})));
+  frame();
+  std::println("read in a scope from the root: {} then {}", before, said_now());
+  EXPECT_EQ(before, "Expand");
+  EXPECT_EQ(said_now(), "Collapse");
+}
+
 // A picture fitted over a named view (mux's: Fitted over its picture_box):
 // the wrapper's size its own, the view filling it -- with a Held& helper
 // beside a catch-all, the named view took the catch-all, and the picture

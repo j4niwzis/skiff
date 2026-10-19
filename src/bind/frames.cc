@@ -17,6 +17,8 @@ namespace detail {
 template <class Place, class Handlers> struct ScopeFrame {
   const Place *fPlace;
   const Handlers *fHandlers;
+  // The scope's own word that something under it reads from beyond it.
+  bool *fBeyond = nullptr;
 };
 // A Local: its state and handlers, through the node.
 template <class L> struct LocalFrame {
@@ -59,6 +61,33 @@ template <class L, class Place> struct InLocal {
 template <class Want, class Here> auto where(const Here &here) {
   return InModel<decltype(model::borrowBelow<Want>(here))>{
       model::borrowBelow<Want>(here)};
+}
+// A read from beyond the innermost scope around it, told to that scope: it
+// is walked whenever the model moved (Scoped::fReadsBeyond).
+inline void markBeyond() {}
+template <class Place, class Handlers, class... Rest> void markBeyond(const ScopeFrame<Place, Handlers> &scope, const Rest &...) {
+  if (scope.fBeyond != nullptr)
+    *scope.fBeyond = true;
+}
+template <class F, class... Rest> void markBeyond(const F &, const Rest &...rest) { markBeyond(rest...); }
+// Whether a part read at a place is found from the root, not below it.
+template <class Want, class Here> inline constexpr bool kFromRoot = false;
+template <class Want, class Root, class P, class K>
+inline constexpr bool kFromRoot<Want, model::Place<Root, P, K>> =
+    model::kFound<Want, model::TypeAt<Root, P>> == 0 && model::kFound<Want, Root> == 1;
+template <class Want, class Here, class... Frames>
+  requires kFromRoot<Want, Here>
+void markIfFromRoot(const Here &, const Frames &...frames) {
+  markBeyond(frames...);
+}
+template <class Want, class Here, class... Frames> void markIfFromRoot(const Here &, const Frames &...) {}
+// Not below the place it is read at -- in a scope, a part its own does not
+// hold (each level's choices, read where one level's are edited): from the
+// root, where it is there once.
+template <class Want, class Root, class P, class K>
+  requires(model::kFound<Want, model::TypeAt<Root, P>> == 0 && model::kFound<Want, Root> == 1)
+auto where(const model::Place<Root, P, K> &) {
+  return InModel<decltype(model::placeOf<Want, Root>())>{model::placeOf<Want, Root>()};
 }
 template <class Want, class Here, class F, class... Rest>
   requires kLocalHas<Want, F>

@@ -21,6 +21,7 @@ template <class M> struct Refreshing {
   void bound(N &node, const Here &here, const Frames &...frames) {
     auto &shown = asBound(node);
     using Want = decltype(boundToOf(shown));
+    markIfFromRoot<Want>(here, frames...);
     const auto seen = lookAt(fModel, where<Want>(here, frames...));
     if (!seen) {
       if (!std::exchange(shown.fGone, true))
@@ -61,7 +62,7 @@ template <class M> struct Refreshing {
   template <class S, class Place> bool enter(S &scoped, const Place &place) {
     const auto seen = fModel.look(place);
     const model::Revision now = seen ? seen.fRevision : fModel.revision();
-    if (scoped.fShown && scoped.fSeen == now && scoped.fEpoch == localEpoch())
+    if (scoped.fShown && scoped.fSeen == now && scoped.fEpoch == localEpoch() && !scoped.fReadsBeyond)
       return false;
     scoped.fShown = true;
     scoped.fSeen = now;

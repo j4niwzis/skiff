@@ -249,6 +249,7 @@ struct ScopedPart {
   model::Revision &(*fSeen)(void *);
   std::uint64_t &(*fEpoch)(void *);
   bool &(*fShown)(void *);
+  bool &(*fBeyond)(void *);
 };
 // A Local: its state's model, and whether nothing outside it is seen from
 // within.
@@ -351,7 +352,8 @@ template <class T> struct ScopedOf {
       },
       +[](void *n) -> model::Revision & { return detail::asScoped(*static_cast<T *>(n)).fSeen; },
       +[](void *n) -> std::uint64_t & { return detail::asScoped(*static_cast<T *>(n)).fEpoch; },
-      +[](void *n) -> bool & { return detail::asScoped(*static_cast<T *>(n)).fShown; }};
+      +[](void *n) -> bool & { return detail::asScoped(*static_cast<T *>(n)).fShown; },
+      +[](void *n) -> bool & { return detail::asScoped(*static_cast<T *>(n)).fReadsBeyond; }};
 };
 template <class T>
   requires IsScoped<T>
@@ -711,17 +713,32 @@ private:
     return fChanged == nullptr ||
            std::ranges::any_of(*fChanged, [&](const mrt::Place &changed) { return mrt::related(place, changed); });
   }
-  // A place below another: the way to what is wanted, and its keys.
+  // A place below another: the way to what is wanted, and its keys. Not
+  // below it -- in a scope, a part its own does not hold (each level's
+  // choices, read where one level's are edited) -- from the root, where it
+  // is there once and the way needs no keys.
   std::optional<mrt::Place> below(const mrt::Place &here, const mrt::Want &want, std::vector<mrt::AnyKey> keys = {}) {
     const mrt::Shape *at = mrt::shapeAt(*fModel.fRoot, here.fSteps);
     if (at == nullptr)
       return std::nullopt;
     const auto &way = wayFrom(*at, want);
     if (!way)
-      return std::nullopt;
+      return here.fSteps.empty() || !keys.empty() ? std::nullopt : this->fromRoot(want);
     mrt::Place place = here;
     place.fSteps.append_range(*way);
     place.fKeys.append_range(std::move(keys));
+    return place;
+  }
+  // The innermost scope walked: told where a read under it falls back.
+  bool *fBeyond = nullptr;
+  std::optional<mrt::Place> fromRoot(const mrt::Want &want) {
+    if (fBeyond != nullptr)
+      *fBeyond = true;
+    const auto &way = wayFrom(*fModel.fRoot, want);
+    if (!way || std::ranges::any_of(*way, [](const mrt::Step &one) { return std::visit(spl::overloaded{[](mrt::step::at) { return true; }, [](const auto &) { return false; }}, one); }))
+      return std::nullopt;
+    mrt::Place place;
+    place.fSteps = *way;
     return place;
   }
 
@@ -734,26 +751,36 @@ private:
     // A scope: what is inside it shown below its part -- only where that
     // moved, or a Local's state did, since it was last.
     std::optional<mrt::Place> inner;
+    // Where a read under a scope that falls back to the root says so: the
+    // innermost scope walked, for this node and what is under it.
+    bool *const beyondWas = fBeyond;
+    const struct Restore {
+      bool *&at;
+      bool *was;
+      ~Restore() { at = was; }
+    } restore{fBeyond, beyondWas};
     if (table->fScoped != nullptr && owns(table->fScoped->fWithin)) {
       inner = below(here, table->fScoped->fWithin, table->fScoped->fKeys(node.node()));
       if (!inner)
         return;
       if (tracing())
         std::println(std::cerr, "[bind] scope {} entered", node.kind().name);
+      bool &beyond = table->fScoped->fBeyond(node.node());
       if (fChanged == nullptr) {
         const auto seen = fModel.look(*inner);
         const model::Revision now = seen ? seen.fRevision : fModel.revision();
         auto &shown = table->fScoped->fShown(node.node());
         auto &was = table->fScoped->fSeen(node.node());
         auto &epoch = table->fScoped->fEpoch(node.node());
-        if (shown && was == now && epoch == localEpoch())
+        if (shown && was == now && epoch == localEpoch() && !beyond)
           return;
         shown = true;
         was = now;
         epoch = localEpoch();
-      } else if (!onTheWay(*inner)) {
+      } else if (!onTheWay(*inner) && !beyond) {
         return;
       }
+      fBeyond = &beyond;
     }
     const mrt::Place &place = inner ? *inner : here;
     // A Local: a frame of its own, its state's parts found in it.
@@ -992,12 +1019,19 @@ private:
     ~BoundAbove() { fSelf->fBoundAbove = fWas; }
   };
 
-  // A part's way below a place, where it is in this model once.
+  // A part's way below a place, where it is in this model once; not below
+  // it, from the root, as a read finds it (Refreshing::below).
   std::optional<mrt::Place> below(const mrt::Place &here, const mrt::Want &want, std::vector<mrt::AnyKey> keys = {}) const {
     const mrt::Shape *at = mrt::shapeAt(*fModel.fRoot, here.fSteps);
     if (at == nullptr)
       return std::nullopt;
     const auto way = mrt::pathTo(*at, want);
+    if (!way && !here.fSteps.empty() && keys.empty())
+      if (const auto whole = mrt::pathTo(*fModel.fRoot, want); whole && !std::ranges::any_of(*whole, [](const mrt::Step &one) { return std::visit(spl::overloaded{[](mrt::step::at) { return true; }, [](const auto &) { return false; }}, one); })) {
+        mrt::Place place;
+        place.fSteps = *whole;
+        return place;
+      }
     if (!way)
       return std::nullopt;
     mrt::Place place = here;

@@ -160,7 +160,7 @@ void visitScoped(Op &op, N &node, const Here &here, const Frames &...frames) {
     return;
   visitLocal(op, node, inner,
              ScopeFrame<std::remove_cvref_t<decltype(inner)>, Handlers>{
-                 &inner, &scoped.fHandlers},
+                 &inner, &scoped.fHandlers, &scoped.fReadsBeyond},
              frames...);
 }
 template <class Op, class N, class Here, class... Frames>

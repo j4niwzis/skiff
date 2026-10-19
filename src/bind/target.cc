@@ -65,12 +65,15 @@ template <class M, class C> struct Targeting {
     return true;
   }
 
+  // A scope: entered where the change is on its way -- or where something
+  // under it reads from beyond it (fReadsBeyond), a change anywhere being
+  // possibly what that read.
   template <class S, class Root, class P, class K>
-  bool enter(S &, const model::Place<Root, P, K> &place) {
+  bool enter(S &scoped, const model::Place<Root, P, K> &place) {
     if constexpr (!kRelated<P, C>)
-      return false;
+      return scoped.fReadsBeyond;
     else
-      return sameKeys(place.fKeys, fKeys);
+      return scoped.fReadsBeyond || sameKeys(place.fKeys, fKeys);
   }
 
   // A list: its members changed -- its rows made again, the new ones shown
@@ -138,7 +141,7 @@ template <class M, class Changes> struct ChangedTargeting {
   template <class N, class Here, class... Frames>
   bool local(N &, const Here &, const Frames &...) { return true; }
   template <class S, class Place>
-  bool enter(S &, const Place &place) { return related(place); }
+  bool enter(S &scoped, const Place &place) { return scoped.fReadsBeyond || related(place); }
   template <class N, class Place> void rows(N &, const Place &) {}
 
   template <class N, class Root, class P, class K, class VisitRow>
