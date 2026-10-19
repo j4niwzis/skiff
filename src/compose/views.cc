@@ -223,7 +223,11 @@ template <class Want, class Compute, class N> auto slid_for(Compute compute, N n
 // dialog fading in or out), into pixels kept: each frame of the fade puts
 // those down and draws only what is over them -- every frame of a fade
 // repainted all of the window under its scrim, and blurred it again. Done,
-// they are let go: the frame the fade ends on draws all of it.
+// they are let go: the frame the fade ends on draws all of it. Not while
+// what is under moves too -- a drawer sliding away as the dialog it opened
+// fades in: kept as it was at the fade's first frame, it stood still, then
+// was gone at once as the fade ended. Drawn as it is until it rests, and
+// kept from then.
 template <class Under, class Over> struct FrozenUnder : Box<Under, Over> {
   skia::Sp<skia::SkImage> fFrozen;
   skia::SkRect fAt = skia::SkRect::MakeEmpty();  // where it is on the device
@@ -232,7 +236,7 @@ template <class Under, class Over> struct FrozenUnder : Box<Under, Over> {
     auto &under = std::get<0>(this->fParts);
     auto &over = std::get<1>(this->fParts);
     skia::SkMatrix inverse;
-    if (!moving(over) || !canvas->getTotalMatrix().invert(&inverse)) {
+    if (!moving(over) || moving(under) || !canvas->getTotalMatrix().invert(&inverse)) {
       fFrozen = nullptr;
       scene::drawDefault(*this, painting, canvas, alpha);
       return;
@@ -261,14 +265,14 @@ template <class Under, class Over> struct FrozenUnder : Box<Under, Over> {
   }
 
 private:
-  // Whether anything over it moves: seen as the walks see it, through
+  // Whether anything in a part moves: seen as the walks see it, through
   // whatever holds it.
-  static bool moving(Over &over) {
+  template <class Part> static bool moving(Part &part) {
     if constexpr (scene::kErasedWalks) {
-      auto seen = scene::AnyNodeRef::of(over);
+      auto seen = scene::AnyNodeRef::of(part);
       return scene::walk::animating(seen);
     } else {
-      return scene::walk::animating(over);
+      return scene::walk::animating(part);
     }
   }
 };

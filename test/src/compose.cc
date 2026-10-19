@@ -2808,6 +2808,49 @@ TEST(Compose, ARowUnderAListDraggedIsNotSwipedOnceLetGo) {
   scene::hostWork().answers.clear();
 }
 
+// What is under a dialog fading in, moving itself -- a drawer sliding away
+// as the dialog it opened comes: drawn as it is at each frame, not kept as
+// it was at the fade's first; once it rests, kept.
+namespace frozen_moving {
+namespace c = skiff::compose;
+template <int Tag> struct Mover : scene::Node {
+  bool fMoving = true;
+  int fDraws = 0;
+  Mover() { this->apply({.place = scene::anchor::kTopLeft, .fill = true}); }
+  [[nodiscard]] bool settling() const { return fMoving; }
+  [[nodiscard]] bool wantsTick() const { return fMoving; }
+  void drawSelf(skia::SkCanvas *, float) { ++fDraws; }
+};
+}  // namespace frozen_moving
+TEST(Compose, WhatMovesUnderAFadeIsNotFrozen) {
+  using namespace frozen_moving;
+  scene::Scene tree(c::frozen_under(c::vbox(0.0f, {.fill = true}), Mover<0>(), Mover<1>()));
+  const auto box = skia::SkRect::MakeXYWH(0.0f, 0.0f, 100.0f, 80.0f);
+  tree.layoutIfNeeded(box);
+  (void)tree.finishFrame();
+  auto *under = scene::findNode<Mover<0>>(tree.root());
+  ASSERT_NE(under, nullptr);
+  skia::SkBitmap pixels;
+  ASSERT_TRUE(pixels.tryAllocN32Pixels(100, 80));
+  skia::SkCanvas canvas(pixels);
+  scene::detail::PlainPaint plain;
+  // Both moving: what is under drawn at every frame.
+  const int before = under->fDraws;
+  tree.draw(plain, &canvas);
+  tree.draw(plain, &canvas);
+  const int moving = under->fDraws - before;
+  // It rests, what is over it still moving: kept, drawn once.
+  under->fMoving = false;
+  const int still = under->fDraws;
+  tree.draw(plain, &canvas);
+  tree.draw(plain, &canvas);
+  tree.draw(plain, &canvas);
+  const int resting = under->fDraws - still;
+  std::println("under drawn: {} in two frames moving, {} in three resting", moving, resting);
+  EXPECT_EQ(moving, 2);
+  EXPECT_EQ(resting, 1);
+}
+
 // A long list as its width is dragged: only the rows near the view laid out
 // again at each width, the rest once the width holds -- and then all of
 // them at it.
