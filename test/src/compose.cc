@@ -3931,6 +3931,8 @@ TEST(Compose, AnEmojiGridOfItsSizeDoesLittleAFrame) {
   for (int i = 0; i < 3; ++i) {
     const auto [ms, ticked, layouts, laid, more] = frame();
     std::println("idle: {:.1f} ms, ticked {}, layouts {}, laid out {}, wants more {}", ms, ticked, layouts, laid, more);
+    // Idle, its cells' rests are not ticked: none has the pointer on it.
+    EXPECT_LT(ticked, 50u);
   }
   for (int i = 0; i < 4; ++i) {
     (void)tree.dispatchPointer(scene::pointer::move{20.0f + 37.0f * static_cast<float>(i), 60.0f});
@@ -3945,6 +3947,76 @@ TEST(Compose, AnEmojiGridOfItsSizeDoesLittleAFrame) {
   const auto [ms, ticked, layouts, laid, more] = frame();
   EXPECT_LT(laid, 200u);
 }
+
+// A rest in a scene, ticked only while the pointer is on it: the pointer
+// coming wakes it, and it says so once it has rested; leaving wakes it, and
+// it says that too. Idle, it is not ticked.
+namespace rest_in_scene {
+namespace c = skiff::compose;
+struct RestSaid {
+  std::vector<bool> *to = nullptr;
+  int operator()(bool on) const {
+    to->push_back(on);
+    return 0;
+  }
+};
+struct RestBox : scene::Node {
+  RestBox() { this->apply({.width = 40.0f, .height = 40.0f}); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+};
+struct RestNothing {
+  int n = 0;
+};
+struct RestRoot {
+  model::Tracked<RestNothing> nothing;
+};
+struct RestSink {
+  template <class E> void take(const E &) {}
+};
+}  // namespace rest_in_scene
+TEST(Compose, ARestInASceneSaysWhenThePointerHasRestedAndWhenItLeaves) {
+  using namespace rest_in_scene;
+  std::vector<bool> said;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), c::resting(300.0, RestSaid{&said}, RestBox())));
+  model::Model<RestRoot, bind::NoReactions> m{RestRoot{}};
+  RestSink sink;
+  double at = 0.0;
+  std::uint64_t ticked = 0;
+  const auto frame = [&] {
+    const std::uint64_t before = scene::walkCounts().tick;
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 200.0f, 200.0f));
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &sink);
+    (void)tree.finishFrame();
+    ticked = scene::walkCounts().tick - before;
+    at += 16.0;
+  };
+  for (int i = 0; i < 5; ++i)
+    frame();
+  std::println("idle ticked {}", ticked);
+  (void)tree.dispatchPointer(scene::pointer::move{20.0f, 20.0f});
+  for (int i = 0; i < 30; ++i)
+    frame();
+  std::println("rested: {}", said.size());
+  EXPECT_EQ(said, std::vector<bool>{true});
+  (void)tree.dispatchPointer(scene::pointer::move{150.0f, 150.0f});
+  for (int i = 0; i < 5; ++i)
+    frame();
+  EXPECT_EQ(said, (std::vector<bool>{true, false}));
+  // Back, and away before it has rested: nothing said, and the next rest
+  // counted from when the pointer came, not from the first.
+  (void)tree.dispatchPointer(scene::pointer::move{20.0f, 20.0f});
+  frame();
+  (void)tree.dispatchPointer(scene::pointer::move{150.0f, 150.0f});
+  for (int i = 0; i < 40; ++i)
+    frame();
+  (void)tree.dispatchPointer(scene::pointer::move{20.0f, 20.0f});
+  for (int i = 0; i < 3; ++i)
+    frame();
+  EXPECT_EQ(said, (std::vector<bool>{true, false}));
+}
+
 // A tree bound to two models: the settings, where an account is at its
 // address, and what is shown, holding a copy of the account in a page's
 // facts. The account's scope is the settings' -- the shown model, holding

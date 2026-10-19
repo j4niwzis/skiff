@@ -189,6 +189,10 @@ template <class Act, class N> struct Resting : Box<N> {
       : Box<N>(vbox(0.0f, {.autoSize = scene::axes::kBoth}), std::move(node)), fMs(ms), fAct(std::move(act)) {}
   [[nodiscard]] bool settling() const { return this->hovered() && !fSaid; }
   [[nodiscard]] bool hoverChangesAppearance() const { return true; }
+  // Ticked only while the pointer is on it, or it has something to undo
+  // as it leaves -- the pointer's coming and going marks it. Polled every
+  // frame, every cell of a picker's ~1900 was ticked at every frame, idle.
+  [[nodiscard]] bool wantsTick() const { return this->hovered() || fSaid || fSince.has_value(); }
   void update(double now) {
     if (!this->hovered()) {
       fSince.reset();
