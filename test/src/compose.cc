@@ -1111,6 +1111,63 @@ TEST(Compose, APageViewKeptScrolledIsStillToldItsFacts) {
   EXPECT_EQ(shown, 7) << "its offset read tells it no facts";
 }
 
+// A page held whole by its own state (local) -- a form's draft over all of
+// its fields -- whose header is pinned, scrolled: the header held at the
+// top, shifted back as far as the page scrolled, the rest moving under it.
+// The local, a node of one part, was taken for the header: the whole page
+// pinned, standing still while its bar moved.
+namespace pinned_local_page {
+namespace c = skiff::compose;
+struct PinnedHeader : scene::Node {
+  PinnedHeader() { this->apply({.fillX = true, .height = 40.0f}); }
+};
+struct PageBody : scene::Node {
+  PageBody() { this->apply({.fillX = true, .height = 1000.0f}); }
+};
+struct Draft {
+  int at = 0;
+  friend bool operator==(const Draft &, const Draft &) = default;
+};
+inline auto page() { return c::local<Draft>(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), PinnedHeader(), PageBody())); }
+using page_t = std::variant<decltype(page())>;
+inline auto view() {
+  auto show = [](page_t &, const int &) {};
+  auto same = [](const int &a, const int &b) { return a == b; };
+  auto side = [](const int &) { return 1.0f; };
+  auto pin = [](const int &) { return std::optional(scene::Spec{.depth = 1.0f}); };
+  return c::page_view<int, page_t>(show, same, side, pin, page_t(std::in_place_index<0>, page()), {.fill = true});
+}
+}  // namespace pinned_local_page
+TEST(Compose, APageHeldWholeByItsStateScrollsUnderItsHeader) {
+  using namespace pinned_local_page;
+  scene::Scene tree(view());
+  auto &pages = tree.root();
+  pages.read(1);
+  const auto box = skia::SkRect::MakeXYWH(0.0f, 0.0f, 200.0f, 300.0f);
+  for (double at = 0.0; at < 400.0; at += 16.0) {
+    tree.update(at);
+    tree.layoutIfNeeded(box);
+    (void)tree.finishFrame();
+  }
+  pages.setCurrent(300.0f);
+  tree.layoutIfNeeded(box);
+  (void)tree.finishFrame();
+  skia::SkBitmap pixels;
+  ASSERT_TRUE(pixels.tryAllocN32Pixels(200, 300));
+  skia::SkCanvas canvas(pixels);
+  scene::detail::PlainPaint plain;
+  tree.draw(plain, &canvas);
+  auto *header = scene::findNode<PinnedHeader>(tree.root());
+  auto *body = scene::findNode<PageBody>(tree.root());
+  ASSERT_NE(header, nullptr);
+  ASSERT_NE(body, nullptr);
+  const float scrolled = pages.fScroll.contentsShift();
+  std::println("scrolled {}: header shifted {}, body {}", scrolled, header->fState.fShiftY, body->fState.fShiftY);
+  EXPECT_NE(scrolled, 0.0f);
+  EXPECT_FLOAT_EQ(header->fState.fShiftY, -scrolled);
+  EXPECT_FLOAT_EQ(body->fState.fShiftY, 0.0f);
+}
+
 // A column sliding in (appearing_across) keeps its fill: a row in it is as
 // wide as the place it slides into, and a text growing in the row gets what
 // the row leaves. Outside a release build the slide's starting spec reached

@@ -1849,11 +1849,27 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
     spl::visit([](auto &one) { one.apply({.relativeSize = scene::axes::kX, .autoSize = scene::axes::kY}); }, page());
   }
   // The page's header -- its first part, as the walks see it -- given to f.
+  // A page held whole by a node of one part -- its own state over it
+  // (local), and outside a release build what holds that -- is gone into to
+  // its own parts: the node of one part taken for the header, the whole page
+  // was pinned, shifted back as far as it scrolled -- the bar moved, the
+  // page stood still.
   template <class F> void header(F &&f) {
     spl::visit([&](auto &one) {
       bool first = true;
       if constexpr (scene::kErasedWalks) {
         auto seen = scene::AnyNodeRef::of(one);
+        for (;;) {
+          std::size_t count = 0;
+          std::optional<scene::AnyNodeRef> only;
+          seen.forEachChild([&](scene::AnyNodeRef &part) {
+            if (count++ == 0)
+              only.emplace(part);
+          });
+          if (count != 1)
+            break;
+          seen = *only;
+        }
         seen.forEachChild([&](scene::AnyNodeRef &part) {
           if (std::exchange(first, false))
             f(part.state());
