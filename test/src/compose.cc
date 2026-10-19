@@ -2767,6 +2767,47 @@ TEST(Compose, ARowSwipedFarUnderAFlickIsLetGo) {
   scene::hostWork().answers.clear();
 }
 
+// A row in a list dragged up and down -- the list's drag, its release the
+// list's too: the pointer moved on with no button held is not a swipe.
+// (Taken for one, the row followed the pointer, stuck, until a click.)
+TEST(Compose, ARowUnderAListDraggedIsNotSwipedOnceLetGo) {
+  using namespace swipe_follow;
+  auto row = c::swiped(48.0f, 120.0f, [] { return Answered{}; }, [](nodes::Text &, float) {}, nodes::Text("", 12.0f, 0u), ShiftProbe());
+  auto view = nodes::ScrollContainer(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(row),
+                                               c::column(c::vbox(0.0f, {.fillX = true, .height = 1000.0f}))));
+  view.apply({.fill = true});
+  view.setHoldsInView(false);
+  scene::Scene tree(std::move(view));
+  const auto box = skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 200.0f);
+  const auto frame = [&](double at) {
+    tree.update(at);
+    tree.layoutIfNeeded(box);
+    (void)tree.finishFrame();
+  };
+  for (double at = 0.0; at < 200.0; at += 16.0)
+    frame(at);
+  ShiftProbe *probe = scene::findNode<ShiftProbe>(tree.root());
+  ASSERT_NE(probe, nullptr);
+  scene::hostWork().pressed.clear();
+  scene::hostWork().answers.clear();
+  // Pressed on the row and dragged up: the list's drag, and its release.
+  (void)tree.dispatchPointer(scene::pointer::down{200.0f, 30.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::move{200.0f, 20.0f});
+  frame(216.0);
+  (void)tree.dispatchPointer(scene::pointer::move{200.0f, 15.0f});
+  frame(232.0);
+  (void)tree.dispatchPointer(scene::pointer::up{200.0f, 15.0f, 1});
+  // Then moved left, no button held, over the row.
+  (void)tree.dispatchPointer(scene::pointer::move{150.0f, 15.0f});
+  frame(248.0);
+  (void)tree.dispatchPointer(scene::pointer::move{110.0f, 15.0f});
+  frame(264.0);
+  std::println("row moved after the list let go: {}", probe->fState.fShiftX);
+  EXPECT_FLOAT_EQ(probe->fState.fShiftX, 0.0f);
+  scene::hostWork().pressed.clear();
+  scene::hostWork().answers.clear();
+}
+
 // A long list as its width is dragged: only the rows near the view laid out
 // again at each width, the rest once the width holds -- and then all of
 // them at it.

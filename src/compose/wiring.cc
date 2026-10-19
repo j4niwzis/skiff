@@ -735,6 +735,14 @@ template <class Act, class Mark, class Show, class N> struct Swiped : Box<N, Mar
     }
     if (!fArmed)
       return;
+    // The press let go already, out of its sight: a drag the scroll view
+    // took, its release the view's -- the pointer moved on with no button,
+    // and taken here for a swipe, the row followed it, stuck, until a
+    // click let it go.
+    if (!scene::pointerHeld()) {
+      fArmed = false;
+      return;
+    }
     // Something holds the pointer already -- a text being selected: this
     // drag is its, not a swipe.
     if (reply.fCaptured) {
