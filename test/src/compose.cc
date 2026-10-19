@@ -3426,6 +3426,56 @@ TEST(Compose, ACallButtonInAChatHeadIsShownAndPressed) {
   EXPECT_EQ(std::exchange(scene::hostWork().pressed, {}).size(), 1u);
 }
 
+// The call button exactly as mux's calls plugin makes it: its icon button a
+// named view (SKIFF_NAMED, a press over a column), styled, hidden as made,
+// shown by what it reads -- in the head's row of plugin buttons, under the
+// head's own projection.
+namespace named_call {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Chosen {};
+inline auto icon_like() {
+  return SKIFF_NAMED(icon_button, c::onPress([] { return Chosen{}; },
+      c::column(c::vbox(0.0f, {.width = 36.0f, .height = 36.0f, .cornerRadius = 18.0f}),
+                c::styled({.fill = true}, nodes::Box<>(0))), "Call"));
+}
+inline auto call_button() {
+  return SKIFF_NAMED(extend, c::shown_if<FeedTold>([](const FeedTold &now) { return now.of == 2; },
+      c::visible(false, c::styled({.alignSelf = scene::align::kMiddle}, icon_like()))));
+}
+inline auto head() {
+  const auto chat = [](const Feed &) { return true; };
+  return c::shown_for<Feed>(chat, c::column(c::vbox(0.0f, {.fillX = true, .height = 56.0f}),
+      c::row(c::hbox(12.0f, {.fillX = true, .grow = scene::axes::kY}),
+             c::column(c::vbox(3.0f, {.autoSize = scene::axes::kY, .grow = scene::axes::kX, .alignSelf = scene::align::kMiddle}), nodes::Box<>(0)),
+             c::shown_for<Feed>(chat, c::row(c::hbox(12.0f, {.autoSize = scene::axes::kBoth, .alignSelf = scene::align::kMiddle}), call_button())))));
+}
+}  // namespace named_call
+TEST(Compose, ACallButtonMadeAsTheCallsPluginMakesItIsShown) {
+  using namespace named_call;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), head()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  const auto frame = [&] {
+    binding.refresh(tree.root(), m);
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+    (void)tree.finishFrame();
+  };
+  frame();
+  frame();
+  (void)m.apply(model::edit(model::placeOf<FeedTold, FeedRoot>(), model::setTo(FeedTold{.of = 2})));
+  frame();
+  frame();
+  std::print("{}", scene::laidOutText(tree.root()));
+  bool seen = false;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.visible && one.bounds.width() == 36.0f && one.bounds.height() == 36.0f)
+      seen = true;
+  std::println("named call button seen: {}", seen);
+  EXPECT_TRUE(seen);
+}
+
 // The same button, its part held as mux's shown model holds a plugin's
 // layer: in a list of aggregates, a head and a tail, under the root.
 namespace nested_button {

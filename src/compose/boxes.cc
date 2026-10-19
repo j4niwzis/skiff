@@ -349,7 +349,12 @@ struct Held : Stacked {
     // seen. What the content says of itself after that stays its own,
     // followed as it is seen (walkedState).
     fShown = mine.fVisible && node.fVisible;
-    node.fVisible = true;
+    // Shown again as the content takes a spec: content that is a wrapper
+    // itself -- a named view's press, held -- keeps whether it is shown in
+    // its own word (its fShown), which its state's flag alone did not move:
+    // set only there, the content stayed hidden under a wrapper that showed
+    // -- mux's call button, an icon button hidden as made, never seen.
+    fSpecTo(parts.held.ref().node(), scene::Spec{.visible = true});
     // How it is drawn -- its alpha, its scale, its shift -- stays the
     // content's: it is a node of its own under the wrapper, drawn so. Taken
     // over, a fade under way froze: a message coming in -- faded in, then
