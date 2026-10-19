@@ -931,6 +931,40 @@ TEST(Compose, SplitStripsPutEachTabWhereItsElementSaysAndPagedOnesPage) {
   EXPECT_EQ(list.fStrip.fThen.fFirst, 0u);
 }
 
+// A message's menu as mux makes it: a card sized by what it holds, at
+// least 220 across, its first part (the quick reactions, which alone have a
+// width of their own) hidden for a message that cannot be reacted to --
+// still as wide as its least, its rows across it.
+namespace menu_card_width {
+namespace c = skiff::compose;
+struct Head : scene::Node {
+  Head() { this->apply({.width = 244.0f, .height = 36.0f}); }
+};
+struct Item : scene::Node {
+  Item() { this->apply({.fillX = true, .height = 33.0f}); }
+};
+inline auto card(bool head) {
+  return c::onClick(scene::Taken{},
+      c::column(c::vbox(0.0f, {.autoSize = scene::axes::kBoth, .minWidth = 220.0f, .padding = {6.0f, 0.0f, 6.0f, 0.0f}}),
+          c::column(c::vbox(0.0f, {.autoSize = scene::axes::kBoth}), c::visible(head, c::column(c::vbox(0.0f, {.autoSize = scene::axes::kBoth}), Head()))),
+          c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), Item(), Item(), Item())));
+}
+}  // namespace menu_card_width
+TEST(Compose, AMenuCardWithItsHeadHiddenIsAsWideAsItsLeast) {
+  using namespace menu_card_width;
+  for (const bool head : {true, false}) {
+    scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), c::styled({.place = scene::anchor::kTopLeft}, card(head))));
+    const auto box = skia::SkRect::MakeXYWH(0.0f, 0.0f, 600.0f, 400.0f);
+    tree.layoutIfNeeded(box);
+    (void)tree.finishFrame();
+    tree.layoutIfNeeded(box);
+    float item = -1.0f;
+    scene::forEachNode<Item>(tree.root(), [&](auto &one) { item = one.bounds().width(); });
+    std::println("head {}: an item {} wide", head, item);
+    EXPECT_GE(item, 220.0f);
+  }
+}
+
 TEST(Compose, PlacedAtIsShownWhereThereIsAPoint) {
   auto node = PlacedAt<nodes::Text>(nodes::Text("tones", 13.0f, 0));
   EXPECT_FALSE(node.visible());

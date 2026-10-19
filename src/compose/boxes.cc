@@ -329,10 +329,19 @@ struct Held : Stacked {
       mine.fAlignSelf = node.fAlignSelf;
     node.fAlignSelf.reset();
     mine.fDepth += std::exchange(node.fDepth, 0.0f);
-    take(mine.fMinWidth, node.fMinWidth, 0.0f);
-    take(mine.fMaxWidth, node.fMaxWidth, 0.0f);
-    take(mine.fMinHeight, node.fMinHeight, 0.0f);
-    take(mine.fMaxHeight, node.fMaxHeight, 0.0f);
+    // Its least and largest sizes: the wrapper's too, where it says none of
+    // its own -- and still the content's. Taken from it, a card at least 220
+    // across, sized by what it holds, held only rows that fill across: the
+    // wrapper was 220 wide, the card in it sized by its rows, 0 -- a
+    // message's menu without its quick reactions, every word gone.
+    const auto share = [](auto &own, const auto &theirs, const auto &rest) {
+      if (own == std::remove_cvref_t<decltype(own)>(rest))
+        own = theirs;
+    };
+    share(mine.fMinWidth, node.fMinWidth, 0.0f);
+    share(mine.fMaxWidth, node.fMaxWidth, 0.0f);
+    share(mine.fMinHeight, node.fMinHeight, 0.0f);
+    share(mine.fMaxHeight, node.fMaxHeight, 0.0f);
     // Hidden as it was made -- visible(false, ...) said before the wrapper
     // was put over it -- the wrapper starts hidden, and what shows it later
     // (shown_if over it, reading the model) shows it: kept the content's,
