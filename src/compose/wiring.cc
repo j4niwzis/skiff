@@ -1269,6 +1269,17 @@ template <class Key> struct WindowAim {
 struct WindowSizes {
   std::size_t first = 80, most = 240, step = 16;
 };
+// Whether a list goes on past the last of what its source holds -- a chat
+// a window away from its newest, the rest on the server: as the source says
+// (Source::goes_on), where it says; else it ends there.
+template <class Source, class M, class Told>
+  requires requires(const M &model, const Told &told) {
+    { Source::goes_on(model, told) } -> std::convertible_to<bool>;
+  }
+[[nodiscard]] bool goes_on_of(const M &model, const Told &told) {
+  return Source::goes_on(model, told);
+}
+template <class Source, class M, class Told> [[nodiscard]] bool goes_on_of(const M &, const Told &) { return false; }
 template <class Source, class M, class Key, class View, class Row, class Make, class Locate = NoLocate, class Tag = void>
 class WindowFrom : public WindowList<Key, View, Row, Make, Locate, Tag> {
   using List = WindowList<Key, View, Row, Make, Locate, Tag>;
@@ -1427,7 +1438,10 @@ private:
     const auto [from, to] = this->window();
     this->keep(from, to);
     using Item = typename decltype(Source::items(*fModel, *fTold, 0, 0, std::optional<Key>()))::value_type;
-    const std::optional<Key> newest = fToEnd && fShownEnd ? fShownLast : std::nullopt;
+    // Going on past what is held: its last is not the newest, and a page
+    // come below it is not followed to its end.
+    const bool goesOn = goes_on_of<Source>(*fModel, *fTold);
+    const std::optional<Key> newest = fToEnd && fShownEnd && !goesOn ? fShownLast : std::nullopt;
     fShownLast = to > 0 ? std::optional<Key>(Source::key(*fModel, *fTold, to - 1)) : std::nullopt;
     fShownEnd = fToEnd;
     // What came while the reader was away from the end: counted, where the
@@ -1444,7 +1458,12 @@ private:
     WindowShown<Item, Key> shown{.items = Source::items(*fModel, *fTold, from, to, newest),
                                  // At the top: the window slides, or the history is asked for.
                                  .more_above = true,
-                                 .more_below = !fToEnd,
+                                 // At the bottom: the window slides, or -- the list
+                                 // going on past what is held -- the next page is
+                                 // asked for. Said only within what was held, a
+                                 // chat a window back stopped at its last held,
+                                 // the way down the only way on.
+                                 .more_below = !fToEnd || goesOn,
                                  .aim = fTold->aim.key,
                                  .aim_number = fTold->aim.number,
                                  .aim_top = fTold->aim.top,

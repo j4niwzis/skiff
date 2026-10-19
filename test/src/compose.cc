@@ -1646,6 +1646,53 @@ TEST(Compose, AWindowAtItsTopAsksForWhatIsOlder) {
   EXPECT_GE(heard.older, 1);
 }
 
+// A list going on past what its source holds -- a chat a window back from
+// its newest -- scrolled to its bottom: the next page asked for, as the top
+// asks for what is older.
+namespace window_goes_on {
+using namespace window_edge;
+struct GoingSrc : Src {
+  static bool goes_on(const FeedModel &, const Told &) { return true; }
+};
+using GoingWindow = c::WindowFrom<GoingSrc, FeedModel, std::string, int, RowNode, MakeFeedRow, c::NoLocate, Tag>;
+struct HeardBelow {
+  int newer = 0;
+  void take(const c::ListEdge<Tag> &edge) { newer += edge.older ? 0 : 1; }
+  void take(const c::ListAimed<std::string, Tag> &) {}
+  void take(const c::ListSeen<std::string, Tag> &) {}
+};
+}  // namespace window_goes_on
+TEST(Compose, AWindowGoingOnAtItsBottomAsksForWhatIsNewer) {
+  using namespace window_goes_on;
+  GoingWindow window(MakeFeedRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, GoingWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  HeardBelow heard;
+  const auto frame = [&](double at) {
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    tree.update(at);
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  // Up a little, then down to its bottom again, as by the wheel.
+  for (int notch = 0; notch < 3; ++notch)
+    (void)tree.dispatchPointer(scene::pointer::scroll{150.0f, 200.0f, 0.0f, 120.0f});
+  for (double t = 600.0; t < 1200.0; t += 16.0)
+    frame(t);
+  for (int notch = 0; notch < 10; ++notch)
+    (void)tree.dispatchPointer(scene::pointer::scroll{150.0f, 200.0f, 0.0f, -120.0f});
+  for (double t = 1200.0; t < 2400.0; t += 16.0)
+    frame(t);
+  std::println("newer asked: {}", heard.newer);
+  EXPECT_GE(heard.newer, 1);
+}
+
 // A picture fitted over a named view (mux's: Fitted over its picture_box):
 // the wrapper's size its own, the view filling it -- with a Held& helper
 // beside a catch-all, the named view took the catch-all, and the picture
