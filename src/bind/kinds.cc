@@ -339,6 +339,12 @@ template <class W, class H, class B, class... K>
 W scopeOfOf(const Scoped<W, H, B, K...> &);
 template <class W, class H, class B, class... K>
 H handlersOf(const Scoped<W, H, B, K...> &);
+// Whether a scope is entered from a place: its keys lead from there to its
+// part. A model holding its part's type only some other way -- not by those
+// keys -- passes it by, for the model it is of.
+template <class S, class Here> inline constexpr bool kScopeLeads = false;
+template <class W, class H, class B, class... K, class Here>
+inline constexpr bool kScopeLeads<Scoped<W, H, B, K...>, Here> = model::kLeadsBelow<W, Here, K...>;
 template <class K, class T, class R, class C, class M>
 T elementOf(const Each<K, T, R, C, M> &);
 template <class K, class T, class R, class C, class M>

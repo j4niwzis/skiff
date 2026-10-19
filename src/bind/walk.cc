@@ -146,7 +146,8 @@ template <class Op, class N, class Here, class... Frames>
   // Decide who owns the scope from the scope itself, not its outer Bound.
   requires(IsScoped<N> &&
            (Op::template kOwns<std::remove_cvref_t<decltype(asScoped(std::declval<N &>()))>> ||
-            (kInLocal<std::remove_cvref_t<decltype(asScoped(std::declval<N &>()))>, Frames> || ...)))
+            (kInLocal<std::remove_cvref_t<decltype(asScoped(std::declval<N &>()))>, Frames> || ...)) &&
+           kScopeLeads<std::remove_cvref_t<decltype(asScoped(std::declval<N &>()))>, Here>)
 void visitScoped(Op &op, N &node, const Here &here, const Frames &...frames) {
   auto &scoped = asScoped(node);
   using Within = decltype(scopeOfOf(scoped));

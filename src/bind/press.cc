@@ -150,7 +150,8 @@ void pressLocal(Op &op, N &node, const scene::Path &path, std::size_t at, const 
   pressBody(op, node, path, at, here, frames...);
 }
 template <class Op, class N, class Here, class... Frames>
-  requires(IsScoped<N> && (Op::template kOwns<N> || (kInLocal<N, Frames> || ...)))
+  requires(IsScoped<N> && (Op::template kOwns<N> || (kInLocal<N, Frames> || ...)) &&
+           kScopeLeads<std::remove_cvref_t<decltype(asScoped(std::declval<N &>()))>, Here>)
 void pressScoped(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
   auto &scoped = asScoped(node);
   using Within = decltype(scopeOfOf(scoped));
@@ -377,7 +378,7 @@ auto rowPartOf(P &parent, N &row, const C &outer) {
 template <class P, class N, class C> NoPart rowPartOf(P &, N &, const C &) { return {}; }
 
 template <class N, class Here, class Root>
-  requires(IsScoped<N> && kOfModel<Root, N>)
+  requires(IsScoped<N> && kOfModel<Root, N> && kScopeLeads<std::remove_cvref_t<decltype(asScoped(std::declval<N &>()))>, Here>)
 auto scopePartOf(N &node, const Here &here, std::type_identity<Root>) {
   auto &scoped = asScoped(node);
   using Within = decltype(scopeOfOf(scoped));

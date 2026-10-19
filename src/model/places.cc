@@ -186,6 +186,20 @@ constexpr auto borrowBelow(const Place<Root, P, K> &above, const Keys &...keys) 
   return Place<Root, Whole, BorrowedKeysOf<Whole>>{std::tuple_cat(
       above.borrowed().fKeys, std::tuple<const Keys &...>{keys...})};
 }
+namespace detail {
+template <class Want, class In, class Keys, std::size_t N = kFound<Want, In>> inline constexpr bool kLeads = N > 1;
+template <class Want, class In, class Keys>
+inline constexpr bool kLeads<Want, In, Keys, 1> = std::same_as<KeysOf<PathTo<Want, In>>, Keys>;
+} // namespace detail
+// Whether these keys lead below a place to the Want there -- the place a
+// scope is a model's, not one of another model's of the same type held in
+// this one some other way (a copy of an account's settings in what a page
+// shows, where the scope is at the account by its address). Where it is in
+// more than one place, said so: the borrow names the paths.
+template <class Want, class Here, class... Keys> inline constexpr bool kLeadsBelow = false;
+template <class Want, class Root, class P, class K, class... Keys>
+inline constexpr bool kLeadsBelow<Want, Place<Root, P, K>, Keys...> =
+    detail::kLeads<Want, TypeAt<Root, P>, std::tuple<Keys...>>;
 
 namespace detail {
 // Along a path from a part, the keys taken from index K on. At the end the

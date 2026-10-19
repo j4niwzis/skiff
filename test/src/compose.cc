@@ -3945,3 +3945,41 @@ TEST(Compose, AnEmojiGridOfItsSizeDoesLittleAFrame) {
   const auto [ms, ticked, layouts, laid, more] = frame();
   EXPECT_LT(laid, 200u);
 }
+// A tree bound to two models: the settings, where an account is at its
+// address, and what is shown, holding a copy of the account in a page's
+// facts. The account's scope is the settings' -- the shown model, holding
+// the account only some other way, passes it by.
+namespace scope_leads {
+namespace c = skiff::compose;
+struct LeadAccount {
+  int n = 0;
+};
+struct LeadSettings {
+  model::Keyed<std::string, LeadAccount> accounts;
+};
+struct LeadPage {
+  LeadAccount account;
+};
+struct LeadShown {
+  model::Tracked<LeadPage> page;
+};
+struct LeadReads : scene::Node {
+  int n = -1;
+  void read(int now) { n = now; }
+};
+}  // namespace scope_leads
+TEST(Compose, AScopeIsOfTheModelItsKeysLeadInNotOneHoldingItsPartAnotherWay) {
+  using namespace scope_leads;
+  auto node = c::scoped<LeadAccount>(c::handlers(), c::bound<model::Field<&LeadAccount::n>>(LeadReads{}), std::string("a"));
+  model::Model<LeadSettings, bind::NoReactions> settings{LeadSettings{}};
+  (void)settings.apply(model::put<LeadAccount>(std::string("a"), LeadAccount{7}));
+  model::Model<LeadShown, bind::NoReactions> shown{LeadShown{.page = {LeadPage{LeadAccount{3}}}}};
+  bind::Binding<decltype(shown)> showing;
+  bind::Binding<decltype(settings)> setting;
+  showing.refresh(node, shown);
+  setting.refresh(node, settings);
+  showing.refresh(node, shown);
+  const LeadReads *reads = scene::findNode<LeadReads>(node);
+  ASSERT_NE(reads, nullptr);
+  EXPECT_EQ(reads->n, 7);
+}
