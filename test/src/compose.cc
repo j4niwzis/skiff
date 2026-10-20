@@ -4510,3 +4510,26 @@ TEST(Compose, ARowsViewDerivedFromAPagesDraftIsMade) {
   ASSERT_NE(rows, nullptr);
   EXPECT_EQ(rows->rows, 7);
 }
+// derived of one part with a callable type, as mux's calls plugin writes it:
+// one derived, not two.
+namespace derived_callable {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct CountOf {
+  int operator()(const Feed &now) const { return now.count; }
+};
+struct Shows : scene::Node {
+  int n = -1;
+  explicit Shows(int now) : n(now) { this->apply({.width = 10.0f, .height = 10.0f}); }
+};
+}  // namespace derived_callable
+TEST(Compose, DerivedOfOnePartWithACallableTypeIsAProjection) {
+  using namespace derived_callable;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), c::derived<Feed>(CountOf{}, c::mount<Shows, int>([](int n) { return std::tuple{Shows(n)}; }, {.fillX = true, .autoSize = scene::axes::kY}))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 5}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  const Shows *shown = scene::findNode<Shows>(tree.root());
+  ASSERT_NE(shown, nullptr);
+  EXPECT_EQ(shown->n, 5);
+}
