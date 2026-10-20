@@ -4278,7 +4278,8 @@ TEST(Compose, APressAnsweringAnEditMakesItWhereItsPartIs) {
 // over content with a size of its own takes that size, and a scroll inside
 // lays out what moved -- not, sized by its content, all of the panel's
 // cells at every frame. And the panel, in a column that grows under the
-// tabs, ends inside the card.
+// The emoji card, each wrapper of emoji_popup's in turn: which makes every
+// scrolling frame lay the whole panel out again.
 namespace card_isolate {
 namespace c = skiff::compose;
 using namespace emoji_grid;
@@ -4294,9 +4295,17 @@ struct Preview2 {
   int on = 0;
   friend bool operator==(const Preview2 &, const Preview2 &) = default;
 };
+inline auto mux_tab(const Group &one) {
+  auto made = SKIFF_NAMED(emoji_tab, c::row(c::justified(c::hbox(0.0f, {.width = 30.0f, .height = 30.0f, .minWidth = 24.0f, .alignSelf = scene::align::kMiddle,
+                                                                      .cornerRadius = 6.0f}), nodes::justify::middle{}),
+      c::visible(true, c::styled({.alignSelf = scene::align::kMiddle}, nodes::Text(one.name.substr(0, 1), 16.0f, 0xff000000u)))));
+  if (!one.name.starts_with("Pack"))
+    made.apply({.grow = scene::axes::kX, .shrink = scene::axes::kX, .minWidth = 0.0f});
+  return made;
+}
 inline auto panel() {
   using query = skiff::model::Field<&Query2::text>;
-  auto groups = c::sections<Group>(c::vbox(4.0f, {.fill = true}), c::vbox(0.0f), tab, section,
+  auto groups = c::sections<Group>(c::vbox(4.0f, {.fill = true}), c::vbox(0.0f), mux_tab, section,
       c::split<Group>(c::vbox(4.0f, {.fillX = true, .autoSize = scene::axes::kY}),
           [](const Group &one) { return one.name.starts_with("Pack"); },
           c::in_row<Group>(c::hbox(0.0f, {.fillX = true, .height = 36.0f})),
@@ -4346,11 +4355,23 @@ template <class Card> void run(const char *what, Card card) {
     at += 16.0;
     return scene::walkCounts().laidOut - w0.laidOut;
   };
-  for (int i = 0; i < 4; ++i)
+  (void)frame();
+  {
+    int shown = 0, all = 0;
+    for (const scene::LaidOutNode &one : all_nodes)
+      if (one.view == "emoji_tab" && one.names) {
+        ++all;
+        shown += one.visible && one.bounds.width() > 1.0f ? 1 : 0;
+      }
+    std::println("first frame: {} of {} tabs shown", shown, all);
+    // Every tab its room at the first layout, the categories' too.
+    EXPECT_EQ(shown, all);
+  }
+  for (int i = 0; i < 3; ++i)
     (void)frame();
   float footer = 0.0f;
   for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root())) {
-    if (one.depth <= 5)
+    if (false)
       std::println("{}{} {}x{} auto {}{}", std::string(one.depth * 2, ' '), one.bounds.fTop, one.bounds.width(), one.bounds.height(),
                    one.autoSize.has<scene::axis::x>() ? "x" : "", one.autoSize.has<scene::axis::y>() ? "y" : "");
     // The footer's rows: the categories' (36 high), the packs' (30).

@@ -302,6 +302,13 @@ struct Held : Stacked {
   // content is -- content that hides itself later (a mount emptied, a part
   // shown as the model says) hides the wrapper with it.
   [[nodiscard]] scene::State &walkedState() noexcept {
+    // Adopted as the walks first see it, not only as it is measured: a flow
+    // reads which of its children grow before it measures any, and a tab
+    // button over a held tab (a combinator's wrapper no one erased) was no
+    // grower yet at the first layout -- a category tab 0 wide until a later
+    // one laid the row out again.
+    if (parts.held)
+      this->adopt();
     this->fState.fVisible = fShown && (!parts.held || parts.held.state().fVisible);
     return this->fState;
   }
