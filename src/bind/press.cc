@@ -160,6 +160,15 @@ void pressScoped(Op &op, N &node, const scene::Path &path, std::size_t at, const
   pressLocal(op, node, path, at, inner, ScopeFrame<std::remove_cvref_t<decltype(inner)>, Handlers>{&inner, &scoped.fHandlers},
              frames...);
 }
+// A scope of another model's part, passed by: what is pressed under it is
+// walked on, but an edit it answers with is that model's (Pressing::fForeign).
+template <class Op, class N, class Here, class... Frames>
+  requires IsScoped<N>
+void pressScoped(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
+  ++op.fForeign;
+  pressLocal(op, node, path, at, here, frames...);
+  --op.fForeign;
+}
 template <class Op, class N, class Here, class... Frames>
 void pressScoped(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
   pressLocal(op, node, path, at, here, frames...);
@@ -184,6 +193,8 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
   bool fReached = false;
   // An own change whose part is not in this model.
   bool fMissed = false;
+  // How many scopes of other models' parts the walk is under, passed by.
+  int fForeign = 0;
   template <class N, class Here, class... Frames>
     requires PressesNothing<N>
   void pressed(N &node, const Here &, const Frames &...) {
@@ -246,6 +257,46 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
     spl::visit([&](const auto &event) { this->sendAll(event, frames...); }, one);
   }
   template <class E, class... Frames> void sendAll(const E &event, const Frames &...frames) { this->send(event, frames...); }
+  // An edit a press answers with itself -- a picker's choice, over<Part>(...):
+  // made in the innermost frame holding its part, a scope's or a Local's;
+  // else in the model, where its part is; else another model's, pressed
+  // there. Sent up as an event, as a release build did, no frame took it
+  // and it fell to the program -- which takes no edits; a debug build's
+  // walk made it where its part is.
+  template <class Want, class C, class... Keys, class... Frames>
+  void sendAll(const model::Over<Want, C, Keys...> &over, const Frames &...frames) {
+    this->editPressed(over, frames...);
+  }
+
+private:
+  // In the model, where nothing around it holds its part -- but not from
+  // under a scope this model passed by: the part there is the scope's, of
+  // another model (a copy of it held here some other way is not it).
+  template <class Want, class C, class... Keys>
+    requires(model::kFound<Want, typename M::RootType> == 1)
+  void editPressed(const model::Over<Want, C, Keys...> &over) {
+    if (fForeign > 0) {
+      fMissed = true;
+      return;
+    }
+    (void)this->fModel.apply(over);
+  }
+  template <class Want, class C, class... Keys> void editPressed(const model::Over<Want, C, Keys...> &) { fMissed = true; }
+  template <class Want, class C, class... Keys, class P, class H, class... Rest>
+    requires(model::kFound<Want, typename P::Target> == 1)
+  void editPressed(const model::Over<Want, C, Keys...> &over, const ScopeFrame<P, H> &frame, const Rest &...) {
+    (void)this->fModel.apply(M::edit(*frame.fPlace, over));
+  }
+  template <class Want, class C, class... Keys, class L, class... Rest>
+    requires(model::kFound<Want, typename L::LocalOf> == 1)
+  void editPressed(const model::Over<Want, C, Keys...> &over, const LocalFrame<L> &frame, const Rest &...) {
+    (void)frame.fLocal->fModel.apply(over);
+    ++localEpoch();
+  }
+  template <class Want, class C, class... Keys, class F, class... Rest>
+  void editPressed(const model::Over<Want, C, Keys...> &over, const F &, const Rest &...rest) {
+    this->editPressed(over, rest...);
+  }
 };
 
 // What a handler kept, delivered along its path: at its node, the answer --

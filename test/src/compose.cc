@@ -4210,3 +4210,67 @@ TEST(Compose, ANamedListScrollsByTheWheelAndByADragOverItsRows) {
   EXPECT_GT(wheeled, 100.0f);
   EXPECT_GT(dragged, 100.0f);
 }
+// A press answering an edit itself -- a picker's choice: made in the Local
+// holding its part; and one in a scope of another model's part, pressed
+// with each model: made by the model the scope is of, passed by the other.
+namespace pressed_edit {
+namespace c = skiff::compose;
+struct PickDraft {
+  int choice = 0;
+  friend bool operator==(const PickDraft &, const PickDraft &) = default;
+};
+struct PickReads : scene::Node {
+  int n = -1;
+  void read(int now) { n = now; }
+};
+struct PickBox : scene::Node {
+  PickBox() { this->apply({.width = 40.0f, .height = 40.0f}); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+};
+struct Picked {
+  auto operator()() const { return model::over<PickDraft>(model::setTo(PickDraft{5})); }
+};
+struct Counted {
+  auto operator()() const { return model::over<scope_leads::LeadAccount>(model::setTo(scope_leads::LeadAccount{9})); }
+};
+struct NoSink {
+  void take(int) {}
+};
+}  // namespace pressed_edit
+TEST(Compose, APressAnsweringAnEditMakesItWhereItsPartIs) {
+  using namespace pressed_edit;
+  using scope_leads::LeadAccount;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::local<PickDraft>(c::column(c::vbox(0.0f, {.width = 200.0f, .height = 40.0f}),
+          c::row(c::hbox(0.0f, {.width = 200.0f, .height = 40.0f}), c::onPress(Picked{}, PickBox{}),
+                 c::bound<model::Field<&PickDraft::choice>>(PickReads{})))),
+      c::scoped<LeadAccount>(c::handlers(), c::row(c::hbox(0.0f, {.width = 200.0f, .height = 40.0f}), c::onPress(Counted{}, PickBox{}),
+                                                   c::bound<model::Field<&LeadAccount::n>>(PickReads{})), std::string("a"))));
+  model::Model<scope_leads::LeadSettings, bind::NoReactions> settings{scope_leads::LeadSettings{}};
+  (void)settings.apply(model::put<LeadAccount>(std::string("a"), LeadAccount{7}));
+  model::Model<scope_leads::LeadShown, bind::NoReactions> shown{scope_leads::LeadShown{}};
+  bind::Binding<decltype(settings)> setting;
+  bind::Binding<decltype(shown)> showing;
+  NoSink sink;
+  const auto frame = [&](double at) {
+    setting.refresh(tree.root(), settings);
+    showing.refresh(tree.root(), shown);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 200.0f));
+    (void)tree.finishFrame();
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)(bind::press(tree.root(), shown, way, &sink) || bind::press(tree.root(), settings, way, &sink));
+  };
+  for (double at = 0.0; at < 100.0; at += 16.0)
+    frame(at);
+  for (const float y : {20.0f, 60.0f}) {
+    (void)tree.dispatchPointer(scene::pointer::down{20.0f, y, 1});
+    (void)tree.dispatchPointer(scene::pointer::up{20.0f, y, 1});
+    for (double at = 100.0; at < 200.0; at += 16.0)
+      frame(at);
+  }
+  const PickReads *picked = scene::findNode<PickReads>(tree.root());
+  ASSERT_NE(picked, nullptr);
+  EXPECT_EQ(picked->n, 5);
+  EXPECT_EQ(settings.look(model::placeOf<LeadAccount, scope_leads::LeadSettings>(std::string("a")))->n, 9);
+}
