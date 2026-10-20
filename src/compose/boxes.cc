@@ -227,10 +227,7 @@ struct Held : Stacked {
   // out of it.
   template <class Self>
     requires HeldWrapper<Self>
-  void measure(this Self &self, const skia::SkRect &) {
-    self.adopt();
-    self.sizeAsContent();
-  }
+  void measure(this Self &self, const skia::SkRect &) { self.adopt(); }
   // The rest of what a node is told by hand: Held itself passes it to its
   // node, a wrapper takes it itself -- never Held's own state, which no walk
   // sees.
@@ -467,34 +464,23 @@ private:
       sizeAs<Axis>(node, nodeSize, mySize);
     }
   }
-  // Along an axis its content says its size on: that size, the wrapper's
-  // too, said -- not followed from the content as it is laid out. Sized by
-  // its content, the wrapper laid all of it out again whenever anything in
-  // it moved: every frame of a scroll in mux's emoji card laid out all of
-  // the panel's 1900 cells. Sized by its content where the content is.
-  // Asked again as it is measured: content told its size after it was put
-  // in the wrapper (a spec read at the first refresh) is followed so.
+  // Along an axis its content says its size on in its spec (a card 345 by
+  // 400): that size, the wrapper's too, said -- not followed from the
+  // content as it is laid out. Sized by its content, the wrapper laid all of
+  // it out again whenever anything in it moved: every frame of a scroll in
+  // mux's emoji card laid out all of the panel's 1900 cells. Only a size the
+  // content said, as it is wrapped or given a spec (restored first): a size
+  // it worked out laying itself out -- a text's, measured -- is followed, or
+  // the wrapper kept the last one, and the text stood out of its bubble
+  // until the next layout.
   template <class Axis> void sizeAs(const scene::State &node, float nodeSize, float &mySize) {
     scene::State &mine = this->fState;
-    if (node.fAutoSizeAxes.template has<Axis>()) {
+    if (node.fAutoSizeAxes.template has<Axis>() || nodeSize <= 0.0f) {
       mine.fAutoSizeAxes = mine.fAutoSizeAxes.template with<Axis>();
       return;
     }
     mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<Axis>();
     mySize = nodeSize;
-  }
-  // The axes it follows its content's size on: none it says itself, nor
-  // one it fills relative to its own room or grows on.
-  template <class Axis> [[nodiscard]] bool followsAlong() const {
-    const scene::State &mine = this->fState;
-    return !fOwnAxes.template has<Axis>() && !mine.fRelativeSizeAxes.template has<Axis>() && !mine.fGrowAxes.template has<Axis>();
-  }
-  void sizeAsContent() {
-    scene::State &node = parts.held.state();
-    if (this->template followsAlong<scene::axis::x>())
-      this->template sizeAs<scene::axis::x>(node, node.fWidth, this->fState.fWidth);
-    if (this->template followsAlong<scene::axis::y>())
-      this->template sizeAs<scene::axis::y>(node, node.fHeight, this->fState.fHeight);
   }
 };
 } // namespace skiff::compose

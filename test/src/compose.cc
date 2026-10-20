@@ -4375,3 +4375,49 @@ TEST(Compose, TheEmojiCardUnderItsWrappersLaysOutLittleAFrame) {
   run("styled over flicked", styled_flick());
   run("styled only", styled_only());
 }
+// A wrapper over a text (a named or pressed one, held): its text changed,
+// the wrapper as big as the text at the very next layout -- not as it was.
+namespace wrapped_text {
+namespace c = skiff::compose;
+struct Pressed {
+  int operator()() const { return 0; }
+};
+}  // namespace wrapped_text
+TEST(Compose, AWrapperOverATextIsItsSizeAtTheNextLayout) {
+  using namespace wrapped_text;
+  using namespace window_edge;
+  // Measured with a font (the stand-in's): as wide as it is long.
+  skia::SkFont font;
+  paint::defaultFont() = &font;
+  struct cleanup {
+    ~cleanup() { paint::defaultFont() = nullptr; }
+  } restore;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::column(c::vbox(0.0f, {.autoSize = scene::axes::kBoth}),
+          c::onPress(Pressed{}, c::text_of<Feed>([](const Feed &now) { return std::string(static_cast<std::size_t>(now.count), 'x'); },
+                                                 nodes::Text("", 13.0f, 0xff000000u))))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 3}}}};
+  bind::Binding<FeedModel> binding;
+  const auto view = skia::SkRect::MakeXYWH(0.0f, 0.0f, 600.0f, 400.0f);
+  const auto widths = [&] {
+    std::vector<float> out;
+    for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+      out.push_back(one.bounds.width());
+    return out;
+  };
+  binding.refresh(tree.root(), m);
+  tree.layoutIfNeeded(view);
+  (void)m.apply(model::over<Feed>(model::setTo(Feed{.count = 40})));
+  binding.refresh(tree.root(), m);
+  tree.layoutIfNeeded(view);
+  const auto now = widths();
+  std::print("widths after the text grew:");
+  for (float w : now)
+    std::print(" {}", w);
+  std::println("");
+  ASSERT_GE(now.size(), 3u);
+  // The box around the wrapper as wide as the text in it, at this layout.
+  EXPECT_GE(now[1] + 0.5f, now.back());
+  // And the text its new size: 40 characters, not the 3 it had.
+  EXPECT_GT(now.back(), 200.0f);
+}
