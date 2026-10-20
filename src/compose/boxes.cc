@@ -534,6 +534,15 @@ template <class N> N &over_held(N &made) { return made; }
 // what it names: while that is laid out it is the view its parts are in,
 // for what is told of them (an overflow).
 template <class Self, class Base> struct Named : Base {
+  // Its content's handlers, at this type's level, as Bound keeps them: a
+  // call on a type derived from the node took Node's deducing-this
+  // defaults (Self the derived type, an exact match) over the node's own
+  // (the object converted to its base) -- a named selection's wrapper
+  // never took a press, a named list never a wheel or a drag.
+  using Base::onKey;
+  using Base::onPointer;
+  using Base::onText;
+  using Base::onSemantic;
   explicit Named(Base made) : Base(std::move(made)) { state_of(static_cast<Base &>(*this)).fViewName = Self::viewName(); }
 };
 // Over held content (outside a release build): seen as the Held it is.

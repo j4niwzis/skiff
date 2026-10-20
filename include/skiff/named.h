@@ -6,7 +6,9 @@
 //     return SKIFF_NAMED(accounts_side, c::column(...));
 //   }
 //
-// What it does is compose::Named's (CRTP); the macro gives it its name.
+// What it does is compose::Named's (CRTP); the macro gives it its name. Its
+// content's event handlers are declared again at its level: a type derived
+// from a node otherwise calls Node's deducing-this defaults, not the node's.
 // The type is a struct deriving from what the expression made, so it is
 // everything that was: read, bound, wrapped and walked the same; returned
 // as itself in every build, so that what is overloaded on a view's type
@@ -28,6 +30,10 @@
     auto skiff_named_made = [&] { return __VA_ARGS__; };                                                               \
     struct name : ::skiff::compose::Named<name, decltype(skiff_named_made())> {                                         \
       using ::skiff::compose::Named<name, decltype(skiff_named_made())>::Named;                                        \
+      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onKey;                                        \
+      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onPointer;                                    \
+      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onText;                                       \
+      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onSemantic;                                   \
       static constexpr const char *viewName() { return #name; }                                                        \
     };                                                                                                                 \
     return name(skiff_named_made());                                                                                   \

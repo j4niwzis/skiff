@@ -4055,3 +4055,158 @@ TEST(Compose, AScopeIsOfTheModelItsKeysLeadInNotOneHoldingItsPartAnotherWay) {
   ASSERT_NE(reads, nullptr);
   EXPECT_EQ(reads->n, 7);
 }
+// A list in selection mode (spanned_for on): a click on a row says a span
+// of that one row, done -- as mux's chat selects or lets go of a message.
+namespace click_span {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Spans {
+  int spans = 0;
+  std::string first, last;
+  void take(const c::ListSpan<std::string, Tag> &one) {
+    if (one.done) {
+      ++spans;
+      first = one.first;
+      last = one.last;
+    }
+  }
+  void take(const c::ListEdge<Tag> &) {}
+  void take(const c::ListAimed<std::string, Tag> &) {}
+  void take(const c::ListSeen<std::string, Tag> &) {}
+};
+}  // namespace click_span
+TEST(Compose, AClickOnARowInSelectionSaysItsSpan) {
+  using namespace click_span;
+  FeedWindow window(MakeFeedRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::spanned_for<FeedTold>([](const FeedTold &now) { return now.of == 2; }, bind::Bound<FeedTold, FeedWindow>(std::move(window)))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 2}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  Spans heard;
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    (void)tree.finishFrame();
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    for (const auto &one : std::exchange(scene::hostWork().answers, {}))
+      (void)bind::answer(tree.root(), m, one, &heard);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  scene::hostWork().pressed.clear();
+  scene::hostWork().answers.clear();
+  (void)tree.dispatchPointer(scene::pointer::down{150.0f, 200.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::up{150.0f, 200.0f, 1});
+  for (double at = 600.0; at < 700.0; at += 16.0)
+    frame(at);
+  std::println("click in selection: {} span(s), {} to {}", heard.spans, heard.first, heard.last);
+  EXPECT_EQ(heard.spans, 1);
+  EXPECT_EQ(heard.first, heard.last);
+}
+
+// The same, the wrapper named where it is made (SKIFF_NAMED): a type derived
+// from it, which called Node's defaults, not its own, and took no press.
+namespace click_span_named {
+namespace c = skiff::compose;
+using namespace window_edge;
+inline auto list() {
+  FeedWindow window(MakeFeedRow{});
+  window.apply({.fill = true});
+  return SKIFF_NAMED(timeline_list, c::spanned_for<FeedTold>([](const FeedTold &now) { return now.of == 2; }, bind::Bound<FeedTold, FeedWindow>(std::move(window))));
+}
+}  // namespace click_span_named
+TEST(Compose, AClickOnARowInSelectionSaysItsSpanWhereTheWrapperIsNamed) {
+  using namespace click_span_named;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), list()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 2}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  click_span::Spans heard;
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    (void)tree.finishFrame();
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    for (const auto &one : std::exchange(scene::hostWork().answers, {}))
+      (void)bind::answer(tree.root(), m, one, &heard);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  scene::hostWork().pressed.clear();
+  scene::hostWork().answers.clear();
+  (void)tree.dispatchPointer(scene::pointer::down{150.0f, 200.0f, 1});
+  (void)tree.dispatchPointer(scene::pointer::up{150.0f, 200.0f, 1});
+  for (double at = 600.0; at < 700.0; at += 16.0)
+    frame(at);
+  std::println("named wrapper: {} span(s)", heard.spans);
+  EXPECT_EQ(heard.spans, 1);
+}
+
+// A list named where it is made (SKIFF_NAMED), its rows taking presses: a
+// wheel over a row goes up to the list, and the list scrolls; a drag too.
+// Named, a type derived from the list called Node's defaults, not its own.
+namespace named_wheel {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct PressedRow : scene::Node {
+  PressedRow() { this->apply({.fillX = true, .height = 40.0f}); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+};
+struct MakePressedRow {
+  PressedRow operator()(const Item &) const { return PressedRow{}; }
+};
+using PressedWindow = c::WindowFrom<Src, FeedModel, std::string, int, PressedRow, MakePressedRow, c::NoLocate, Tag>;
+inline auto named() {
+  PressedWindow window(MakePressedRow{});
+  window.apply({.fill = true});
+  return SKIFF_NAMED(scrolled_list, bind::Bound<FeedTold, PressedWindow>(std::move(window)));
+}
+template <class List, class Move> float moved_by(List list, Move move) {
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(list)));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 30}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  Heard heard;
+  const auto frame = [&](double at) {
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    (void)tree.finishFrame();
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    binding.refresh(tree.root(), m);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  PressedRow *row = scene::findNode<PressedRow>(tree.root());
+  if (row == nullptr)
+    return 0.0f;
+  const float before = scene::work::drawnOffset(row->fState.fId).y;
+  move(tree);
+  for (double t = 600.0; t < 2000.0; t += 16.0)
+    frame(t);
+  return scene::work::drawnOffset(row->fState.fId).y - before;
+}
+}  // namespace named_wheel
+TEST(Compose, ANamedListScrollsByTheWheelAndByADragOverItsRows) {
+  using namespace named_wheel;
+  const auto wheel = [](auto &tree) {
+    for (int notch = 0; notch < 30; ++notch)
+      (void)tree.dispatchPointer(scene::pointer::scroll{150.0f, 200.0f, 0.0f, 120.0f});
+  };
+  const auto drag = [](auto &tree) {
+    (void)tree.dispatchPointer(scene::pointer::down{150.0f, 100.0f, 1});
+    for (int step = 1; step <= 20; ++step)
+      (void)tree.dispatchPointer(scene::pointer::move{150.0f, 100.0f + 10.0f * static_cast<float>(step)});
+    (void)tree.dispatchPointer(scene::pointer::up{150.0f, 300.0f, 1});
+  };
+  const float wheeled = moved_by(named(), wheel);
+  const float dragged = moved_by(named(), drag);
+  std::println("named list: moved {} by the wheel, {} by a drag", wheeled, dragged);
+  EXPECT_GT(wheeled, 100.0f);
+  EXPECT_GT(dragged, 100.0f);
+}
