@@ -868,7 +868,12 @@ auto bound(N node) {
 // A node shown what Compute makes of the model, as the parts it reads move.
 // (Of one part Compute takes, a projection of it -- below, after projected:
 // found in the innermost Local holding it, else in the model.)
+// Whether Compute takes the one part it is derived from: then a projection.
+template <class Compute, class... Reads> inline constexpr bool kTakesOnePart = false;
+template <class Compute, class Read>
+inline constexpr bool kTakesOnePart<Compute, Read> = std::invocable<Compute &, const typename bind::BoundValueT<Read>::type &>;
 template <class... Reads, class Compute, class N>
+  requires(!kTakesOnePart<Compute, Reads...>)
 auto derived(Compute compute, N node) {
   return erased(bind::Derived<Compute, part_t<N>, Reads...>(as_part(std::move(node)), std::move(compute)));
 }
@@ -1197,7 +1202,7 @@ auto projected(Compute compute, N node) {
 // the model alone, a view derived from a page's draft was never made, and
 // nothing said so (mux's room members, an empty page).
 template <class Read, class Compute, class N>
-  requires std::invocable<Compute &, const typename bind::BoundValueT<Read>::type &>
+  requires kTakesOnePart<Compute, Read>
 auto derived(Compute compute, N node) {
   return projected<Read>(std::move(compute), std::move(node));
 }
