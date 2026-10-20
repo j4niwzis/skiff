@@ -4353,7 +4353,8 @@ template <class Card> void run(const char *what, Card card) {
     if (one.depth <= 5)
       std::println("{}{} {}x{} auto {}{}", std::string(one.depth * 2, ' '), one.bounds.fTop, one.bounds.width(), one.bounds.height(),
                    one.autoSize.has<scene::axis::x>() ? "x" : "", one.autoSize.has<scene::axis::y>() ? "y" : "");
-    if (one.bounds.height() == 36.0f && one.bounds.width() > 300.0f)
+    // The footer's rows: the categories' (36 high), the packs' (30).
+    if ((one.bounds.height() == 36.0f || one.bounds.height() == 30.0f) && one.bounds.width() > 300.0f && one.bounds.fTop > 200.0f)
       footer = std::max(footer, one.bounds.fBottom);
   }
   std::uint64_t laid = 0;

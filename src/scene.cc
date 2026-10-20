@@ -2725,6 +2725,17 @@ public:
       // of what holds the node means nothing, and a fill there is its size.
       if (!spec.autoSize)
         fAutoSizeAxes = fAutoSizeAxes.except(*spec.grow);
+      // And of a fill the node said before -- its own look's, told later to
+      // take what its column leaves beside its siblings (mux's emoji sections
+      // under the search, the chat under its bar): grown there, not filling
+      // its parent's whole room and standing out of it past the siblings.
+      // A fill said with the grow, in the same spec, stays.
+      Axes saidFill = spec.relativeSize.value_or(Axes{});
+      if (spec.fill || spec.fillX)
+        saidFill = saidFill.with<axis::x>();
+      if (spec.fill || spec.fillY)
+        saidFill = saidFill.with<axis::y>();
+      fRelativeSizeAxes = fRelativeSizeAxes.except(spec.grow->except(saidFill));
     }
     if (spec.minWidth) {
       fMinWidth = *spec.minWidth;

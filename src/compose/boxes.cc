@@ -201,7 +201,12 @@ struct Held : Stacked {
     // two sizes at once on every wrapper so made.
     scene::Spec placed = placement(spec);
     if (spec.grow) {
-      const scene::Axes grow = spec.grow->except(node.fRelativeSizeAxes);
+      // Grown where it is told to -- its content filling it there, a fill of
+      // the content's own now the wrapper's room, not its parent's. Told to
+      // grow over content that fills, the grow was dropped: the content took
+      // its parent's whole room beside its siblings (mux's emoji panel under
+      // the card's tabs, its footer under the card's bottom edge).
+      const scene::Axes grow = *spec.grow;
       self.fState.fAutoSizeAxes = self.fState.fAutoSizeAxes.except(grow);
       self.fState.fRelativeSizeAxes = self.fState.fRelativeSizeAxes.except(grow);
       placed.grow = grow;
@@ -430,6 +435,16 @@ private:
     if (fOwnAxes.template has<Axis>()) {
       mine.fRelativeSizeAxes = mine.fRelativeSizeAxes.template without<Axis>();
       mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<Axis>();
+      node.fGrowAxes = node.fGrowAxes.template without<Axis>();
+      node.fAutoSizeAxes = node.fAutoSizeAxes.template without<Axis>();
+      node.fRelativeSizeAxes = node.fRelativeSizeAxes.template with<Axis>();
+      nodeSize = 1.0f;
+      return;
+    }
+    // Told to grow there: grown, the content filling it.
+    if (mine.fGrowAxes.template has<Axis>()) {
+      mine.fAutoSizeAxes = mine.fAutoSizeAxes.template without<Axis>();
+      mine.fRelativeSizeAxes = mine.fRelativeSizeAxes.template without<Axis>();
       node.fGrowAxes = node.fGrowAxes.template without<Axis>();
       node.fAutoSizeAxes = node.fAutoSizeAxes.template without<Axis>();
       node.fRelativeSizeAxes = node.fRelativeSizeAxes.template with<Axis>();
