@@ -866,6 +866,8 @@ auto bound(N node) {
   return erased(bind::Bound<Want, part_t<N>>(as_part(std::move(node))));
 }
 // A node shown what Compute makes of the model, as the parts it reads move.
+// (Of one part Compute takes, a projection of it -- below, after projected:
+// found in the innermost Local holding it, else in the model.)
 template <class... Reads, class Compute, class N>
 auto derived(Compute compute, N node) {
   return erased(bind::Derived<Compute, part_t<N>, Reads...>(as_part(std::move(node)), std::move(compute)));
@@ -1189,6 +1191,15 @@ auto projected(Compute compute, N node) {
   auto fn = erased_fn<Out(const In &)>(std::move(compute));
   return bound<Want>(
       Projected<decltype(fn), part_t<N>>(std::move(fn), as_part(std::move(node))));
+}
+// What Compute makes of one part, the part taken: projected from it, wherever
+// it is -- a page's own state (a Local) as well as the model. Computed from
+// the model alone, a view derived from a page's draft was never made, and
+// nothing said so (mux's room members, an empty page).
+template <class Read, class Compute, class N>
+  requires std::invocable<Compute &, const typename bind::BoundValueT<Read>::type &>
+auto derived(Compute compute, N node) {
+  return projected<Read>(std::move(compute), std::move(node));
 }
 // And as a part of the model says they do: `ask(now, press)` with the part
 // as last read -- in the phase given: on their way down (capture), before a

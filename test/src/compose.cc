@@ -4442,3 +4442,71 @@ TEST(Compose, AWrapperOverATextIsItsSizeAtTheNextLayout) {
   // And the text its new size: 40 characters, not the 3 it had.
   EXPECT_GT(now.back(), 200.0f);
 }
+// mux's room members page: a Local's draft, and under it a projection of a
+// part of the model mounting a view whose rows are derived from the draft
+// (the search, the filter) -- made, and read from the draft, at once.
+namespace members_like {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct MemberDraft {
+  std::string query;
+  std::size_t filter = 0;
+  friend bool operator==(const MemberDraft &, const MemberDraft &) = default;
+};
+struct Listing {
+  int rows = -1;
+  friend bool operator==(const Listing &, const Listing &) = default;
+};
+struct RowsShown : scene::Node {
+  int rows = -1;
+  explicit RowsShown(int n) : rows(n) { this->apply({.width = 10.0f, .height = 10.0f}); }
+};
+inline auto listing_view(int basis) {
+  return SKIFF_NAMED(member_listing_view, c::derived<MemberDraft>([basis](const MemberDraft &now) { return Listing{basis + static_cast<int>(now.filter)}; },
+      c::mount<RowsShown, Listing>([](const Listing &listing) { return std::tuple{RowsShown(listing.rows)}; }, {.fillX = true, .autoSize = scene::axes::kY})));
+}
+using listing_t = decltype(listing_view(0));
+inline auto page() {
+  return SKIFF_NAMED(members_page, c::local<MemberDraft>(c::column(c::vbox(0.0f, {.fill = true}),
+      c::projected<Feed>([](const Feed &now) { return std::optional<int>(now.count); },
+          c::mount<listing_t, int>([](int count) { return std::tuple{listing_view(count)}; }, {.fillX = true, .autoSize = scene::axes::kY})))));
+}
+inline auto page_no_draft() {
+  return c::local<MemberDraft>(c::column(c::vbox(0.0f, {.fill = true}),
+      c::projected<Feed>([](const Feed &now) { return std::optional<int>(now.count); },
+          c::mount<RowsShown, int>([](int count) { return std::tuple{RowsShown(count)}; }, {.fillX = true, .autoSize = scene::axes::kY}))));
+}
+inline auto page_no_outer_mount() {
+  return c::local<MemberDraft>(c::column(c::vbox(0.0f, {.fill = true}), listing_view(7)));
+}
+template <class Page> int rows_of_page(Page made) {
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(made)));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 7}}}};
+  bind::Binding<FeedModel> binding;
+  for (double at = 0.0; at < 100.0; at += 16.0) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 300.0f));
+    (void)tree.finishFrame();
+  }
+  const RowsShown *rows = scene::findNode<RowsShown>(tree.root());
+  return rows ? rows->rows : -1;
+}
+}  // namespace members_like
+TEST(Compose, ARowsViewDerivedFromAPagesDraftIsMade) {
+  using namespace members_like;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), page()));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 7}}}};
+  bind::Binding<FeedModel> binding;
+  for (double at = 0.0; at < 100.0; at += 16.0) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 300.0f));
+    (void)tree.finishFrame();
+  }
+  const RowsShown *rows = scene::findNode<RowsShown>(tree.root());
+  std::println("rows made: {}, showing {}", rows != nullptr, rows ? rows->rows : -1);
+  EXPECT_EQ(rows_of_page(page_no_outer_mount()), 7);
+  ASSERT_NE(rows, nullptr);
+  EXPECT_EQ(rows->rows, 7);
+}
