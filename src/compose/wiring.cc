@@ -1072,9 +1072,14 @@ public:
       fAimFrames = 0;
       scene::work::mark(this->fState.fId);
     }
-    // Another window: the edges may be asked about again.
+    // Another window: the edges may be asked about again. And what it shows
+    // read anew -- a page come that shows nothing of its own (a room's state,
+    // kinds hidden): the same rows, the top still short of a screen, and
+    // asked about once, the list waited there for good, no loader shown.
     if (!rows().fRows.empty())
       fWindow = std::pair{rows().fRows.front().fKey, rows().fRows.back().fKey};
+    ++fShownAnew;
+    scene::work::mark(this->fState.fId);
   }
   // Another list shown in it: what it aimed at in the last let go.
   void forgetAim() {
@@ -1097,11 +1102,14 @@ public:
     // Near an edge of what is made, with more beyond it: asked once for each
     // window.
     const float ahead = std::max(300.0f, this->bounds().height() * 1.5f);
-    if (fMoreAbove && this->current() <= ahead && fAsked != fWindow) {
+    const bool asked = fAsked == fWindow && fAskedAt == fShownAnew;
+    if (fMoreAbove && this->current() <= ahead && !asked) {
       fAsked = fWindow;
+      fAskedAt = fShownAnew;
       this->say(Edge{true});
-    } else if (fMoreBelow && this->current() >= this->extent() - ahead && fAsked != fWindow) {
+    } else if (fMoreBelow && this->current() >= this->extent() - ahead && !asked) {
       fAsked = fWindow;
+      fAskedAt = fShownAnew;
       this->say(Edge{false});
     }
   }
@@ -1226,6 +1234,8 @@ private:
   int fAimFrames = 0;
   [[no_unique_address]] Locate fLocate{};
   std::optional<std::pair<Key, Key>> fWindow, fAsked;
+  // How many times what it shows was read, and the read last asked about.
+  std::uint64_t fShownAnew = 0, fAskedAt = 0;
   std::deque<Answer> fDue;
   std::optional<std::tuple<float, float, std::size_t, std::optional<Key>>> fSeenAt;
   std::optional<Seen> fSaid;

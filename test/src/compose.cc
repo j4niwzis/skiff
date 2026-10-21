@@ -4533,3 +4533,71 @@ TEST(Compose, DerivedOfOnePartWithACallableTypeIsAProjection) {
   ASSERT_NE(shown, nullptr);
   EXPECT_EQ(shown->n, 5);
 }
+// A chat with less than a screen of messages: its top asks for what is older
+// at once, and again as each page comes and still leaves room, without
+// anything scrolled.
+TEST(Compose, AShortWindowAsksForOlderUntilItFillsItsView) {
+  using namespace window_edge;
+  FeedWindow window(MakeFeedRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, FeedWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 3}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  Heard heard;
+  double at = 0.0;
+  const auto frames = [&](int n) {
+    for (int i = 0; i < n; ++i, at += 16.0) {
+      tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+      tree.update(at);
+      (void)tree.finishFrame();
+      for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+        (void)bind::press(tree.root(), m, way, &heard);
+      binding.refresh(tree.root(), m);
+    }
+  };
+  frames(30);
+  std::println("older asked with 3 rows: {}", heard.older);
+  EXPECT_GE(heard.older, 1);
+  // A page of history come above: still less than a screen.
+  (void)m.apply(model::over<Feed>(model::setTo(Feed{.count = 6, .first = -3})));
+  binding.refresh(tree.root(), m);
+  frames(30);
+  std::println("older asked after a page came: {}", heard.older);
+  EXPECT_GE(heard.older, 2);
+}
+
+// A page of history come that shows nothing of its own (a room's state,
+// hidden kinds): the same rows, still less than a screen -- asked again.
+TEST(Compose, AShortWindowAsksAgainWhenAPageAddsNothingShown) {
+  using namespace window_edge;
+  FeedWindow window(MakeFeedRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, FeedWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 3}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  Heard heard;
+  double at = 0.0;
+  const auto frames = [&](int n) {
+    for (int i = 0; i < n; ++i, at += 16.0) {
+      tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+      tree.update(at);
+      (void)tree.finishFrame();
+      for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+        (void)bind::press(tree.root(), m, way, &heard);
+      binding.refresh(tree.root(), m);
+    }
+  };
+  frames(30);
+  const int first = heard.older;
+  // The model moved, the rows did not.
+  (void)m.apply(model::over<Feed>(model::setTo(Feed{.count = 3})));
+  binding.refresh(tree.root(), m);
+  frames(30);
+  std::println("older asked: {} then {}", first, heard.older);
+  EXPECT_GE(first, 1);
+  EXPECT_GT(heard.older, first);
+}
