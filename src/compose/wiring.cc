@@ -1166,18 +1166,30 @@ public:
     }
     this->seen();
     // Near an edge of what is made, with more beyond it: asked once for each
-    // window.
+    // window -- and again a while later where it is still there and nothing
+    // was read since. Asked only once, an ask that brought nothing (the
+    // request failed, or the program let it go as one already on its way)
+    // was the last: nothing read, nothing asked again, and the list stood
+    // at its top with older messages never loading, until something else
+    // (a reply jumped to) had it read again. How often a request goes out is
+    // the program's to say (mux's patience); the list only keeps asking.
     const float ahead = std::max(300.0f, this->bounds().height() * 1.5f);
-    const bool asked = fAsked == fWindow && fAskedAt == fShownAnew;
-    if (fMoreAbove && this->current() <= ahead && !asked) {
+    const bool above = fMoreAbove && this->current() <= ahead;
+    const bool below = !above && fMoreBelow && this->current() >= this->extent() - ahead;
+    const bool asked = fAsked == fWindow && fAskedAt == fShownAnew && nowMs - fAskedMs < kAskAgainMs;
+    if ((above || below) && !asked) {
       fAsked = fWindow;
       fAskedAt = fShownAnew;
-      this->say(Edge{true});
-    } else if (fMoreBelow && this->current() >= this->extent() - ahead && !asked) {
-      fAsked = fWindow;
-      fAskedAt = fShownAnew;
-      this->say(Edge{false});
+      fAskedMs = nowMs;
+      this->say(Edge{above});
     }
+    fAtEdge = above || below;
+  }
+  // Ticked while it waits at an edge to ask again; woken for it.
+  [[nodiscard]] bool wantsTick() const { return nodes::ScrollContainer<Rows>::wantsTick() || this->waitsToAsk(); }
+  [[nodiscard]] double wakeAt() const {
+    return std::min(nodes::ScrollContainer<Rows>::wakeAt(),
+                    this->waitsToAsk() ? fAskedMs + kAskAgainMs : std::numeric_limits<double>::infinity());
   }
   std::optional<Answer> onPress() {
     if (fDue.empty())
@@ -1302,6 +1314,12 @@ private:
   std::optional<std::pair<Key, Key>> fWindow, fAsked;
   // How many times what it shows was read, and the read last asked about.
   std::uint64_t fShownAnew = 0, fAskedAt = 0;
+  // When an edge was last asked about, and whether the view is at one.
+  static constexpr double kAskAgainMs = 3000.0;
+  double fAskedMs = 0.0;
+  bool fAtEdge = false;
+  // At an edge it asked about, nothing read since: to ask again.
+  [[nodiscard]] bool waitsToAsk() const { return fAtEdge && fAsked == fWindow && fAskedAt == fShownAnew; }
   std::deque<Answer> fDue;
   std::optional<std::tuple<float, float, std::size_t, std::optional<Key>>> fSeenAt;
   std::optional<Seen> fSaid;

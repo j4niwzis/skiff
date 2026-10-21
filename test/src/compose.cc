@@ -4792,3 +4792,39 @@ TEST(Compose, AFieldGrowingWithItsLinesPushesTheListUp) {
   EXPECT_LT(bareArea, 600.0f - 120.0f);
   EXPECT_LT(wrappedArea, 600.0f - 120.0f);
 }
+
+// An ask for what is older that brings nothing -- the request failed, or the
+// program let it go as one on its way: nothing read, the model as it was.
+// Still at its top, the list asks again a while later; not at every frame.
+TEST(Bind, AWindowAtItsTopAsksAgainWhereAnAskBroughtNothing) {
+  using namespace window_edge;
+  FeedWindow window(MakeRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, FeedWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 3}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  scene::hostWork().pressed.clear();
+  Heard heard;
+  double at = 0.0;
+  const auto frames = [&](int n) {
+    for (int i = 0; i < n; ++i, at += 16.0) {
+      tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+      tree.update(at);
+      (void)tree.finishFrame();
+      for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+        (void)bind::press(tree.root(), m, way, &heard);
+      binding.refresh(tree.root(), m);
+    }
+  };
+  frames(30);
+  const int first = heard.older;
+  frames(60);  // a second more, nothing come
+  const int soon = heard.older;
+  frames(250);  // four seconds more
+  std::println("older asked: {}, a second later {}, five seconds later {}", first, soon, heard.older);
+  EXPECT_GE(first, 1);
+  EXPECT_EQ(soon, first);
+  EXPECT_GT(heard.older, first);
+  EXPECT_LE(heard.older, first + 2);
+}
