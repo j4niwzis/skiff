@@ -84,6 +84,11 @@ template <class C> struct InOfT {
 // Pointer handling composed around an existing node. The handler sees the
 // node so it can read the current text selection and laid-out children.
 template <class E, class Make, class N> struct OnPointer : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onText;
+  using N::onSemantic;
   using Answer = E;
   using Out = Union<OutOf<N>, model::Types<E>>;
   Make fPointer;
@@ -104,6 +109,11 @@ auto onPointer(Make make, N node) {
 // asked as the move is delivered (onPress), as a press's answer is: a
 // divider dragged, the column beside it as wide as it says.
 template <class Act, class N> struct OnDragAcross : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onText;
+  using N::onSemantic;
   using Out = Union<OutOf<N>, model::Types<std::remove_cvref_t<std::invoke_result_t<Act &, float>>>>;
   Act fAct;
   float fAt = 0.0f;
@@ -144,6 +154,11 @@ template <class Act, class N> auto onDragAcross(Act act, N node) {
 // the node itself is its target's, which the way back up does not reach:
 // taken there too; any other press there as the node takes it.
 template <class E, class N> struct OnRightPress : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onText;
+  using N::onSemantic;
   using Answer = E;
   using Out = Union<OutOf<N>, model::Types<E>>;
   E fEvent;
@@ -513,6 +528,11 @@ auto zoomable_for(Compute compute, float margin, Off off, On on, Picture picture
 // `ask(node, x, y)` makes of where it was: a message's menu, from what is
 // selected in it and the link pressed. Nothing asked, not taken.
 template <class Ask, class N> struct OnRightPressAt : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onText;
+  using N::onSemantic;
   using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Ask &, N &, float, float>>())>;
   using Out = Union<OutOf<N>, model::Types<Answer>>;
   Ask fAsk;
@@ -578,6 +598,11 @@ template <class Act, class N> auto hovering(Look look, Act act, N node) {
 // something of them (Esc, closing it). Focusable itself, so the keys come to
 // it first.
 template <class Ask, class N> struct MovesFocus : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Ask &, const scene::key::down &>>())>;
   Ask fAsk;
   MovesFocus(Ask ask, N node) : N(std::move(node)), fAsk(std::move(ask)) {}
@@ -600,6 +625,12 @@ template <class Ask, class N> auto moves_focus(Ask ask, N node) { return erased(
 // then -- a form's fields, kept in a Local, sent as they are when its button
 // is pressed. Read through bound (asking_for).
 template <class Want, class Make, class N> struct AskingFor : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   using Answer = std::remove_cvref_t<std::invoke_result_t<Make &, const Want &>>;
   using Out = Union<OutOf<N>, model::Types<Answer>>;
   Make fMake;
@@ -620,6 +651,11 @@ template <class Want, class Make, class N> auto asking_for(Make make, N node) {
 // A flick across a node -- more across than up or down, past `reach` --
 // answered as `act(towards_left)` makes of it: a page on, or back.
 template <class Act, class N> struct Flicked : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onText;
+  using N::onSemantic;
   using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Act &, bool>>())>;
   using Out = Union<OutOf<N>, model::Types<Answer>>;
   Act fAct;
@@ -656,6 +692,12 @@ template <class Act, class N> auto flicked(float reach, Act act, N node) {
 // A node shown for a moment each time what it reads moves on -- a number,
 // newer each time: "Copied", said and gone. Unseen until then.
 template <class N> struct Fading : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   paint::Tween fFade{0.0f, 300.0f};
   double fHold = 0.0, fUntil = 0.0;
   std::optional<std::uint64_t> fSeen;
@@ -828,6 +870,12 @@ struct Wash {
   friend bool operator==(const Wash &, const Wash &) = default;
 };
 template <class N> struct Washed : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   skia::SkColor fColour;
   float fHeld, fFlash;
   paint::Tween fFading{0.0f, 1200.0f};
@@ -889,6 +937,12 @@ struct across {};
 [[nodiscard]] inline scene::Spec appearing_spec(appear::below, float shown, float shift) { return {.alpha = shown, .shiftY = shift}; }
 [[nodiscard]] inline scene::Spec appearing_spec(appear::across, float shown, float shift) { return {.alpha = shown, .shiftX = shift}; }
 template <class N, class Way = appear::below> struct Appearing : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   paint::Tween fIn;
   float fFrom;
   Appearing(bool now, float from, N node, float duration = 220.0f) : N(std::move(node)), fIn(1.0f, duration), fFrom(from) {
@@ -928,6 +982,12 @@ template <class N> auto appearing_across(bool now, N node, float from, float dur
 // settle(N&, State&) at each frame it asks for (settling(const N&, const
 // State&)) -- a template parameter, not a callback.
 template <class Policy, class N> struct Arranged : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   typename Policy::State fRules;
   Arranged(typename Policy::State rules, N node) : N(std::move(node)), fRules(std::move(rules)) {}
   void read(const typename Policy::State& rules)
@@ -968,6 +1028,12 @@ template <class Policy, class N> auto arranged(typename Policy::State rules, N n
 // pressed, the message it quotes: `ask(node, x, y)` answers, or says
 // nothing and the press is not taken.
 template <class Ask, class N> struct OnClickAt : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Ask &, N &, float, float>>())>;
   using Out = Union<OutOf<N>, model::Types<Answer>>;
   Ask fAsk;

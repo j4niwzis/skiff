@@ -610,6 +610,12 @@ struct Named<Self, Base> : Held {
 };
 
 template <class Tag, class N> struct Marked : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   // Found by this mark through whatever wraps it (scene::MarkOf).
   using MarkedAs = Marked<Tag, N>;
   Tag fTag;
@@ -715,6 +721,12 @@ N visible(bool on, N node) {
 // Keep a subtree polling while an external deadline is pending. The
 // node's own polling, if any, remains active independently.
 template <class N> struct Ticking : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   bool fTick;
   Ticking(bool tick, N node) : N(std::move(node)), fTick(tick) {}
   bool wantsTick() const {
@@ -975,6 +987,12 @@ template <class... H> Handlers<H...> handlers(H... each) { return {std::move(eac
 
 // Answers a press with a copy of its event.
 template <class E, class N> struct OnClick : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   using Walked = std::true_type;
   using HasLocal = std::bool_constant<bind::detail::kHasLocal<N>>;
   using Out = model::Types<E>;
@@ -1048,6 +1066,12 @@ auto onPress(Make make, N node, std::string label = {}) {
 // whether it is the one chosen -- a radio row, the segment in effect.
 // Read from the model where that moves (chosen_for).
 template <class N> struct Said : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   std::optional<scene::SemanticRole> fRole;
   bool fChosen = false;
   // A name and a hint it is read out with, where its own say none.
@@ -1085,6 +1109,11 @@ template <class Want, class Compute, class N> auto chosen_for(Compute compute, s
 
 // Answers a key with a copy of its event: Esc, as a bar is let go.
 template <class E, class N, class K> struct OnKey : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   using Walked = std::bool_constant<bind::detail::kWalks<N>>;
   using HasLocal = std::bool_constant<bind::detail::kHasLocal<N>>;
   using Answer = E;
@@ -1107,6 +1136,11 @@ template <class K, class E, class N> auto onKey(K key, E event, N node) {
 // apart, the arrows: what it makes, the key taken; nothing, the key on its
 // way up.
 template <class Ask, class N> struct OnKeys : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   using Walked = std::bool_constant<bind::detail::kWalks<N>>;
   using HasLocal = std::bool_constant<bind::detail::kHasLocal<N>>;
   using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Ask &, const scene::key::down &>>())>;
@@ -1133,6 +1167,12 @@ template <class... Reads, class Compute> auto text_of(Compute compute, nodes::Te
   return erased(bind::Derived<Compute, TextOf, Reads...>(TextOf(std::move(text)), std::move(compute)));
 }
 template <class N> struct ShownBy : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   explicit ShownBy(N node) : N(std::move(node)) {}
   void read(bool on) { this->setVisible(on); }
 };
@@ -1153,6 +1193,12 @@ void readNested(N &node, const T &value) {
   bind::detail::asBound(node).read(value);
 }
 template <class Compute, class N> struct Projected : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   Compute fCompute;
   Projected(Compute compute, N node)
       : N(std::move(node)), fCompute(std::move(compute)) {}
@@ -1214,6 +1260,11 @@ auto derived(Compute compute, N node) {
 // as last read -- in the phase given: on their way down (capture), before a
 // field under it takes them, or on their way up (bubble).
 template <class Phase, class K, class Ask, class N> struct KeysFor : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   using Answer = std::remove_cvref_t<decltype(*std::declval<std::invoke_result_t<Ask &, const K &, const scene::key::down &>>())>;
   Ask fAsk;
   K fNow{};
@@ -1241,6 +1292,12 @@ auto shown_for(Compute compute, N node) {
 // and colour, an avatar's person. What it shows is still the model's; only
 // how the value lands on the node is said here, once.
 template <class Apply, class N> struct Applied : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   Apply fApply;
   Applied(Apply apply, N node) : N(std::move(node)), fApply(std::move(apply)) {}
   template <class T> void read(const T &value) {
@@ -1260,6 +1317,12 @@ auto applied(Compute compute, Apply apply, N node) {
 // next layout; 0 asks nothing. A field made again (the window remade in
 // another theme) takes the keys back where the last request was its own.
 template <class N> struct FocusedBy : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   std::uint64_t fSeen = 0;
   explicit FocusedBy(N node) : N(std::move(node)) {}
   void read(std::uint64_t asked) {
@@ -1275,6 +1338,12 @@ auto focused_by(Compute compute, N node) {
   return projected<Want>(std::move(compute), FocusedBy<part_t<N>>(as_part(std::move(node))));
 }
 template <class N> struct SpecOf : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   explicit SpecOf(N node) : N(std::move(node)) {}
   void read(const scene::Spec &spec) { this->apply(spec); }
 };
@@ -1291,6 +1360,12 @@ auto text_for(Compute compute, nodes::Text text) {
 // scope is moved to them (rekey), shown that part by the next refresh of
 // its model that walks it.
 template <class Compute, class N> struct Rekeyed : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   Compute fCompute;
   Rekeyed(Compute compute, N node) : N(std::move(node)), fCompute(std::move(compute)) {}
   template <class T> void read(const T &value) {
@@ -1629,6 +1704,12 @@ struct Fit {
   std::optional<std::pair<float, float>> cell;
 };
 template <class Ratio, class N> struct Fitted : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   Fit fFit;
   Ratio fRatio;
   Fitted(Fit fit, Ratio ratio, N node) : N(std::move(node)), fFit(fit), fRatio(std::move(ratio)) {
@@ -1684,6 +1765,12 @@ template <class Picture, class Loader> auto while_coming(Look look, Picture pict
 // the share it is laid out at told to `fit(node, share)` -- an album's cells
 // all shrunk alike, a gap `gap` kept -- once each time the share changes.
 template <class Fit_, class N> struct Shrunk : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   float fWide, fGap, fShare = 1.0f;
   Fit_ fFit;
   Shrunk(float wide, float gap, Fit_ fit, N node) : N(std::move(node)), fWide(wide), fGap(gap), fFit(std::move(fit)) {}
@@ -1704,6 +1791,12 @@ template <class Fit_, class N> auto shrunk(float wide, float gap, Fit_ fit, N no
 // kept inside its parent's box; shown where there is one: a popover over
 // the cell it is for.
 template <class N> struct PlacedAt : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   std::optional<skia::SkPoint> fAt;
   explicit PlacedAt(N node) : N(std::move(node)) {
     this->fState.apply({.place = scene::anchor::kTopLeft});
@@ -1756,6 +1849,12 @@ struct PopAt {
   friend bool operator==(const PopAt &, const PopAt &) = default;
 };
 template <class N> struct Popped : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   std::optional<PopAt> fAt;
   bool fPlaced = false;
   float fEdge;

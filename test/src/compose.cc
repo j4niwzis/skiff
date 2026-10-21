@@ -4658,3 +4658,50 @@ TEST(Compose, ATabRowHiddenAsMadeStaysHidden) {
   EXPECT_EQ(shown_of(no_name()), 0);
   EXPECT_EQ(shown, 1);
 }
+// A scroll view wrapped by a combinator that derives from what it wraps
+// (marked, ticking): the wheel still scrolls it -- its own handler, not
+// Node's default, found through the wrapper's type.
+namespace wrapped_wheel {
+namespace c = skiff::compose;
+struct WheelTag {};
+struct TallRow : scene::Node {
+  TallRow() { this->apply({.fillX = true, .height = 40.0f}); }
+  [[nodiscard]] bool acceptsInput() const { return true; }
+};
+inline auto list() {
+  std::vector<TallRow> rows(30);
+  auto view = nodes::ScrollContainer(c::Many<TallRow>(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(rows)));
+  view.apply({.fill = true});
+  return view;
+}
+template <class View> float wheeled(View view) {
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(view)));
+  for (double at = 0.0; at < 100.0; at += 16.0) {
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    (void)tree.finishFrame();
+  }
+  TallRow *row = scene::findNode<TallRow>(tree.root());
+  const float before = row ? scene::work::drawnOffset(row->fState.fId).y : 0.0f;
+  for (int notch = 0; notch < 10; ++notch)
+    (void)tree.dispatchPointer(scene::pointer::scroll{150.0f, 200.0f, 0.0f, -120.0f});
+  for (double at = 100.0; at < 1500.0; at += 16.0) {
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    (void)tree.finishFrame();
+  }
+  return row ? before - scene::work::drawnOffset(row->fState.fId).y : -1.0f;
+}
+}  // namespace wrapped_wheel
+TEST(Compose, AScrollViewWrappedByACombinatorStillScrolls) {
+  using namespace wrapped_wheel;
+  const float bare = wheeled(list());
+  const float marked = wheeled(c::marked(WheelTag{}, list()));
+  const float ticking = wheeled(c::keep_ticking(true, list()));
+  const float clamped = wheeled(c::clamped_width(c::WidthLimit{.wanted = 300.0f, .whole = true}, list()));
+  std::println("scrolled by the wheel: bare {}, marked {}, ticking {}, clamped {}", bare, marked, ticking, clamped);
+  EXPECT_GT(clamped, 100.0f);
+  EXPECT_GT(bare, 100.0f);
+  EXPECT_GT(marked, 100.0f);
+  EXPECT_GT(ticking, 100.0f);
+}

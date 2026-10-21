@@ -15,6 +15,12 @@ export namespace skiff::compose {
 // a filtered list's keys and snapshots, with its source rows in the main
 // model. Both arrive through binding; construction needs neither model.
 template <class M, class Told, class Compute, class N> struct WithModel : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   Compute fCompute;
   const M* fModel = nullptr;
   std::optional<Told> fTold;
@@ -69,6 +75,11 @@ template <class N> auto focus_frame(Look look, N field) {
 // while the target still handles its normal press.
 // Answering does not take the press from its target.
 template <class E, class Ask, class N> struct OnCapture : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onText;
+  using N::onSemantic;
   using Answer = E;
   using Out = Union<OutOf<N>, model::Types<E>>;
   Ask fAsk;
@@ -102,6 +113,12 @@ struct VirtualRowsOptions {
   float minimum_view = 400.0f;
 };
 template <class Item, class Height, class N> struct VirtualRows : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   Height fHeight;
   VirtualRowsOptions fOptions;
   std::vector<Item> fItems;
@@ -182,6 +199,12 @@ struct Paned {
   friend bool operator==(const Paned&, const Paned&) = default;
 };
 template <class N> struct Slid : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   std::optional<Paned> fNow;
   float fFrom = 0.0f;
   paint::Tween fIn{1.0f, 240.0f, paint::movement::sweeping{}};
@@ -287,6 +310,11 @@ template <class Under, class Over> auto frozen_under(Look look, Under under, Ove
 // press is off is those parts, as they are laid out -- read as the walks
 // see them, not by any type of theirs.
 template <class Make, class N> struct TappedOff : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onText;
+  using N::onSemantic;
   using Answer = std::remove_cvref_t<std::invoke_result_t<Make &>>;
   Make fMake;
   std::optional<skia::SkPoint> fFrom;
@@ -324,6 +352,12 @@ template <class Make, class N> auto tapped_off(Make make, N node) {
 // press (its answer, delivered as a press is). N is a view with current()
 // and setCurrent().
 template <class Tell, class N> struct KeptScroll : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   using Answer = std::remove_cvref_t<std::invoke_result_t<Tell &, float>>;
   using Out = Union<OutOf<N>, model::Types<Answer>>;
   Tell fTell;
@@ -407,6 +441,12 @@ template <class Key, class View = void, class N> auto remembered_scroll(N node) 
 // Search results start at their top for each new result generation. A
 // refresh of the same generation preserves the reader's offset.
 template <class Key, class N> struct RestartedScroll : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   std::optional<Key> fKey;
   explicit RestartedScroll(N node) : N(std::move(node)) {}
   void read(const Key& key) {
@@ -444,6 +484,12 @@ template <class N> void ownWidth(N &node) {
   node.apply({.relativeSize = node.fState.fRelativeSizeAxes.template without<scene::axis::x>()});
 }
 template <class N> struct ClampedWidth : N {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using N::onKey;
+  using N::onPointer;
+  using N::onText;
+  using N::onSemantic;
   WidthLimit fLimit;
   ClampedWidth(WidthLimit limit, N node) : N(std::move(node)), fLimit(limit) { ownWidth(static_cast<N &>(*this)); }
   void read(const WidthLimit& limit) {

@@ -112,6 +112,12 @@ template <class C, class R, class A> struct OnlyArgumentOf<R (C::*)(A)> {
 
 template <class Compute, class Base, class... Reads>
 struct Derived : Base {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using Base::onKey;
+  using Base::onPointer;
+  using Base::onText;
+  using Base::onSemantic;
   using Computes = Compute;
   // Its compute and read, made where the node is made, for the runtime walks
   // (outside a release build): given the parts' values, or the model's root
@@ -157,6 +163,12 @@ struct Derived : Base {
 
 template <class Within, class Handlers, class Base, class... Keys>
 struct Scoped : Base {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using Base::onKey;
+  using Base::onPointer;
+  using Base::onText;
+  using Base::onSemantic;
   using ScopeOf = Within;
   Scoped() = default;
   explicit Scoped(Handlers handlers, Base base, Keys... keys)
@@ -267,6 +279,12 @@ struct NoHandlers {};
 
 template <class T, class Handlers, class Base, bool Hidden = false>
 struct Local : Base {
+  // Its content's handlers at its own level (as Bound keeps them): a call
+  // on this type took Node's deducing-this defaults over the content's own.
+  using Base::onKey;
+  using Base::onPointer;
+  using Base::onText;
+  using Base::onSemantic;
   using LocalOf = T;
   static constexpr bool kHidden = Hidden;
   using Store = model::Model<T, NoReactions>;
