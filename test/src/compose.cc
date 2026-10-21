@@ -4705,3 +4705,90 @@ TEST(Compose, AScrollViewWrappedByACombinatorStillScrolls) {
   EXPECT_GT(marked, 100.0f);
   EXPECT_GT(ticking, 100.0f);
 }
+// A field that grows with its lines (as skiff-widgets' TextArea: its height
+// said in measure, each edit invalidating its layout), at the bottom of a
+// column whose list above grows into what is left -- mux's chat column and
+// composer: lines typed, the field grows upwards, the list giving way; the
+// field never past the window's bottom.
+namespace growing_field {
+namespace c = skiff::compose;
+struct FieldTag {};
+struct Lines;
+inline Lines *gField = nullptr;  // where the field is, as it was last measured (erased, findNode cannot see it)
+struct Area;
+inline Area *gArea = nullptr;
+struct Lines : scene::Node {
+  int lines = 1;
+  // One line high as it is made, as TextArea is.
+  Lines() { this->fState.fHeight = 20.0f; }
+  void measure(const skia::SkRect &) {
+    gField = this;
+    this->fState.fHeight = 20.0f * static_cast<float>(lines);
+  }
+  void addLine() {
+    ++lines;
+    this->fState.invalidateLayout();
+    this->fState.markDamaged();
+  }
+};
+struct Area : scene::Node {
+  void measure(const skia::SkRect &) { gArea = this; }
+};
+// The area above as mux's chat_area: a named column growing on its own
+// account, a backdrop filling it, under styled's grow and a wrapper.
+inline auto area_like() {
+  return SKIFF_NAMED(area_like, c::column(c::vbox(0.0f, {.fillX = true, .grow = scene::axes::kY}), c::styled({.fill = true}, Area{})));
+}
+template <class Above, class Field> auto screen_with(Above above, Field field) {
+  return c::column(c::vbox(0.0f, {.fill = true}),
+      c::styled({.fillX = true, .grow = scene::axes::kY}, std::move(above)),
+      SKIFF_NAMED(composer_like, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+          c::styled({.fillX = true, .height = 1.0f}, nodes::Box<>(0xff000000u)),
+          c::row(c::hbox(6.0f, {.fillX = true, .autoSize = scene::axes::kY, .minHeight = 54.0f, .padding = {9.0f, 8.0f, 9.0f, 8.0f}}),
+              c::styled({.grow = scene::axes::kX, .alignSelf = scene::align::kMiddle}, std::move(field))))));
+}
+template <class Field> auto screen(Field field) { return screen_with(Area{}, std::move(field)); }
+template <class Tree> std::pair<float, float> typed(Tree &tree, int extra) {
+  const auto view = skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 600.0f);
+  double at = 0.0;
+  const auto frame = [&] {
+    tree.update(at += 16.0);
+    tree.layoutIfNeeded(view);
+    (void)tree.finishFrame();
+  };
+  gField = nullptr;
+  gArea = nullptr;
+  frame();
+  Lines *field = gField;
+  Area *area = gArea;
+  if (!field || !area)
+    return {1e9f, 1e9f};
+  for (int i = 0; i < extra; ++i) {
+    field->addLine();
+    frame();
+  }
+  const float bottom = scene::work::drawnOffset(field->fState.fId).y + field->fState.fBounds.height();
+  std::println("  field {} lines: bounds {} {} {} {}, drawn y {}, area height {}", field->lines, field->fState.fBounds.fLeft, field->fState.fBounds.fTop,
+               field->fState.fBounds.width(), field->fState.fBounds.height(), scene::work::drawnOffset(field->fState.fId).y, area->fState.fBounds.height());
+  return {std::max(bottom, field->fState.fBounds.fBottom), area->fState.fBounds.height()};
+}
+}  // namespace growing_field
+TEST(Compose, AFieldGrowingWithItsLinesPushesTheListUp) {
+  using namespace growing_field;
+  scene::Scene bare(screen(Lines{}));
+  scene::Scene wrapped(screen(c::marked(FieldTag{}, c::keep_ticking(true, Lines{}))));
+  std::println("bare:");
+  const auto [bareBottom, bareArea] = typed(bare, 5);
+  std::println("wrapped:");
+  const auto [wrappedBottom, wrappedArea] = typed(wrapped, 5);
+  scene::Scene named(screen_with(c::marked(FieldTag{}, area_like()), c::marked(FieldTag{}, c::keep_ticking(true, Lines{}))));
+  std::println("area a named growing column:");
+  const auto [namedBottom, namedArea] = typed(named, 5);
+  EXPECT_LE(namedBottom, 600.5f);
+  EXPECT_LT(namedArea, 600.0f - 120.0f);
+  // Six lines, 120 high: within the window, the area above smaller by it.
+  EXPECT_LE(bareBottom, 600.5f);
+  EXPECT_LE(wrappedBottom, 600.5f);
+  EXPECT_LT(bareArea, 600.0f - 120.0f);
+  EXPECT_LT(wrappedArea, 600.0f - 120.0f);
+}

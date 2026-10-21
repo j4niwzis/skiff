@@ -120,6 +120,14 @@ concept NamedOverHeld = requires { typename N::NamedOver; } && std::same_as<type
                         std::derived_from<N, Stacked>;
 template <class Self>
 concept HeldWrapper = !NamedOverHeld<Self>;
+// A node that works its own size out as it is laid out -- a measure() of
+// its own: a text field one line high as it is made, more as lines are
+// typed. Node's own measure (outside a release build, not a template) is
+// none: told apart by overloading on the class the member is of.
+constexpr bool ownMeasure(void (scene::Node::*)(const skia::SkRect &)) { return false; }
+template <class C> constexpr bool ownMeasure(void (C::*)(const skia::SkRect &)) { return true; }
+template <class T>
+concept MeasuresItself = requires { requires ownMeasure(&T::measure); };
 struct Held : Stacked {
   // What it holds is not known here: walked, and taken to hold a Local, as
   // any node naming its children itself is.
@@ -150,6 +158,7 @@ struct Held : Stacked {
     if constexpr (std::derived_from<T, Held>)
       node.adopt();
     fSpecTo = +[](void *held, const scene::Spec &spec) { static_cast<T *>(held)->apply(spec); };
+    fMeasured = MeasuresItself<T>;
     parts.held = scene::AnyNode(std::forward<N>(node));
   }
   // Made in place: a node that is never moved (a mount whose content may
@@ -158,6 +167,7 @@ struct Held : Stacked {
     requires(std::derived_from<N, scene::Node> && !std::derived_from<N, Held>)
   explicit Held(std::in_place_type_t<N> which, Args &&...args) : Stacked(vbox(0.0f)) {
     fSpecTo = +[](void *held, const scene::Spec &spec) { static_cast<N *>(held)->apply(spec); };
+    fMeasured = MeasuresItself<N>;
     parts.held = scene::AnyNode(which, std::forward<Args>(args)...);
   }
   [[nodiscard]] scene::AnyNode &held() noexcept { return parts.held; }
@@ -393,6 +403,8 @@ private:
   bool fHeldShown = true;
   // Its content's placement folded in already.
   bool fAdopted = false;
+  // Its content works its size out as it is laid out (MeasuresItself).
+  bool fMeasured = false;
   // The axes it sizes itself along (ownAxes).
   scene::Axes fOwnAxes{};
   [[nodiscard]] static scene::Spec placement(const scene::Spec &spec) {
@@ -483,10 +495,13 @@ private:
   // content said, as it is wrapped or given a spec (restored first): a size
   // it worked out laying itself out -- a text's, measured -- is followed, or
   // the wrapper kept the last one, and the text stood out of its bubble
-  // until the next layout.
+  // until the next layout. Nor a size content that measures itself had as
+  // it was made: mux's message field, one line high as made, then more as
+  // lines were typed -- the wrapper kept the one line, the bar never grew,
+  // and the lines went on under the window's bottom.
   template <class Axis> void sizeAs(const scene::State &node, float nodeSize, float &mySize) {
     scene::State &mine = this->fState;
-    if (node.fAutoSizeAxes.template has<Axis>() || nodeSize <= 0.0f) {
+    if (fMeasured || node.fAutoSizeAxes.template has<Axis>() || nodeSize <= 0.0f) {
       mine.fAutoSizeAxes = mine.fAutoSizeAxes.template with<Axis>();
       return;
     }
