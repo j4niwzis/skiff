@@ -4601,3 +4601,60 @@ TEST(Compose, AShortWindowAsksAgainWhenAPageAddsNothingShown) {
   EXPECT_GE(first, 1);
   EXPECT_GT(heard.older, first);
 }
+// A tab row as mux's room settings make it -- named, its look read from the
+// model, pressed -- hidden as made: stays hidden.
+namespace hidden_tab {
+namespace c = skiff::compose;
+using namespace window_edge;
+struct Tap {
+  int operator()() const { return 0; }
+};
+struct Mark : scene::Node {
+  Mark() { this->apply({.width = 20.0f, .height = 20.0f}); }
+};
+inline auto tab_row() {
+  return SKIFF_NAMED(manage_tab_row, c::spec_for<FeedTold>([](const FeedTold &) { return scene::Spec{.selected = false}; },
+      c::onPress(Tap{}, c::row(c::hbox(8.0f, {.fillX = true, .height = 40.0f}), Mark{}))));
+}
+inline auto no_spec() { return SKIFF_NAMED(manage_tab_row, c::onPress(Tap{}, c::row(c::hbox(8.0f, {.fillX = true, .height = 40.0f}), Mark{}))); }
+inline auto no_name() {
+  return c::spec_for<FeedTold>([](const FeedTold &) { return scene::Spec{.selected = false}; },
+      c::onPress(Tap{}, c::row(c::hbox(8.0f, {.fillX = true, .height = 40.0f}), Mark{})));
+}
+inline auto only_row() { return c::row(c::hbox(8.0f, {.fillX = true, .height = 40.0f}), Mark{}); }
+template <class Row> int shown_of(Row hidden) {
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), c::visible(false, std::move(hidden))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  for (double at = 0.0; at < 100.0; at += 16.0) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 300.0f));
+    (void)tree.finishFrame();
+  }
+  int marks = 0;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    marks += one.visible && one.bounds.height() == 20.0f ? 1 : 0;
+  return marks;
+}
+}  // namespace hidden_tab
+TEST(Compose, ATabRowHiddenAsMadeStaysHidden) {
+  using namespace hidden_tab;
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), c::visible(false, tab_row()), c::visible(true, tab_row())));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
+  bind::Binding<FeedModel> binding;
+  for (double at = 0.0; at < 100.0; at += 16.0) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 300.0f));
+    (void)tree.finishFrame();
+  }
+  int shown = 0;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(tree.root()))
+    if (one.view == "manage_tab_row" && one.names && one.visible && one.bounds.height() > 0.0f)
+      ++shown;
+  std::println("tab rows shown: {} (of 2, one hidden)", shown);
+  EXPECT_EQ(shown_of(tab_row()), 0);
+  EXPECT_EQ(shown_of(no_name()), 0);
+  EXPECT_EQ(shown, 1);
+}

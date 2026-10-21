@@ -213,7 +213,7 @@ struct Held : Stacked {
     }
     self.fState.apply(placed);
     if (spec.visible)
-      self.fShown = *spec.visible;
+      self.fHeldShown = *spec.visible;
     self.followSize(node);
     self.invalidateLayout();
   }
@@ -309,7 +309,7 @@ struct Held : Stacked {
     // one laid the row out again.
     if (parts.held)
       this->adopt();
-    this->fState.fVisible = fShown && (!parts.held || parts.held.state().fVisible);
+    this->fState.fVisible = fHeldShown && (!parts.held || parts.held.state().fVisible);
     return this->fState;
   }
 
@@ -360,10 +360,10 @@ struct Held : Stacked {
     // it was hidden under every wrapper for good -- a call button never
     // seen. What the content says of itself after that stays its own,
     // followed as it is seen (walkedState).
-    fShown = mine.fVisible && node.fVisible;
+    fHeldShown = mine.fVisible && node.fVisible;
     // Shown again as the content takes a spec: content that is a wrapper
     // itself -- a named view's press, held -- keeps whether it is shown in
-    // its own word (its fShown), which its state's flag alone did not move:
+    // its own word (its fHeldShown), which its state's flag alone did not move:
     // set only there, the content stayed hidden under a wrapper that showed
     // -- mux's call button, an icon button hidden as made, never seen.
     fSpecTo(parts.held.ref().node(), scene::Spec{.visible = true});
@@ -386,7 +386,11 @@ private:
   // Not a part: nothing walks it.
   own_t fOwn;
   // Shown, as the wrapper itself says.
-  bool fShown = true;
+  // Whether the wrapper is shown, as said to it: named so that nothing
+  // derived from a wrapper hides it -- Bound's own fShown (whether it was
+  // read) took a spec_for row's hide, the row was never hidden, and the
+  // binding only read it again.
+  bool fHeldShown = true;
   // Its content's placement folded in already.
   bool fAdopted = false;
   // The axes it sizes itself along (ownAxes).
