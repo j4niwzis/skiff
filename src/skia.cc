@@ -683,6 +683,10 @@ inline constexpr Cap kSquareCap = ::SkPaint::Cap::kSquare_Cap;
 using Version = ::SkSL::Version;
 inline constexpr Version kSL300 = ::SkSL::Version::k300;
 
+// Whether this is Skia, or skiff's stand-in for it (skia_lite.cc): a test
+// of pixels asks.
+inline constexpr bool kLite = false;
+
 } // namespace skia
 
 // The smart pointer, instantiated here rather than in whoever imports this.

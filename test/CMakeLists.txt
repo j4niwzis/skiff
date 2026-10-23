@@ -56,6 +56,13 @@ option(SKIFF_TESTS_HEAVY "Build the heaviest test units too" ON)
 if(SKIFF_TESTS_HEAVY)
   target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_emoji_wrapped.cc)
 endif()
+# On skiff's stand-in for Skia, nothing is drawn and nothing decoded: the
+# tests of pixels and of files of images are Skia's.
+if(DEFINED SKIFF_SKIA AND NOT SKIFF_SKIA)
+  get_target_property(skiff_test_sources ${PROJECT_NAME} SOURCES)
+  list(REMOVE_ITEM skiff_test_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/images.cc)
+  set_target_properties(${PROJECT_NAME} PROPERTIES SOURCES "${skiff_test_sources}")
+endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   gtest

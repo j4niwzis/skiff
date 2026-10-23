@@ -1,6 +1,7 @@
 # The tests, on every push: the page's without Skia -- skiff.web with its
-# in-memory document -- and the scene's with it, all of them, the heaviest
-# units too (a runner has the memory a small box has not).
+# in-memory document; the scene's without Skia too, on skiff's stand-in for
+# its types; and the scene's with it, all of them, the heaviest units too
+# (a runner has the memory a small box has not).
 name: tests
 
 on:
@@ -67,6 +68,70 @@ jobs:
           # all of it, in one run.
           cmake --build build --target skiffWebTests -- -k 0
           ctest --test-dir build -R skiffWebTests --output-on-failure
+
+  scene-lite:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # Clang 23 and the distribution's libstdc++: this is a C++23 module
+      # library, so the compiler has to scan for imports.
+      - name: clang 23
+        run: |
+          sudo apt-get update || true
+          sudo apt-get install -y ninja-build python3 pkg-config \
+            lsb-release software-properties-common gnupg curl
+          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 23 all
+          echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
+
+      - name: cmake
+        run: |
+          version=4.3.4
+          curl -sSL -o cmake.tar.gz \
+            "https://github.com/Kitware/CMake/releases/download/v${version}/cmake-${version}-linux-x86_64.tar.gz"
+          sudo tar xzf cmake.tar.gz -C /opt
+          echo "/opt/cmake-${version}-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      # Where libstdc++ keeps the source of its std module.
+      - name: what import std reads from libstdc++
+        run: |
+          std=$(ls /usr/include/c++/*/bits/std.cc | sort -V | tail -1)
+          cat > /tmp/libstdc++.modules.json <<EOF
+          {
+            "version": 1,
+            "revision": 1,
+            "modules": [
+              { "logical-name": "std", "source-path": "$std",
+                "is-std-library": true },
+              { "logical-name": "std.compat",
+                "source-path": "${std%std.cc}std.compat.cc",
+                "is-std-library": true }
+            ]
+          }
+          EOF
+
+      # The scene's tests on skiff's stand-in for Skia (src/skia_lite.cc):
+      # laid out, bound, hit-tested, damaged and animated, nothing drawn --
+      # no Skia to build or cache. What reads pixels or decodes files is
+      # the Skia job's.
+      - name: the scene's tests, without Skia
+        run: |
+          cmake -S test -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-23 \
+            -DCMAKE_CXX_COMPILER=clang++-23 \
+            -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
+            -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
+            -DCME_STORE_ENABLED=ON \
+            -DCME_SOURCES_ENABLED=ON \
+            -DSKIFF_SKIA=OFF -DSKIFF_WEB=OFF
+          # Every unit tried, not the first that fails: what a compiler refuses,
+          # all of it, in one run.
+          cmake --build build --target skiffTests skiffClickTests -- -k 0
+          ctest --test-dir build -R "skiffTests|skiffClickTests" --output-on-failure
 
   scene:
     runs-on: ubuntu-26.04

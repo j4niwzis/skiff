@@ -756,7 +756,7 @@ inline auto row() {
   words.setSelectable(true);
   words.apply({.width = 220.0f, .height = 36.0f});
   nodes::Text time("12:44", 11.0f, 0xff000000u);
-  time.apply({.place = scene::anchor::kBottomRight, .width = 40.0f, .height = 14.0f, .y = 2.0f});
+  time.apply({.place = scene::anchor::kBottomRight, .y = 2.0f, .width = 40.0f, .height = 14.0f});
   auto bubble = compose::Held(c::column(c::vbox(2.0f, {.autoSize = scene::axes::kBoth, .padding = {6.0f, 10.0f, 6.0f, 10.0f},
                                                         .cornerRadius = 12.0f, .background = 0xffeeeeeeu}),
                                         std::move(name), std::move(words), std::move(time)));

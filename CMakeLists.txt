@@ -64,6 +64,13 @@ endif()
 # build that keeps that state with no window to show it in (a program's
 # headless parts, its tests, a command-line copy of it).
 option(SKIFF_UI "Build the scene, the nodes and their binding, on Skia; off, skiff.model alone" ON)
+# The scene's types from Skia, or from skiff's own stand-in for them
+# (src/skia_lite.cc): the geometry for real, a canvas that keeps its matrix
+# and its clip and draws nothing, faces all of one width, no codecs. Off, the
+# scene is laid out, bound, hit-tested, damaged and animated with no Skia on
+# the machine -- its tests, where Skia is not; nothing is drawn, and nothing
+# is installed.
+option(SKIFF_SKIA "With SKIFF_UI: the scene on Skia; off, on skiff's own stand-in for its types, drawing nothing" ON)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   set(SKIFF_EMSCRIPTEN TRUE)
@@ -137,10 +144,10 @@ endif()
 set(skiff_skia_components freetype ${skiff_asked})
 list(REMOVE_ITEM skiff_skia_components text-shaping)
 set(SKIFF_TEXT_SHAPING OFF)
-if("text-shaping" IN_LIST skiff_asked)
+if("text-shaping" IN_LIST skiff_asked AND SKIFF_SKIA)
   set(SKIFF_TEXT_SHAPING ON)
 endif()
-if(SKIFF_UI)
+if(SKIFF_UI AND SKIFF_SKIA)
 find_package(Skia REQUIRED
              COMPONENTS ${skiff_skia_components} ${SKIFF_SKIA_COMPONENTS})
 
@@ -323,8 +330,13 @@ endif()
 target_sources(skiff_core PUBLIC FILE_SET HEADERS BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/skiff/named.h)
 
 if(SKIFF_UI)
+if(SKIFF_SKIA)
+  set(skiff_skia_module ${CMAKE_CURRENT_SOURCE_DIR}/src/skia.cc)
+else()
+  set(skiff_skia_module ${CMAKE_CURRENT_SOURCE_DIR}/src/skia_lite.cc)
+endif()
 set(skiff_sources
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/skia.cc
+  ${skiff_skia_module}
   ${CMAKE_CURRENT_SOURCE_DIR}/src/paint.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/scene.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/nodes.cc
@@ -374,8 +386,12 @@ endif()
 # -- rightly, since what would be installed is a library whose dependency
 # exists nowhere else. So an installed copy names Skia the way a machine can
 # answer for it, which is what the config file below writes.
+if(SKIFF_SKIA)
 target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:Skia::skia>)
-if(ANDROID AND SKIFF_EGL_LIBRARY AND SKIFF_GLES_LIBRARY)
+endif()
+if(NOT SKIFF_SKIA)
+  # Nothing of Skia's, and nothing that draws with GL.
+elseif(ANDROID AND SKIFF_EGL_LIBRARY AND SKIFF_GLES_LIBRARY)
   target_link_libraries(${PROJECT_NAME} PUBLIC
     ${SKIFF_EGL_LIBRARY} ${SKIFF_GLES_LIBRARY})
 elseif(NOT SKIFF_EMSCRIPTEN AND TARGET OpenGL::GL)
@@ -463,6 +479,10 @@ endif()
 # dependencies exist only in the build directory it came from.
 option(SKIFF_INSTALL "Install skiff and its CMake package"
        ${PROJECT_IS_TOP_LEVEL})
+if(SKIFF_INSTALL AND SKIFF_UI AND NOT SKIFF_SKIA)
+  message(STATUS "skiff: the stand-in for Skia is for tests; nothing is installed")
+  set(SKIFF_INSTALL OFF)
+endif()
 if(SKIFF_INSTALL)
   include(GNUInstallDirs)
   install(TARGETS ${skiff_built}
