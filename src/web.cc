@@ -946,22 +946,22 @@ private:
     State &state = node.fState;
     // A list's rows: the new ones mounted, all of them in the list's order.
     if constexpr (requires { node.fRows; node.fShownRows; }) {
-      bool changed = node.fRows.size() != node.fShownRows.size();
-      for (std::size_t i = 0; i < node.fRows.size(); ++i) {
+      // The rows as they were, then new ones at the end: those are mounted
+      // (appended) and that is all. Rows gone from the middle or moved: all
+      // appended again, in the list's order.
+      std::size_t same = 0;
+      while (same < node.fShownRows.size() && same < node.fRows.size() && node.fShownRows[same] == node.fRows[same].fState.fHandle) ++same;
+      const bool reorder = same != node.fShownRows.size();
+      for (std::size_t i = same; i < node.fRows.size(); ++i) {
         auto &row = node.fRows[i];
-        if (row.fState.fHandle == dom::kNone) {
-          mountNode(row, state.fHandle);
-          changed = true;
-        } else if (!changed && node.fShownRows[i] != row.fState.fHandle) {
-          changed = true;
-        }
+        if (row.fState.fHandle == dom::kNone) mountNode(row, state.fHandle);
+        else if (!reorder) dom::append(state.fHandle, row.fState.fHandle);
       }
-      if (changed) {
+      if (reorder)
+        for (auto &row : node.fRows) dom::append(state.fHandle, row.fState.fHandle);
+      if (reorder || same != node.fRows.size()) {
         node.fShownRows.clear();
-        for (auto &row : node.fRows) {
-          dom::append(state.fHandle, row.fState.fHandle);
-          node.fShownRows.push_back(row.fState.fHandle);
-        }
+        for (auto &row : node.fRows) node.fShownRows.push_back(row.fState.fHandle);
       }
     }
     if (state.fDirty) {

@@ -99,13 +99,14 @@ template <class M> struct Refreshing {
     std::vector<Row> rows;
     keys.reserve(seen->size());
     rows.reserve(seen->size());
+    // The rows there were, found by key through the index kept sorted
+    // (indexRows): a list that grows by one each frame is not scanned
+    // whole for each of its keys.
     for (std::size_t i = 0; i < seen->size(); ++i) {
       const auto &key = seen->keyAt(i);
       keys.push_back(key);
-      const auto was = std::ranges::find(list.fKeys, key);
-      if (was != list.fKeys.end())
-        rows.push_back(std::move(
-            list.fRows[static_cast<std::size_t>(was - list.fKeys.begin())]));
+      if (Row *was = list.rowFor(key))
+        rows.push_back(std::move(*was));
       else
         rows.push_back(list.fMake(seen->valueAt(i)));
     }
