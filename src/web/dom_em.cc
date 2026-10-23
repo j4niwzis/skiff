@@ -33,6 +33,21 @@ EM_JS(int, skiffDomCreate, (const char *tag, int len), {
   Module.skiffDom.els.push(el);
   return Module.skiffDom.els.length - 1;
 });
+EM_JS(int, skiffDomChild, (int parent, int index), {
+  const p = Module.skiffDom.els[parent];
+  const el = p ? p.children[index] : null;
+  if (!el) return 0;
+  Module.skiffDom.els.push(el);
+  return Module.skiffDom.els.length - 1;
+});
+EM_JS(int, skiffDomChildren, (int parent), {
+  const p = Module.skiffDom.els[parent];
+  return p ? p.children.length : 0;
+});
+EM_JS(void, skiffDomClear, (int h), {
+  const el = Module.skiffDom.els[h];
+  if (el) el.replaceChildren();
+});
 EM_JS(void, skiffDomDestroy, (int h), {
   const el = Module.skiffDom.els[h];
   if (el && el.parentNode) el.parentNode.removeChild(el);
@@ -174,6 +189,15 @@ Handle create(std::string_view tag) {
   return static_cast<Handle>(skiffDomCreate(tag.data(), static_cast<int>(tag.size())));
 }
 void destroy(Handle h) { skiffDomDestroy(static_cast<int>(h)); }
+Handle child(Handle parent, std::size_t index) {
+  skiffDomInit();
+  return static_cast<Handle>(skiffDomChild(static_cast<int>(parent), static_cast<int>(index)));
+}
+std::size_t children(Handle parent) {
+  skiffDomInit();
+  return static_cast<std::size_t>(skiffDomChildren(static_cast<int>(parent)));
+}
+void clear(Handle h) { skiffDomClear(static_cast<int>(h)); }
 void append(Handle parent, Handle child) { skiffDomAppend(static_cast<int>(parent), static_cast<int>(child)); }
 void text(Handle h, std::string_view t) { skiffDomText(static_cast<int>(h), t.data(), static_cast<int>(t.size())); }
 void attr(Handle h, std::string_view n, std::string_view v) {

@@ -78,6 +78,17 @@ void append(Handle parent, Handle child) {
   for (Element &e : elements()) std::erase(e.children, child);
   at(parent).children.push_back(child);
 }
+Handle child(Handle parent, std::size_t index) {
+  if (parent == kNone || parent >= elements().size()) return kNone;
+  const auto &all = at(parent).children;
+  return index < all.size() ? all[index] : kNone;
+}
+std::size_t children(Handle parent) { return parent == kNone || parent >= elements().size() ? 0 : at(parent).children.size(); }
+void clear(Handle h) {
+  if (h == kNone || h >= elements().size()) return;
+  at(h).children.clear();
+  at(h).text.clear();
+}
 void text(Handle h, std::string_view t) { at(h).text = std::string(t); }
 void attr(Handle h, std::string_view n, std::string_view v) { set(at(h).attrs, n, v); }
 void dropAttr(Handle h, std::string_view n) {

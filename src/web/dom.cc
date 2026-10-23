@@ -20,6 +20,12 @@ inline constexpr Handle kNone = 0;
 [[nodiscard]] Handle create(std::string_view tag);
 void destroy(Handle element);
 void append(Handle parent, Handle child);
+// An element the document has already -- a page written beforehand -- at a
+// place among its parent's elements (none past them), how many there are,
+// and an element emptied of what it holds: what a page taken over reads.
+[[nodiscard]] Handle child(Handle parent, std::size_t index);
+[[nodiscard]] std::size_t children(Handle parent);
+void clear(Handle element);
 void text(Handle element, std::string_view text);
 void attr(Handle element, std::string_view name, std::string_view value);
 void dropAttr(Handle element, std::string_view name);

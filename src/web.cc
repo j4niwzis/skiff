@@ -1532,6 +1532,20 @@ public:
     fBinding.refresh(fRoot, *fModel);
     sync();
   }
+  // A page written beforehand taken over -- the markup this tree made where
+  // it was mounted natively and dumped: the tree read as the model says, then
+  // walked over the document's elements in the order they were written, each
+  // node taking its own and saying its listeners, nothing made again; then
+  // written as the model says now. `first` is the place of the tree's root
+  // among the parent's elements (after the stylesheets written before it). A
+  // node with no nodes under it makes what it holds itself (a text's runs, a
+  // control's parts): it is emptied and makes it again. An element not there
+  // is made, as mount() would.
+  void hydrate(dom::Handle into = dom::root(), std::size_t first = 0) {
+    fBinding.refresh(fRoot, *fModel);
+    hydrateNode(fRoot, into, first);
+    sync();
+  }
   // What the model says, written to the page: after an edit made elsewhere
   // than by the page's own events.
   void refresh() {
@@ -1573,6 +1587,30 @@ private:
       if constexpr (requires { node.fLook.fHorizontal; }) child.fState.fInRow = node.fLook.fHorizontal;
       mountNode(child, state.fHandle);
     });
+  }
+  template <class N> void hydrateNode(N &node, dom::Handle parent, std::size_t index) {
+    State &state = node.fState;
+    const dom::Handle found = dom::child(parent, index);
+    if (found == dom::kNone) {
+      mountNode(node, parent);
+      return;
+    }
+    state.fHandle = found;
+    std::size_t under = 0;
+    detail::eachChild(node, [&](auto &) { ++under; });
+    if (under == 0) dom::clear(found);
+    node.mounted();
+    std::size_t at = 0;
+    detail::eachChild(node, [&](auto &child) {
+      if constexpr (requires { node.fLook.fHorizontal; }) child.fState.fInRow = node.fLook.fHorizontal;
+      hydrateNode(child, found, at++);
+    });
+    // A list's rows are the ones it shows now: not appended again.
+    if constexpr (requires { node.fRows; node.fShownRows; }) {
+      node.fShownRows.clear();
+      for (auto &row : node.fRows) node.fShownRows.push_back(row.fState.fHandle);
+    }
+    state.fDirty = true;
   }
   template <class N> void syncNode(N &node) {
     State &state = node.fState;

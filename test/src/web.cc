@@ -75,6 +75,34 @@ TEST(Web, AnEventOnAnElementIsAPressDownTheTreeAndThePageFollows) {
   EXPECT_NE(dom::dump(counter.element()).find(">2<"), std::string::npos);
 }
 
+TEST(Web, APageWrittenBeforehandIsTakenOverNotMadeAgain) {
+  dom::reset();
+  Model m;
+  // Written as a program does where it is built natively: mounted, dumped.
+  Page written(counterPage(), m);
+  written.mount();
+  const std::string before = dom::dump(dom::root());
+  // Taken over by another page of the same tree: the same elements, none made.
+  Model live;
+  (void)live.apply(model::over<Count>([](Count c) {
+    c.n = 5;
+    return c;
+  }));
+  Page page(counterPage(), live);
+  page.hydrate();
+  const std::string after = dom::dump(dom::root());
+  EXPECT_EQ(dom::children(dom::root()), 1u) << after;
+  auto &counter = std::get<1>(std::get<0>(page.root().fParts).fParts);
+  EXPECT_EQ(counter.element(), std::get<1>(std::get<0>(written.root().fParts).fParts).element());
+  EXPECT_NE(after.find(">5<"), std::string::npos) << after;
+  EXPECT_EQ(before.size(), after.size()) << before << "\n" << after;
+  // And it is the page's: its events go to its model.
+  auto &button = std::get<1>(page.root().fParts);
+  fire(page, button.element(), "click", "");
+  EXPECT_EQ(live.look<Count>()->n, 6);
+  EXPECT_NE(dom::dump(counter.element()).find(">6<"), std::string::npos);
+}
+
 TEST(Web, AnEditMadeElsewhereIsWrittenToThePage) {
   dom::reset();
   Model m;
