@@ -256,14 +256,30 @@ endif()
 # wants them -- a scene drawing on a worker does, a page of controls does
 # not, and a page without threads needs no cross-origin isolation to run.
 option(SKIFF_EMSCRIPTEN_THREADS "Under Emscripten, build with -pthread and -msimd128" ON)
+# One set of flags for every unit of a build, said where it is configured:
+# a target compiled with others -- the same flag twice is another string --
+# has CMake make another std module for it, and a unit that imports modules
+# made over two of them is one clang does not get through. What is missing
+# is added here, for skiff's own; a program of its own compiled without it
+# would not be one build with skiff, and is told so.
 if(SKIFF_EMSCRIPTEN)
   if(SKIFF_EMSCRIPTEN_THREADS)
     set(skiff_emscripten_flags -fexceptions -pthread -msimd128)
   else()
     set(skiff_emscripten_flags -fexceptions)
   endif()
-  string(JOIN " " skiff_emscripten_flags_joined ${skiff_emscripten_flags})
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${skiff_emscripten_flags_joined}")
+  set(skiff_emscripten_missing)
+  foreach(flag IN LISTS skiff_emscripten_flags)
+    if(NOT " ${CMAKE_CXX_FLAGS} " MATCHES " ${flag} ")
+      list(APPEND skiff_emscripten_missing ${flag})
+    endif()
+  endforeach()
+  if(skiff_emscripten_missing)
+    string(JOIN " " skiff_emscripten_missing_joined ${skiff_emscripten_missing})
+    message(WARNING "skiff under Emscripten: configure with CMAKE_CXX_FLAGS holding \"${skiff_emscripten_missing_joined}\" "
+                    "-- added for skiff alone, they make its units another std module than the program's")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${skiff_emscripten_missing_joined}")
+  endif()
 endif()
 
 # splice: the variant and the visiting skiff's nodes, events and styles are
@@ -321,9 +337,6 @@ target_compile_definitions(skiff_core PUBLIC
 # skiff's own tests, which call a widget's members on what made it.
 option(SKIFF_CONCRETE_COMBINATORS "Keep what combinators return concrete outside a release build" OFF)
 target_compile_definitions(skiff_core PUBLIC $<$<BOOL:${SKIFF_CONCRETE_COMBINATORS}>:SKIFF_CONCRETE_COMBINATORS>)
-if(SKIFF_EMSCRIPTEN)
-  target_compile_options(skiff_core PRIVATE ${skiff_emscripten_flags})
-endif()
 # SKIFF_NAMED, a macro: a header, as a module cannot export one. The core's
 # rather than the scene's: it names a view over whichever backend's Named the
 # build says (SKIFF_NAMED_BASE), so every consumer of skiff.core has it.
@@ -398,9 +411,6 @@ elseif(NOT SKIFF_EMSCRIPTEN AND TARGET OpenGL::GL)
   target_link_libraries(${PROJECT_NAME} PUBLIC OpenGL::GL)
 endif()
 
-if(SKIFF_EMSCRIPTEN)
-  target_compile_options(${PROJECT_NAME} PRIVATE ${skiff_emscripten_flags})
-endif()
 endif()
 set(skiff_targets skiff::core skiff::model)
 set(skiff_built skiff_core skiff_model)
@@ -426,7 +436,6 @@ if(SKIFF_WEB)
                                ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom.cc)
   if(SKIFF_EMSCRIPTEN)
     target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_em.cc)
-    target_compile_options(skiff_web PRIVATE ${skiff_emscripten_flags})
   else()
     target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_fake.cc)
   endif()
