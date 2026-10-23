@@ -13,7 +13,7 @@ endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-project(skiffTests LANGUAGES CXX)
+project(skiffTests LANGUAGES C CXX)
 
 option(ENABLE_TEST_COVERAGE "Enable test coverage" OFF)
 option(TEST_INSTALLED_VERSION "Test the installed skiff package" OFF)
@@ -56,6 +56,12 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 
 enable_testing()
 add_test(NAME ${PROJECT_NAME} COMMAND ${PROJECT_NAME})
+
+# Keep pointer-composition regressions quick to build and run on their own.
+add_executable(skiffClickTests ${CMAKE_CURRENT_SOURCE_DIR}/src/click.cc)
+target_link_libraries(skiffClickTests PRIVATE gtest gtest_main skiff::skiff)
+set_target_properties(skiffClickTests PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
+add_test(NAME skiffClickTests COMMAND skiffClickTests)
 
 
 if(ENABLE_TEST_COVERAGE)

@@ -1021,6 +1021,19 @@ template <class E, class N> struct OnClick : N {
     scene::pressLater(this->fState);
     return true;
   }
+  // Passive content can have its own pointer handlers (Text does), which
+  // do not call Node's click defaults. Let it handle the input first, then
+  // run the button's defaults if it neither owns input nor took the event.
+  // Input-owning content retains its gestures; typed answers pass through.
+  auto onPointer(scene::phase::target, const scene::pointer::down &input, scene::PointerReply &reply) {
+    return pointer(input, reply);
+  }
+  auto onPointer(scene::phase::target, const scene::pointer::up &input, scene::PointerReply &reply) {
+    return pointer(input, reply);
+  }
+  auto onPointer(scene::phase::target, const scene::pointer::cancel &input, scene::PointerReply &reply) {
+    return pointer(input, reply);
+  }
   E onPress() const { return fEvent; }
   bool acceptsInput() const { return true; }
   scene::Semantics semantics() const {
@@ -1036,6 +1049,28 @@ template <class E, class N> struct OnClick : N {
       result.fActions = {scene::semantic_action::focus{}, scene::semantic_action::activate{}};
     }
     return result;
+  }
+
+private:
+  template <class Input> auto pointer(const Input &input, scene::PointerReply &reply) {
+    const auto fallback = [&] {
+      if (!reply.fHandled && !static_cast<const N &>(*this).acceptsInput()) {
+        scene::defaultPointer(*this, scene::phase::target{}, input, reply);
+        if (reply.fHandled)
+          reply.fClickAbove.reset();
+      }
+    };
+    // Dispatch as the content itself, so Node's deducing-this defaults do
+    // not outrank a handler inherited from the content's concrete type.
+    auto &content = static_cast<N &>(*this);
+    if constexpr (std::is_void_v<decltype(content.onPointer(scene::phase::target{}, input, reply))>) {
+      content.onPointer(scene::phase::target{}, input, reply);
+      fallback();
+    } else {
+      auto answer = content.onPointer(scene::phase::target{}, input, reply);
+      fallback();
+      return answer;
+    }
   }
 };
 template <class E, class N> auto onClick(E event, N node, std::string label = {}) {
@@ -1055,6 +1090,7 @@ template <class Make>
 concept MakesPress = (std::invocable<Make &> || std::invocable<Make &, const skia::SkRect &>) &&
                      !std::is_void_v<typename PressMade<Make>::type>;
 template <class Make, class N> struct OnPress : OnClick<model::Nothing, N> {
+  using OnClick<model::Nothing, N>::onPointer;
   using Out = model::Types<typename PressMade<Make>::type>;
   Make fMake;
   OnPress(Make make, N node, std::string label)
