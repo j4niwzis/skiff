@@ -245,8 +245,18 @@ if(skiff_cxx_standard LESS 26)
   target_link_libraries(skiff_model PUBLIC $<BUILD_INTERFACE:Boost::pfr>)
 endif()
 
+# Under Emscripten: exceptions always; threads and SIMD where the program
+# wants them -- a scene drawing on a worker does, a page of controls does
+# not, and a page without threads needs no cross-origin isolation to run.
+option(SKIFF_EMSCRIPTEN_THREADS "Under Emscripten, build with -pthread and -msimd128" ON)
 if(SKIFF_EMSCRIPTEN)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions -pthread -msimd128")
+  if(SKIFF_EMSCRIPTEN_THREADS)
+    set(skiff_emscripten_flags -fexceptions -pthread -msimd128)
+  else()
+    set(skiff_emscripten_flags -fexceptions)
+  endif()
+  string(JOIN " " skiff_emscripten_flags_joined ${skiff_emscripten_flags})
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${skiff_emscripten_flags_joined}")
 endif()
 
 # splice: the variant and the visiting skiff's nodes, events and styles are
@@ -305,7 +315,7 @@ target_compile_definitions(skiff_core PUBLIC
 option(SKIFF_CONCRETE_COMBINATORS "Keep what combinators return concrete outside a release build" OFF)
 target_compile_definitions(skiff_core PUBLIC $<$<BOOL:${SKIFF_CONCRETE_COMBINATORS}>:SKIFF_CONCRETE_COMBINATORS>)
 if(SKIFF_EMSCRIPTEN)
-  target_compile_options(skiff_core PRIVATE -fexceptions -pthread -msimd128)
+  target_compile_options(skiff_core PRIVATE ${skiff_emscripten_flags})
 endif()
 
 if(SKIFF_UI)
@@ -371,7 +381,7 @@ elseif(NOT SKIFF_EMSCRIPTEN AND TARGET OpenGL::GL)
 endif()
 
 if(SKIFF_EMSCRIPTEN)
-  target_compile_options(${PROJECT_NAME} PRIVATE -fexceptions -pthread -msimd128)
+  target_compile_options(${PROJECT_NAME} PRIVATE ${skiff_emscripten_flags})
 endif()
 endif()
 set(skiff_targets skiff::core skiff::model)
@@ -398,13 +408,31 @@ if(SKIFF_WEB)
                                ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom.cc)
   if(SKIFF_EMSCRIPTEN)
     target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_em.cc)
-    target_compile_options(skiff_web PRIVATE -fexceptions -pthread -msimd128)
+    target_compile_options(skiff_web PRIVATE ${skiff_emscripten_flags})
   else()
     target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_fake.cc)
   endif()
   target_link_libraries(skiff_web PUBLIC skiff_core)
   list(PREPEND skiff_targets skiff::web)
   list(PREPEND skiff_built skiff_web)
+endif()
+
+# The page on skiff.web a browser can be shown: demo/web, built under
+# Emscripten only -- a maze visualizer's settings, every control native.
+option(SKIFF_WEB_DEMO "Build demo/web, a settings page on skiff.web (Emscripten)" OFF)
+if(SKIFF_WEB AND SKIFF_WEB_DEMO AND SKIFF_EMSCRIPTEN)
+  add_executable(skiff_web_demo ${CMAKE_CURRENT_SOURCE_DIR}/demo/web/main.cc)
+  set_target_properties(skiff_web_demo PROPERTIES
+    OUTPUT_NAME index SUFFIX .html CXX_STANDARD ${skiff_cxx_standard} CXX_SCAN_FOR_MODULES ON)
+  target_link_libraries(skiff_web_demo PRIVATE skiff::web)
+  target_compile_options(skiff_web_demo PRIVATE ${skiff_emscripten_flags})
+  target_link_options(skiff_web_demo PRIVATE ${skiff_emscripten_flags}
+    -sALLOW_MEMORY_GROWTH=1 -sEXPORTED_RUNTIME_METHODS=ccall
+    # A page's tree is one deep expression of tuples, mounted recursively: more
+    # stack than Emscripten's 64 KB, and the overflow caught rather than written over the heap.
+    -sSTACK_SIZE=4194304 -sSTACK_OVERFLOW_CHECK=1
+    -sEXPORTED_FUNCTIONS=_main,_skiff_web_event
+    --shell-file ${CMAKE_CURRENT_SOURCE_DIR}/demo/web/index.html)
 endif()
 
 # ---- What this library is, said by the library ----

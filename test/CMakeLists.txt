@@ -74,6 +74,10 @@ if(TARGET skiff::web)
   target_link_libraries(skiffWebTests PRIVATE gtest gtest_main skiff::web)
   set_target_properties(skiffWebTests PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
   add_test(NAME skiffWebTests COMMAND skiffWebTests)
+  # The demo page with the in-memory document: run, it prints its HTML.
+  add_executable(skiffWebDemo ${CMAKE_CURRENT_SOURCE_DIR}/../demo/web/main.cc)
+  target_link_libraries(skiffWebDemo PRIVATE skiff::web)
+  set_target_properties(skiffWebDemo PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
 endif()
 
 
