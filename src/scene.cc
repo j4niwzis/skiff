@@ -5446,6 +5446,9 @@ public:
       const float away = -std::numeric_limits<float>::infinity();
       this->setHover(away, away);
     }
+    // A press that moves the focus is taken by what it moved it to: a text
+    // field pressed answers nothing itself, and has the press all the same.
+    const NodeId focusBefore = fFocus;
     if (routed.fFocusRequest != 0) {
       this->focus(routed.fFocusRequest);
     } else if (routed.fTargetDelivered && press && routed.fTargetFocusable) {
@@ -5454,7 +5457,7 @@ public:
     }
     this->notePress(path);
     this->restyleDirty();
-    return reply.fHandled;
+    return reply.fHandled || (press && fFocus != focusBefore);
   }
 
   // A click at a point: onClick of the front-most node there that takes
