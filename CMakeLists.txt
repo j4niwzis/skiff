@@ -6,6 +6,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # skiff -- a small retained-mode UI framework on Skia, in the shape
 # osu!framework gives its drawables, sized for software rasterisation.
 #
+#   skiff.web    the HTML backend: nodes that are the page's elements, laid
+#                out by the browser and bound to a model as the scene's are
 #   skiff.core   what every backend shares, with no Skia in it: the words a
 #                tree is written in, its events and semantics, a node of any
 #                type by the table of its type; skiff.bind is built on it
@@ -377,6 +379,32 @@ set(skiff_built skiff_core skiff_model)
 if(SKIFF_UI)
   list(PREPEND skiff_targets skiff::skiff)
   list(PREPEND skiff_built ${PROJECT_NAME})
+endif()
+
+# skiff.web: the HTML backend -- a tree that is a page, its nodes the
+# document's elements laid out by the browser, bound to a model through
+# skiff.bind as the scene's are. Nothing of Skia in it. Under Emscripten the
+# elements are the document's; elsewhere they are a tree kept in memory,
+# which a test reads back as HTML and sends events into.
+option(SKIFF_WEB "Build skiff.web, the HTML backend" ON)
+if(SKIFF_WEB)
+  add_library(skiff_web STATIC)
+  add_library(skiff::web ALIAS skiff_web)
+  set_target_properties(skiff_web PROPERTIES
+    EXPORT_NAME web CXX_STANDARD ${skiff_cxx_standard})
+  target_compile_features(skiff_web PUBLIC cxx_std_${skiff_cxx_standard})
+  target_sources(skiff_web PUBLIC
+    FILE_SET CXX_MODULES FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/web.cc
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom.cc)
+  if(SKIFF_EMSCRIPTEN)
+    target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_em.cc)
+    target_compile_options(skiff_web PRIVATE -fexceptions -pthread -msimd128)
+  else()
+    target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_fake.cc)
+  endif()
+  target_link_libraries(skiff_web PUBLIC skiff_core)
+  list(PREPEND skiff_targets skiff::web)
+  list(PREPEND skiff_built skiff_web)
 endif()
 
 # ---- What this library is, said by the library ----

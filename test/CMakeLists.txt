@@ -41,6 +41,10 @@ else()
   CPMAddPackage(NAME skiff SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/..)
 endif()
 
+enable_testing()
+
+# The scene's tests, where the scene is built: they draw through Skia.
+if(TARGET skiff::skiff)
 add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/style.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/tracking.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/model.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/bind.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/compose.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reconcile.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/rekey.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reorder.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/views.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/row_layout.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/picker.cc
@@ -62,6 +66,15 @@ add_executable(skiffClickTests ${CMAKE_CURRENT_SOURCE_DIR}/src/click.cc)
 target_link_libraries(skiffClickTests PRIVATE gtest gtest_main skiff::skiff)
 set_target_properties(skiffClickTests PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
 add_test(NAME skiffClickTests COMMAND skiffClickTests)
+endif()
+
+# The page's tests: skiff.web with its in-memory document, nothing of Skia.
+if(TARGET skiff::web)
+  add_executable(skiffWebTests ${CMAKE_CURRENT_SOURCE_DIR}/src/web.cc)
+  target_link_libraries(skiffWebTests PRIVATE gtest gtest_main skiff::web)
+  set_target_properties(skiffWebTests PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
+  add_test(NAME skiffWebTests COMMAND skiffWebTests)
+endif()
 
 
 if(ENABLE_TEST_COVERAGE)
