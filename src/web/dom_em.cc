@@ -70,7 +70,9 @@ EM_JS(void, skiffDomListen, (int h, const char *e, int el), {
       const r = t.getBoundingClientRect();
       value = (ev.clientX - r.left) + ',' + (ev.clientY - r.top) + ',' + ev.button;
       if (name === 'contextmenu') ev.preventDefault();
-    } else if (t.tagName === 'SELECT') value = String(t.selectedIndex);
+    } else if (name === 'scroll') value = String(t.scrollTop || t.scrollLeft || 0);
+    else if (name === 'keydown' || name === 'keyup') value = ev.key + '|' + (ev.shiftKey ? 1 : 0) + ((ev.ctrlKey || ev.metaKey) ? 1 : 0);
+    else if (t.tagName === 'SELECT') value = String(t.selectedIndex);
     else if ('value' in t) value = String(t.value);
     Module.ccall('skiff_web_event', null, ['number', 'string', 'string'], [h, name, value]);
   });
@@ -123,6 +125,20 @@ EM_JS(void, skiffDomCanvasText, (int h, float x, float y, float size, unsigned c
   ctx.textBaseline = 'middle';
   ctx.fillStyle = Module.skiffDom.rgba(c);
   ctx.fillText(UTF8ToString(s, len), x, y);
+});
+EM_JS(char *, skiffDomObjectUrl, (const unsigned char *p, int len, const char *mime, int ml), {
+  const blob = new Blob([HEAPU8.slice(p, p + len)], { type: UTF8ToString(mime, ml) });
+  const s = URL.createObjectURL(blob);
+  const n = lengthBytesUTF8(s) + 1;
+  const out = _malloc(n);
+  stringToUTF8(s, out, n);
+  return out;
+});
+EM_JS(void, skiffDomScrollTo, (int h, float offset), {
+  const el = Module.skiffDom.els[h];
+  const horizontal = getComputedStyle(el).flexDirection === 'row';
+  const at = offset < 0 ? (horizontal ? el.scrollWidth : el.scrollHeight) : offset;
+  if (horizontal) el.scrollLeft = at; else el.scrollTop = at;
 });
 EM_JS(char *, skiffDomDump, (int h), {
   const s = Module.skiffDom.els[h].outerHTML;
@@ -181,6 +197,14 @@ void canvasText(Handle h, float x, float y, float size, Colour c, std::string_vi
   skiffDomCanvasText(static_cast<int>(h), x, y, size, c, text.data(), static_cast<int>(text.size()));
 }
 std::string drawn(Handle) { return {}; }
+std::string objectUrl(std::span<const std::byte> bytes, std::string_view mime) {
+  char *p = skiffDomObjectUrl(reinterpret_cast<const unsigned char *>(bytes.data()), static_cast<int>(bytes.size()), mime.data(),
+                              static_cast<int>(mime.size()));
+  std::string out(p);
+  std::free(p);
+  return out;
+}
+void scrollTo(Handle h, float offset) { skiffDomScrollTo(static_cast<int>(h), offset); }
 std::string dump(Handle h) {
   char *p = skiffDomDump(static_cast<int>(h));
   std::string out(p);

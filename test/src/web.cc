@@ -164,6 +164,53 @@ TEST(Web, PlacementDepthAndTheLooksOfASpecAreCss) {
   EXPECT_EQ(b.find("flex:"), std::string::npos) << b;
 }
 
+// A picture's source of the test's own: where the picture is, when it is.
+struct Shot {
+  std::shared_ptr<scene::Picture> fPicture;
+  const scene::Picture *operator()() const { return fPicture.get(); }
+};
+
+TEST(Web, FlowsScrollingPicturesAndIconsAreTheBrowsersOwn) {
+  dom::reset();
+  Model m;
+  auto shot = std::make_shared<scene::Picture>();
+  scene::IconShape shape{.marks = {{.shape = scene::mark::line{-6.0f, 0.0f, 6.0f, 0.0f}},
+                                   {.shape = scene::mark::circle{0.0f, 0.0f, 4.0f}, .filled = true, .colour = 0xffff0000u}},
+                         .rotation = 45.0f};
+  Page page(column(vbox(),
+                   Flow(scene::FlowOptions{.direction = scene::direction::horizontal{}, .spacingX = 4.0f, .spacingY = 2.0f, .wrap = true,
+                                           .justify = scene::justify::space_between{}},
+                        Text("a"), Text("b")),
+                   ScrollContainer(Text("c")), Image(Shot{shot}), Icon(shape, 0xff00ff00u, {.width = 24.0f, .height = 12.0f})),
+            m);
+  page.mount();
+  std::string html = dom::dump(dom::root());
+  EXPECT_NE(html.find("class=\"skiff-flow\" style=\"display:flex;flex-direction:row;flex-wrap:wrap;column-gap:4px;row-gap:2px;align-items:flex-start;"
+                      "justify-content:space-between;"),
+            std::string::npos)
+      << html;
+  EXPECT_NE(html.find("class=\"skiff-scroll\" style=\"display:flex;flex-direction:column;overflow-x:hidden;overflow-y:auto;"), std::string::npos) << html;
+  // No picture yet: no src; the icon's marks about its middle, rotated.
+  EXPECT_NE(html.find("<img class=\"skiff-image\" style=\"object-fit:cover;\">"), std::string::npos) << html;
+  EXPECT_NE(html.find("<svg class=\"skiff-icon\" width=\"24\" height=\"12\" viewBox=\"-12 -6 24 12\""), std::string::npos) << html;
+  EXPECT_NE(html.find("<g transform=\"rotate(45)\"><line x1=\"-6\" y1=\"0\" x2=\"6\" y2=\"0\" fill=\"none\" stroke=\"rgba(0,255,0,1)\" "
+                      "stroke-width=\"1.8\""),
+            std::string::npos)
+      << html;
+  EXPECT_NE(html.find("<circle cx=\"0\" cy=\"0\" r=\"4\" fill=\"rgba(255,0,0,1)\" stroke=\"none\">"), std::string::npos) << html;
+  // The picture arrives: shown at the next sync, asked for until then.
+  shot->url = "data:image/png;base64,AA==";
+  page.sync();
+  html = dom::dump(dom::root());
+  EXPECT_NE(html.find("src=\"data:image/png;base64,AA==\""), std::string::npos) << html;
+  // Scrolled to the end: told to the element.
+  auto &scroll = std::get<1>(page.root().fParts);
+  scroll.scrollToEnd();
+  page.sync();
+  EXPECT_NE(dom::dump(scroll.element()).find("data-skiff-scroll=\"end\""), std::string::npos) << dom::dump(scroll.element());
+  EXPECT_FALSE(dom::objectUrl(std::span<const std::byte>(), "image/png").empty());
+}
+
 TEST(Web, ANodeHiddenAndShownAgainIsShownAsItWas) {
   dom::reset();
   Model m;

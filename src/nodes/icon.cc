@@ -13,48 +13,22 @@ export namespace skiff::nodes {
 // round ends, or filled; the whole turned where it says. What a symbolic
 // icon is, declared: nothing here draws but the Icon node.
 namespace path_step {
-struct move {
-  float x, y;
-};
-struct line {
-  float x, y;
-};
-struct cubic {
-  float x1, y1, x2, y2, x, y;
-};
-struct close {};
+using skiff::scene::path_step::move;
+using skiff::scene::path_step::line;
+using skiff::scene::path_step::cubic;
+using skiff::scene::path_step::close;
 } // namespace path_step
-using PathStep = spl::variant<path_step::move, path_step::line, path_step::cubic, path_step::close>;
-
+using skiff::scene::PathStep;
 namespace mark {
-struct line {
-  float x1, y1, x2, y2;
-};
-struct circle {
-  float x, y, radius;
-};
-struct arc {
-  float left, top, right, bottom, start, sweep;
-};
-struct rect {
-  float left, top, right, bottom, radius = 0.0f;
-};
-struct path {
-  std::vector<PathStep> steps;
-};
+using skiff::scene::mark::line;
+using skiff::scene::mark::circle;
+using skiff::scene::mark::arc;
+using skiff::scene::mark::rect;
+using skiff::scene::mark::path;
 } // namespace mark
-using MarkShape = spl::variant<mark::line, mark::circle, mark::arc, mark::rect, mark::path>;
-
-struct Mark {
-  MarkShape shape;
-  float width = 1.8f;  // the stroke's; ignored where filled
-  bool filled = false;
-  std::optional<skia::SkColor> colour;  // its own, over the icon's
-};
-struct IconShape {
-  std::vector<Mark> marks;
-  float rotation = 0.0f;  // degrees, about the middle
-};
+using skiff::scene::MarkShape;
+using skiff::scene::Mark;
+using skiff::scene::IconShape;
 
 // An icon: its shape, in its colour, in the middle of its box.
 class Icon : public skiff::scene::Node {

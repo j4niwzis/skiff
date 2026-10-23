@@ -54,6 +54,11 @@ void canvasText(Handle canvas, float x, float y, float size, Colour colour, std:
 // What was drawn on a canvas, as the in-memory document keeps it: a word per
 // call ("size clear begin moveto lineto close fill ..."). Nothing in a browser.
 [[nodiscard]] std::string drawn(Handle canvas);
+// A picture's bytes as a URL the page can show: an object URL (a fake one
+// without a browser).
+[[nodiscard]] std::string objectUrl(std::span<const std::byte> bytes, std::string_view mime);
+// Scrolled to an offset along its way, or -- below zero -- to its end.
+void scrollTo(Handle element, float offset);
 
 // What the page under `element` is, as HTML -- the fake's for a test; the
 // browser's innerHTML under Emscripten.

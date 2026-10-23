@@ -12,35 +12,19 @@ export namespace skiff::nodes {
 
 // Along which axis a flow lays its children.
 namespace direction {
-struct vertical {};
-struct horizontal {};
+using skiff::scene::direction::vertical;
+using skiff::scene::direction::horizontal;
 } // namespace direction
-using Direction = spl::variant<direction::vertical, direction::horizontal>;
-
-// How the room a line leaves is handed out.
+using skiff::scene::Direction;
 namespace justify {
-struct start {};
-struct middle {};
-struct end {};
-struct space_between {};
-struct space_around {};
+using skiff::scene::justify::start;
+using skiff::scene::justify::middle;
+using skiff::scene::justify::end;
+using skiff::scene::justify::space_between;
+using skiff::scene::justify::space_around;
 } // namespace justify
-using Justify = spl::variant<justify::start, justify::middle, justify::end,
-                               justify::space_between, justify::space_around>;
-
-struct FlowOptions {
-  Direction direction = direction::vertical{};
-  float spacingX = 0.0f;
-  float spacingY = 0.0f;
-  // A horizontal flow breaks into rows at its edge.
-  bool wrap = true;
-  // Rows centred in the container, as the cards are.
-  bool centreRows = false;
-  // Where children sit across the axis; a child can say otherwise with
-  // alignSelf.
-  skiff::scene::Align crossAlign = skiff::scene::align::kStart;
-  Justify justify = justify::start{};
-};
+using skiff::scene::Justify;
+using skiff::scene::FlowOptions;
 
 // Where a line starts and how much goes between its items, given how much
 // room it did not use. Pure arithmetic, usable at compile time.

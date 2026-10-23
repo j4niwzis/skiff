@@ -11,10 +11,10 @@ export namespace skiff::nodes {
 // How a picture fills a box of other proportions: covering it, cut at the
 // middle of the side that is too long; or contained in it, whole.
 namespace fit {
-struct cover {};
-struct contain {};
+using skiff::scene::fit::cover;
+using skiff::scene::fit::contain;
 } // namespace fit
-using Fit = spl::variant<fit::cover, fit::contain>;
+using skiff::scene::Fit;
 
 // Where a picture comes from: a value called for each frame it is drawn,
 // so a picture that comes later -- fetched, decoded -- is drawn once it is

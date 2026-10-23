@@ -351,6 +351,9 @@ struct Node : scene::NodeBase {
   [[nodiscard]] static constexpr std::string_view tag() { return "div"; }
   void mounted(this auto &) {}
   void sync(this auto &) {}
+  // Synced at every sync, not only when something of its own changed: a
+  // picture waiting on its source.
+  [[nodiscard]] bool wantsSync(this auto &) { return false; }
   template <class F> void handles(this auto &self, F &&f) { f(self.fState.fHandle); }
   [[nodiscard]] bool onDom(this auto &, dom::Handle, std::string_view, std::string_view) { return true; }
 
@@ -571,6 +574,14 @@ template <class... Parts> struct Stack : Node {
     // Across its way, a child is its own size -- as in a scene's flow -- unless it fills or grows there.
     dom::style(fState.fHandle, "align-items", fLook.fHorizontal ? "center" : "flex-start");
   }
+  void setGap(float gap) {
+    fLook.fGap = gap;
+    if (fState.fHandle != dom::kNone) dom::style(fState.fHandle, "gap", gap > 0.0f ? px(gap) : std::string());
+  }
+  void setHorizontal() {
+    fLook.fHorizontal = true;
+    if (fState.fHandle != dom::kNone) dom::style(fState.fHandle, "flex-direction", "row");
+  }
 };
 template <class... Parts> [[nodiscard]] Stack<Parts...> column(Look look, Parts... parts) {
   if (look.fHorizontal) look.fHorizontal = false;
@@ -590,6 +601,285 @@ template <class... Parts>
 [[nodiscard]] Stack<Parts...> row(Parts... parts) {
   return Stack<Parts...>(hbox(), std::move(parts)...);
 }
+
+// ---- flows, scrolling, pictures, icons ------------------------------------------
+
+[[nodiscard]] inline std::string_view justified(const scene::Justify &how) {
+  return spl::visit(spl::overloaded{[](const scene::justify::start &) { return std::string_view("flex-start"); },
+                                    [](const scene::justify::middle &) { return std::string_view("center"); },
+                                    [](const scene::justify::end &) { return std::string_view("flex-end"); },
+                                    [](const scene::justify::space_between &) { return std::string_view("space-between"); },
+                                    [](const scene::justify::space_around &) { return std::string_view("space-around"); }},
+                    how);
+}
+
+// A flow: its children along a way, wrapped at its edge where they do not
+// fit, spaced, aligned across the way and justified along it -- the
+// browser's flexbox, told by the scene's FlowOptions.
+template <class... Children> struct Flow : Node {
+  std::tuple<Children...> fParts;
+  scene::FlowOptions fOptions;
+  Look fLook;  // its way, for its children: what a grow means in it
+  explicit Flow(scene::FlowOptions options, Children... children) : fParts(std::move(children)...), fOptions(options) {
+    fState.fDisplay = "flex";
+    fLook.fHorizontal = spl::holds_alternative<scene::direction::horizontal>(fOptions.direction);
+  }
+  void forEachChild(auto &&f) {
+    std::apply([&](auto &...each) { (f(each), ...); }, fParts);
+  }
+  void setOptions(scene::FlowOptions options) {
+    fOptions = options;
+    fLook.fHorizontal = spl::holds_alternative<scene::direction::horizontal>(fOptions.direction);
+    markDirty();
+  }
+  void setSpacing(float x, float y) {
+    fOptions.spacingX = x;
+    fOptions.spacingY = y;
+    markDirty();
+  }
+  void setWrap(bool wrap) {
+    fOptions.wrap = wrap;
+    markDirty();
+  }
+  void setCrossAlign(scene::Align at) {
+    fOptions.crossAlign = at;
+    markDirty();
+  }
+  void setJustify(scene::Justify how) {
+    fOptions.justify = how;
+    markDirty();
+  }
+  void mounted() { dom::attr(fState.fHandle, "class", "skiff-flow"); }
+  void sync() {
+    const dom::Handle h = fState.fHandle;
+    dom::style(h, "flex-direction", fLook.fHorizontal ? "row" : "column");
+    dom::style(h, "flex-wrap", fOptions.wrap ? "wrap" : "nowrap");
+    dom::style(h, "column-gap", px(fOptions.spacingX));
+    dom::style(h, "row-gap", px(fOptions.spacingY));
+    dom::style(h, "align-items", std::string(alignment(fOptions.crossAlign)));
+    dom::style(h, "justify-content", fOptions.centreRows ? std::string("center") : std::string(justified(fOptions.justify)));
+    dom::style(h, "position", "relative");
+  }
+};
+template <class... Children> Flow(scene::FlowOptions, Children...) -> Flow<Children...>;
+
+// A scroll container: its children in a column -- or a row -- scrolled by
+// the browser, the offset it is at read back from its scroll events; told
+// to scroll to an offset or to its end. The scene's names, for a page
+// written against them; what the browser does by itself is nothing here.
+template <class... Children> struct ScrollContainer : Node {
+  std::tuple<Children...> fParts;
+  Look fLook;
+  explicit ScrollContainer(Children... children) : fParts(std::move(children)...) { fState.fDisplay = "flex"; }
+  void forEachChild(auto &&f) {
+    std::apply([&](auto &...each) { (f(each), ...); }, fParts);
+  }
+  void setHorizontal() {
+    fLook.fHorizontal = true;
+    markDirty();
+  }
+  void mounted() {
+    dom::attr(fState.fHandle, "class", "skiff-scroll");
+    dom::listen(fState.fHandle, "scroll");
+  }
+  void sync() {
+    const dom::Handle h = fState.fHandle;
+    dom::style(h, "flex-direction", fLook.fHorizontal ? "row" : "column");
+    dom::style(h, "overflow-x", fLook.fHorizontal ? "auto" : "hidden");
+    dom::style(h, "overflow-y", fLook.fHorizontal ? "hidden" : "auto");
+    dom::style(h, "position", "relative");
+    if (fWanted) {
+      dom::scrollTo(h, *fWanted);
+      fWanted.reset();
+    }
+  }
+  void scrollTo(float offset) {
+    fWanted = offset;
+    fCurrent = offset;
+    markDirty();
+  }
+  void setCurrent(float offset) { scrollTo(offset); }
+  void seeAt(float offset) { scrollTo(offset); }
+  void scrollToStart() { scrollTo(0.0f); }
+  void scrollToEnd(bool = true) {
+    fWanted = -1.0f;
+    markDirty();
+  }
+  [[nodiscard]] float current() const noexcept { return fCurrent; }
+  [[nodiscard]] float extent() const noexcept { return fExtent; }
+  [[nodiscard]] bool moving() const noexcept { return false; }
+  [[nodiscard]] bool atRest() const noexcept { return true; }
+  [[nodiscard]] bool glidingToEnd() const noexcept { return fWanted && *fWanted < 0.0f; }
+  void setCopiesOnScroll(bool) {}
+  void setHoldsInView(bool) {}
+  void setDrawsAhead(bool) {}
+  // Scrolled by the user: where it is now -- not a press.
+  bool onDom(dom::Handle, std::string_view event, std::string_view value) {
+    if (event != "scroll") return false;
+    fCurrent = std::strtof(std::string(value).c_str(), nullptr);
+    return false;
+  }
+  std::optional<float> fWanted;
+  float fCurrent = 0.0f;
+  float fExtent = 0.0f;
+};
+template <class... Children> ScrollContainer(Children...) -> ScrollContainer<Children...>;
+
+// A picture's source: what has it, asked as the page is synced -- a Picture
+// where it is, nothing where it is not (yet).
+template <class Source>
+concept PictureSource = std::copy_constructible<Source> && requires(const Source &source) {
+  { source() } -> std::convertible_to<const scene::Picture *>;
+};
+// A picture in its box, fitting it as said (object-fit): an img, its source
+// asked at every sync until it has one.
+template <PictureSource Source> struct Image : Node {
+  explicit Image(Source source, scene::Fit how = scene::fit::cover{}) : fSource(std::move(source)), fFit(how) {}
+  [[nodiscard]] static constexpr std::string_view tag() { return "img"; }
+  void setSource(Source source) {
+    fSource = std::move(source);
+    markDirty();
+  }
+  void keepBox(bool kept = true) { fBoxKept = kept; }
+  [[nodiscard]] const Source &source() const { return fSource; }
+  [[nodiscard]] const scene::Picture *picture() const {
+    const scene::Picture *found = fSource();
+    return found && !found->url.empty() ? found : nullptr;
+  }
+  [[nodiscard]] bool wantsSync() const { return fShown.empty(); }
+  void mounted() { dom::attr(fState.fHandle, "class", "skiff-image"); }
+  void sync() {
+    const scene::Picture *found = picture();
+    const std::string url = found ? found->url : std::string();
+    if (url != fShown) {
+      fShown = url;
+      if (url.empty()) dom::dropAttr(fState.fHandle, "src");
+      else dom::attr(fState.fHandle, "src", url);
+    }
+    dom::style(fState.fHandle, "object-fit", spl::holds_alternative<scene::fit::contain>(fFit) ? "contain" : "cover");
+  }
+
+private:
+  Source fSource;
+  scene::Fit fFit;
+  std::string fShown;
+  bool fBoxKept = false;
+};
+
+// An icon: its marks as an SVG's elements about the middle of its box (the
+// viewBox is centred, as the scene draws them), in the icon's colour or a
+// mark's own; rotated about the middle.
+struct Icon : Node {
+  explicit Icon(scene::IconShape shape, scene::Colour colour = 0xffffffffu, scene::Spec spec = {}) : fShape(std::move(shape)), fColour(colour) {
+    fState.apply(spec);
+  }
+  [[nodiscard]] static constexpr std::string_view tag() { return "svg"; }
+  void setShape(scene::IconShape shape) {
+    fShape = std::move(shape);
+    markDirty();
+  }
+  void setColour(scene::Colour colour) {
+    if (colour != fColour) {
+      fColour = colour;
+      markDirty();
+    }
+  }
+  [[nodiscard]] scene::Colour colour() const noexcept { return fColour; }
+  void mounted() {
+    dom::attr(fState.fHandle, "class", "skiff-icon");
+    fGroup = dom::create("g");
+    dom::append(fState.fHandle, fGroup);
+  }
+  void sync() {
+    const float w = fState.fSpec.width.value_or(24.0f), h = fState.fSpec.height.value_or(24.0f);
+    dom::attr(fState.fHandle, "width", number(w));
+    dom::attr(fState.fHandle, "height", number(h));
+    dom::attr(fState.fHandle, "viewBox", number(-w / 2.0f) + " " + number(-h / 2.0f) + " " + number(w) + " " + number(h));
+    if (fShape.rotation != 0.0f) dom::attr(fGroup, "transform", "rotate(" + number(fShape.rotation) + ")");
+    else dom::dropAttr(fGroup, "transform");
+    for (const dom::Handle old : fMarks) dom::destroy(old);
+    fMarks.clear();
+    for (const scene::Mark &one : fShape.marks) {
+      const dom::Handle made = spl::visit([&](const auto &shape) { return markElement(shape); }, one.shape);
+      const std::string colour = rgba(one.colour.value_or(fColour));
+      if (one.filled) {
+        dom::attr(made, "fill", colour);
+        dom::attr(made, "stroke", "none");
+      } else {
+        dom::attr(made, "fill", "none");
+        dom::attr(made, "stroke", colour);
+        dom::attr(made, "stroke-width", number(one.width));
+        dom::attr(made, "stroke-linecap", "round");
+        dom::attr(made, "stroke-linejoin", "round");
+      }
+      dom::append(fGroup, made);
+      fMarks.push_back(made);
+    }
+  }
+
+private:
+  static dom::Handle markElement(const scene::mark::line &one) {
+    const dom::Handle h = dom::create("line");
+    dom::attr(h, "x1", number(one.x1));
+    dom::attr(h, "y1", number(one.y1));
+    dom::attr(h, "x2", number(one.x2));
+    dom::attr(h, "y2", number(one.y2));
+    return h;
+  }
+  static dom::Handle markElement(const scene::mark::circle &one) {
+    const dom::Handle h = dom::create("circle");
+    dom::attr(h, "cx", number(one.x));
+    dom::attr(h, "cy", number(one.y));
+    dom::attr(h, "r", number(one.radius));
+    return h;
+  }
+  static dom::Handle markElement(const scene::mark::rect &one) {
+    const dom::Handle h = dom::create("rect");
+    dom::attr(h, "x", number(one.left));
+    dom::attr(h, "y", number(one.top));
+    dom::attr(h, "width", number(one.right - one.left));
+    dom::attr(h, "height", number(one.bottom - one.top));
+    if (one.radius > 0.0f) {
+      dom::attr(h, "rx", number(one.radius));
+      dom::attr(h, "ry", number(one.radius));
+    }
+    return h;
+  }
+  // An arc of the oval in its box, from a start angle through a sweep (degrees, clockwise), as Skia draws one.
+  static dom::Handle markElement(const scene::mark::arc &one) {
+    const float rx = (one.right - one.left) / 2.0f, ry = (one.bottom - one.top) / 2.0f;
+    const float cx = (one.left + one.right) / 2.0f, cy = (one.top + one.bottom) / 2.0f;
+    const float sweep = std::clamp(one.sweep, -359.99f, 359.99f);
+    const float toRadians = std::numbers::pi_v<float> / 180.0f;
+    const float a0 = one.start * toRadians, a1 = (one.start + sweep) * toRadians;
+    const dom::Handle h = dom::create("path");
+    dom::attr(h, "d",
+              "M" + number(cx + rx * std::cos(a0)) + " " + number(cy + ry * std::sin(a0)) + " A" + number(rx) + " " + number(ry) + " 0 " +
+                  (std::abs(sweep) > 180.0f ? "1" : "0") + " " + (sweep > 0.0f ? "1" : "0") + " " + number(cx + rx * std::cos(a1)) + " " +
+                  number(cy + ry * std::sin(a1)));
+    return h;
+  }
+  static dom::Handle markElement(const scene::mark::path &one) {
+    std::string d;
+    for (const scene::PathStep &step : one.steps) {
+      spl::visit(spl::overloaded{[&](const scene::path_step::move &at) { d += "M" + number(at.x) + " " + number(at.y); },
+                                 [&](const scene::path_step::line &at) { d += "L" + number(at.x) + " " + number(at.y); },
+                                 [&](const scene::path_step::cubic &at) {
+                                   d += "C" + number(at.x1) + " " + number(at.y1) + " " + number(at.x2) + " " + number(at.y2) + " " + number(at.x) +
+                                        " " + number(at.y);
+                                 },
+                                 [&](const scene::path_step::close &) { d += "Z"; }},
+                 step);
+    }
+    const dom::Handle h = dom::create("path");
+    dom::attr(h, "d", d);
+    return h;
+  }
+  scene::IconShape fShape;
+  scene::Colour fColour;
+  dom::Handle fGroup = dom::kNone;
+  std::vector<dom::Handle> fMarks;
+};
 
 // ---- figures: shapes as nodes ----------------------------------------------
 //
@@ -1080,6 +1370,8 @@ private:
       else dom::dropAttr(state.fHandle, "disabled");
       node.sync();
       state.fDirty = false;
+    } else if (node.wantsSync()) {
+      node.sync();
     }
     detail::eachChild(node, [&](auto &child) { syncNode(child); });
   }

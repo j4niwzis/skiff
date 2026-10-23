@@ -484,6 +484,89 @@ struct Tail {
   friend bool operator==(const Tail &, const Tail &) = default;
 };
 
+// ---- what nodes show, said without a backend ---------------------------------
+// How a picture fits its box: filling it, cut at the edges, or whole within it.
+namespace fit {
+struct cover {};
+struct contain {};
+} // namespace fit
+using Fit = spl::variant<fit::cover, fit::contain>;
+// A picture as a page shows it: where it is -- a URL (http, data, blob).
+struct Picture {
+  std::string url;
+  friend bool operator==(const Picture &, const Picture &) = default;
+};
+// A flow's way, its spacing, whether it wraps, where its children sit across
+// its way and how they are justified along it.
+namespace direction {
+struct vertical {};
+struct horizontal {};
+} // namespace direction
+using Direction = spl::variant<direction::vertical, direction::horizontal>;
+namespace justify {
+struct start {};
+struct middle {};
+struct end {};
+struct space_between {};
+struct space_around {};
+} // namespace justify
+using Justify = spl::variant<justify::start, justify::middle, justify::end, justify::space_between, justify::space_around>;
+struct FlowOptions {
+  Direction direction = direction::vertical{};
+  float spacingX = 0.0f;
+  float spacingY = 0.0f;
+  // A horizontal flow breaks into rows at its edge.
+  bool wrap = true;
+  // Rows centred in the container, as the cards are.
+  bool centreRows = false;
+  // Where children sit across the axis; a child can say otherwise with alignSelf.
+  Align crossAlign = align::kStart;
+  Justify justify = justify::start{};
+};
+// An icon's marks -- lines, circles, arcs, rounded boxes, paths -- about the
+// middle of its box, stroked or filled, in the icon's colour or their own.
+namespace path_step {
+struct move {
+  float x, y;
+};
+struct line {
+  float x, y;
+};
+struct cubic {
+  float x1, y1, x2, y2, x, y;
+};
+struct close {};
+} // namespace path_step
+using PathStep = spl::variant<path_step::move, path_step::line, path_step::cubic, path_step::close>;
+namespace mark {
+struct line {
+  float x1, y1, x2, y2;
+};
+struct circle {
+  float x, y, radius;
+};
+struct arc {
+  float left, top, right, bottom, start, sweep;
+};
+struct rect {
+  float left, top, right, bottom, radius = 0.0f;
+};
+struct path {
+  std::vector<PathStep> steps;
+};
+} // namespace mark
+using MarkShape = spl::variant<mark::line, mark::circle, mark::arc, mark::rect, mark::path>;
+struct Mark {
+  MarkShape shape;
+  float width = 1.8f;  // the stroke's; ignored where filled
+  bool filled = false;
+  std::optional<Colour> colour;  // its own, over the icon's
+};
+struct IconShape {
+  std::vector<Mark> marks;
+  float rotation = 0.0f;  // degrees, about the middle
+};
+
 struct Spec {
   std::optional<Anchor> place{};
   std::optional<Anchor> anchor{};

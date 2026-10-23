@@ -114,6 +114,11 @@ void canvasStroke(Handle h, float, Colour) { drew(h, "stroke"); }
 void canvasCircle(Handle h, float, float, float, Colour) { drew(h, "circle"); }
 void canvasText(Handle h, float, float, float, Colour, std::string_view) { drew(h, "text"); }
 std::string drawn(Handle h) { return at(h).drawn; }
+std::string objectUrl(std::span<const std::byte> bytes, std::string_view mime) {
+  static int made = 0;
+  return "blob:fake/" + std::to_string(++made) + "#" + std::string(mime) + "/" + std::to_string(bytes.size());
+}
+void scrollTo(Handle h, float offset) { set(at(h).attrs, "data-skiff-scroll", offset < 0.0f ? "end" : std::to_string(static_cast<int>(offset))); }
 
 std::string dump(Handle h) {
   std::string out;
