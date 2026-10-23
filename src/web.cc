@@ -246,7 +246,7 @@ struct State {
     // An equal share of the stack's way, whatever is in it: a basis of nothing, so two filling
     // parts are two halves, as two filling children of a scene's flow are.
     css.set("flex", "1 1 0%");
-    css.set("min-width", "0");
+    if (!s.minWidth) css.set("min-width", "0");
     css.set("align-self", "stretch");
   }
   if (s.fillX) css.set("width", "100%");
@@ -268,9 +268,12 @@ struct State {
     const bool x = s.grow->has<scene::axis::x>(), y = s.grow->has<scene::axis::y>();
     const bool along = state.fInRow ? (*state.fInRow ? x : y) : (x || y);
     const bool across = state.fInRow && (*state.fInRow ? y : x);
+    // Able to shrink to nothing -- unless it says how narrow it goes, as a
+    // grown child of a scene's flow keeps its minWidth: then, where a flow
+    // wraps, it wraps rather than squeezing.
     if (along) {
       css.set("flex", "1 1 0%");
-      css.set("min-width", "0");
+      if (!s.minWidth) css.set("min-width", "0");
     }
     if (across && !s.alignSelf && !s.fill) css.set("align-self", "stretch");
   }

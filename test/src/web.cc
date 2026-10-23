@@ -119,6 +119,16 @@ TEST(Web, ASpecIsCssOnTheElement) {
   EXPECT_NE(html.find("flex:1 1 0%;"), std::string::npos);
 }
 
+TEST(Web, AGrownChildKeepsTheLeastWidthItSays) {
+  dom::reset();
+  Model m;
+  Page page(row(hbox(), Box({.grow = scene::axes::kX, .minWidth = 300.0f}), Box({.grow = scene::axes::kX})), m);
+  page.mount();
+  const std::string html = dom::dump(dom::root());
+  // The one that says a least width keeps it; the other may shrink to nothing.
+  EXPECT_NE(html.find("min-width:300px;"), std::string::npos) << html;
+  EXPECT_NE(html.find("min-width:0;"), std::string::npos) << html;
+}
 TEST(Web, PlacementDepthAndTheLooksOfASpecAreCss) {
   dom::reset();
   Model m;
