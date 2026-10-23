@@ -595,18 +595,29 @@ if(SKIFF_INSTALL)
   # IMPORTED_CXX_MODULES_LINK_LIBRARIES, not from the link interface. Named
   # only in the second, splice was built and linked and its module was still
   # missing from the module map the interfaces were compiled with.
+  # On every installed target whose interfaces import it, not on skiff::skiff
+  # alone: each is compiled by the consumer as a target of its own, and
+  # skiff::core's imported splice -- as skiff::model's, below, Boost.PFR --
+  # with nothing saying where it was.
   string(APPEND skiff_config
-    "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
-    "             INTERFACE_LINK_LIBRARIES splice)\n"
-    "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
-    "             IMPORTED_CXX_MODULES_LINK_LIBRARIES splice)\n")
+    "foreach(skiff_target IN ITEMS skiff::core skiff::skiff)\n"
+    "  if(TARGET \${skiff_target})\n"
+    "    set_property(TARGET \${skiff_target} APPEND PROPERTY INTERFACE_LINK_LIBRARIES splice)\n"
+    "    set_property(TARGET \${skiff_target} APPEND PROPERTY IMPORTED_CXX_MODULES_LINK_LIBRARIES splice)\n"
+    "  endif()\n"
+    "endforeach()\n")
+  endif()
+  # Boost.PFR, on C++23, where skiff.aggregate is: skiff::model and every
+  # target over it. Said only of skiff::skiff, a consumer compiling the
+  # installed skiff::model stopped at "module 'boost.pfr' not found".
   if(skiff_cxx_standard LESS 26)
     string(APPEND skiff_config
-      "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
-      "             INTERFACE_LINK_LIBRARIES Boost::pfr)\n"
-      "set_property(TARGET skiff::skiff APPEND PROPERTY\n"
-      "             IMPORTED_CXX_MODULES_LINK_LIBRARIES Boost::pfr)\n")
-  endif()
+      "foreach(skiff_target IN ITEMS skiff::model skiff::core skiff::skiff)\n"
+      "  if(TARGET \${skiff_target})\n"
+      "    set_property(TARGET \${skiff_target} APPEND PROPERTY INTERFACE_LINK_LIBRARIES Boost::pfr)\n"
+      "    set_property(TARGET \${skiff_target} APPEND PROPERTY IMPORTED_CXX_MODULES_LINK_LIBRARIES Boost::pfr)\n"
+      "  endif()\n"
+      "endforeach()\n")
   endif()
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake" "${skiff_config}")
   # And which version it is: find_package(skiff 0.1.0) -- skiff-widgets'
