@@ -635,8 +635,21 @@ public:
     fNodeStyleActive = active;
   }
 
+  // A width given from outside -- a label's column, as CSS's width -- and
+  // not one this wrote (its glyphs', or the room it wrapped in): kept, the
+  // text wrapped within it rather than the width sized to the text.
+  [[nodiscard]] float givenWidth() const {
+    const skiff::scene::State &state = fState;
+    if (state.fWidth <= 0.0f || state.fWidth == fWroteWidth || state.fGrowAxes.has<skiff::scene::axis::x>() ||
+        state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
+      return 0.0f;
+    }
+    return state.fWidth;
+  }
+
   void measure(const skia::SkRect &parent) {
     skiff::scene::State &state = fState;
+    const float given = this->givenWidth();
     // Wrapped or not as it fits, where nothing chose: as CSS's text.
     const bool automatic = !fWrapChoice && !fElided && !state.fGrowAxes.has<skiff::scene::axis::x>() &&
                            !state.fRelativeSizeAxes.has<skiff::scene::axis::x>();
@@ -658,17 +671,20 @@ public:
       fNatural = p.measure(fText, fSize, fBold);
     }
     if (automatic) {
-      const float room = state.fMaxWidth > 0.0f ? state.fMaxWidth : parent.width() - state.fMargin.totalX();
+      const float room = given > 0.0f              ? given
+                         : state.fMaxWidth > 0.0f ? state.fMaxWidth
+                                                  : parent.width() - state.fMargin.totalX();
       const bool wrap = room > 0.0f && fNatural > room + 0.5f;
       if (wrap != fWrapped) {
         fWrapped = wrap;
         // Wrapped: at its parent's width, not at the one-line width it had
         // (which would wrap it at its own length, one line past the edge).
-        fWrapsToParent = wrap;
+        // Given a width, wrapped within that, which stays as it is.
+        fWrapsToParent = wrap && given <= 0.0f;
         fWrappedRoom = -1.0f;
         fMeasuredSize = -1.0f;
         if (wrap) {
-          fShrinks = true;  // as wide as its widest line, not the parent
+          fShrinks = given <= 0.0f;  // as wide as its widest line, not the parent
         }
       } else if (!wrap && fMeasuredSize == fSize) {
         return;
@@ -713,11 +729,14 @@ public:
           }
           state.fWidth = std::min(room, std::ceil(widest + indent) + 1.0f);
         }
+        fWroteWidth = state.fWidth;
       }
       fMeasuredSize = fSize;
       return;
     }
-    this->sizeOnOneLine(parent);
+    if (given <= 0.0f) {
+      this->sizeOnOneLine(parent);
+    }
     state.fHeight = this->lineHeight();
     fMeasuredSize = fSize;
   }
@@ -736,6 +755,7 @@ public:
       width = std::min(width, std::max(0.0f, parent.width() - state.fMargin.totalX()));
     }
     state.fWidth = width;
+    fWroteWidth = width;
   }
 
   void drawSelf(skia::SkCanvas *canvas, float alpha) {
@@ -1151,6 +1171,9 @@ private:
   // The width a wrapped line has to fit into, resolved as layout would.
   [[nodiscard]] float roomFor(const skia::SkRect &parent) const {
     const skiff::scene::State &state = fState;
+    if (const float given = this->givenWidth(); given > 0.0f) {
+      return given;
+    }
     // At most its own maximum, as CSS's max-width -- and never more than its
     // parent has.
     if (state.fMaxWidth > 0.0f) {
@@ -1182,6 +1205,7 @@ private:
   // Its width on one line, at fMeasuredSize.
   float fNatural = 0.0f;
   float fWrappedRoom = -1.0f;
+  float fWroteWidth = -1.0f;  // the last width this wrote itself: any other was given
   // Wrapped with no width of its own: it wraps to its parent's, whatever
   // that is at the time.
   bool fWrapsToParent = false;
