@@ -254,64 +254,135 @@ template <class N> struct Flowing {
       // not: what a row of the last layout asked of them asks nothing now.
       skiff::scene::eachChild(fNode, [](auto &child) { shrink_to(skiff::scene::stateOf(child), 0.0f); });
     }
+    // Wrapped, a child that grows is broken onto its line at the least it
+    // takes -- CSS's flex-basis of nothing, held up by its min-width -- and
+    // grown once its line is known (growWrapped).
+    if (fOptions.wrap) {
+      skiff::scene::eachChild(fNode, [](auto &child) {
+        skiff::scene::State &state = skiff::scene::stateOf(child);
+        if (inFlow(state) && state.fGrowAxes.template has<skiff::scene::axis::x>())
+          state.arrangeAxisSize(true, 0.0f);
+      });
+    }
     const auto shown = measured(box);
     if (!fOptions.wrap && !skiff::scene::stateOf(fNode).fAutoSizeAxes.template has<skiff::scene::axis::x>()) {
       this->shrink_to_fit(box);
     }
-    std::vector<std::pair<float, float>> places(shown.size());
-    // Rows broken at the edge, then placed.
-    std::size_t rowStart = 0;
-    float rowWidth = 0.0f;
-    float y = 0.0f;
-    const auto flush = [&](std::size_t end) {
-      if (end == rowStart) {
-        return;
+    // Rows broken at the edge...
+    std::vector<std::pair<std::size_t, std::size_t>> lines;
+    {
+      std::size_t rowStart = 0;
+      float rowWidth = 0.0f;
+      for (std::size_t i = 0; i < shown.size(); ++i) {
+        const float width = shown[i]->fBounds.width() + shown[i]->fMargin.totalX();
+        // Half a pixel of slack: four quarters add up to the width.
+        if (fOptions.wrap && i > rowStart && rowWidth + fOptions.spacingX + width > box.width() + 0.5f) {
+          lines.emplace_back(rowStart, i);
+          rowStart = i;
+          rowWidth = 0.0f;
+        }
+        rowWidth += i == rowStart ? width : fOptions.spacingX + width;
       }
+      if (rowStart < shown.size())
+        lines.emplace_back(rowStart, shown.size());
+    }
+    // ...what grows grown along its own...
+    if (fOptions.wrap)
+      this->growWrapped(box, shown, lines);
+    // ...then placed.
+    std::vector<std::pair<float, float>> places(shown.size());
+    float y = 0.0f;
+    for (const auto &[rowStart, end] : lines) {
+      float rowWidth = 0.0f;
       float rowHeight = 0.0f;
       for (std::size_t i = rowStart; i < end; ++i) {
-        rowHeight = std::max(rowHeight, shown[i]->fBounds.height() +
-                                            shown[i]->fMargin.totalY());
+        rowWidth += (i == rowStart ? 0.0f : fOptions.spacingX) + shown[i]->fBounds.width() + shown[i]->fMargin.totalX();
+        rowHeight = std::max(rowHeight, shown[i]->fBounds.height() + shown[i]->fMargin.totalY());
       }
       // What a child is aligned against across the row: a row not wrapped
       // is the whole box across, as a column is (unless the box takes its
       // height from what it holds); wrapped rows, each its tallest child.
       const float line =
-          !fOptions.wrap &&
-                  !skiff::scene::stateOf(fNode).fAutoSizeAxes
-                       .template has<skiff::scene::axis::y>()
+          !fOptions.wrap && !skiff::scene::stateOf(fNode).fAutoSizeAxes.template has<skiff::scene::axis::y>()
               ? std::max(rowHeight, box.height())
               : rowHeight;
-      const Spread gaps =
-          fOptions.centreRows
-              ? Spread{(box.width() - rowWidth) * 0.5f, 0.0f}
-              : spread(fOptions.justify, box.width(), rowWidth,
-                       static_cast<int>(end - rowStart));
+      const Spread gaps = fOptions.centreRows ? Spread{(box.width() - rowWidth) * 0.5f, 0.0f}
+                                              : spread(fOptions.justify, box.width(), rowWidth, static_cast<int>(end - rowStart));
       float x = gaps.fStart;
       for (std::size_t i = rowStart; i < end; ++i) {
         const skiff::scene::State &state = *shown[i];
-        places[i] = {x, y + crossOffset(state, line,
-                                              state.fBounds.height() +
-                                                  state.fMargin.totalY())};
-        x += state.fBounds.width() + state.fMargin.totalX() +
-             fOptions.spacingX + gaps.fBetween;
+        places[i] = {x, y + crossOffset(state, line, state.fBounds.height() + state.fMargin.totalY())};
+        x += state.fBounds.width() + state.fMargin.totalX() + fOptions.spacingX + gaps.fBetween;
       }
       y += rowHeight + fOptions.spacingY;
-      rowStart = end;
-      rowWidth = 0.0f;
-    };
-    for (std::size_t i = 0; i < shown.size(); ++i) {
-      const float width =
-          shown[i]->fBounds.width() + shown[i]->fMargin.totalX();
-      // Half a pixel of slack: four quarters add up to the width.
-      if (fOptions.wrap && i > rowStart &&
-          rowWidth + fOptions.spacingX + width > box.width() + 0.5f) {
-        flush(i);
-      }
-      rowWidth += i == rowStart ? width : fOptions.spacingX + width;
     }
-    flush(shown.size());
     place(box, places);
     told(box);
+  }
+
+  // CSS's flex-grow on wrapped lines: on each line, what grows takes an
+  // equal share of what it and the room left come to -- none less than it
+  // takes already (its min-width): one that would is kept at that, and the
+  // rest share what is left. Laid out at its share, before the line's
+  // height is known: its words wrap anew.
+  void growWrapped(const skia::SkRect &box, const std::vector<skiff::scene::State *> &shown,
+                   const std::vector<std::pair<std::size_t, std::size_t>> &lines) {
+    std::vector<float> to(shown.size(), -1.0f);
+    bool any = false;
+    for (const auto &[from, end] : lines) {
+      float used = fOptions.spacingX * static_cast<float>(end - from - 1);
+      float growing = 0.0f;
+      int growers = 0;
+      for (std::size_t i = from; i < end; ++i) {
+        const float width = shown[i]->fBounds.width() + shown[i]->fMargin.totalX();
+        used += width;
+        if (shown[i]->fGrowAxes.template has<skiff::scene::axis::x>()) {
+          growing += width;
+          ++growers;
+        }
+      }
+      const float room = box.width() - used;
+      if (growers == 0 || room <= 0.5f)
+        continue;
+      std::vector<bool> kept(end - from, false);
+      float pool = growing + room;
+      int open = growers;
+      for (bool again = true; again && open > 0;) {
+        again = false;
+        const float share = pool / static_cast<float>(open);
+        for (std::size_t i = from; i < end; ++i) {
+          const float width = shown[i]->fBounds.width() + shown[i]->fMargin.totalX();
+          if (shown[i]->fGrowAxes.template has<skiff::scene::axis::x>() && !kept[i - from] && width > share) {
+            kept[i - from] = true;
+            pool -= width;
+            --open;
+            again = true;
+          }
+        }
+      }
+      if (open == 0)
+        continue;
+      const float share = pool / static_cast<float>(open);
+      for (std::size_t i = from; i < end; ++i) {
+        if (shown[i]->fGrowAxes.template has<skiff::scene::axis::x>() && !kept[i - from]) {
+          to[i] = std::max(0.0f, share - shown[i]->fMargin.totalX());
+          any = true;
+        }
+      }
+    }
+    if (!any)
+      return;
+    std::size_t at = 0;
+    skiff::scene::eachChild(fNode, [&](auto &child) {
+      skiff::scene::State &state = skiff::scene::stateOf(child);
+      if (!inFlow(state))
+        return;
+      if (to[at] >= 0.0f) {
+        state.arrangeAxisSize(true, to[at]);
+        skiff::scene::layout(child, boxFor(state, box));
+      }
+      ++at;
+    });
   }
 
   // What sticks out of the box, told: along an axis the box does not take

@@ -222,4 +222,72 @@ TEST(Compose, APressAnsweringAnEditMakesItWhereItsPartIs) {
   EXPECT_EQ(settings.look(model::placeOf<LeadAccount, scope_leads::LeadSettings>(std::string("a")))->n, 9);
 }
 
+// A model said by its tree: each view keeps its part where it is made
+// (state<T>), with what answers what is sent within; the model is the parts
+// the views say, each once -- in every build, a Held saying none.
+namespace stated_model {
+namespace c = skiff::compose;
+struct Pressed {};
+struct Tally {
+  int n = 0;
+};
+struct Seen {
+  bool on = false;
+};
+struct Task {
+  int id = 0;
+};
+// A part with a list in it: kept as it is, not tracked again.
+struct Tasks {
+  model::Keyed<int, Task> list;
+};
+inline int &lastTally() {
+  static int n = -1;
+  return n;
+}
+struct TallyText : nodes::Text {
+  TallyText() : nodes::Text("0", 13.0f, 0u) {}
+  void read(const Tally &t) {
+    lastTally() = t.n;
+    setText(std::to_string(t.n));
+  }
+};
+inline auto tally() {
+  return c::state<Tally>(c::handlers(c::handle<Pressed>([] {
+                           return model::over<Tally>([](Tally t) {
+                             ++t.n;
+                             return t;
+                           });
+                         })),
+                         c::row(c::hbox(0.0f, {.width = 200.0f, .height = 40.0f}), c::bound<Tally>(TallyText()),
+                                c::onClick(Pressed{}, nodes::Text("+", 13.0f, 0u))));
+}
+inline auto page() {
+  return c::column(c::vbox(0.0f, {.fill = true}), tally(), c::state<Seen>(nodes::Text("seen", 13.0f, 0u)),
+                   c::row(c::hbox(0.0f), c::state<Tasks>(nodes::Text("tasks", 13.0f, 0u))), tally());
+}
+}  // namespace stated_model
+
+TEST(Compose, AModelIsThePartsItsTreesViewsSayTheyKeep) {
+  using namespace stated_model;
+  using Tree = decltype(page());
+  static_assert(std::same_as<bind::PartsOf<Tree>, model::Types<model::Tracked<Tally>, model::Tracked<Seen>, Tasks>>);
+  static_assert(std::same_as<bind::RootOf<Tree>, model::Assembled<model::Tracked<Tally>, model::Tracked<Seen>, Tasks>>);
+  bind::ModelOf<Tree> m;
+  (void)m.apply(model::put<Task>(1, Task{1}));
+  EXPECT_EQ(m.root().rest.rest.part.list.size(), 1u);
+  scene::Scene tree(page());
+  bind::Binding<bind::ModelOf<Tree>> binding;
+  binding.refresh(tree.root(), m);
+  EXPECT_EQ(lastTally(), 0);
+  // The first tally's button: sent up to its own state's handlers.
+  EXPECT_TRUE(bind::press(tree.root(), m, scene::Path{0, 1}));
+  EXPECT_EQ(m.look<Tally>()->n, 1);
+  binding.refresh(tree.root(), m);
+  EXPECT_EQ(lastTally(), 1);
+  // The second says the same part: the same one, pressed again.
+  EXPECT_TRUE(bind::press(tree.root(), m, scene::Path{3, 1}));
+  EXPECT_EQ(m.look<Tally>()->n, 2);
+}
+
 }  // namespace

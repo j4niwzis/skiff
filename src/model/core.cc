@@ -348,6 +348,19 @@ template <class... T> struct Types {
   template <std::size_t I> using at = std::tuple_element_t<I, std::tuple<T...>>;
 };
 
+// A root made of parts said elsewhere -- by the tree a model is bound to
+// (skiff::bind::RootOf), each where a view says it keeps it: the parts in
+// their order, the first a member and the rest one more, an aggregate as
+// any root is, so that each part is found by its type as any part is.
+template <class... P> struct Assembled {};
+template <class P> struct Assembled<P> {
+  P part{};
+};
+template <class P, class Q, class... Rest> struct Assembled<P, Q, Rest...> {
+  P part{};
+  Assembled<Q, Rest...> rest{};
+};
+
 namespace detail {
 template <class T> inline constexpr bool kTracked = false;
 template <class T> inline constexpr bool kTracked<Tracked<T>> = true;

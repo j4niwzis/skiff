@@ -1437,6 +1437,20 @@ template <class... H> struct Handlers : H... {
   using H::on...;
 };
 template <class... H> [[nodiscard]] Handlers<H...> handlers(H... each) { return {std::move(each)...}; }
+// A part of the model kept by the view it is made over: a scope over it,
+// with the handlers that answer what is sent within -- and the model the
+// page is bound to holds it because the view says so (bind::ModelOf). As
+// skiff.compose's.
+template <class T, class Handlers, class N>
+  requires(!std::derived_from<Handlers, Node>)
+[[nodiscard]] bind::Stated<T, Handlers, N> state(Handlers handlers, N node) {
+  return bind::Stated<T, Handlers, N>(std::move(handlers), std::move(node));
+}
+template <class T, class N>
+  requires std::derived_from<N, Node>
+[[nodiscard]] auto state(N node) {
+  return state<T>(Handlers<>{}, std::move(node));
+}
 
 // A view named where it is written (SKIFF_NAMED): a type of its own over
 // what the expression made, read, bound and walked the same, and written to
@@ -1448,6 +1462,9 @@ template <class Self, class Base> struct Named : Base {
   using Base::onPointer;
   using Base::onText;
   using Base::onSemantic;
+  // What it names: where the parts of the model its views keep are found
+  // (bind::RootOf).
+  using NamedContent = Base;
   explicit Named(Base made) : Base(std::move(made)) {}
 };
 

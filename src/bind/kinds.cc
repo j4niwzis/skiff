@@ -329,6 +329,92 @@ inline constexpr bool kOfModel<Root, N> = model::kFound<typename N::BoundTo, Roo
 template <class Root, class N>
   requires(IsScoped<N> && !IsBound<N>)
 inline constexpr bool kOfModel<Root, N> = model::kFound<typename N::ScopeOf, Root> > 0;
+// ---- a model said by its tree --------------------------------------------
+//
+// A view says the part of the model it keeps where it is made -- state<T>,
+// a scope over that part, its handlers beside it -- and the model the tree
+// is bound to is the parts its views say (RootOf): no root written by hand,
+// and a part next to what reads it and edits it.
+
+// The part a view's T is kept as: a plain value tracked; a list, a tracked
+// value or an aggregate with tracked places in it, itself.
+template <class T>
+using PartFor = std::conditional_t<(model::AllTracked<T>::size > 0), T, model::Tracked<T>>;
+
+// A scope over the part a view keeps (state<T>), said by its type: what
+// RootOf finds.
+template <class T, class Handlers, class Base>
+struct Stated : Scoped<T, Handlers, Base> {
+  using Scoped<T, Handlers, Base>::onKey;
+  using Scoped<T, Handlers, Base>::onPointer;
+  using Scoped<T, Handlers, Base>::onText;
+  using Scoped<T, Handlers, Base>::onSemantic;
+  using StatePart = PartFor<T>;
+  using StateContent = Base;
+  Stated() = default;
+  explicit Stated(Handlers handlers, Base base) : Scoped<T, Handlers, Base>(std::move(handlers), std::move(base)) {}
+};
+
+namespace detail {
+template <class T> struct PartsIn;
+template <class T> using PartsInT = typename PartsIn<std::remove_cvref_t<T>>::type;
+// A node of either backend: what has a state of its own.
+template <class T>
+concept IsNodeType = std::is_class_v<T> && requires(T &t) { t.fState; };
+template <class T> struct NodePartsIn {
+  using type = model::Types<>;
+};
+template <IsNodeType T> struct NodePartsIn<T> {
+  using type = PartsInT<T>;
+};
+// What the node arguments of a node's template say: a stack's parts, the
+// content of a wrapper.
+template <class T> struct ArgumentParts {
+  using type = model::Types<>;
+};
+template <template <class...> class X, class... A> struct ArgumentParts<X<A...>> {
+  using type = typename model::detail::Concat<typename NodePartsIn<A>::type...>::type;
+};
+template <class T> consteval auto partsOf() {
+  if constexpr (requires { typename T::StatePart; })
+    return typename model::detail::Concat<model::Types<typename T::StatePart>, PartsInT<typename T::StateContent>>::type{};
+  else if constexpr (requires { typename T::NamedContent; })
+    return PartsInT<typename T::NamedContent>{};
+  else if constexpr (IsNodeType<T>)
+    return typename ArgumentParts<T>::type{};
+  else
+    return model::Types<>{};
+}
+template <class T> struct PartsIn {
+  using type = decltype(partsOf<T>());
+};
+// Each part once, where it is first said.
+template <class Seen, class Rest> struct Once;
+template <class... S> struct Once<model::Types<S...>, model::Types<>> {
+  using type = model::Types<S...>;
+};
+template <class... S, class P, class... Rest> struct Once<model::Types<S...>, model::Types<P, Rest...>> {
+  using type = typename Once<std::conditional_t<(std::same_as<P, S> || ...), model::Types<S...>, model::Types<S..., P>>,
+                             model::Types<Rest...>>::type;
+};
+template <class L> struct AssembledOf;
+template <class... P> struct AssembledOf<model::Types<P...>> {
+  using type = model::Assembled<P...>;
+};
+} // namespace detail
+
+// The parts a tree's views say they keep, each once, in the tree's order.
+template <class Tree>
+using PartsOf = typename detail::Once<model::Types<>, detail::PartsInT<Tree>>::type;
+// The root of the model a tree is bound to: its parts. Two trees that say
+// the same parts in the same order -- one tree said for two backends -- have
+// one root.
+template <class Tree>
+using RootOf = typename detail::AssembledOf<PartsOf<Tree>>::type;
+// The model itself.
+template <class Tree, class Reactions = NoReactions>
+using ModelOf = model::Model<RootOf<Tree>, Reactions>;
+
 template <class N>
 concept IsEach = decltype(detail::eachTest(static_cast<N *>(nullptr)))::value;
 template <class N>

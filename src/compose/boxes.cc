@@ -602,6 +602,9 @@ template <class Self, class Base> struct Named : Base {
   using Base::onPointer;
   using Base::onText;
   using Base::onSemantic;
+  // What it names: where the parts of the model its views keep are found
+  // (bind::RootOf).
+  using NamedContent = Base;
   explicit Named(Base made) : Base(std::move(made)) { state_of(static_cast<Base &>(*this)).fViewName = Self::viewName(); }
 };
 // Over held content (outside a release build): seen as the Held it is.
@@ -648,11 +651,18 @@ template <class N, class... Args> auto erased_made(Args &&...args) {
 }
 // A node as a combinator returns it: itself in a release build; held,
 // outside one.
+// One that keeps a part of the model (state<T>) somewhere in it stays
+// concrete: the model its tree is bound to is the parts its type says
+// (bind::RootOf), and a Held says none.
 template <class N> auto erased(N node) {
-  if constexpr (scene::kErasedCombinators && !std::same_as<N, Held>)
-    return Held(std::move(node));
-  else
+  if constexpr (scene::kErasedCombinators && !std::same_as<N, Held>) {
+    if constexpr (bind::PartsOf<N>::size == 0)
+      return Held(std::move(node));
+    else
+      return node;
+  } else {
     return node;
+  }
 }
 
 // A node of its own drawing or input, its parts placed in it by their own
@@ -1016,6 +1026,22 @@ template <class... H> struct Handlers : H... {
   using H::on...;
 };
 template <class... H> Handlers<H...> handlers(H... each) { return {std::move(each)...}; }
+
+// A part of the model kept by the view it is made over: a scope over it,
+// with the handlers that answer what is sent within -- and the model the
+// tree is bound to holds it because the view says so (bind::ModelOf).
+template <class T, class Handlers, class N>
+  requires(!std::derived_from<Handlers, scene::NodeBase>)
+auto state(Handlers handlers, N node) {
+  bind::Stated<T, Handlers, part_t<N>> made(std::move(handlers), as_part(std::move(node)));
+  over_held(made);
+  return made;
+}
+template <class T, class N>
+  requires std::derived_from<N, scene::NodeBase>
+auto state(N node) {
+  return state<T>(Handlers<>{}, std::move(node));
+}
 
 // Answers a press with a copy of its event.
 template <class E, class N> struct OnClick : N {

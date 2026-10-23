@@ -513,4 +513,35 @@ TEST(Web, AFigureIsShapesAsNodesEachWrittenAsItsPartMoves) {
   EXPECT_NE(html.find("x2=\"42\""), std::string::npos) << html;
 }
 
+// A model said by its tree, on the page as on the scene: each view keeps
+// its part (state<T>), the model is the parts the views say.
+struct Shown {
+  bool on = false;
+};
+auto clicks() {
+  return state<Count>(handlers(handle<Clicked>([](const Clicked &, const auto &) {
+                        return model::over<Count>([](Count c) {
+                          ++c.n;
+                          return c;
+                        });
+                      })),
+                      row(hbox(8.0f), bound<Count>(Counter()), Clicker()));
+}
+auto statedPage() { return column(vbox(8.0f), clicks(), state<Shown>(Text("shown")), state<Count>(Text("again"))); }
+
+TEST(Web, AModelIsThePartsItsTreesViewsSayTheyKeep) {
+  using Tree = decltype(statedPage());
+  static_assert(std::same_as<bind::PartsOf<Tree>, model::Types<model::Tracked<Count>, model::Tracked<Shown>>>);
+  dom::reset();
+  bind::ModelOf<Tree> m;
+  Page page(statedPage(), m);
+  page.mount();
+  auto &clicked = std::get<0>(page.root().fParts);
+  auto &button = std::get<1>(clicked.fParts);
+  fire(page, button.element(), "click", "");
+  fire(page, button.element(), "click", "");
+  EXPECT_EQ(m.look<Count>()->n, 2);
+  EXPECT_EQ(std::get<0>(clicked.fParts).text(), "2");
+}
+
 } // namespace
