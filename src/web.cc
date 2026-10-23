@@ -212,7 +212,13 @@ struct State {
   if (s.maxWidth) css.set("max-width", px(*s.maxWidth));
   if (s.minHeight) css.set("min-height", px(*s.minHeight));
   if (s.maxHeight) css.set("max-height", px(*s.maxHeight));
-  if (s.grow && (s.grow->has<scene::axis::x>() || s.grow->has<scene::axis::y>())) css.set("flex-grow", "1");
+  // Growing along the stack: an equal share of what is left (a basis of
+  // nothing), able to shrink -- CSS's `flex: 1`. What the scene's grow means
+  // in a flow: the room divided among those that grow.
+  if (s.grow && (s.grow->has<scene::axis::x>() || s.grow->has<scene::axis::y>())) {
+    css.set("flex", "1 1 0%");
+    css.set("min-width", "0");
+  }
   if (s.shrink && (s.shrink->has<scene::axis::x>() || s.shrink->has<scene::axis::y>())) css.set("flex-shrink", "1");
   if (s.alignSelf) css.set("align-self", std::string(alignment(*s.alignSelf)));
   if (s.margin.given) css.set("margin", margin(*s.margin.given));
