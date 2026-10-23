@@ -68,6 +68,9 @@ export namespace skiff::web {
 // The declarations a node's element gets, from its Spec and flags.
 struct Css {
   std::vector<std::pair<std::string, std::string>> fRules;
+  // Attributes the stylesheet's rules select on (pageCss): a hover
+  // background, a tail, a part revealed on hover.
+  std::vector<std::pair<std::string, std::string>> fAttrs;
   void set(std::string property, std::string value) {
     for (auto &[p, v] : fRules)
       if (p == property) {
@@ -76,7 +79,26 @@ struct Css {
       }
     fRules.emplace_back(std::move(property), std::move(value));
   }
+  void attr(std::string name, std::string value = {}) { fAttrs.emplace_back(std::move(name), std::move(value)); }
 };
+
+// The rules the page's own attributes select on: what a Spec says that an
+// element's inline style cannot -- a background under the pointer or the
+// focus, a bubble's tail, a part shown on hover -- and a stack as the box
+// its placed children are placed in. Put into the document with the theme.
+[[nodiscard]] inline std::string pageCss() {
+  return ".skiff-stack{position:relative}\n"
+         "[data-skiff-hover]:hover{background-color:var(--skiff-hover-bg)!important}\n"
+         "[data-skiff-focus]:focus-within{background-color:var(--skiff-focus-bg)!important}\n"
+         "[data-skiff-reveal]{opacity:0;transition:opacity .12s}\n"
+         "*:hover>[data-skiff-reveal],[data-skiff-reveal]:focus-within{opacity:1}\n"
+         "[data-skiff-tail]{position:relative}\n"
+         "[data-skiff-tail]::after{content:'';position:absolute;bottom:0;width:0;height:0;border-style:solid}\n"
+         "[data-skiff-tail=right]::after{right:calc(-1*var(--skiff-tail-w));border-width:0 0 var(--skiff-tail-h) var(--skiff-tail-w);"
+         "border-color:transparent transparent transparent var(--skiff-bg)}\n"
+         "[data-skiff-tail=left]::after{left:calc(-1*var(--skiff-tail-w));border-width:0 var(--skiff-tail-w) var(--skiff-tail-h) 0;"
+         "border-color:transparent var(--skiff-bg) transparent transparent}\n";
+}
 
 // A Spec laid over another: what the later says, said; the rest as it was.
 inline void overlay(scene::Spec &into, const scene::Spec &from) {
@@ -93,6 +115,9 @@ inline void overlay(scene::Spec &into, const scene::Spec &from) {
   into.fillY = into.fillY || from.fillY;
   take(into.width, from.width);
   take(into.height, from.height);
+  // A relative size said takes the place of the fills said before: the
+  // scene's way to make a filling widget a fixed size is relativeSize kNone.
+  if (from.relativeSize) into.fill = into.fillX = into.fillY = false;
   take(into.relativeSize, from.relativeSize);
   take(into.autoSize, from.autoSize);
   take(into.grow, from.grow);
@@ -141,11 +166,16 @@ struct State {
   std::string fDisplay;
   // Written to its element at the next sync.
   bool fDirty = true;
+  // The way of the stack it is in -- a row, or a column -- where it is in
+  // one: what a grow means there (along it, a share; across it, its breadth).
+  std::optional<bool> fInRow;
 
   // The element is the state's: it goes with a move and with the node (a row
   // gone from a list takes its element out of the page); a copy has none.
   State() = default;
-  State(const State &other) : fSpec(other.fSpec), fVisible(other.fVisible), fSelected(other.fSelected), fDisabled(other.fDisabled), fDisplay(other.fDisplay) {}
+  State(const State &other)
+      : fSpec(other.fSpec), fVisible(other.fVisible), fSelected(other.fSelected), fDisabled(other.fDisabled), fDisplay(other.fDisplay),
+        fInRow(other.fInRow) {}
   State &operator=(const State &other) {
     if (this != &other) {
       drop();
@@ -154,13 +184,14 @@ struct State {
       fSelected = other.fSelected;
       fDisabled = other.fDisabled;
       fDisplay = other.fDisplay;
+      fInRow = other.fInRow;
       fDirty = true;
     }
     return *this;
   }
   State(State &&other) noexcept
       : fSpec(std::move(other.fSpec)), fVisible(other.fVisible), fSelected(other.fSelected), fDisabled(other.fDisabled),
-        fHandle(std::exchange(other.fHandle, dom::kNone)), fDisplay(std::move(other.fDisplay)), fDirty(other.fDirty) {}
+        fHandle(std::exchange(other.fHandle, dom::kNone)), fDisplay(std::move(other.fDisplay)), fDirty(other.fDirty), fInRow(other.fInRow) {}
   State &operator=(State &&other) noexcept {
     if (this != &other) {
       drop();
@@ -171,6 +202,7 @@ struct State {
       fHandle = std::exchange(other.fHandle, dom::kNone);
       fDisplay = std::move(other.fDisplay);
       fDirty = other.fDirty;
+      fInRow = other.fInRow;
     }
     return *this;
   }
@@ -188,13 +220,28 @@ struct State {
   }
 };
 
-// The CSS of a state: the Spec as the browser can take it. Anchors, origins
-// and depth -- a scene's placement by hand -- are not here: the page is laid
-// out by the browser, by stacks.
+// The CSS of a state: the Spec as the browser can take it. Placement by
+// hand -- an anchor of the stack, an origin of the node -- is absolute
+// position in the stack (position: relative, pageCss); depth is z-index;
+// what the browser does on its own under the pointer or the focus is a
+// variable on the element and an attribute the page's rules select on.
 [[nodiscard]] inline Css cssOf(const State &state) {
   const scene::Spec &s = state.fSpec;
   Css css;
   css.set("display", state.fVisible ? state.fDisplay : "none");
+  // Placed: out of the flow, at an anchor of its stack, by an origin of its own.
+  const bool placed = s.place || s.anchor;
+  scene::Anchor origin = scene::anchor::kTopLeft;
+  if (placed) {
+    const scene::Anchor at = s.place ? *s.place : *s.anchor;
+    origin = s.place ? *s.place : s.origin.value_or(scene::anchor::kTopLeft);
+    css.set("position", "absolute");
+    css.set("left", number(at.x * 100.0f) + "%");
+    css.set("top", number(at.y * 100.0f) + "%");
+  } else if (s.depth) {
+    css.set("position", "relative");
+  }
+  if (s.depth) css.set("z-index", std::to_string(static_cast<int>(std::lround(*s.depth))));
   if (s.fill) {
     // An equal share of the stack's way, whatever is in it: a basis of nothing, so two filling
     // parts are two halves, as two filling children of a scene's flow are.
@@ -204,8 +251,9 @@ struct State {
   }
   if (s.fillX) css.set("width", "100%");
   if (s.fillY) css.set("height", "100%");
-  const bool relX = s.relativeSize && s.relativeSize->has<scene::axis::x>();
-  const bool relY = s.relativeSize && s.relativeSize->has<scene::axis::y>();
+  // A size on an axis the node fills, or is relative on, is a share of its parent's -- as on the scene.
+  const bool relX = (s.relativeSize && s.relativeSize->has<scene::axis::x>()) || s.fill || s.fillX;
+  const bool relY = (s.relativeSize && s.relativeSize->has<scene::axis::y>()) || s.fill || s.fillY;
   if (s.width) css.set("width", relX ? number(*s.width * 100.0f) + "%" : px(*s.width));
   if (s.height) css.set("height", relY ? number(*s.height * 100.0f) + "%" : px(*s.height));
   if (s.minWidth) css.set("min-width", px(*s.minWidth));
@@ -213,23 +261,57 @@ struct State {
   if (s.minHeight) css.set("min-height", px(*s.minHeight));
   if (s.maxHeight) css.set("max-height", px(*s.maxHeight));
   // Growing along the stack: an equal share of what is left (a basis of
-  // nothing), able to shrink -- CSS's `flex: 1`. What the scene's grow means
-  // in a flow: the room divided among those that grow.
-  if (s.grow && (s.grow->has<scene::axis::x>() || s.grow->has<scene::axis::y>())) {
-    css.set("flex", "1 1 0%");
-    css.set("min-width", "0");
+  // nothing), able to shrink -- CSS's `flex: 1`. Across it: the stack's
+  // breadth (align-self: stretch), as a scene's flow gives one grown across
+  // its way. Where the stack's way is not known (the root), along.
+  if (s.grow) {
+    const bool x = s.grow->has<scene::axis::x>(), y = s.grow->has<scene::axis::y>();
+    const bool along = state.fInRow ? (*state.fInRow ? x : y) : (x || y);
+    const bool across = state.fInRow && (*state.fInRow ? y : x);
+    if (along) {
+      css.set("flex", "1 1 0%");
+      css.set("min-width", "0");
+    }
+    if (across && !s.alignSelf && !s.fill) css.set("align-self", "stretch");
   }
   if (s.shrink && (s.shrink->has<scene::axis::x>() || s.shrink->has<scene::axis::y>())) css.set("flex-shrink", "1");
   if (s.alignSelf) css.set("align-self", std::string(alignment(*s.alignSelf)));
   if (s.margin.given) css.set("margin", margin(*s.margin.given));
   if (s.padding.given) css.set("padding", margin(*s.padding.given));
-  if (s.padding.given || s.width || s.height) css.set("box-sizing", "border-box");
-  if (s.cornerRadius) css.set("border-radius", px(*s.cornerRadius));
-  if (state.fSelected && s.selectedBackground) css.set("background-color", rgba(*s.selectedBackground));
-  else if (s.background) css.set("background-color", rgba(*s.background));
+  if (s.padding.given || s.width || s.height || s.border) css.set("box-sizing", "border-box");
+  if (s.corners) {
+    const scene::Corners &k = *s.corners;
+    css.set("border-radius", px(k.topLeft) + " " + px(k.topRight) + " " + px(k.bottomRight) + " " + px(k.bottomLeft));
+  } else if (s.cornerRadius) {
+    css.set("border-radius", px(*s.cornerRadius));
+  }
+  std::optional<scene::Colour> background;
+  if (state.fSelected && s.selectedBackground) background = *s.selectedBackground;
+  else if (s.background) background = *s.background;
+  if (background) css.set("background-color", rgba(*background));
+  if (s.gradient) css.set("background-image", "linear-gradient(" + rgba(s.gradient->top) + "," + rgba(s.gradient->bottom) + ")");
+  if (s.hoverBackground) {
+    css.set("--skiff-hover-bg", rgba(*s.hoverBackground));
+    css.attr("data-skiff-hover");
+  }
+  if (s.focusBackground) {
+    css.set("--skiff-focus-bg", rgba(*s.focusBackground));
+    css.attr("data-skiff-focus");
+  }
+  if (s.border) css.set("border", px(s.border->width) + " solid " + rgba(s.border->colour));
+  if (s.shadow) css.set("box-shadow", "0 " + px(s.shadow->offsetY) + " " + px(s.shadow->offsetY * 2.0f) + " " + rgba(s.shadow->colour));
+  if (s.tail && s.tail->shown) {
+    css.attr("data-skiff-tail", spl::holds_alternative<scene::tail_side::left>(s.tail->side) ? "left" : "right");
+    css.set("--skiff-tail-w", px(s.tail->width));
+    css.set("--skiff-tail-h", px(s.tail->height));
+    if (background) css.set("--skiff-bg", rgba(*background));
+  }
+  if (s.revealOnHover && *s.revealOnHover) css.attr("data-skiff-reveal");
   if (s.alpha) css.set("opacity", number(*s.alpha));
   if (s.masking && *s.masking) css.set("overflow", "hidden");
   std::string transform;
+  if (placed && (origin.x != 0.0f || origin.y != 0.0f))
+    transform += "translate(" + number(-origin.x * 100.0f) + "%," + number(-origin.y * 100.0f) + "%) ";
   const float dx = s.x.value_or(0.0f) + s.shiftX.value_or(0.0f), dy = s.y.value_or(0.0f) + s.shiftY.value_or(0.0f);
   if (dx != 0.0f || dy != 0.0f) transform += "translate(" + px(dx) + "," + px(dy) + ") ";
   if (s.scale && *s.scale != 1.0f) transform += "scale(" + number(*s.scale) + ") ";
@@ -241,6 +323,7 @@ struct State {
 }
 inline void applyCss(dom::Handle element, const Css &css) {
   for (const auto &[p, v] : css.fRules) dom::style(element, p, v);
+  for (const auto &[n, v] : css.fAttrs) dom::attr(element, n, v);
 }
 
 // ---- the node ---------------------------------------------------------------
@@ -485,7 +568,8 @@ template <class... Parts> struct Stack : Node {
     dom::style(fState.fHandle, "display", "flex");
     dom::style(fState.fHandle, "flex-direction", fLook.fHorizontal ? "row" : "column");
     if (fLook.fGap > 0.0f) dom::style(fState.fHandle, "gap", px(fLook.fGap));
-    if (fLook.fHorizontal) dom::style(fState.fHandle, "align-items", "center");
+    // Across its way, a child is its own size -- as in a scene's flow -- unless it fills or grows there.
+    dom::style(fState.fHandle, "align-items", fLook.fHorizontal ? "center" : "flex-start");
   }
 };
 template <class... Parts> [[nodiscard]] Stack<Parts...> column(Look look, Parts... parts) {
@@ -746,7 +830,8 @@ struct Rows : Node {
     dom::style(fState.fHandle, "display", "flex");
     dom::style(fState.fHandle, "flex-direction", fLook.fHorizontal ? "row" : "column");
     if (fLook.fGap > 0.0f) dom::style(fState.fHandle, "gap", px(fLook.fGap));
-    if (fLook.fHorizontal) dom::style(fState.fHandle, "align-items", "center");
+    // Across its way, a child is its own size -- as in a scene's flow -- unless it fills or grows there.
+    dom::style(fState.fHandle, "align-items", fLook.fHorizontal ? "center" : "flex-start");
   }
 };
 namespace detail {
@@ -959,7 +1044,10 @@ private:
     if constexpr (requires { std::string_view(std::remove_cvref_t<N>::viewName()); })
       dom::attr(state.fHandle, "data-view", std::string_view(std::remove_cvref_t<N>::viewName()));
     node.mounted();
-    detail::eachChild(node, [&](auto &child) { mountNode(child, state.fHandle); });
+    detail::eachChild(node, [&](auto &child) {
+      if constexpr (requires { node.fLook.fHorizontal; }) child.fState.fInRow = node.fLook.fHorizontal;
+      mountNode(child, state.fHandle);
+    });
   }
   template <class N> void syncNode(N &node) {
     State &state = node.fState;
@@ -973,7 +1061,10 @@ private:
       const bool reorder = same != node.fShownRows.size();
       for (std::size_t i = same; i < node.fRows.size(); ++i) {
         auto &row = node.fRows[i];
-        if (row.fState.fHandle == dom::kNone) mountNode(row, state.fHandle);
+        if (row.fState.fHandle == dom::kNone) {
+          if constexpr (requires { node.fLook.fHorizontal; }) row.fState.fInRow = node.fLook.fHorizontal;
+          mountNode(row, state.fHandle);
+        }
         else if (!reorder) dom::append(state.fHandle, row.fState.fHandle);
       }
       if (reorder)

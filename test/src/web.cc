@@ -119,6 +119,51 @@ TEST(Web, ASpecIsCssOnTheElement) {
   EXPECT_NE(html.find("flex:1 1 0%;"), std::string::npos);
 }
 
+TEST(Web, PlacementDepthAndTheLooksOfASpecAreCss) {
+  dom::reset();
+  Model m;
+  Page page(column(vbox(),
+                   Box({.place = scene::anchor::kBottomRight,
+                        .depth = 2.0f,
+                        .corners = scene::Corners{1.0f, 2.0f, 3.0f, 4.0f},
+                        .tail = scene::Tail{},
+                        .background = 0xff445566u,
+                        .hoverBackground = 0xff112233u,
+                        .gradient = scene::Gradient{0xff000000u, 0xffffffffu},
+                        .border = scene::Border{0xff00ff00u, 2.0f},
+                        .shadow = scene::Shadow{0x80000000u, 4.0f}}),
+                   row(hbox(), Text("a", {.grow = scene::axes::kY}), Box({.grow = scene::axes::kX})), Text("b", {.grow = scene::axes::kX})),
+            m);
+  page.mount();
+  const std::string html = dom::dump(dom::root());
+  // Placed at the stack's bottom right by its own bottom right, over its siblings.
+  EXPECT_NE(html.find("position:absolute;left:100%;top:100%;"), std::string::npos) << html;
+  EXPECT_NE(html.find("z-index:2;"), std::string::npos);
+  EXPECT_NE(html.find("transform:translate(-100%,-100%);"), std::string::npos) << html;
+  EXPECT_NE(html.find("border-radius:1px 2px 3px 4px;"), std::string::npos);
+  EXPECT_NE(html.find("background-image:linear-gradient(rgba(0,0,0,1),rgba(255,255,255,1));"), std::string::npos);
+  EXPECT_NE(html.find("border:2px solid rgba(0,255,0,1);"), std::string::npos);
+  EXPECT_NE(html.find("box-shadow:0 4px 8px rgba(0,0,0,0.502);"), std::string::npos) << html;
+  // Under the pointer: a variable and an attribute the page's rules select on; a tail likewise.
+  EXPECT_NE(html.find("data-skiff-hover=\"\""), std::string::npos) << html;
+  EXPECT_NE(html.find("--skiff-hover-bg:rgba(17,34,51,1);"), std::string::npos);
+  EXPECT_NE(html.find("data-skiff-tail=\"right\""), std::string::npos);
+  EXPECT_NE(html.find("--skiff-bg:rgba(68,85,102,1);"), std::string::npos);
+  EXPECT_NE(pageCss().find("[data-skiff-hover]:hover"), std::string::npos);
+  // A stack does not stretch its children across its way, as a scene's flow does not.
+  EXPECT_NE(html.find("flex-direction:column;align-items:flex-start;"), std::string::npos) << html;
+  // Grown across the stack's way: its breadth; along it: a share.
+  auto &inner = std::get<1>(page.root().fParts);
+  const std::string a = dom::dump(std::get<0>(inner.fParts).element());
+  EXPECT_NE(a.find("align-self:stretch;"), std::string::npos) << a;
+  EXPECT_EQ(a.find("flex:"), std::string::npos) << a;
+  const std::string grown = dom::dump(std::get<1>(inner.fParts).element());
+  EXPECT_NE(grown.find("flex:1 1 0%;"), std::string::npos) << grown;
+  const std::string b = dom::dump(std::get<2>(page.root().fParts).element());
+  EXPECT_NE(b.find("align-self:stretch;"), std::string::npos) << b;
+  EXPECT_EQ(b.find("flex:"), std::string::npos) << b;
+}
+
 TEST(Web, ANodeHiddenAndShownAgainIsShownAsItWas) {
   dom::reset();
   Model m;
