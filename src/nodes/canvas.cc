@@ -12,6 +12,8 @@ export namespace skiff::nodes {
 // own, from its top left.
 class SkiaPainter {
 public:
+  // Nothing stays: the scene paints the node whole each time it is damaged.
+  static constexpr bool kRetains = false;
   SkiaPainter(skia::SkCanvas *canvas, float width, float height, float alpha)
       : fCanvas(canvas), fWidth(width), fHeight(height), fAlpha(alpha) {}
   void clear(scene::Colour colour) {
@@ -54,13 +56,13 @@ private:
     return p;
   }
   [[nodiscard]] static skia::SkPath path(std::span<const scene::Point> points) {
-    skia::SkPath path;
+    skia::SkPathBuilder builder;
     for (std::size_t i = 0; i < points.size(); ++i) {
-      if (i == 0) path.moveTo(points[i].fX, points[i].fY);
-      else path.lineTo(points[i].fX, points[i].fY);
+      if (i == 0) builder.moveTo(points[i].fX, points[i].fY);
+      else builder.lineTo(points[i].fX, points[i].fY);
     }
-    path.close();
-    return path;
+    builder.close();
+    return builder.detach();
   }
   skia::SkCanvas *fCanvas;
   float fWidth, fHeight, fAlpha;

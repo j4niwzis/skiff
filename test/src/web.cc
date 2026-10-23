@@ -196,4 +196,122 @@ TEST(Web, ACanvasIsDrawnByItsNodeAndPressedWhereItWasClicked) {
   EXPECT_EQ(m.look<Count>()->n, 1);
 }
 
+
+// A list: a row per element, as the model has them -- made as elements
+// come, gone as they go, in the list's order; a press in a row delivered
+// to the row's scope with its key.
+struct Item {
+  std::string name;
+  int n = 0;
+};
+struct Gone {};
+struct ListRoot {
+  model::Keyed<std::string, Item> items;
+};
+using ListModel = model::Model<ListRoot, Reactions>;
+struct ItemText : Text {
+  ItemText() : Text("") {}
+  void read(const Item &item) { setText(item.name + ":" + std::to_string(item.n)); }
+};
+struct Remover : Clicker {
+  using Out = model::Types<Gone>;
+  Gone onPress() { return {}; }
+};
+auto itemRow() {
+  return scoped<Item>(handlers(handle<Gone>([](const auto &here) { return model::take<Item>(model::key<std::string>(here)); })),
+                      row(hbox(4.0f), bound<Item>(ItemText()), Remover()));
+}
+auto listPage() { return column(vbox(), Text("items"), each<std::string, Item>([] { return itemRow(); })); }
+
+TEST(Web, AListIsARowPerElementMadeAndGoneWithThemInOrder) {
+  dom::reset();
+  ListModel m;
+  m.apply(model::put<Item>(std::string("b"), Item{"bee", 2}));
+  m.apply(model::put<Item>(std::string("a"), Item{"ay", 1}));
+  Page page(listPage(), m);
+  page.mount();
+  std::string html = dom::dump(dom::root());
+  EXPECT_NE(html.find("bee:2"), std::string::npos) << html;
+  EXPECT_NE(html.find("ay:1"), std::string::npos) << html;
+  EXPECT_LT(html.find("bee:2"), html.find("ay:1")) << html;  // the list's order
+  auto &rows = std::get<1>(page.root().fParts);
+  EXPECT_EQ(rows.fRows.size(), 2u);
+  // An element changed: its row reads it; one put: a row made; one taken: its row gone.
+  m.apply(model::put<Item>(std::string("b"), Item{"bee", 3}));
+  m.apply(model::put<Item>(std::string("c"), Item{"sea", 0}));
+  page.refresh();
+  html = dom::dump(dom::root());
+  EXPECT_NE(html.find("bee:3"), std::string::npos) << html;
+  EXPECT_NE(html.find("sea:0"), std::string::npos) << html;
+  EXPECT_EQ(rows.fRows.size(), 3u);
+  m.apply(model::take<Item>(std::string("a")));
+  page.refresh();
+  html = dom::dump(dom::root());
+  EXPECT_EQ(html.find("ay:1"), std::string::npos) << html;
+  EXPECT_EQ(rows.fRows.size(), 2u);
+  // A press in the second row: delivered along its path, with its key.
+  auto &button = std::get<1>(rows.fRows[1].fParts);
+  fire(page, button.element(), "click", "");
+  html = dom::dump(dom::root());
+  EXPECT_EQ(html.find("sea:0"), std::string::npos) << html;
+  EXPECT_NE(html.find("bee:3"), std::string::npos) << html;
+  EXPECT_EQ(rows.fRows.size(), 1u);
+  EXPECT_EQ(rows.fKeys, std::vector<std::string>{"b"});
+}
+
+
+// A figure: shapes as nodes in an svg, each bound to its part of the model
+// and written to its element as the part moves; a list of them as many as
+// the model has.
+struct Dot {
+  float x = 0.0f, y = 0.0f;
+  bool lit = false;
+};
+struct DotsRoot {
+  model::Keyed<int, Dot> dots;
+  model::Tracked<Count> count;
+};
+using DotsModel = model::Model<DotsRoot, Reactions>;
+struct DotShape : Circle {
+  explicit DotShape(const Dot &dot) : Circle({dot.x, dot.y}, 3.0f, 0xff808080u) {}
+  void read(const Dot &dot) {
+    setCentre({dot.x, dot.y});
+    setFill(dot.lit ? 0xffff0000u : 0xff808080u);
+  }
+};
+struct CountLine : Line {
+  CountLine() : Line({0.0f, 0.0f}, {0.0f, 0.0f}, 0xff00ff00u, 2.0f) {}
+  void read(const Count &c) { setEnds({0.0f, 0.0f}, {static_cast<float>(c.n), 0.0f}); }
+};
+auto dotsPage() {
+  return column(figure(100.0f, 50.0f, Polygon({{0.0f, 0.0f}, {10.0f, 0.0f}, {5.0f, 8.0f}}, 0xff0000ffu), bound<Count>(CountLine()),
+                       group<int, Dot>([](const Dot &dot) { return bound<Dot>(DotShape(dot)); })));
+}
+
+TEST(Web, AFigureIsShapesAsNodesEachWrittenAsItsPartMoves) {
+  dom::reset();
+  DotsModel m;
+  m.apply(model::put<Dot>(1, Dot{10.0f, 20.0f, false}));
+  m.apply(model::put<Dot>(2, Dot{30.0f, 40.0f, true}));
+  Page page(dotsPage(), m);
+  page.mount();
+  std::string html = dom::dump(dom::root());
+  EXPECT_NE(html.find("<svg class=\"skiff-figure\" width=\"100\" height=\"50\" viewBox=\"0 0 100 50\">"), std::string::npos) << html;
+  EXPECT_NE(html.find("<polygon points=\"0,0 10,0 5,8\" fill=\"#0000ff\" stroke=\"none\" stroke-width=\"0\">"), std::string::npos) << html;
+  EXPECT_NE(html.find("<line x1=\"0\" y1=\"0\" x2=\"0\" y2=\"0\" fill=\"none\" stroke=\"#00ff00\" stroke-width=\"2\">"), std::string::npos) << html;
+  EXPECT_NE(html.find("<g><circle cx=\"10\" cy=\"20\" r=\"3\" fill=\"#808080\""), std::string::npos) << html;
+  EXPECT_NE(html.find("<circle cx=\"30\" cy=\"40\" r=\"3\" fill=\"#ff0000\""), std::string::npos) << html;
+  m.apply(model::put<Dot>(1, Dot{11.0f, 20.0f, true}));
+  m.apply(model::take<Dot>(2));
+  m.apply(model::over<Count>([](Count c) {
+    c.n = 42;
+    return c;
+  }));
+  page.refresh();
+  html = dom::dump(dom::root());
+  EXPECT_NE(html.find("<circle cx=\"11\" cy=\"20\" r=\"3\" fill=\"#ff0000\""), std::string::npos) << html;
+  EXPECT_EQ(html.find("cx=\"30\""), std::string::npos) << html;
+  EXPECT_NE(html.find("x2=\"42\""), std::string::npos) << html;
+}
+
 } // namespace

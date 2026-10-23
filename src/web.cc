@@ -142,6 +142,43 @@ struct State {
   // Written to its element at the next sync.
   bool fDirty = true;
 
+  // The element is the state's: it goes with a move and with the node (a row
+  // gone from a list takes its element out of the page); a copy has none.
+  State() = default;
+  State(const State &other) : fSpec(other.fSpec), fVisible(other.fVisible), fSelected(other.fSelected), fDisabled(other.fDisabled), fDisplay(other.fDisplay) {}
+  State &operator=(const State &other) {
+    if (this != &other) {
+      drop();
+      fSpec = other.fSpec;
+      fVisible = other.fVisible;
+      fSelected = other.fSelected;
+      fDisabled = other.fDisabled;
+      fDisplay = other.fDisplay;
+      fDirty = true;
+    }
+    return *this;
+  }
+  State(State &&other) noexcept
+      : fSpec(std::move(other.fSpec)), fVisible(other.fVisible), fSelected(other.fSelected), fDisabled(other.fDisabled),
+        fHandle(std::exchange(other.fHandle, dom::kNone)), fDisplay(std::move(other.fDisplay)), fDirty(other.fDirty) {}
+  State &operator=(State &&other) noexcept {
+    if (this != &other) {
+      drop();
+      fSpec = std::move(other.fSpec);
+      fVisible = other.fVisible;
+      fSelected = other.fSelected;
+      fDisabled = other.fDisabled;
+      fHandle = std::exchange(other.fHandle, dom::kNone);
+      fDisplay = std::move(other.fDisplay);
+      fDirty = other.fDirty;
+    }
+    return *this;
+  }
+  ~State() { drop(); }
+  void drop() {
+    if (fHandle != dom::kNone) dom::destroy(std::exchange(fHandle, dom::kNone));
+  }
+
   void apply(const scene::Spec &spec) {
     overlay(fSpec, spec);
     if (spec.visible) fVisible = *spec.visible;
@@ -230,6 +267,9 @@ struct Node : scene::NodeBase {
 
   void apply(const scene::Spec &spec) { fState.apply(spec); }
   void markDirty() { fState.fDirty = true; }
+  // What skiff.bind asks of a list's container when its rows changed: the
+  // browser lays the page out, so nothing but the next sync.
+  void invalidateLayout() { fState.fDirty = true; }
   [[nodiscard]] dom::Handle element() const noexcept { return fState.fHandle; }
   [[nodiscard]] bool visible() const noexcept { return fState.fVisible; }
   [[nodiscard]] bool selected() const noexcept { return fState.fSelected; }
@@ -324,6 +364,8 @@ private:
 // and then as its press (onPress), as any control's.
 class CanvasPainter {
 public:
+  // What was drawn stays until drawn over: a node may draw only what changed.
+  static constexpr bool kRetains = true;
   explicit CanvasPainter(dom::Handle canvas) : fCanvas(canvas) {}
   void clear(scene::Colour colour) { dom::canvasClear(fCanvas, colour); }
   void fillPolygon(std::span<const scene::Point> points, scene::Colour colour) {
@@ -457,6 +499,221 @@ template <class... Parts>
   requires(sizeof...(Parts) > 0 && !std::same_as<std::tuple_element_t<0, std::tuple<Parts...>>, Look>)
 [[nodiscard]] Stack<Parts...> row(Parts... parts) {
   return Stack<Parts...>(hbox(), std::move(parts)...);
+}
+
+// ---- figures: shapes as nodes ----------------------------------------------
+//
+// A figure is an <svg> of shapes, each a node of its own -- a polygon, a
+// polyline, a line, a circle -- with the points, the fill, the stroke it has
+// now, written to its element when they move; where the figure's stylesheet
+// says so, the browser transitions them. A shape is bound to a model as any
+// node is, and a list of them (group) is as many as the model has. The
+// scene has the same shapes (skiff.nodes' Figure), drawn by Skia.
+[[nodiscard]] inline std::string hexOf(scene::Colour c) {
+  if (((c >> 24) & 0xffu) == 0) return "none";
+  return std::format("#{:02x}{:02x}{:02x}", (c >> 16) & 0xffu, (c >> 8) & 0xffu, c & 0xffu);
+}
+[[nodiscard]] inline std::string pointsOf(std::span<const scene::Point> points) {
+  std::string out;
+  for (const scene::Point &p : points) out += number(p.fX) + "," + number(p.fY) + " ";
+  if (!out.empty()) out.pop_back();
+  return out;
+}
+// What every shape has: a fill, a stroke of a width, an opacity, a class
+// for the stylesheet to know it by. Written as attributes, which the
+// stylesheet's transitions apply to as they change.
+struct Shape : Node {
+  scene::Colour fFill = 0xffffffffu, fStroke = 0;
+  float fStrokeWidth = 0.0f, fOpacity = 1.0f;
+  std::string fClass;
+  void setFill(scene::Colour fill) { change(fFill, fill); }
+  void setStroke(scene::Colour stroke, float width) {
+    change(fStroke, stroke);
+    change(fStrokeWidth, width);
+  }
+  void setOpacity(float opacity) { change(fOpacity, opacity); }
+  void setClass(std::string name) { change(fClass, std::move(name)); }
+  void syncShape() {
+    dom::attr(fState.fHandle, "fill", hexOf(fFill));
+    dom::attr(fState.fHandle, "stroke", hexOf(fStroke));
+    dom::attr(fState.fHandle, "stroke-width", number(fStrokeWidth));
+    if (fOpacity < 1.0f) dom::attr(fState.fHandle, "opacity", number(fOpacity));
+    else dom::dropAttr(fState.fHandle, "opacity");
+    if (!fClass.empty()) dom::attr(fState.fHandle, "class", fClass);
+    else dom::dropAttr(fState.fHandle, "class");
+  }
+  template <class V> void change(V &field, V value) {
+    if (field != value) {
+      field = std::move(value);
+      markDirty();
+    }
+  }
+};
+class Polygon : public Shape {
+public:
+  explicit Polygon(std::vector<scene::Point> points = {}, scene::Colour fill = 0xffffffffu) : fPoints(std::move(points)) { fFill = fill; }
+  [[nodiscard]] static constexpr std::string_view tag() { return "polygon"; }
+  void setPoints(std::vector<scene::Point> points) { change(fPoints, std::move(points)); }
+  [[nodiscard]] const std::vector<scene::Point> &points() const noexcept { return fPoints; }
+  void sync() {
+    dom::attr(fState.fHandle, "points", pointsOf(fPoints));
+    syncShape();
+  }
+
+private:
+  std::vector<scene::Point> fPoints;
+};
+class Polyline : public Shape {
+public:
+  explicit Polyline(std::vector<scene::Point> points = {}, scene::Colour stroke = 0xffffffffu, float width = 1.0f) : fPoints(std::move(points)) {
+    fFill = 0;
+    fStroke = stroke;
+    fStrokeWidth = width;
+  }
+  [[nodiscard]] static constexpr std::string_view tag() { return "polyline"; }
+  void setPoints(std::vector<scene::Point> points) { change(fPoints, std::move(points)); }
+  [[nodiscard]] const std::vector<scene::Point> &points() const noexcept { return fPoints; }
+  void sync() {
+    dom::attr(fState.fHandle, "points", pointsOf(fPoints));
+    syncShape();
+  }
+
+private:
+  std::vector<scene::Point> fPoints;
+};
+class Line : public Shape {
+public:
+  Line(scene::Point a = {}, scene::Point b = {}, scene::Colour stroke = 0xffffffffu, float width = 1.0f) : fA(a), fB(b) {
+    fFill = 0;
+    fStroke = stroke;
+    fStrokeWidth = width;
+  }
+  [[nodiscard]] static constexpr std::string_view tag() { return "line"; }
+  void setEnds(scene::Point a, scene::Point b) {
+    if (a.fX != fA.fX || a.fY != fA.fY || b.fX != fB.fX || b.fY != fB.fY) {
+      fA = a;
+      fB = b;
+      markDirty();
+    }
+  }
+  void sync() {
+    dom::attr(fState.fHandle, "x1", number(fA.fX));
+    dom::attr(fState.fHandle, "y1", number(fA.fY));
+    dom::attr(fState.fHandle, "x2", number(fB.fX));
+    dom::attr(fState.fHandle, "y2", number(fB.fY));
+    syncShape();
+  }
+
+private:
+  scene::Point fA, fB;
+};
+class Circle : public Shape {
+public:
+  Circle(scene::Point centre = {}, float radius = 1.0f, scene::Colour fill = 0xffffffffu) : fCentre(centre), fRadius(radius) { fFill = fill; }
+  [[nodiscard]] static constexpr std::string_view tag() { return "circle"; }
+  void setCentre(scene::Point centre) {
+    if (centre.fX != fCentre.fX || centre.fY != fCentre.fY) {
+      fCentre = centre;
+      markDirty();
+    }
+  }
+  void setRadius(float radius) { change(fRadius, radius); }
+  [[nodiscard]] scene::Point centre() const noexcept { return fCentre; }
+  void sync() {
+    dom::attr(fState.fHandle, "cx", number(fCentre.fX));
+    dom::attr(fState.fHandle, "cy", number(fCentre.fY));
+    dom::attr(fState.fHandle, "r", number(fRadius));
+    syncShape();
+  }
+
+private:
+  scene::Point fCentre;
+  float fRadius;
+};
+// The figure: an svg of its parts, of a size in CSS pixels, its own
+// coordinates the same.
+template <class... Parts> struct Figure : Node {
+  std::tuple<Parts...> fParts;
+  float fWidth, fHeight;
+  Figure(float width, float height, Parts... parts) : fParts(std::move(parts)...), fWidth(width), fHeight(height) {}
+  [[nodiscard]] static constexpr std::string_view tag() { return "svg"; }
+  void forEachChild(auto &&f) {
+    std::apply([&](auto &...each) { (f(each), ...); }, fParts);
+  }
+  void setSize(float width, float height) {
+    if (width != fWidth || height != fHeight) {
+      fWidth = width;
+      fHeight = height;
+      markDirty();
+    }
+  }
+  void mounted() { dom::attr(fState.fHandle, "class", "skiff-figure"); }
+  void sync() {
+    dom::attr(fState.fHandle, "width", number(fWidth));
+    dom::attr(fState.fHandle, "height", number(fHeight));
+    dom::attr(fState.fHandle, "viewBox", "0 0 " + number(fWidth) + " " + number(fHeight));
+  }
+};
+template <class... Parts> [[nodiscard]] Figure<Parts...> figure(float width, float height, Parts... parts) {
+  return Figure<Parts...>(width, height, std::move(parts)...);
+}
+
+// ---- a list's rows ------------------------------------------------------------
+//
+// A row per element of a model's list (model::Keyed), made by the make given
+// as the elements come, kept while they stay, gone with them: skiff.bind's
+// Each, with a container of the page's own. The rows are its children, as
+// the list has them now; the page mounts the new ones and keeps them in the
+// list's order.
+struct Rows : Node {
+  Look fLook;
+  std::string_view fTag = "div";
+  bool fFlex = true;
+  std::vector<dom::Handle> fShownRows;  // the rows' elements as last appended, in order
+  explicit Rows(Look look, std::string_view tag = "div", bool flex = true) : fLook(std::move(look)), fTag(tag), fFlex(flex) {
+    if (fFlex) fState.fDisplay = "flex";
+    fState.apply(fLook.fSpec);
+  }
+  [[nodiscard]] std::string_view tag() const noexcept { return fTag; }
+  void forEachChild(this auto &self, auto &&f) {
+    if constexpr (requires { self.fRows; }) f(self.fRows);
+  }
+  void mounted() {
+    if (!fFlex) return;
+    dom::attr(fState.fHandle, "class", "skiff-stack");
+    dom::style(fState.fHandle, "display", "flex");
+    dom::style(fState.fHandle, "flex-direction", fLook.fHorizontal ? "row" : "column");
+    if (fLook.fGap > 0.0f) dom::style(fState.fHandle, "gap", px(fLook.fGap));
+    if (fLook.fHorizontal) dom::style(fState.fHandle, "align-items", "center");
+  }
+};
+namespace detail {
+// How a row is made for an element: from the element where the make takes
+// one, else from nothing. As skiff.compose has it.
+template <class T, class F> struct MakeRow {
+  F fMake;
+  auto operator()(const T &value) const
+    requires std::invocable<const F &, const T &>
+  {
+    return fMake(value);
+  }
+  auto operator()(const T &) const
+    requires(!std::invocable<const F &, const T &>)
+  {
+    return fMake();
+  }
+};
+template <class T, class F> using RowOf = std::invoke_result_t<const MakeRow<T, F> &, const T &>;
+} // namespace detail
+// The rows of a list as a stack, down (vbox) or across.
+template <class Key, class T, class F> [[nodiscard]] auto each(F make, Look look = vbox()) {
+  using Row = detail::RowOf<T, F>;
+  return bind::Each<Key, T, Row, Rows, detail::MakeRow<T, F>>(detail::MakeRow<T, F>{std::move(make)}, Rows(std::move(look)));
+}
+// The rows of a list as an SVG group: for the shapes of a figure.
+template <class Key, class T, class F> [[nodiscard]] auto group(F make) {
+  using Row = detail::RowOf<T, F>;
+  return bind::Each<Key, T, Row, Rows, detail::MakeRow<T, F>>(detail::MakeRow<T, F>{std::move(make)}, Rows(vbox(), "g", false));
 }
 
 // ---- the model's kinds, around a node --------------------------------------
@@ -599,8 +856,7 @@ public:
   Page &operator=(const Page &) = delete;
 
   void mount(dom::Handle into = dom::root()) {
-    scene::Path path;
-    mountNode(fRoot, into, path);
+    mountNode(fRoot, into);
     fBinding.refresh(fRoot, *fModel);
     sync();
   }
@@ -618,34 +874,53 @@ public:
   // An event on one of the page's elements: from the document's listener,
   // through the program's skiff_web_event; from a test, through web::fire.
   void event(dom::Handle target, std::string_view kind, std::string_view value) {
-    const auto found = fPaths.find(target);
-    if (found == fPaths.end()) return;
-    const scene::Path path = found->second;
-    bool press = false;
-    atPath(fRoot, path, 0, [&](auto &node) { press = node.onDom(target, kind, value); });
+    // The node that answers on the element, found down the tree with the
+    // path to it -- the one a press is delivered along. Walked rather than
+    // kept, as a list's rows come and go.
+    scene::Path path;
+    bool press = false, found = false;
+    findNode(fRoot, target, path, [&](auto &node) {
+      found = true;
+      press = node.onDom(target, kind, value);
+    });
+    if (!found) return;
     if (press) bind::press(fRoot, *fModel, path);
     refresh();
   }
 
 private:
-  template <class N> void mountNode(N &node, dom::Handle parent, scene::Path &path) {
+  template <class N> void mountNode(N &node, dom::Handle parent) {
     State &state = node.fState;
-    state.fHandle = dom::create(std::remove_cvref_t<N>::tag());
+    state.fHandle = dom::create(node.tag());
     dom::append(parent, state.fHandle);
     // A named view is named in the document too: the page reads as the source does.
     if constexpr (requires { std::string_view(std::remove_cvref_t<N>::viewName()); })
       dom::attr(state.fHandle, "data-view", std::string_view(std::remove_cvref_t<N>::viewName()));
     node.mounted();
-    node.handles([&](dom::Handle h) { fPaths[h] = path; });
-    std::uint32_t place = 0;
-    detail::eachChild(node, [&](auto &child) {
-      path.push_back(place++);
-      mountNode(child, state.fHandle, path);
-      path.pop_back();
-    });
+    detail::eachChild(node, [&](auto &child) { mountNode(child, state.fHandle); });
   }
   template <class N> void syncNode(N &node) {
     State &state = node.fState;
+    // A list's rows: the new ones mounted, all of them in the list's order.
+    if constexpr (requires { node.fRows; node.fShownRows; }) {
+      bool changed = node.fRows.size() != node.fShownRows.size();
+      for (std::size_t i = 0; i < node.fRows.size(); ++i) {
+        auto &row = node.fRows[i];
+        if (row.fState.fHandle == dom::kNone) {
+          mountNode(row, state.fHandle);
+          changed = true;
+        } else if (!changed && node.fShownRows[i] != row.fState.fHandle) {
+          changed = true;
+        }
+      }
+      if (changed) {
+        node.fShownRows.clear();
+        for (auto &row : node.fRows) {
+          dom::append(state.fHandle, row.fState.fHandle);
+          node.fShownRows.push_back(row.fState.fHandle);
+        }
+      }
+    }
     if (state.fDirty) {
       applyCss(state.fHandle, cssOf(state));
       if (state.fDisabled) dom::attr(state.fHandle, "disabled", "");
@@ -654,6 +929,23 @@ private:
       state.fDirty = false;
     }
     detail::eachChild(node, [&](auto &child) { syncNode(child); });
+  }
+  template <class N, class F> static bool findNode(N &node, dom::Handle target, scene::Path &path, F &&f) {
+    bool mine = false;
+    node.handles([&](dom::Handle h) { mine = mine || h == target; });
+    if (mine) {
+      f(node);
+      return true;
+    }
+    std::uint32_t place = 0;
+    bool found = false;
+    detail::eachChild(node, [&](auto &child) {
+      if (found) return;
+      path.push_back(place++);
+      found = findNode(child, target, path, f);
+      if (!found) path.pop_back();
+    });
+    return found;
   }
   template <class N, class F> static void atPath(N &node, const scene::Path &path, std::size_t at, F &&f) {
     if (at == path.size()) {
@@ -666,7 +958,6 @@ private:
   Root fRoot;
   Model *fModel;
   bind::Binding<Model> fBinding;
-  std::unordered_map<dom::Handle, scene::Path> fPaths;
 };
 template <class Root, class Model> Page(Root, Model &) -> Page<Root, Model>;
 
