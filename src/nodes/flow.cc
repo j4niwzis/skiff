@@ -254,16 +254,6 @@ template <class N> struct Flowing {
       // not: what a row of the last layout asked of them asks nothing now.
       skiff::scene::eachChild(fNode, [](auto &child) { shrink_to(skiff::scene::stateOf(child), 0.0f); });
     }
-    // Wrapped, a child that grows is broken onto its line at the least it
-    // takes -- CSS's flex-basis of nothing, held up by its min-width -- and
-    // grown once its line is known (growWrapped).
-    if (fOptions.wrap) {
-      skiff::scene::eachChild(fNode, [](auto &child) {
-        skiff::scene::State &state = skiff::scene::stateOf(child);
-        if (inFlow(state) && state.fGrowAxes.template has<skiff::scene::axis::x>())
-          state.arrangeAxisSize(true, 0.0f);
-      });
-    }
     const auto shown = measured(box);
     if (!fOptions.wrap && !skiff::scene::stateOf(fNode).fAutoSizeAxes.template has<skiff::scene::axis::x>()) {
       this->shrink_to_fit(box);
@@ -274,7 +264,7 @@ template <class N> struct Flowing {
       std::size_t rowStart = 0;
       float rowWidth = 0.0f;
       for (std::size_t i = 0; i < shown.size(); ++i) {
-        const float width = shown[i]->fBounds.width() + shown[i]->fMargin.totalX();
+        const float width = this->basis(*shown[i]);
         // Half a pixel of slack: four quarters add up to the width.
         if (fOptions.wrap && i > rowStart && rowWidth + fOptions.spacingX + width > box.width() + 0.5f) {
           lines.emplace_back(rowStart, i);
@@ -320,6 +310,17 @@ template <class N> struct Flowing {
     told(box);
   }
 
+  // What a child takes on its line, wrapped: what it is -- or, where it
+  // grows, the least it takes, CSS's flex-basis of nothing held up by its
+  // min-width -- whatever it was given last: its width given again only
+  // where its share moved, so a flow laid out again for something else does
+  // not lay out, nor repaint, what it holds.
+  [[nodiscard]] float basis(const skiff::scene::State &state) const {
+    if (fOptions.wrap && state.fGrowAxes.template has<skiff::scene::axis::x>())
+      return state.fMinWidth + state.fMargin.totalX();
+    return state.fBounds.width() + state.fMargin.totalX();
+  }
+
   // CSS's flex-grow on wrapped lines: on each line, what grows takes an
   // equal share of what it and the room left come to -- none less than it
   // takes already (its min-width): one that would is kept at that, and the
@@ -334,15 +335,15 @@ template <class N> struct Flowing {
       float growing = 0.0f;
       int growers = 0;
       for (std::size_t i = from; i < end; ++i) {
-        const float width = shown[i]->fBounds.width() + shown[i]->fMargin.totalX();
+        const float width = this->basis(*shown[i]);
         used += width;
         if (shown[i]->fGrowAxes.template has<skiff::scene::axis::x>()) {
           growing += width;
           ++growers;
         }
       }
-      const float room = box.width() - used;
-      if (growers == 0 || room <= 0.5f)
+      const float room = std::max(0.0f, box.width() - used);
+      if (growers == 0)
         continue;
       std::vector<bool> kept(end - from, false);
       float pool = growing + room;
@@ -351,7 +352,7 @@ template <class N> struct Flowing {
         again = false;
         const float share = pool / static_cast<float>(open);
         for (std::size_t i = from; i < end; ++i) {
-          const float width = shown[i]->fBounds.width() + shown[i]->fMargin.totalX();
+          const float width = this->basis(*shown[i]);
           if (shown[i]->fGrowAxes.template has<skiff::scene::axis::x>() && !kept[i - from] && width > share) {
             kept[i - from] = true;
             pool -= width;
@@ -364,10 +365,11 @@ template <class N> struct Flowing {
         continue;
       const float share = pool / static_cast<float>(open);
       for (std::size_t i = from; i < end; ++i) {
-        if (shown[i]->fGrowAxes.template has<skiff::scene::axis::x>() && !kept[i - from]) {
-          to[i] = std::max(0.0f, share - shown[i]->fMargin.totalX());
-          any = true;
-        }
+        if (!shown[i]->fGrowAxes.template has<skiff::scene::axis::x>())
+          continue;
+        const float width = kept[i - from] ? this->basis(*shown[i]) : share;
+        to[i] = std::max(0.0f, width - shown[i]->fMargin.totalX());
+        any = true;
       }
     }
     if (!any)
@@ -377,7 +379,7 @@ template <class N> struct Flowing {
       skiff::scene::State &state = skiff::scene::stateOf(child);
       if (!inFlow(state))
         return;
-      if (to[at] >= 0.0f) {
+      if (to[at] >= 0.0f && std::abs(state.fWidth - to[at]) > 0.01f) {
         state.arrangeAxisSize(true, to[at]);
         skiff::scene::layout(child, boxFor(state, box));
       }
