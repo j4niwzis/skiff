@@ -26,7 +26,10 @@ EM_JS(void, skiffDomInit, (), {
   };
 });
 EM_JS(int, skiffDomCreate, (const char *tag, int len), {
-  const el = document.createElement(UTF8ToString(tag, len));
+  const name = UTF8ToString(tag, len);
+  // SVG's elements are made in SVG's namespace, or they would not draw.
+  const svg = {svg: 1, g: 1, polygon: 1, polyline: 1, line: 1, circle: 1, path: 1, rect: 1, text: 1, defs: 1};
+  const el = svg[name] ? document.createElementNS('http://www.w3.org/2000/svg', name) : document.createElement(name);
   Module.skiffDom.els.push(el);
   return Module.skiffDom.els.length - 1;
 });
@@ -62,8 +65,10 @@ EM_JS(void, skiffDomListen, (int h, const char *e, int el), {
   target.addEventListener(name, function(ev) {
     const t = ev.currentTarget;
     let value = '';
-    if (t.tagName === 'CANVAS' && typeof ev.offsetX === 'number') {
-      value = ev.offsetX + ',' + ev.offsetY + ',' + ev.button;
+    if ((t.tagName === 'CANVAS' || t.tagName === 'svg') && typeof ev.clientX === 'number') {
+      // Where in the element, whatever child of it was hit.
+      const r = t.getBoundingClientRect();
+      value = (ev.clientX - r.left) + ',' + (ev.clientY - r.top) + ',' + ev.button;
       if (name === 'contextmenu') ev.preventDefault();
     } else if (t.tagName === 'SELECT') value = String(t.selectedIndex);
     else if ('value' in t) value = String(t.value);

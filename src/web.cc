@@ -136,6 +136,9 @@ struct State {
   bool fSelected = false;
   bool fDisabled = false;
   dom::Handle fHandle = dom::kNone;
+  // The element's display when shown: the tag's own (""), a stack's flex.
+  // Written on every sync, so that a node shown again is not left display:none.
+  std::string fDisplay;
   // Written to its element at the next sync.
   bool fDirty = true;
 
@@ -154,7 +157,7 @@ struct State {
 [[nodiscard]] inline Css cssOf(const State &state) {
   const scene::Spec &s = state.fSpec;
   Css css;
-  if (!state.fVisible) css.set("display", "none");
+  css.set("display", state.fVisible ? state.fDisplay : "none");
   if (s.fill) {
     // An equal share of the stack's way, whatever is in it: a basis of nothing, so two filling
     // parts are two halves, as two filling children of a scene's flow are.
@@ -422,7 +425,10 @@ struct Look {
 template <class... Parts> struct Stack : Node {
   std::tuple<Parts...> fParts;
   Look fLook;
-  explicit Stack(Look look, Parts... parts) : fParts(std::move(parts)...), fLook(std::move(look)) { fState.apply(fLook.fSpec); }
+  explicit Stack(Look look, Parts... parts) : fParts(std::move(parts)...), fLook(std::move(look)) {
+    fState.fDisplay = "flex";
+    fState.apply(fLook.fSpec);
+  }
   void forEachChild(auto &&f) {
     std::apply([&](auto &...each) { (f(each), ...); }, fParts);
   }

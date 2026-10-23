@@ -83,7 +83,11 @@ void attr(Handle h, std::string_view n, std::string_view v) { set(at(h).attrs, n
 void dropAttr(Handle h, std::string_view n) {
   std::erase_if(at(h).attrs, [&](const auto &p) { return p.first == n; });
 }
-void style(Handle h, std::string_view p, std::string_view v) { set(at(h).styles, p, v); }
+// An empty value takes the property away, as setProperty does in a browser.
+void style(Handle h, std::string_view p, std::string_view v) {
+  if (v.empty()) std::erase_if(at(h).styles, [&](const auto &pair) { return pair.first == p; });
+  else set(at(h).styles, p, v);
+}
 void value(Handle h, std::string_view v) { at(h).value = std::string(v); }
 void checked(Handle h, bool on) { at(h).checked = on; }
 void listen(Handle h, std::string_view event) { at(h).listened.emplace_back(event); }

@@ -16,6 +16,7 @@ inline constexpr Handle kNone = 0;
 // Where a page is mounted: the document's body, or the element with id
 // "skiff" where the page has one.
 [[nodiscard]] Handle root();
+// An element by its tag; SVG's (svg, g, polygon, line, circle, path...) in SVG's namespace.
 [[nodiscard]] Handle create(std::string_view tag);
 void destroy(Handle element);
 void append(Handle parent, Handle child);
@@ -32,8 +33,8 @@ void checked(Handle element, bool on);
 // for the page it has -- extern "C", for the document's listeners to call --
 // forwarding to Page::event: no pointer kept anywhere, the page's type known
 // where the event arrives. A test calls Page::event itself (web::fire).
-// A pointer event on a canvas (click, contextmenu) carries where and which:
-// its value is "x,y,button", in the element's CSS pixels.
+// A pointer event on a canvas or an svg (click, contextmenu) carries where
+// and which: its value is "x,y,button", in the element's CSS pixels.
 void listen(Handle element, std::string_view event);
 
 // A canvas element drawn on, in CSS pixels (the device's ratio is the

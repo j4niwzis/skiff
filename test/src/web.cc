@@ -119,6 +119,26 @@ TEST(Web, ASpecIsCssOnTheElement) {
   EXPECT_NE(html.find("flex:1 1 0%;"), std::string::npos);
 }
 
+TEST(Web, ANodeHiddenAndShownAgainIsShownAsItWas) {
+  dom::reset();
+  Model m;
+  Page page(column(vbox(), Text("x"), row(hbox(), Text("y"))), m);
+  page.mount();
+  auto &text = std::get<0>(page.root().fParts);
+  auto &inner = std::get<1>(page.root().fParts);
+  text.setVisible(false);
+  inner.setVisible(false);
+  page.sync();
+  EXPECT_NE(dom::dump(text.element()).find("display:none;"), std::string::npos) << dom::dump(text.element());
+  EXPECT_NE(dom::dump(inner.element()).find("display:none;"), std::string::npos);
+  text.setVisible(true);
+  inner.setVisible(true);
+  page.sync();
+  EXPECT_EQ(dom::dump(text.element()).find("display:"), std::string::npos) << dom::dump(text.element());
+  EXPECT_NE(dom::dump(inner.element()).find("display:flex;"), std::string::npos) << dom::dump(inner.element());
+  EXPECT_EQ(dom::dump(inner.element()).find("display:none"), std::string::npos);
+}
+
 TEST(Web, AStylesheetIsMountedBeforeTheTree) {
   dom::reset();
   Model m;
