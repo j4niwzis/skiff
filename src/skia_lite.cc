@@ -766,6 +766,11 @@ public:
   [[nodiscard]] bool drawsNothing() const noexcept { return isNull(); }
   void setImmutable() noexcept {}
   [[nodiscard]] Pixels &pixels() noexcept { return fPixels; }
+  // Its pixels as memory, four bytes each, a row after a row: what a
+  // filter written for Skia's bitmap (a blur) reads and writes.
+  [[nodiscard]] void *getPixels() noexcept { return fPixels.colours.empty() ? nullptr : fPixels.colours.data(); }
+  [[nodiscard]] const void *getPixels() const noexcept { return fPixels.colours.empty() ? nullptr : fPixels.colours.data(); }
+  [[nodiscard]] std::size_t rowBytes() const noexcept { return static_cast<std::size_t>(fPixels.width) * sizeof(SkColor); }
 
 private:
   SkImageInfo fInfo;
