@@ -646,6 +646,19 @@ private:
   scene::Point fCentre;
   float fRadius;
 };
+// A layer: shapes together as one node -- an SVG group of its parts -- for
+// a row of a list that is more than one shape, or for shapes shown and
+// hidden together.
+template <class... Parts> struct Layer : Node {
+  std::tuple<Parts...> fParts;
+  explicit Layer(Parts... parts) : fParts(std::move(parts)...) {}
+  [[nodiscard]] static constexpr std::string_view tag() { return "g"; }
+  void forEachChild(auto &&f) {
+    std::apply([&](auto &...each) { (f(each), ...); }, fParts);
+  }
+};
+template <class... Parts> [[nodiscard]] Layer<Parts...> layer(Parts... parts) { return Layer<Parts...>(std::move(parts)...); }
+
 // The figure: an svg of its parts, of a size in CSS pixels, its own
 // coordinates the same.
 template <class... Parts> struct Figure : Node {
