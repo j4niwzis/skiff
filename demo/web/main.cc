@@ -70,6 +70,11 @@ template <class... Parts> auto group(std::string title, Parts... parts) {
 template <class Control> auto field(std::string name, Control control) {
   return row(hbox(10.0f), Text(std::move(name), {.width = 170.0f}), std::move(control));
 }
+// Two to a row: each takes half, its label growing to push the control to
+// the half's end.
+template <class Control> auto check(std::string name, Control control) {
+  return row(hbox(8.0f, {.fill = true}), Text(std::move(name), {.grow = scene::axes::kX}), std::move(control));
+}
 
 auto page() {
   return scoped<Root>(
@@ -113,12 +118,12 @@ auto page() {
                    field("Pathfinding delay", bound<model::Field<&Visualization::pathDelay>>(SliderField<float>(0.0f, 2.0f))),
                    field("Speed of points", bound<model::Field<&Visualization::pointSpeed>>(SliderField<float>(1.0f, 64.0f)))),
              group("Graphic elements",
-                   row(hbox(16.0f), field("Grid", bound<model::Field<&Visualization::grid>>(ToggleField())),
-                       field("Edges of a maze graph", bound<model::Field<&Visualization::edges>>(ToggleField()))),
-                   row(hbox(16.0f), field("Shortest path", bound<model::Field<&Visualization::path>>(ToggleField())),
-                       field("Dots", bound<model::Field<&Visualization::dots>>(ToggleField()))),
-                   row(hbox(16.0f), field("Maze walls", bound<model::Field<&Visualization::walls>>(ToggleField())),
-                       field("Debug info", bound<model::Field<&Visualization::debug>>(ToggleField())))),
+                   row(hbox(16.0f), check("Grid", bound<model::Field<&Visualization::grid>>(ToggleField())),
+                       check("Edges of a maze graph", bound<model::Field<&Visualization::edges>>(ToggleField()))),
+                   row(hbox(16.0f), check("Shortest path", bound<model::Field<&Visualization::path>>(ToggleField())),
+                       check("Dots", bound<model::Field<&Visualization::dots>>(ToggleField()))),
+                   row(hbox(16.0f), check("Maze walls", bound<model::Field<&Visualization::walls>>(ToggleField())),
+                       check("Debug info", bound<model::Field<&Visualization::debug>>(ToggleField())))),
              bound<Settings>(label<Settings>(
                  [](const Settings &s) {
                    return std::format("{}x{} cells of {}x{}px, generator #{}, aisle {}, {} · applied {} time(s)", s.grid.columns, s.grid.rows,

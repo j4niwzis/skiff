@@ -47,7 +47,7 @@ TEST(Web, TheTreeIsMountedAsElementsShowingTheModel) {
   Page page(settingsPage(), m);
   page.mount();
   const std::string html = dom::dump(dom::root());
-  EXPECT_NE(html.find("<input type=\"checkbox\""), std::string::npos) << html;
+  EXPECT_NE(html.find("<input class=\"skiff-toggle\" type=\"checkbox\""), std::string::npos) << html;
   EXPECT_NE(html.find("type=\"range\""), std::string::npos);
   EXPECT_NE(html.find("value=\"500\""), std::string::npos) << html;       // volume 0.5 of 1000
   EXPECT_NE(html.find("role=\"tablist\""), std::string::npos);
@@ -55,7 +55,8 @@ TEST(Web, TheTreeIsMountedAsElementsShowingTheModel) {
   EXPECT_NE(html.find("<select"), std::string::npos);
   EXPECT_NE(html.find("display:flex;"), std::string::npos);
   EXPECT_NE(html.find("padding:12px 12px 12px 12px;"), std::string::npos) << html;
-  EXPECT_NE(html.find("<span>Sound</span>"), std::string::npos) << html;
+  EXPECT_NE(html.find("<span class=\"skiff-text\">Sound</span>"), std::string::npos) << html;
+  EXPECT_NE(html.find("<style>.skiff-text{"), std::string::npos) << html.substr(0, 200);
 }
 
 TEST(Web, WhatIsDoneToAControlSetsItsPartAndThePageShowsIt) {
@@ -131,10 +132,23 @@ TEST(Web, AButtonSendsItsEventToTheScopeAroundIt) {
             m);
   page.mount();
   auto &button = std::get<0>(page.root().fParts);
-  EXPECT_NE(dom::dump(button.element()).find("<button type=\"button\">Count</button>"), std::string::npos) << dom::dump(dom::root());
+  EXPECT_NE(dom::dump(button.element()).find("<button class=\"skiff-button\" type=\"button\">Count</button>"), std::string::npos) << dom::dump(dom::root());
   fire(page, button.element(), "click", "");
   fire(page, button.element(), "click", "");
   EXPECT_EQ(m.look<Count>()->n, 2);
+}
+
+struct SoundRow : Named<SoundRow, decltype(row(hbox(8.0f), Text("Sound"), bound<model::Field<&Settings::sound>>(ToggleField())))> {
+  using Named::Named;
+  static constexpr const char *viewName() { return "SoundRow"; }
+};
+
+TEST(Web, ANamedViewIsWrittenToThePageByItsName) {
+  dom::reset();
+  Model m;
+  Page page(column(SoundRow(row(hbox(8.0f), Text("Sound"), bound<model::Field<&Settings::sound>>(ToggleField())))), m);
+  page.mount();
+  EXPECT_NE(dom::dump(dom::root()).find("data-view=\"SoundRow\""), std::string::npos) << dom::dump(dom::root());
 }
 
 TEST(Web, ASpecIsCssOnTheElement) {

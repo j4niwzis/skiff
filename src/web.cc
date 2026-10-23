@@ -126,6 +126,88 @@ inline void overlay(scene::Spec &into, const scene::Spec &from) {
   take(into.disabled, from.disabled);
 }
 
+
+// ---- the theme: skiff-widgets' palette and metrics, as CSS -------------------
+//
+// What skiff-widgets draws its controls from, with the same fields and the
+// same defaults, so a page looks as the scene does: the surface and its hover
+// and active shades, text and its dimmer greys, the accent and what sits on
+// it, the corner, the font size, the row height, the padding. themeCss() is
+// the stylesheet of the browser's own controls dressed in it -- a checkbox a
+// switch, a range input a track with a knob, a select a plate with a chevron.
+struct Theme {
+  scene::Colour fSurface = 0xff2e3538u;
+  scene::Colour fSurfaceHover = 0xff394246u;
+  scene::Colour fSurfaceActive = 0xff454f54u;
+  scene::Colour fText = 0xffffffffu;
+  scene::Colour fLabel = 0xffdbe9f0u;
+  scene::Colour fTextDim = 0xffb2bec4u;
+  scene::Colour fTextFaint = 0xff8f9ca3u;
+  scene::Colour fAccent = 0xff66ccffu;
+  scene::Colour fOnAccent = 0xff171a1cu;
+  float fCorner = 5.0f;
+  float fFontSize = 16.0f;
+  float fRowHeight = 40.0f;
+  float fPaddingX = 12.0f;
+  friend bool operator==(const Theme &, const Theme &) = default;
+};
+// The process-wide default every page copies at construction.
+[[nodiscard]] inline Theme &theme() {
+  static Theme kept;
+  return kept;
+}
+// A colour brought towards white by a share, as skiff.paint lightens one.
+[[nodiscard]] inline scene::Colour lighten(scene::Colour c, float amount) {
+  const auto up = [&](unsigned v) { return static_cast<unsigned>(std::lround(v + (255.0f - v) * amount)); };
+  return (c & 0xff000000u) | (up((c >> 16) & 0xffu) << 16) | (up((c >> 8) & 0xffu) << 8) | up(c & 0xffu);
+}
+[[nodiscard]] inline std::string themeCss(const Theme &t) {
+  const std::string surface = rgba(t.fSurface), hover = rgba(t.fSurfaceHover), active = rgba(t.fSurfaceActive), text = rgba(t.fText),
+                    label = rgba(t.fLabel), dim = rgba(t.fTextDim), faint = rgba(t.fTextFaint), accent = rgba(t.fAccent),
+                    onAccent = rgba(t.fOnAccent), corner = px(t.fCorner), font = px(t.fFontSize), rowH = px(t.fRowHeight),
+                    padX = px(t.fPaddingX), font600 = "600 " + px(t.fFontSize) + " system-ui, sans-serif";
+  const std::string chevron =
+      "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='white'/%3E%3C/svg%3E\")";
+  std::string css;
+  css += ".skiff-text{color:" + label + ";font:" + font + " system-ui,sans-serif;line-height:1.3}\n";
+  css += ".skiff-button{height:" + rowH + ";padding:0 " + padX + ";border:0;border-radius:" + corner + ";background:" + surface + ";color:" + text +
+         ";font:" + font600 + ";cursor:pointer}\n";
+  css += ".skiff-button:hover{background:" + hover + "}\n";
+  css += ".skiff-button:focus-visible{outline:1.5px solid " + accent + ";outline-offset:-1.5px}\n";
+  css += ".skiff-button[disabled]{opacity:.5;cursor:default}\n";
+  css += ".skiff-tabs{display:inline-flex;gap:14px;border-radius:3px}\n";
+  css += ".skiff-tab{background:none;border:0;padding:4px 0;font:" + font + " system-ui,sans-serif;color:" + dim + ";cursor:pointer}\n";
+  css += ".skiff-tab:hover{color:" + rgba(lighten(t.fTextDim, 0.2f)) + "}\n";
+  css += ".skiff-tab[aria-selected=true]{color:" + text + ";font-weight:600}\n";
+  css += ".skiff-tabs:focus-within{outline:1px solid " + accent + "}\n";
+  css += ".skiff-textbox{height:" + rowH + ";box-sizing:border-box;padding:0 " + padX + ";border:1px solid transparent;border-radius:" + corner +
+         ";background:" + surface + ";color:" + text + ";font:" + font + " system-ui,sans-serif;outline:none}\n";
+  css += ".skiff-textbox::placeholder{color:" + faint + "}\n";
+  css += ".skiff-textbox:focus{border-color:" + accent + "}\n";
+  css += ".skiff-select{height:30px;box-sizing:border-box;padding:0 28px 0 " + padX + ";border:1px solid " + active + ";border-radius:" + corner +
+         ";background:" + surface + " " + chevron + " no-repeat right 10px center;color:" + text + ";font:" + font +
+         " system-ui,sans-serif;appearance:none;-webkit-appearance:none;cursor:pointer}\n";
+  css += ".skiff-select:hover{background-color:" + hover + "}\n";
+  css += ".skiff-select:focus{border-color:" + accent + ";outline:none}\n";
+  css += ".skiff-toggle{appearance:none;-webkit-appearance:none;width:40px;height:22px;border-radius:11px;background:" + surface +
+         ";position:relative;margin:0;cursor:pointer;flex:none;transition:background .12s}\n";
+  css += ".skiff-toggle::before{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:" + text +
+         ";transition:left .12s}\n";
+  css += ".skiff-toggle:checked{background:" + accent + "}\n";
+  css += ".skiff-toggle:checked::before{left:21px}\n";
+  css += ".skiff-toggle:focus-visible{outline:1.5px solid " + accent + ";outline-offset:1px}\n";
+  css += ".skiff-slider{appearance:none;-webkit-appearance:none;height:16px;background:transparent;margin:0;cursor:pointer;width:100%;min-width:80px;--skiff-track:" +
+         surface + "}\n";
+  css += ".skiff-slider::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--skiff-track)}\n";
+  css += ".skiff-slider::-moz-range-track{height:6px;border-radius:3px;background:" + surface + "}\n";
+  css += ".skiff-slider::-moz-range-progress{height:6px;border-radius:3px;background:" + accent + "}\n";
+  css += ".skiff-slider::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:" + text +
+         ";margin-top:-4px}\n";
+  css += ".skiff-slider::-moz-range-thumb{width:14px;height:14px;border:0;border-radius:50%;background:" + text + "}\n";
+  css += ".skiff-slider:focus-visible{outline:1.5px solid " + accent + ";outline-offset:2px;border-radius:7px}\n";
+  return css;
+}
+
 // ---- a node's state --------------------------------------------------------
 
 struct State {
@@ -285,6 +367,7 @@ class Text : public Node {
 public:
   explicit Text(std::string text, scene::Spec spec = {}) : fText(std::move(text)) { fState.apply(spec); }
   [[nodiscard]] static constexpr std::string_view tag() { return "span"; }
+  void mounted() { dom::attr(fState.fHandle, "class", "skiff-text"); }
   void sync() { dom::text(fState.fHandle, fText); }
   void setText(std::string text) {
     if (text != fText) {
@@ -314,6 +397,7 @@ template <class... Parts> struct Stack : Node {
     std::apply([&](auto &...each) { (f(each), ...); }, fParts);
   }
   void mounted() {
+    dom::attr(fState.fHandle, "class", "skiff-stack");
     dom::style(fState.fHandle, "display", "flex");
     dom::style(fState.fHandle, "flex-direction", fLook.fHorizontal ? "row" : "column");
     if (fLook.fGap > 0.0f) dom::style(fState.fHandle, "gap", px(fLook.fGap));
@@ -352,6 +436,7 @@ public:
   explicit ToggleField(scene::Spec spec = {}) { fState.apply(spec); }
   [[nodiscard]] static constexpr std::string_view tag() { return "input"; }
   void mounted() {
+    dom::attr(fState.fHandle, "class", "skiff-toggle");
     dom::attr(fState.fHandle, "type", "checkbox");
     dom::listen(fState.fHandle, "change");
   }
@@ -381,13 +466,25 @@ public:
   SliderField(T low, T high, scene::Spec spec = {}) : fLow(low), fHigh(high) { fState.apply(spec); }
   [[nodiscard]] static constexpr std::string_view tag() { return "input"; }
   void mounted() {
+    dom::attr(fState.fHandle, "class", "skiff-slider");
     dom::attr(fState.fHandle, "type", "range");
     dom::attr(fState.fHandle, "min", "0");
     dom::attr(fState.fHandle, "max", std::to_string(kSteps));
     dom::attr(fState.fHandle, "step", "1");
     dom::listen(fState.fHandle, "input");
   }
-  void sync() { dom::value(fState.fHandle, std::to_string(static_cast<int>(std::lround(fFraction * kSteps)))); }
+  void sync() {
+    dom::value(fState.fHandle, std::to_string(static_cast<int>(std::lround(fFraction * kSteps))));
+    // The track filled up to the knob, as the scene draws it: the gradient is
+    // the element's own, where the browser's track cannot be told the value.
+    const std::string at = number(fFraction * 100.0f) + "%";
+    dom::style(fState.fHandle, "--skiff-track",
+               "linear-gradient(to right," + rgba(fTheme.fAccent) + " 0 " + at + "," + rgba(fTheme.fSurface) + " " + at + " 100%)");
+  }
+  void setTheme(Theme value) {
+    fTheme = std::move(value);
+    markDirty();
+  }
   void read(const T &now) {
     const double span = static_cast<double>(fHigh) - static_cast<double>(fLow);
     const float fraction = span == 0.0 ? 0.0f : static_cast<float>((static_cast<double>(now) - static_cast<double>(fLow)) / span);
@@ -418,6 +515,7 @@ private:
   T fLow;
   T fHigh;
   float fFraction = 0.0f;
+  Theme fTheme = theme();
 };
 
 // A text input showing a string part -- a std::string, or a type whose one
@@ -427,6 +525,7 @@ public:
   explicit TextField(std::string placeholder = {}, scene::Spec spec = {}) : fPlaceholder(std::move(placeholder)) { fState.apply(spec); }
   [[nodiscard]] static constexpr std::string_view tag() { return "input"; }
   void mounted() {
+    dom::attr(fState.fHandle, "class", "skiff-textbox");
     dom::attr(fState.fHandle, "type", "text");
     if (!fPlaceholder.empty()) dom::attr(fState.fHandle, "placeholder", fPlaceholder);
     dom::listen(fState.fHandle, "input");
@@ -461,12 +560,12 @@ public:
   using Choice = std::pair<std::string, T>;
   explicit ChoiceTabs(std::vector<Choice> choices, scene::Spec spec = {}) : fChoices(std::move(choices)) { fState.apply(spec); }
   void mounted() {
+    dom::attr(fState.fHandle, "class", "skiff-tabs");
     dom::attr(fState.fHandle, "role", "tablist");
-    dom::style(fState.fHandle, "display", "inline-flex");
-    dom::style(fState.fHandle, "gap", "4px");
     fTabs.clear();
     for (const auto &[label, value] : fChoices) {
       const dom::Handle tab = dom::create("button");
+      dom::attr(tab, "class", "skiff-tab");
       dom::attr(tab, "role", "tab");
       dom::attr(tab, "type", "button");
       dom::text(tab, label);
@@ -517,6 +616,7 @@ public:
   explicit Dropdown(std::vector<Choice> choices, scene::Spec spec = {}) : fChoices(std::move(choices)) { fState.apply(spec); }
   [[nodiscard]] static constexpr std::string_view tag() { return "select"; }
   void mounted() {
+    dom::attr(fState.fHandle, "class", "skiff-select");
     for (std::size_t i = 0; i < fChoices.size(); ++i) {
       const dom::Handle option = dom::create("option");
       dom::attr(option, "value", std::to_string(i));
@@ -561,6 +661,7 @@ public:
   SendButton(std::string label, E event, scene::Spec spec = {}) : fLabel(std::move(label)), fEvent(std::move(event)) { fState.apply(spec); }
   [[nodiscard]] static constexpr std::string_view tag() { return "button"; }
   void mounted() {
+    dom::attr(fState.fHandle, "class", "skiff-button");
     dom::attr(fState.fHandle, "type", "button");
     dom::listen(fState.fHandle, "click");
   }
@@ -633,6 +734,19 @@ template <class... H> struct Handlers : H... {
   using H::on...;
 };
 template <class... H> [[nodiscard]] Handlers<H...> handlers(H... each) { return {std::move(each)...}; }
+
+// A view named where it is written (SKIFF_NAMED): a type of its own over
+// what the expression made, read, bound and walked the same, and written to
+// the page under its name (data-view) so that the document reads as the
+// source does. Its content's handlers are declared again at its level, as
+// the binding's kinds declare them.
+template <class Self, class Base> struct Named : Base {
+  using Base::onKey;
+  using Base::onPointer;
+  using Base::onText;
+  using Base::onSemantic;
+  explicit Named(Base made) : Base(std::move(made)) {}
+};
 
 // ---- walking a page's tree, typed ---------------------------------------------
 //
@@ -710,7 +824,13 @@ public:
   Page(const Page &) = delete;
   Page &operator=(const Page &) = delete;
 
+  // The theme the page's own stylesheet is written from: set before mount().
+  void setTheme(Theme value) { fTheme = std::move(value); }
+  [[nodiscard]] const Theme &pageTheme() const noexcept { return fTheme; }
   void mount(dom::Handle into = dom::root()) {
+    const dom::Handle style = dom::create("style");
+    dom::text(style, themeCss(fTheme));
+    dom::append(into, style);
     scene::Path path;
     mountNode(fRoot, into, path);
     fBinding.refresh(fRoot, *fModel);
@@ -744,6 +864,9 @@ private:
     State &state = node.fState;
     state.fHandle = dom::create(std::remove_cvref_t<N>::tag());
     dom::append(parent, state.fHandle);
+    // A named view is named in the document too: the page reads as the source does.
+    if constexpr (requires { std::string_view(std::remove_cvref_t<N>::viewName()); })
+      dom::attr(state.fHandle, "data-view", std::string_view(std::remove_cvref_t<N>::viewName()));
     node.mounted();
     node.handles([&](dom::Handle h) { fPaths[h] = path; });
     std::uint32_t place = 0;
@@ -774,6 +897,7 @@ private:
 
   Root fRoot;
   Model *fModel;
+  Theme fTheme = theme();
   bind::Binding<Model> fBinding;
   std::unordered_map<dom::Handle, scene::Path> fPaths;
 };
