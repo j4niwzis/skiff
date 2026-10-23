@@ -236,7 +236,10 @@ struct State {
   Css css;
   if (!state.fVisible) css.set("display", "none");
   if (s.fill) {
-    css.set("flex", "1 1 auto");
+    // An equal share of the stack's way, whatever is in it: a basis of nothing, so two filling
+    // parts are two halves, as two filling children of a scene's flow are.
+    css.set("flex", "1 1 0%");
+    css.set("min-width", "0");
     css.set("align-self", "stretch");
   }
   if (s.fillX) css.set("width", "100%");
