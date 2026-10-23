@@ -781,6 +781,23 @@ inline std::uint64_t &bornGeneration() {
   return at;
 }
 // Frames finished: what a node did "the frame before" is told by it.
+// Nodes raised over the rest -- a dropdown's plate hung below its button,
+// over the rows under it -- and, built from them, those and all they are
+// in: a child on the way to a raised one is drawn after its siblings, at
+// every level, so the raised one is drawn over the whole window and -- the
+// hit walk going by draw order -- pressed through what it covers.
+inline std::vector<NodeId> &raised() {
+  static std::vector<NodeId> ids;
+  return ids;
+}
+inline bool &raisedStale() {
+  static bool stale = false;
+  return stale;
+}
+inline std::unordered_set<NodeId> &raisedPath() {
+  static std::unordered_set<NodeId> path;
+  return path;
+}
 inline std::uint64_t &frameNumber() {
   static std::uint64_t at = 1;
   return at;
@@ -912,6 +929,27 @@ inline void reach(NodeId id) {
   }
   return 0;
 }
+// The raised nodes and all they are in, as the walks last saw the tree:
+// rebuilt when one is raised or put back, and once a frame, as one may
+// have been moved.
+[[nodiscard]] inline const std::unordered_set<NodeId> &raisedAbove() {
+  static std::uint64_t builtAt = ~std::uint64_t{0};
+  std::unordered_set<NodeId> &path = raisedPath();
+  if (raisedStale() || builtAt != frameNumber()) {
+    raisedStale() = false;
+    builtAt = frameNumber();
+    path.clear();
+    for (const NodeId id : raised()) {
+      NodeId at = id;
+      for (int depth = 0; depth < 512 && at != 0; ++depth) {
+        path.insert(at);
+        const NodeId *up = parents().find(at);
+        at = up == nullptr ? 0 : *up;
+      }
+    }
+  }
+  return path;
+}
 // How far a node is drawn from where it is laid out: its shift and all its
 // ancestors', as the walks last saw them -- a scrolled list's rows are laid
 // out where they were and drawn moved by the list's.
@@ -977,6 +1015,9 @@ inline void gone(NodeId id) {
   roots().erase(id);
   hinted().erase(id);
   reshaped().erase(id);
+  if (std::erase(raised(), id) != 0) {
+    raisedStale() = true;
+  }
   if (Entry *at = entry(id)) {
     at->id = 0;
     freeSlots().push_back(static_cast<std::uint32_t>(id & 0xffffffffu));
@@ -1110,6 +1151,7 @@ public:
   // earlier in the tree) and does not move in memory while followed.
   const State *fFollow = nullptr;
   bool fMasking = false; // clip children to these bounds
+  bool fRaised = false;  // drawn over the rest of the window: see work::raised
   // The view it is the top of, where it was named where it was written
   // (SKIFF_NAMED): noted while it is laid out, for what is told of its parts.
   const char *fViewName = nullptr;
@@ -1608,6 +1650,23 @@ public:
     fRedrawn = true;
     work::mark(fId);
   }
+  // Raised over the rest of the window, or put back: a dropdown's plate,
+  // hung below its button over the rows under it (work::raised).
+  void setRaised(bool raised) {
+    if (raised == fRaised) {
+      return;
+    }
+    fRaised = raised;
+    std::vector<NodeId> &ids = work::raised();
+    if (raised) {
+      ids.push_back(fId);
+    } else {
+      std::erase(ids, fId);
+    }
+    work::raisedStale() = true;
+    this->markDamaged();
+  }
+  [[nodiscard]] bool raised() const noexcept { return fRaised; }
   void setFloats(bool floats) { fFloats = floats; }
   // Repainted where it was and is, what it draws the same: moved by its
   // shift, or faded.
@@ -2328,6 +2387,7 @@ struct Node : NodeBase {
   void delay(double ms) { fState.delay(ms); }
   void invalidateLayout() { fState.invalidateLayout(); }
   void markDamaged() { fState.markDamaged(); }
+  void setRaised(bool raised) { fState.setRaised(raised); }
 };
 
 // A node with no picture of its own that lays its children out in its box.
@@ -2418,8 +2478,14 @@ template <class T, class F> void eachChildInView(T &node, F &&f) {
 template <class T, class F> void eachChildInDrawOrder(T &node, F &&f) {
   bool sorted = true;
   std::uint32_t count = 0;
+  // A raised one, or one on the way to it, after all the others.
+  const bool raising = !work::raised().empty();
+  const auto keyOf = [raising](const State &state) {
+    return raising && work::raisedAbove().contains(state.fId) ? std::numeric_limits<float>::infinity()
+                                                              : state.fDepth;
+  };
   eachChild(node, [&](auto &child) {
-    sorted = sorted && stateOf(child).fDepth == 0.0f;
+    sorted = sorted && keyOf(stateOf(child)) == 0.0f;
     ++count;
   });
   if (sorted) {
@@ -2431,7 +2497,7 @@ template <class T, class F> void eachChildInDrawOrder(T &node, F &&f) {
   order.reserve(count);
   std::uint32_t at = 0;
   eachChild(node, [&](auto &child) {
-    order.emplace_back(stateOf(child).fDepth, at++);
+    order.emplace_back(keyOf(stateOf(child)), at++);
   });
   std::ranges::stable_sort(order, {}, &std::pair<float, std::uint32_t>::first);
   for (const auto &[depth, index] : order) {

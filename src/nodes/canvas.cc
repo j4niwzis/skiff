@@ -68,7 +68,8 @@ private:
   float fWidth, fHeight, fAlpha;
 };
 
-// A node that draws itself through a painter -- its own draw(painter) -- in
+// A node that draws itself through a painter -- its own paint(painter); `draw`
+// is the scene's hook on every node -- in
 // the size it says (setSize), and takes a click: pressed(Press) on the node
 // that is one, where and which button, then its press (onPress) as any
 // control's. The page has the same (skiff.web's Canvas): a program draws
@@ -98,7 +99,7 @@ public:
     canvas->translate(bounds.left(), bounds.top());
     canvas->clipRect(skia::SkRect::MakeWH(bounds.width(), bounds.height()));
     SkiaPainter painter(canvas, bounds.width(), bounds.height(), alpha);
-    self.draw(painter);
+    self.paint(painter);
     canvas->restore();
     hooks.over(state, canvas, alpha);
   }

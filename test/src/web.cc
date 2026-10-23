@@ -156,7 +156,7 @@ struct Plot : Canvas {
   Press fLast;
   void pressed(Press press) { fLast = press; }
   Clicked onPress() { return {}; }
-  template <class P> void draw(P &p) {
+  template <class P> void paint(P &p) {
     p.clear(0xff000000u);
     const scene::Point tri[] = {{0.0f, 0.0f}, {10.0f, 0.0f}, {5.0f, 8.0f}};
     p.fillPolygon(tri, 0xffffffffu);
