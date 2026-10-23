@@ -27,17 +27,19 @@ void style(Handle element, std::string_view property, std::string_view value);
 // the pointer left them.
 void value(Handle element, std::string_view value);
 void checked(Handle element, bool on);
-// Events the page's sink is sent: by name (click, input, change), with the
-// element they happened on and its value then.
+// Events listened on, by name (click, input, change). They reach the page
+// through skiff_web_event(handle, event, value), which the program defines
+// for the page it has -- extern "C", for the document's listeners to call --
+// forwarding to Page::event: no pointer kept anywhere, the page's type known
+// where the event arrives. A test calls Page::event itself (web::fire).
 void listen(Handle element, std::string_view event);
-using Sink = void (*)(void *context, Handle target, std::string_view event, std::string_view value);
-void sink(Sink sink, void *context);
 
 // What the page under `element` is, as HTML -- the fake's for a test; the
 // browser's innerHTML under Emscripten.
 [[nodiscard]] std::string dump(Handle element);
-// An event made by hand, delivered as the page's would be: a test's click,
-// a value typed. Under Emscripten, dispatched to the element.
+// An event made by hand: what the document would have done to the element
+// before telling anyone -- a checkbox toggled, a value typed. Under
+// Emscripten, dispatched to the element, so its listener runs.
 void fire(Handle target, std::string_view event, std::string_view value);
 // Everything forgotten: for a test to start a page from nothing.
 void reset();

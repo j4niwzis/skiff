@@ -69,24 +69,24 @@ TEST(Web, WhatIsDoneToAControlSetsItsPartAndThePageShowsIt) {
   auto &name = std::get<4>(page.root().fParts);
   auto &pick = std::get<5>(page.root().fParts);
 
-  dom::fire(sound.element(), "change", "");
+  fire(page, sound.element(), "change", "");
   EXPECT_TRUE(m.look<Settings>()->sound);
   EXPECT_TRUE(sound.on());
 
-  dom::fire(volume.element(), "input", "250");
+  fire(page, volume.element(), "input", "250");
   EXPECT_NEAR(m.look<Settings>()->volume, 0.25f, 0.001f);
   EXPECT_NE(dom::dump(volume.element()).find("value=\"250\""), std::string::npos);
 
-  dom::fire(look.tabs()[1], "click", "");
+  fire(page, look.tabs()[1], "click", "");
   EXPECT_EQ(m.look<Settings>()->look, Look::kFrosted);
   EXPECT_EQ(look.selected(), 1);
   EXPECT_EQ(pick.selected(), 1);  // the select shows the same part
   EXPECT_NE(dom::dump(look.tabs()[1]).find("aria-selected=\"true\""), std::string::npos);
 
-  dom::fire(name.element(), "input", "bob");
+  fire(page, name.element(), "input", "bob");
   EXPECT_EQ(m.look<Settings>()->name, "bob");
 
-  dom::fire(pick.element(), "change", "0");
+  fire(page, pick.element(), "change", "0");
   EXPECT_EQ(m.look<Settings>()->look, Look::kSolid);
   EXPECT_EQ(look.selected(), 0);
 }
@@ -132,8 +132,8 @@ TEST(Web, AButtonSendsItsEventToTheScopeAroundIt) {
   page.mount();
   auto &button = std::get<0>(page.root().fParts);
   EXPECT_NE(dom::dump(button.element()).find("<button type=\"button\">Count</button>"), std::string::npos) << dom::dump(dom::root());
-  dom::fire(button.element(), "click", "");
-  dom::fire(button.element(), "click", "");
+  fire(page, button.element(), "click", "");
+  fire(page, button.element(), "click", "");
   EXPECT_EQ(m.look<Count>()->n, 2);
 }
 

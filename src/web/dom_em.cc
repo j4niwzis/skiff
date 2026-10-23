@@ -1,7 +1,9 @@
 // skiff.web:dom in the browser, through Emscripten: the elements are the
 // document's, kept in a table on the JS side by the handle the C++ side holds.
-// Events listened on come back through skiff_web_event, exported for the JS
-// listeners to call (the program links with -sEXPORTED_RUNTIME_METHODS=ccall).
+// Events listened on come back through skiff_web_event(handle, event, value),
+// which the program defines for its page (extern "C", EMSCRIPTEN_KEEPALIVE) and
+// the JS listeners call through Module.ccall -- so the program links with
+// -sEXPORTED_RUNTIME_METHODS=ccall and -sEXPORTED_FUNCTIONS=_main,_skiff_web_event.
 module;
 #include <emscripten.h>
 #include <cstdint>
@@ -77,17 +79,6 @@ EM_JS(void, skiffDomReset, (), {
 // clang-format on
 
 namespace skiff::web::dom {
-namespace {
-struct Listener {
-  Sink fSink = nullptr;
-  void *fContext = nullptr;
-};
-Listener &listener() {
-  static Listener kept;
-  return kept;
-}
-} // namespace
-
 Handle root() {
   skiffDomInit();
   return 1;
@@ -109,7 +100,6 @@ void style(Handle h, std::string_view p, std::string_view v) {
 void value(Handle h, std::string_view v) { skiffDomValue(static_cast<int>(h), v.data(), static_cast<int>(v.size())); }
 void checked(Handle h, bool on) { skiffDomChecked(static_cast<int>(h), on ? 1 : 0); }
 void listen(Handle h, std::string_view e) { skiffDomListen(static_cast<int>(h), e.data(), static_cast<int>(e.size())); }
-void sink(Sink s, void *context) { listener() = {s, context}; }
 std::string dump(Handle h) {
   char *p = skiffDomDump(static_cast<int>(h));
   std::string out(p);
@@ -122,9 +112,3 @@ void fire(Handle h, std::string_view e, std::string_view v) {
 void reset() { skiffDomReset(); }
 
 } // namespace skiff::web::dom
-
-// The JS listeners' way back in.
-extern "C" EMSCRIPTEN_KEEPALIVE void skiff_web_event(std::uint32_t handle, const char *event, const char *value) {
-  auto &l = skiff::web::dom::listener();
-  if (l.fSink) l.fSink(l.fContext, handle, std::string_view(event), std::string_view(value));
-}

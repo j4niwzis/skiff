@@ -10,7 +10,9 @@
 // it is the browser's. Events come back from the page by the element they
 // happened on, to the node that made it, and from there as a press:
 // skiff::bind::press delivers it, the binding refreshes what moved, and each
-// node that moved writes itself to its element again (sync()).
+// node that moved writes itself to its element again (sync()). Nothing is
+// erased on the way: the page's type is known where an event arrives, as a
+// release build keeps everything in skiff.
 //
 // How a node is an element, each hook found where a node declares it:
 //   tag()                 the element's tag; "div" unless said
@@ -711,7 +713,6 @@ public:
   void mount(dom::Handle into = dom::root()) {
     scene::Path path;
     mountNode(fRoot, into, path);
-    dom::sink(&Page::onEvent, this);
     fBinding.refresh(fRoot, *fModel);
     sync();
   }
@@ -726,7 +727,8 @@ public:
   [[nodiscard]] const Root &root() const noexcept { return fRoot; }
   [[nodiscard]] Model &model() noexcept { return *fModel; }
 
-  // An event on one of the page's elements.
+  // An event on one of the page's elements: from the document's listener,
+  // through the program's skiff_web_event; from a test, through web::fire.
   void event(dom::Handle target, std::string_view kind, std::string_view value) {
     const auto found = fPaths.find(target);
     if (found == fPaths.end()) return;
@@ -738,9 +740,6 @@ public:
   }
 
 private:
-  static void onEvent(void *context, dom::Handle target, std::string_view kind, std::string_view value) {
-    static_cast<Page *>(context)->event(target, kind, value);
-  }
   template <class N> void mountNode(N &node, dom::Handle parent, scene::Path &path) {
     State &state = node.fState;
     state.fHandle = dom::create(std::remove_cvref_t<N>::tag());
@@ -779,5 +778,14 @@ private:
   std::unordered_map<dom::Handle, scene::Path> fPaths;
 };
 template <class Root, class Model> Page(Root, Model &) -> Page<Root, Model>;
+
+// An event made by hand and delivered: what a test does, where no document
+// is listening -- the element done to as the document would have, then the
+// page told, as its listener would have told it.
+template <class Root, class Model>
+void fire(Page<Root, Model> &page, dom::Handle target, std::string_view event, std::string_view value) {
+  dom::fire(target, event, value);
+  page.event(target, event, value);
+}
 
 } // namespace skiff::web

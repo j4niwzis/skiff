@@ -22,14 +22,6 @@ std::vector<Element> &elements() {
   return all;
 }
 Element &at(Handle h) { return elements().at(h); }
-struct Listener {
-  Sink fSink = nullptr;
-  void *fContext = nullptr;
-};
-Listener &listener() {
-  static Listener kept;
-  return kept;
-}
 template <class Pairs> void set(Pairs &pairs, std::string_view name, std::string_view value) {
   for (auto &[n, v] : pairs)
     if (n == name) {
@@ -94,7 +86,6 @@ void style(Handle h, std::string_view p, std::string_view v) { set(at(h).styles,
 void value(Handle h, std::string_view v) { at(h).value = std::string(v); }
 void checked(Handle h, bool on) { at(h).checked = on; }
 void listen(Handle h, std::string_view event) { at(h).listened.emplace_back(event); }
-void sink(Sink s, void *context) { listener() = {s, context}; }
 
 std::string dump(Handle h) {
   std::string out;
@@ -111,12 +102,9 @@ void fire(Handle target, std::string_view event, std::string_view v) {
     else
       e.value = std::string(v);
   }
-  if (std::ranges::find(e.listened, std::string(event)) == e.listened.end()) return;
-  if (listener().fSink) listener().fSink(listener().fContext, target, event, v);
 }
 void reset() {
   elements() = {Element{}, Element{.tag = "body"}};
-  listener() = {};
 }
 
 } // namespace skiff::web::dom

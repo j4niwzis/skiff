@@ -1,6 +1,9 @@
 // A page on skiff.web: the settings of a maze visualizer (Kirkezz/Mazes), as
 // one model and one tree -- what its Qt window has, in a browser, with every
 // control a native one. Built with Emscripten; the page is index.html.
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 import std;
 import skiff.core;
 import skiff.model;
@@ -130,6 +133,13 @@ Model gModel;
 using Tree = decltype(page());
 std::optional<Page<Tree, Model>> gPage;
 } // namespace
+
+#ifdef __EMSCRIPTEN__
+// The document's listeners' way in: the page's type known here, nothing erased.
+extern "C" EMSCRIPTEN_KEEPALIVE void skiff_web_event(std::uint32_t handle, const char *event, const char *value) {
+  if (gPage) gPage->event(handle, std::string_view(event), std::string_view(value));
+}
+#endif
 
 int main() {
   gPage.emplace(page(), gModel);
