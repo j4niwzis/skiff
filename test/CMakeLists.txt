@@ -47,8 +47,15 @@ enable_testing()
 if(TARGET skiff::skiff)
 add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/style.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/tracking.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/model.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/bind.cc
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/compose.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reconcile.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/rekey.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reorder.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/views.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/row_layout.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/picker.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_wiring.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_mounting_projections.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_tabs_pages.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_styles_named.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_windows.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_rows_arriving.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_row_menus_keys.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_pictures_later.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_swipes_drags.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_menus_badges.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_call_buttons.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_panels.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_said_buttons.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_emoji.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_scopes_clicks.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_wrappers.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_windows_short.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reconcile.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/rekey.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reorder.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/views.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/row_layout.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/picker.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/images.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/schema.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/takes.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/hook.cc)
+
+# The emoji card under all its wrappers is the heaviest unit of the tests to
+# compile (more than a 1 GB box can): built where the host can take it.
+option(SKIFF_TESTS_HEAVY "Build the heaviest test units too" ON)
+if(SKIFF_TESTS_HEAVY)
+  target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/compose_emoji_wrapped.cc)
+endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   gtest

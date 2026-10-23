@@ -156,7 +156,7 @@ public:
     fWaiting = this->waitOn(fSource);
   }
 
-  void drawSelf(skia::SkCanvas *canvas, float alpha) {
+  template <class P> void drawSelf(P &p, float alpha) {
     const skia::Sp<skia::SkImage> *found = this->image();
     if (!found) {
       this->wantFrom(fSource);
@@ -175,44 +175,36 @@ public:
     const float ih = static_cast<float>((*found)->height());
     if (iw <= 0.0f || ih <= 0.0f || box.isEmpty())
       return;
-    const int saved = canvas->save();
-    const float radius = fState.fCornerRadius;
-    canvas->clipRRect(skia::SkRRect::MakeRectXY(box, radius, radius), true);
-    skia::SkPaint paint;
-    paint.setAntiAlias(true);
-    paint.setAlphaf(alpha);
+    p.save();
+    p.clipRounded(box, fState.fCornerRadius);
     // Drawn smaller than it is: scaled once to the pixels it covers, and
     // that copy put down as it is at every draw -- not filtered down again
     // each time it is repainted, which was a scroll's frame's most costly
     // part where avatars went by.
-    if (const skia::Sp<skia::SkImage> *scaled = this->scaledFor(canvas, *found, box, iw, ih)) {
-      canvas->drawImageRect(*scaled, box, skia::SkSamplingOptions(skia::SkFilterMode::kNearest), &paint);
-      canvas->restoreToCount(saved);
+    if (const skia::Sp<skia::SkImage> *scaled = this->scaledFor(p, *found, box, iw, ih)) {
+      p.image(scaled->get(), box, alpha, P::Sampling::sharp);
+      p.restore();
       return;
     }
-    const skia::SkSamplingOptions sampling(skia::SkFilterMode::kLinear);
     // At its own size: put down as it is, nothing filtered.
-    if (box.width() * canvas->getTotalMatrix().getScaleX() == iw && box.height() * canvas->getTotalMatrix().getScaleY() == ih) {
-      spl::visit([&](auto how) { drawFitted(canvas, *found, box, iw, ih, how, skia::SkSamplingOptions(), paint); }, fFit);
-      canvas->restoreToCount(saved);
-      return;
-    }
-    spl::visit(
-        [&](auto how) { drawFitted(canvas, *found, box, iw, ih, how, sampling, paint); },
-        fFit);
-    canvas->restoreToCount(saved);
+    const auto scales = p.scales();
+    const bool own = box.width() * scales.x == iw && box.height() * scales.y == ih;
+    spl::visit([&](auto how) { drawFitted(p, *found, box, iw, ih, how, own ? P::Sampling::sharp : P::Sampling::linear, alpha); },
+               fFit);
+    p.restore();
   }
 
 private:
   // The picture as the box shows it, at the device's pixels, where that is
   // smaller than the picture: made again for another picture or size.
-  const skia::Sp<skia::SkImage> *scaledFor(skia::SkCanvas *canvas, const skia::Sp<skia::SkImage> &image,
-                                           const skia::SkRect &box, float iw, float ih) {
-    const skia::SkMatrix matrix = canvas->getTotalMatrix();
-    if (matrix.getSkewX() != 0.0f || matrix.getSkewY() != 0.0f) {
+  template <class P>
+  const skia::Sp<skia::SkImage> *scaledFor(const P &p, const skia::Sp<skia::SkImage> &image, const skia::SkRect &box,
+                                           float iw, float ih) {
+    const auto scales = p.scales();
+    if (scales.skewed) {
       return nullptr;
     }
-    const float sx = matrix.getScaleX(), sy = matrix.getScaleY();
+    const float sx = scales.x, sy = scales.y;
     const int width = static_cast<int>(std::lround(box.width() * sx));
     const int height = static_cast<int>(std::lround(box.height() * sy));
     // Shown at another size than its own -- smaller, or larger: a thumbnail
@@ -242,9 +234,12 @@ private:
       skia::SkCanvas *into = surface->getCanvas();
       into->scale(static_cast<float>(width) / box.width(), static_cast<float>(height) / box.height());
       into->translate(-box.fLeft, -box.fTop);
-      skia::SkPaint plain;
-      const skia::SkSamplingOptions smooth(skia::SkFilterMode::kLinear, skia::SkMipmapMode::kLinear);
-      spl::visit([&](auto how) { drawFitted(into, image, box, iw, ih, how, smooth, plain); }, fFit);
+      // Made with Skia's own painter whatever draws the node: the copy is
+      // a Skia image either way.
+      skia::SkFont plain;
+      const skiff::paint::Painter offscreen(into, plain);
+      spl::visit([&](auto how) { drawFitted(offscreen, image, box, iw, ih, how, skiff::paint::Painter::Sampling::smooth, 1.0f); },
+                 fFit);
       fScaled = surface->makeImageSnapshot();
       // Kept for the others, within a number and a size: past them, the
       // cache let go of -- the nodes keep what they draw.
@@ -262,22 +257,21 @@ private:
     return fScaled ? &fScaled : nullptr;
   }
 
-  static void drawFitted(skia::SkCanvas *canvas, const skia::Sp<skia::SkImage> &image, const skia::SkRect &box,
-                         float iw, float ih, fit::cover, const skia::SkSamplingOptions &sampling,
-                         const skia::SkPaint &paint) {
+  template <class P>
+  static void drawFitted(const P &p, const skia::Sp<skia::SkImage> &image, const skia::SkRect &box, float iw, float ih,
+                         fit::cover, typename P::Sampling how, float alpha) {
     const float scale = std::max(box.width() / iw, box.height() / ih);
     const float sw = box.width() / scale, sh = box.height() / scale;
     const skia::SkRect from = skia::SkRect::MakeXYWH((iw - sw) * 0.5f, (ih - sh) * 0.5f, sw, sh);
-    canvas->drawImageRect(image, from, box, sampling, &paint, skia::SkCanvas::kFast_SrcRectConstraint);
+    p.imagePart(image.get(), from, box, alpha, how);
   }
-  static void drawFitted(skia::SkCanvas *canvas, const skia::Sp<skia::SkImage> &image, const skia::SkRect &box,
-                         float iw, float ih, fit::contain, const skia::SkSamplingOptions &sampling,
-                         const skia::SkPaint &paint) {
+  template <class P>
+  static void drawFitted(const P &p, const skia::Sp<skia::SkImage> &image, const skia::SkRect &box, float iw, float ih,
+                         fit::contain, typename P::Sampling how, float alpha) {
     const float scale = std::min(box.width() / iw, box.height() / ih);
     const float w = iw * scale, h = ih * scale;
-    const skia::SkRect to =
-        skia::SkRect::MakeXYWH(box.centerX() - w * 0.5f, box.centerY() - h * 0.5f, w, h);
-    canvas->drawImageRect(image, to, sampling, &paint);
+    const skia::SkRect to = skia::SkRect::MakeXYWH(box.centerX() - w * 0.5f, box.centerY() - h * 0.5f, w, h);
+    p.image(image.get(), to, alpha, how);
   }
 
   // The scaled copies, by picture, size and fit: shared by every Image.

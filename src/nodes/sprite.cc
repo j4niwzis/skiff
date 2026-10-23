@@ -21,9 +21,7 @@ public:
     this->markDamaged();
   }
 
-  void drawSelf(skia::SkCanvas *canvas, float alpha) {
-    skiff::paint::imageFilled(canvas, fImage.get(), fState.fBounds, alpha);
-  }
+  template <class P> void drawSelf(P &p, float alpha) { p.imageFilled(fImage.get(), fState.fBounds, alpha); }
 
 private:
   skia::Sp<skia::SkImage> fImage;

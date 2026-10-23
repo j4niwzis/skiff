@@ -178,7 +178,7 @@ public:
     }
     fFrom = fValue;
     fTarget = target;
-    fStartMs = -1.0;
+    fStartMs.reset();
     if (!moves(fKind)) {
       fValue = target;
     }
@@ -187,12 +187,16 @@ public:
     fValue = value;
     fFrom = value;
     fTarget = value;
-    fStartMs = -1.0;
+    fStartMs.reset();
   }
   void setDuration(float durationMs) noexcept { fDurationMs = durationMs; }
 
   // One frame's step, at `nowMs`: whether the value changed. The first frame
-  // of a move counts as one frame in.
+  // of a move counts as one frame in. The start is none until then, not a
+  // negative time: a clock begun at zero put it at -16 ms, which the next
+  // step took for no start and set again -- the movement stood at its first
+  // frame until the clock passed one (a drawer opened at the first frame
+  // repainted nothing).
   bool step(double nowMs) {
     if (!this->moving()) {
       return false;
@@ -201,13 +205,13 @@ public:
       fValue = fTarget;
       return true;
     }
-    if (fStartMs < 0.0) {
+    if (!fStartMs) {
       fStartMs = nowMs - 16.0;
     }
     // Missing frames skip samples, not time. Moving the start after a slow
     // frame stretched every animation on a machine drawing below 20 FPS.
     const float t = std::clamp(
-        static_cast<float>((nowMs - fStartMs) / fDurationMs), 0.0f, 1.0f);
+        static_cast<float>((nowMs - *fStartMs) / fDurationMs), 0.0f, 1.0f);
     const float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
     const float before = fValue;
     fValue = t >= 1.0f ? fTarget : fFrom + (fTarget - fFrom) * eased;
@@ -220,7 +224,7 @@ private:
   float fTarget;
   float fDurationMs;
   Movement fKind;
-  double fStartMs = -1.0;
+  std::optional<double> fStartMs;
 };
 
 // ---- Text with fallback ---------------------------------------------------
@@ -1000,6 +1004,124 @@ public:
       : fCanvas(canvas), fFont(&font), fMonospace(monospace) {}
 
   [[nodiscard]] skia::SkCanvas *canvas() const noexcept { return fCanvas; }
+  // This painter in the other face: the monospace one where `on`, else the
+  // text's own. For a run of code in a paragraph of prose.
+  [[nodiscard]] Painter monospaced(bool on) const { return Painter(fCanvas, *fFont, on); }
+
+  // Beyond rectangles and text, so that a node draws through this alone --
+  // and a painter that is not Skia's can draw what it draws too. A scene's
+  // Rect is taken where Skia's is: it converts by its fields.
+  void save() const {
+    if (fCanvas) fCanvas->save();
+  }
+  void restore() const {
+    if (fCanvas) fCanvas->restore();
+  }
+  void translate(float dx, float dy) const {
+    if (fCanvas) fCanvas->translate(dx, dy);
+  }
+  void rotate(float degrees) const {
+    if (fCanvas) fCanvas->rotate(degrees);
+  }
+  void clipRect(const skia::SkRect &rect) const {
+    if (fCanvas) fCanvas->clipRect(rect, true);
+  }
+  void clipRounded(const skia::SkRect &rect, float radius) const {
+    if (fCanvas) fCanvas->clipRRect(skia::SkRRect::MakeRectXY(rect, radius, radius), true);
+  }
+  // What is drawn until endLayer is drawn at once, faded as a whole.
+  void clipOval(const skia::SkRect &oval) const {
+    if (fCanvas) fCanvas->clipRRect(skia::SkRRect::MakeOval(oval), true);
+  }
+  void layer(float alpha) const {
+    if (fCanvas) fCanvas->saveLayerAlphaf(nullptr, alpha);
+  }
+  void endLayer() const { restore(); }
+  void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, bool round = true) const {
+    if (!fCanvas) return;
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setStyle(skia::kStrokeStyle);
+    paint.setStrokeWidth(width);
+    paint.setStrokeCap(round ? skia::kRoundCap : skia::kButtCap);
+    paint.setColor(color);
+    paint.setAlphaf(paint.getAlphaf() * alpha);
+    fCanvas->drawLine(x1, y1, x2, y2, paint);
+  }
+  // An arc of the oval in its box, from a start angle through a sweep (degrees, clockwise), stroked.
+  void arc(const skia::SkRect &oval, float startDegrees, float sweepDegrees, float width, skia::SkColor color, float alpha) const {
+    if (!fCanvas) return;
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setStyle(skia::kStrokeStyle);
+    paint.setStrokeWidth(width);
+    paint.setStrokeCap(skia::kRoundCap);
+    paint.setColor(color);
+    paint.setAlphaf(paint.getAlphaf() * alpha);
+    fCanvas->drawArc(oval, startDegrees, sweepDegrees, false, paint);
+  }
+  // The same, filled: the piece of the oval between the arc and its chord.
+  void fillArc(const skia::SkRect &oval, float startDegrees, float sweepDegrees, skia::SkColor color, float alpha) const {
+    if (fCanvas) fCanvas->drawArc(oval, startDegrees, sweepDegrees, false, solid(color, alpha));
+  }
+  void strokeCircle(float cx, float cy, float r, float width, skia::SkColor color, float alpha) const {
+    if (!fCanvas) return;
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setStyle(skia::kStrokeStyle);
+    paint.setStrokeWidth(width);
+    paint.setColor(color);
+    paint.setAlphaf(paint.getAlphaf() * alpha);
+    fCanvas->drawCircle(cx, cy, r, paint);
+  }
+  // A path of lines and curves, filled or stroked.
+  class Path {
+  public:
+    Path &moveTo(float x, float y) {
+      fBuilder.moveTo(x, y);
+      return *this;
+    }
+    Path &lineTo(float x, float y) {
+      fBuilder.lineTo(x, y);
+      return *this;
+    }
+    Path &quadTo(float x1, float y1, float x, float y) {
+      fBuilder.quadTo(x1, y1, x, y);
+      return *this;
+    }
+    Path &cubicTo(float x1, float y1, float x2, float y2, float x, float y) {
+      fBuilder.cubicTo(x1, y1, x2, y2, x, y);
+      return *this;
+    }
+    Path &close() {
+      fBuilder.close();
+      return *this;
+    }
+    [[nodiscard]] skia::SkPath snapshot() const { return fBuilder.snapshot(); }
+
+  private:
+    skia::SkPathBuilder fBuilder;
+  };
+  void fill(const Path &path, skia::SkColor color, float alpha) const {
+    if (!fCanvas) return;
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor(color);
+    paint.setAlphaf(paint.getAlphaf() * alpha);
+    fCanvas->drawPath(path.snapshot(), paint);
+  }
+  void stroke(const Path &path, float width, skia::SkColor color, float alpha, bool round = true) const {
+    if (!fCanvas) return;
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setStyle(skia::kStrokeStyle);
+    paint.setStrokeWidth(width);
+    paint.setStrokeCap(round ? skia::kRoundCap : skia::kButtCap);
+    paint.setStrokeJoin(round ? skia::kRoundJoin : skia::kMiterJoin);
+    paint.setColor(color);
+    paint.setAlphaf(paint.getAlphaf() * alpha);
+    fCanvas->drawPath(path.snapshot(), paint);
+  }
 
   void fillRounded(const skia::SkRect &rect, float radius, skia::SkColor color,
                    float alpha = 1.0f) const {
@@ -1115,6 +1237,75 @@ public:
   void imageFilled(const skia::SkImage *image, const skia::SkRect &dst,
                    float alpha = 1.0f) const {
     skiff::paint::imageFilled(fCanvas, image, dst, alpha);
+  }
+  // How an image is put down: pixel for pixel, for what was made at the
+  // device's pixels already; filtered; or filtered through mipmaps, for a
+  // copy made once and kept.
+  enum class Sampling { sharp, linear, smooth };
+  // The image into `dst` as it is, stretched where their shapes differ: for
+  // a square picture in a square.
+  void image(const skia::SkImage *image, const skia::SkRect &dst, float alpha = 1.0f,
+             Sampling how = Sampling::linear) const {
+    if (fCanvas == nullptr || image == nullptr) {
+      return;
+    }
+    const skia::SkPaint paint = faded(alpha);
+    fCanvas->drawImageRect(image, dst, samplingFor(how), &paint);
+  }
+  // A piece of the image, `from` in its pixels, into `to`: what a cover
+  // shows of a picture.
+  void imagePart(const skia::SkImage *image, const skia::SkRect &from, const skia::SkRect &to, float alpha = 1.0f,
+                 Sampling how = Sampling::linear) const {
+    if (fCanvas == nullptr || image == nullptr) {
+      return;
+    }
+    const skia::SkPaint paint = faded(alpha);
+    fCanvas->drawImageRect(image, from, to, samplingFor(how), &paint, skia::SkCanvas::kFast_SrcRectConstraint);
+  }
+  // The image laid at `at`, seen through a shape -- a rounded box of its own
+  // radii, or a path -- as one antialiased draw, nothing outside the shape:
+  // what frosted glass draws of a blurred wallpaper.
+  void imageThrough(const skia::SkRRect &shape, const skia::SkImage *image, const skia::SkRect &at, float alpha,
+                    Sampling how = Sampling::linear) const {
+    if (fCanvas && image) fCanvas->drawRRect(shape, imagePaint(*image, at, alpha, how));
+  }
+  void imageThrough(const skia::SkPath &shape, const skia::SkImage *image, const skia::SkRect &at, float alpha,
+                    Sampling how = Sampling::linear) const {
+    if (fCanvas && image) fCanvas->drawPath(shape, imagePaint(*image, at, alpha, how));
+  }
+  // A shape filled: a rounded box of its own radii, or a path.
+  void fill(const skia::SkRRect &shape, skia::SkColor color, float alpha = 1.0f) const {
+    if (fCanvas) fCanvas->drawRRect(shape, solid(color, alpha));
+  }
+  void fill(const skia::SkPath &shape, skia::SkColor color, float alpha = 1.0f) const {
+    if (fCanvas) fCanvas->drawPath(shape, solid(color, alpha));
+  }
+  // Where a box lies on the device through the canvas's matrix, and a box on
+  // the device back in the canvas's units (none where the matrix has no
+  // inverse): for what is kept at the device's pixels.
+  [[nodiscard]] skia::SkRect toDevice(const skia::SkRect &rect) const {
+    return fCanvas ? fCanvas->getTotalMatrix().mapRect(rect) : rect;
+  }
+  [[nodiscard]] std::optional<skia::SkRect> fromDevice(const skia::SkRect &device) const {
+    if (!fCanvas) return device;
+    skia::SkMatrix inverse;
+    if (!fCanvas->getTotalMatrix().invert(&inverse)) return std::nullopt;
+    return inverse.mapRect(device);
+  }
+  // How many of the device's pixels a unit is, 1 at least.
+  [[nodiscard]] float deviceScale() const {
+    return fCanvas ? std::max(1.0f, fCanvas->getTotalMatrix().getScaleX()) : 1.0f;
+  }
+  // The canvas's scale along each axis, and whether it skews too: for what
+  // is made at the device's pixels.
+  struct Scales {
+    float x = 1.0f, y = 1.0f;
+    bool skewed = false;
+  };
+  [[nodiscard]] Scales scales() const {
+    if (!fCanvas) return {};
+    const skia::SkMatrix m = fCanvas->getTotalMatrix();
+    return {m.getScaleX(), m.getScaleY(), m.getSkewX() != 0.0f || m.getSkewY() != 0.0f};
   }
 
   void verticalGradient(const skia::SkRect &rect, skia::SkColor top,
@@ -1360,6 +1551,33 @@ public:
   }
 
 private:
+  [[nodiscard]] static skia::SkPaint solid(skia::SkColor color, float alpha) {
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor(color);
+    paint.setAlphaf(combinedAlpha(color, alpha));
+    return paint;
+  }
+  [[nodiscard]] static skia::SkPaint faded(float alpha) {
+    skia::SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setAlphaf(alpha);
+    return paint;
+  }
+  [[nodiscard]] static skia::SkSamplingOptions samplingFor(Sampling how) {
+    switch (how) {
+    case Sampling::sharp: return skia::SkSamplingOptions(skia::SkFilterMode::kNearest);
+    case Sampling::smooth: return skia::SkSamplingOptions(skia::SkFilterMode::kLinear, skia::SkMipmapMode::kLinear);
+    default: return skia::SkSamplingOptions(skia::SkFilterMode::kLinear);
+    }
+  }
+  [[nodiscard]] static skia::SkPaint imagePaint(const skia::SkImage &image, const skia::SkRect &at, float alpha,
+                                                Sampling how) {
+    const skia::SkMatrix local = skia::SkMatrix::RectToRect(skia::SkRect::MakeIWH(image.width(), image.height()), at);
+    skia::SkPaint paint = faded(alpha);
+    paint.setShader(image.makeShader(skia::SkTileMode::kDecal, skia::SkTileMode::kDecal, samplingFor(how), &local));
+    return paint;
+  }
   skia::SkCanvas *fCanvas;
   skia::SkFont *fFont;
   // Code: drawn in the stack's monospace face.

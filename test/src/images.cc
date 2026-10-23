@@ -60,8 +60,9 @@ TEST(Images, SingleLineTextDrawsBothRepeatedInlineImagesWithOrWithoutElision) {
     ASSERT_TRUE(pixels.tryAllocN32Pixels(64, 32));
     pixels.eraseColor(0);
     skia::SkCanvas canvas(pixels);
+    skiff::paint::Painter painter(&canvas, font);
     inline_images::drawn = 0;
-    text.drawSelf(&canvas, 1.0f);
+    text.drawSelf(painter, 1.0f);
     EXPECT_EQ(inline_images::drawn, 2);
     int red_pixels = 0;
     for (int y = 0; y < 32; ++y)

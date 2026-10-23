@@ -46,40 +46,34 @@ struct NoPictures {
 
 // A pill's picture, as an avatar: the picture where there is one, over
 // the gradient with the initials in white where there is not.
-inline void drawPillPicture(skia::SkCanvas *canvas, const skiff::paint::Painter &p, const skia::SkRect &disc,
-                            const skiff::scene::PillPicture &look, float alpha) {
-  const int saved = canvas->save();
-  canvas->clipRRect(skia::SkRRect::MakeOval(disc), true);
+template <class P>
+inline void drawPillPicture(const P &p, const skia::SkRect &disc, const skiff::scene::PillPicture &look, float alpha) {
+  p.save();
+  p.clipOval(disc);
   if (look.picture && *look.picture) {
-    skia::SkPaint paint;
-    paint.setAlphaf(alpha);
-    canvas->drawImageRect(*look.picture, disc, skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &paint);
+    p.image(look.picture->get(), disc, alpha);
   } else {
-    skiff::paint::verticalGradient(canvas, disc, look.top, look.bottom, alpha);
+    p.verticalGradient(disc, look.top, look.bottom, alpha);
     const float size = disc.width() * 0.4f;
     const float width = p.measure(look.initials, size, true);
     p.textIn(disc, look.initials, size, skia::colorSetARGB(255, 255, 255, 255), alpha, true,
              (disc.width() - width) * 0.5f);
   }
-  canvas->restoreToCount(saved);
+  p.restore();
 }
 // A pill's plate, as a mention is drawn in a message and in a field: a
 // rounded plate in the pill's colour behind `width` of text at `x`, on the
 // baseline `y`, and its picture at its start where it has one. The text
 // over it is the caller's.
-inline void drawPill(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float x, float y, float width,
-                     float size, skia::SkColor colour, const std::optional<skiff::scene::PillPicture> &look,
-                     float alpha) {
+template <class P>
+inline void drawPill(const P &p, float x, float y, float width, float size, skia::SkColor colour,
+                     const std::optional<skiff::scene::PillPicture> &look, float alpha) {
   const float height = size * 1.5f;
   const skia::SkRect plate = skia::SkRect::MakeXYWH(x - 1.0f, y - size, width + 2.0f, height);
-  skia::SkPaint fill;
-  fill.setAntiAlias(true);
-  fill.setColor(colour);
-  fill.setAlphaf(0.18f * alpha);
-  canvas->drawRRect(skia::SkRRect::MakeRectXY(plate, height * 0.5f, height * 0.5f), fill);
+  p.fillRounded(plate, height * 0.5f, colour, 0.18f * alpha);
   if (look) {
     const float side = height - 4.0f;
-    drawPillPicture(canvas, p, skia::SkRect::MakeXYWH(x + 1.0f, plate.fTop + 2.0f, side, side), *look, alpha);
+    drawPillPicture(p, skia::SkRect::MakeXYWH(x + 1.0f, plate.fTop + 2.0f, side, side), *look, alpha);
   }
 }
 
@@ -717,19 +711,19 @@ public:
     fWroteWidth = width;
   }
 
-  void drawSelf(skia::SkCanvas *canvas, float alpha) {
+  template <class P> void drawSelf(P &given, float alpha) {
     const skiff::scene::State &state = fState;
-    skia::SkFont *font = skiff::paint::defaultFont();
-    if (font == nullptr || fText.empty()) {
+    if (fText.empty()) {
       return;
     }
-    const skiff::paint::Painter p(canvas, *font, fMonospace);
-    const int saved = canvas->save();
+    // In the monospace face where it is code.
+    const P p = given.monospaced(fMonospace);
+    p.save();
     const skia::SkRect &bounds = state.fBounds;
     if (fWrapped && !fStyles.empty()) {
-      this->drawQuotes(canvas, p, alpha);
+      this->drawQuotes(p, alpha);
     }
-    this->drawSelection(canvas, p, alpha);
+    this->drawSelection(p, alpha);
     if (fWrapped) {
       float y = bounds.fTop + fSize;
       if (fLinks.empty() && fStyles.empty()) {
@@ -739,23 +733,23 @@ public:
         }
       } else {
         for (const auto &[start, line] : this->shownLines()) {
-          this->drawWithLinks(canvas, p, start, line, bounds.fLeft, y, alpha);
+          this->drawWithLinks(p, start, line, bounds.fLeft, y, alpha);
           y += this->lineHeight();
         }
       }
-      canvas->restoreToCount(saved);
+      p.restore();
       return;
     }
     if (state.fMaxWidth > 0.0f || state.fGrowAxes.has<skiff::scene::axis::x>() ||
         state.fRelativeSizeAxes.has<skiff::scene::axis::x>()) {
-      canvas->clipRect(bounds, true);
+      p.clipRect(bounds);
     }
     // The baseline sits at the top plus the ascent share of the line box.
     if (!fLinks.empty() || !fStyles.empty()) {
       const float baseline = bounds.fTop + fSize;
       const std::string shown = fElided ? p.elide(fText, bounds.width(), fSize, fBold) : fText;
       if (shown == fText) {
-        this->drawWithLinks(canvas, p, 0, fText, bounds.fLeft, baseline, alpha);
+        this->drawWithLinks(p, 0, fText, bounds.fLeft, baseline, alpha);
       } else {
         constexpr std::string_view ellipsis = "\u2026";
         std::size_t end = shown.empty() ? 0 : shown.size() - ellipsis.size();
@@ -764,8 +758,7 @@ public:
         for (const Link& link : fLinks)
           if ((link.picture || link.pill) && link.first < end && end < link.last)
             end = link.first;
-        const float x = this->drawWithLinks(canvas, p, 0, std::string_view(fText).substr(0, end),
-                                            bounds.fLeft, baseline, alpha);
+        const float x = this->drawWithLinks(p, 0, std::string_view(fText).substr(0, end), bounds.fLeft, baseline, alpha);
         if (!shown.empty()) p.text(std::string(ellipsis), x, baseline, fSize, fColour, alpha, fBold);
       }
     } else if (fElided) {
@@ -775,7 +768,7 @@ public:
       p.text(fText, bounds.fLeft, bounds.fTop + fSize, fSize, fColour, alpha,
              fBold);
     }
-    canvas->restoreToCount(saved);
+    p.restore();
   }
 
 private:
@@ -881,7 +874,7 @@ private:
       skiff::scene::clipboardCandidate() = std::move(copied);
     }
   }
-  void drawSelection(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float alpha) const {
+  template <class P> void drawSelection(const P &p, float alpha) const {
     // The last text pressed shows its selection -- whether or not it has the
     // keyboard's focus: a selectable text does not take it on a press, and
     // required, no selection was ever drawn.
@@ -892,9 +885,6 @@ private:
     const skia::SkRect &bounds = fState.fBounds;
     const float lineHeight = this->lineHeight();
     float top = bounds.fTop;
-    skia::SkPaint plate;
-    plate.setColor(fSelectionColour);
-    plate.setAlphaf(plate.getAlphaf() * alpha);
     for (const auto &[start, line] : this->shownLines()) {
       const std::size_t end = start + line.size();
       if (high > start && low < end) {
@@ -902,7 +892,7 @@ private:
         const float left = p.measure(std::string(line.substr(0, a)), fSize, fBold);
         const float right = p.measure(std::string(line.substr(0, b)), fSize, fBold);
         const float from = bounds.fLeft + this->indentOf(start);
-        canvas->drawRect(skia::SkRect::MakeLTRB(from + left, top, from + right, top + lineHeight), plate);
+        p.fillRect(skia::SkRect::MakeLTRB(from + left, top, from + right, top + lineHeight), fSelectionColour, alpha);
       }
       top += lineHeight;
     }
@@ -930,8 +920,8 @@ private:
   }
   // A line in pieces: plain in the text's colour, links in theirs and
   // underlined.
-  float drawWithLinks(skia::SkCanvas *canvas, const skiff::paint::Painter &p, std::size_t start,
-                     std::string_view line, float x, float y, float alpha) const {
+  template <class P>
+  float drawWithLinks(const P &p, std::size_t start, std::string_view line, float x, float y, float alpha) const {
     const std::size_t end = start + line.size();
     std::vector<std::size_t> cuts{start, end};
     for (const Link &one : fLinks) {
@@ -959,48 +949,29 @@ private:
       const float width = p.measure(piece, fSize, bold);
       // Marked: on a plate of the quote's colour.
       if (style.marked) {
-        skia::SkPaint plate;
-        plate.setAntiAlias(true);
-        plate.setColor(fQuoteColour);
-        plate.setAlphaf(0.28f * alpha);
-        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight()), 3.0f, 3.0f,
-                              plate);
+        p.fillRounded(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight()), 3.0f, fQuoteColour,
+                      0.28f * alpha);
       }
       // Code: on a plate of the text's colour, faint.
       if (style.code) {
-        skia::SkPaint plate;
-        plate.setAntiAlias(true);
-        plate.setColor(fColour);
-        plate.setAlphaf(0.10f * alpha);
-        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight()), 3.0f, 3.0f,
-                              plate);
+        p.fillRounded(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight()), 3.0f, fColour,
+                      0.10f * alpha);
       }
       // Struck: a line through its middle.
       if (style.struck) {
-        skia::SkPaint line;
-        line.setColor(colour);
-        line.setAlphaf(line.getAlphaf() * alpha);
-        canvas->drawRect(skia::SkRect::MakeXYWH(at, y - fSize * 0.32f, width, 1.0f), line);
+        p.fillRect(skia::SkRect::MakeXYWH(at, y - fSize * 0.32f, width, 1.0f), colour, alpha);
       }
       // A spoiler not shown yet: a faint plate under a scatter of dots in
       // the text's colour, its text not drawn.
       if (style.spoiler && !fSpoilersShown) {
-        skia::SkPaint plate;
-        plate.setAntiAlias(true);
-        plate.setColor(colour);
-        plate.setAlphaf(0.12f * alpha);
         const skia::SkRect box = skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight());
-        canvas->drawRoundRect(box, 3.0f, 3.0f, plate);
-        skia::SkPaint dot;
-        dot.setAntiAlias(true);
-        dot.setColor(colour);
-        dot.setAlphaf(0.7f * alpha);
+        p.fillRounded(box, 3.0f, colour, 0.12f * alpha);
         for (int row = 0; row * 2.5f < box.height() - 1.0f; ++row) {
           for (int column = 0; column * 2.5f < box.width() - 1.0f; ++column) {
             // Scattered, the same at every frame: some places have none.
             if ((row * 7 + column * 13 + static_cast<int>(cuts[i])) % 5 < 2) {
-              canvas->drawCircle(box.fLeft + 1.0f + column * 2.5f + (row % 2) * 1.2f, box.fTop + 1.5f + row * 2.5f,
-                                 0.55f, dot);
+              p.circle(box.fLeft + 1.0f + column * 2.5f + (row % 2) * 1.2f, box.fTop + 1.5f + row * 2.5f, 0.55f, colour,
+                       0.7f * alpha);
             }
           }
         }
@@ -1009,10 +980,7 @@ private:
       }
       // Underlined: a line under it, as a link's.
       if (style.underline && !linked) {
-        skia::SkPaint under;
-        under.setColor(colour);
-        under.setAlphaf(under.getAlphaf() * alpha);
-        canvas->drawRect(skia::SkRect::MakeXYWH(at, y + 2.0f, width, 1.0f), under);
+        p.fillRect(skia::SkRect::MakeXYWH(at, y + 2.0f, width, 1.0f), colour, alpha);
       }
       if (link && link->picture) {
         // The picture, square, a little over the text's size, standing on
@@ -1023,11 +991,7 @@ private:
             waitFor(pictureWaitersOf(link->target));
           } else {
             const float side = fSize * 1.2f;
-            skia::SkPaint paint;
-            paint.setAlphaf(alpha);
-            canvas->drawImageRect(*picture,
-                                  skia::SkRect::MakeXYWH(at + (width - side) * 0.5f, y - fSize * 0.98f, side, side),
-                                  skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &paint);
+            p.image(picture->get(), skia::SkRect::MakeXYWH(at + (width - side) * 0.5f, y - fSize * 0.98f, side, side), alpha);
           }
         }
         at += width;
@@ -1040,19 +1004,15 @@ private:
         // Its picture not here yet: drawn again when it comes.
         if (look && !(look->picture && *look->picture))
           waitFor(pillWaitersOf(link->target));
-        drawPill(canvas, p, at, y, width, fSize, colour, look, alpha);
+        drawPill(p, at, y, width, fSize, colour, look, alpha);
         p.text(piece, at, y, fSize, colour, alpha, fBold);
         at += width;
         continue;
       }
       // The link under the pointer: on a faint plate of its colour.
       if (linked && fState.fHovered && fHoveredLink && link == &fLinks[*fHoveredLink]) {
-        skia::SkPaint plate;
-        plate.setAntiAlias(true);
-        plate.setColor(fLinkColour);
-        plate.setAlphaf(0.16f * alpha);
-        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, fSize * 1.3f), 3.0f, 3.0f,
-                              plate);
+        p.fillRounded(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, fSize * 1.3f), 3.0f, fLinkColour,
+                      0.16f * alpha);
       }
       if (style.emphasis && skiff::paint::defaultFont())
         skiff::paint::defaultFont()->setSkewX(-0.2f);
@@ -1060,10 +1020,7 @@ private:
       if (style.emphasis && skiff::paint::defaultFont())
         skiff::paint::defaultFont()->setSkewX(0.0f);
       if (linked) {
-        skia::SkPaint under;
-        under.setColor(colour);
-        under.setAlphaf(under.getAlphaf() * alpha);
-        canvas->drawRect(skia::SkRect::MakeXYWH(at, y + 2.0f, width, 1.0f), under);
+        p.fillRect(skia::SkRect::MakeXYWH(at, y + 2.0f, width, 1.0f), colour, alpha);
       }
       at += width;
     }
@@ -1081,7 +1038,7 @@ private:
   // a quote mark at its top right. A quote inside a quote lies on the outer
   // one's plate: its words on both tints. The words themselves in the
   // text's colour, readable on any bubble.
-  void drawQuotes(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float alpha) const {
+  template <class P> void drawQuotes(const P &p, float alpha) const {
     const skia::SkRect &bounds = fState.fBounds;
     const float lineHeight = this->lineHeight();
     std::vector<int> depths;
@@ -1104,17 +1061,11 @@ private:
         const float left = bounds.fLeft + static_cast<float>(level) * kQuoteIndent;
         const skia::SkRect plate = skia::SkRect::MakeLTRB(left, bounds.fTop + static_cast<float>(i) * lineHeight,
                                                           bounds.fRight, bounds.fTop + static_cast<float>(j) * lineHeight);
-        const int saved = canvas->save();
-        canvas->clipRRect(skia::SkRRect::MakeRectXY(plate, kQuoteRadius, kQuoteRadius), true);
-        skia::SkPaint fill;
-        fill.setAntiAlias(true);
-        fill.setColor(tint);
-        fill.setAlphaf(0.12f * alpha);
-        canvas->drawRect(plate, fill);
-        fill.setColor(tint);
-        fill.setAlphaf(fill.getAlphaf() * alpha);
-        canvas->drawRect(skia::SkRect::MakeXYWH(left, plate.fTop, 3.0f, plate.height()), fill);
-        canvas->restoreToCount(saved);
+        p.save();
+        p.clipRounded(plate, kQuoteRadius);
+        p.fillRect(plate, tint, 0.12f * alpha);
+        p.fillRect(skia::SkRect::MakeXYWH(left, plate.fTop, 3.0f, plate.height()), tint, alpha);
+        p.restore();
         p.text("\u201D", bounds.fRight - kQuoteRight + 4.0f, plate.fTop + fSize, fSize, tint, alpha);
         i = j;
       }

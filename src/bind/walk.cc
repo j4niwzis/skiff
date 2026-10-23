@@ -123,6 +123,12 @@ void visitRows(Op &op, N &node, const Here &here, const Frames &...frames) {
 template <class Op, class N, class Here, class... Frames>
 void visitBody(Op &op, N &node, const Here &here, const Frames &...frames) {
   op.bound(node, here, frames...);
+  // Content it made as it was read (a mount): shown whole by an op that
+  // would otherwise go on only along its own change.
+  if constexpr (requires { node.takeFresh(); })
+    if (node.takeFresh())
+      if constexpr (requires { op.fresh(node, here, frames...); })
+        op.fresh(node, here, frames...);
   op.itself(node);
   visitRows(op, node, here, frames...);
 }

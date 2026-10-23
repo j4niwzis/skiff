@@ -843,6 +843,7 @@ template <class Content, class Facts, class Make> struct Mounted : Specced {
   std::optional<Content> fContent;
   std::optional<Facts> fLast;
   bool fRead = false;
+  bool fFresh = false;
   explicit Mounted(Make make, scene::Spec spec = {}, bool floats = false)
       : Specced(std::move(spec)), fMake(std::move(make)) {
     this->fState.setFloats(floats);
@@ -859,18 +860,25 @@ template <class Content, class Facts, class Make> struct Mounted : Specced {
         return;
     fLast = now;
     fRead = true;
-    if (now)
+    if (now) {
       std::apply(
           [&](auto &&...arguments) {
             fContent.emplace(std::forward<decltype(arguments)>(arguments)...);
           },
           fMake(*now));
-    else
+      fFresh = true;
+    } else {
       fContent.reset();
+    }
     this->setVisible(now.has_value());
     this->invalidateLayout();
     this->markDamaged();
   }
+  // Content made since this was last asked: the refresh that made it shows
+  // it whole, there and then -- a targeted one followed only its own change
+  // down, and what the new content reads of other parts (a panel placed by
+  // what it reads) was never read until those parts moved.
+  [[nodiscard]] bool takeFresh() { return std::exchange(fFresh, false); }
   template <class Self, class F> void forEachChild(this Self &self, F &&f) {
     f(self.fContent);
   }

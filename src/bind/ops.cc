@@ -11,6 +11,13 @@ import :walk;
 
 export namespace skiff::bind {
 namespace detail {
+// The class a member pointer's member is declared in: the one that lists
+// its refreshes, which its entries are made for.
+template <class P> struct ListerOf {};
+template <class R, class C> struct ListerOf<R C::*> {
+  using type = C;
+};
+
 // ---- refreshing: what changed, shown --------------------------------------
 
 template <class M> struct Refreshing {
@@ -45,6 +52,21 @@ template <class M> struct Refreshing {
     requires ReadsItself<N, M>
   void itself(N &node) {
     node.refresh(fModel);
+  }
+  // One that lists which models it reads (fRefreshes: refreshFrom,
+  // refreshFromRoot), its refresh not one call on this model -- as the
+  // runtime walks call them, so the walks made of templates do too: the
+  // entries for this model, or for its root, each called on the class that
+  // lists them (the node may be one made around it).
+  template <class N>
+    requires(!ReadsItself<N, M> && requires(N &n) { n.fRefreshes.fEntries; })
+  void itself(N &node) {
+    auto &lister = static_cast<typename ListerOf<decltype(&N::fRefreshes)>::type &>(node);
+    for (const auto &entry : lister.fRefreshes.fEntries) {
+      if (entry.fByRoot ? entry.fType == model::rt::keyOf<typename M::RootType>() : entry.fType == model::rt::keyOf<M>())
+        entry.fRefresh(std::addressof(lister), entry.fByRoot ? static_cast<const void *>(&fModel.root())
+                                                             : static_cast<const void *>(&fModel));
+    }
   }
   template <class N> void itself(N &) {}
   template <class N> static constexpr bool kWants = true;

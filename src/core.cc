@@ -1599,13 +1599,13 @@ struct MarkOf<T> {
   static constexpr const void *key = &kMarkKey<typename T::MarkedAs>;
   static void *as(void *node) { return static_cast<void *>(static_cast<typename T::MarkedAs *>(static_cast<T *>(node))); }
 };
-// A node type that is not itself in the tree, outside a release build: what
-// it holds is, in its place -- seen through, by its seenThrough() (an
-// AnyNode&). Said by specializing this for the type (compose's Held).
+// A node type that is not itself in the tree: what it holds is, in its place
+// -- seen through, by its seenThrough() (an AnyNode&), in every build. Said
+// by specializing this for the type (compose's Held).
 template <class T> inline constexpr bool kSeenThrough = false;
-// A node type the walks see as another, its base, outside a release build:
-// one table for every stack of parts, whatever its parts (compose's Box),
-// rather than one made for each. Said by specializing this for the type.
+// A node type the walks see as another, its base: one table for every stack
+// of parts, whatever its parts (compose's Box), rather than one made for
+// each. Said by specializing this for the type.
 template <class T> inline constexpr bool kSeenAsBase = false;
 
 // A node type that is also a range -- it has begin() and end() -- is walked
@@ -1638,6 +1638,9 @@ void visitChild(R &, F &&);
 template <class N, class F> void visitChild(N &, F &&);
 template <class N, class F>
   requires(kErasedWalks && std::derived_from<N, NodeBase>)
+void visitChild(N &, F &&);
+template <class N, class F>
+  requires(!kErasedWalks && std::derived_from<N, NodeBase> && (kSeenThrough<N> || kSeenAsBase<N>))
 void visitChild(N &, F &&);
 
 template <class F> void visitChild(std::monostate &, F &&) {}
@@ -1964,6 +1967,17 @@ template <class F> void visitChild(AnyNode &child, F &&f) {
 // Outside a release build, every child is seen through an AnyNodeRef.
 template <class N, class F>
   requires(kErasedWalks && std::derived_from<N, NodeBase>)
+void visitChild(N &child, F &&f) {
+  AnyNodeRef seen = AnyNodeRef::of(child);
+  f(seen);
+}
+// In a release build too, one the walks see through, or as its base (a
+// Held, a view named over one), is handed on as what they see: its content,
+// or its base -- the node whose state stateOf gives for it. Walked as itself
+// there, it was laid out by its own state and placed by its content's: 0
+// wide, its content twice as far down as its row.
+template <class N, class F>
+  requires(!kErasedWalks && std::derived_from<N, NodeBase> && (kSeenThrough<N> || kSeenAsBase<N>))
 void visitChild(N &child, F &&f) {
   AnyNodeRef seen = AnyNodeRef::of(child);
   f(seen);

@@ -259,6 +259,27 @@ TEST(Web, ATextAsTheSceneMakesItAndAColouredBoxWithChildren) {
   EXPECT_NE(html.find("background-color:rgba(32,32,32,1);\"><span class=\"skiff-text\">in a box</span>"), std::string::npos) << html;
 }
 
+TEST(Core, ARectSaysWhatSkiasDoes) {
+  scene::Rect r = scene::Rect::MakeXYWH(10.0f, 20.0f, 30.0f, 40.0f);
+  EXPECT_EQ(r.fRight, 40.0f);
+  EXPECT_EQ(r.fBottom, 60.0f);
+  EXPECT_EQ(r.width(), 30.0f);
+  EXPECT_EQ(r.centerY(), 40.0f);
+  EXPECT_TRUE(r.contains(10.0f, 20.0f));
+  EXPECT_FALSE(r.contains(40.0f, 20.0f));
+  EXPECT_TRUE(scene::Rect::Intersects(r, scene::Rect::MakeWH(20.0f, 30.0f)));
+  scene::Rect cut = r;
+  EXPECT_TRUE(cut.intersect(scene::Rect::MakeWH(20.0f, 30.0f)));
+  EXPECT_EQ(cut, scene::Rect::MakeLTRB(10.0f, 20.0f, 20.0f, 30.0f));
+  EXPECT_FALSE(cut.intersect(scene::Rect::MakeXYWH(100.0f, 100.0f, 1.0f, 1.0f)));
+  scene::Rect all;
+  EXPECT_TRUE(all.isEmpty());
+  all.join(r);
+  all.join(scene::Rect::MakeWH(5.0f, 5.0f));
+  EXPECT_EQ(all, scene::Rect::MakeLTRB(0.0f, 0.0f, 40.0f, 60.0f));
+  EXPECT_EQ(r.makeInset(1.0f, 2.0f), scene::Rect::MakeLTRB(11.0f, 22.0f, 39.0f, 58.0f));
+}
+
 TEST(Web, ANodeHiddenAndShownAgainIsShownAsItWas) {
   dom::reset();
   Model m;

@@ -48,52 +48,62 @@ public:
   }
   [[nodiscard]] skia::SkColor colour() const noexcept { return fColour; }
 
-  void drawSelf(skia::SkCanvas *canvas, float alpha) {
+  template <class P> void drawSelf(P &p, float alpha) {
     const skia::SkRect &box = fState.fBounds;
-    const int saved = canvas->save();
-    canvas->translate(box.centerX(), box.centerY());
+    p.save();
+    p.translate(box.centerX(), box.centerY());
     if (fShape.rotation != 0.0f)
-      canvas->rotate(fShape.rotation);
+      p.rotate(fShape.rotation);
     for (const Mark &one : fShape.marks) {
-      skia::SkPaint paint;
-      paint.setAntiAlias(true);
-      paint.setColor(one.colour.value_or(fColour));
-      paint.setAlphaf(paint.getAlphaf() * alpha);
-      if (!one.filled) {
-        paint.setStyle(skia::kStrokeStyle);
-        paint.setStrokeWidth(one.width);
-        paint.setStrokeCap(skia::kRoundCap);
-      }
-      spl::visit([&](const auto &shape) { drawMark(canvas, shape, paint); }, one.shape);
+      spl::visit([&](const auto &shape) { drawMark(p, shape, one.colour.value_or(fColour), one.filled, one.width, alpha); },
+                 one.shape);
     }
-    canvas->restoreToCount(saved);
+    p.restore();
   }
 
 private:
-  // Each mark by its own overload -- not named draw, which is the node's hook.
-  static void drawMark(skia::SkCanvas *canvas, const mark::line &one, const skia::SkPaint &paint) {
-    canvas->drawLine(one.x1, one.y1, one.x2, one.y2, paint);
+  // Each mark by its own overload -- not named draw, which is the node's
+  // hook. Filled, or stroked `width` wide with round ends.
+  template <class P>
+  static void drawMark(const P &p, const mark::line &one, skia::SkColor colour, bool, float width, float alpha) {
+    p.line(one.x1, one.y1, one.x2, one.y2, width, colour, alpha);
   }
-  static void drawMark(skia::SkCanvas *canvas, const mark::circle &one, const skia::SkPaint &paint) {
-    canvas->drawCircle(one.x, one.y, one.radius, paint);
+  template <class P>
+  static void drawMark(const P &p, const mark::circle &one, skia::SkColor colour, bool filled, float width, float alpha) {
+    if (filled)
+      p.circle(one.x, one.y, one.radius, colour, alpha);
+    else
+      p.strokeCircle(one.x, one.y, one.radius, width, colour, alpha);
   }
-  static void drawMark(skia::SkCanvas *canvas, const mark::arc &one, const skia::SkPaint &paint) {
-    canvas->drawArc(skia::SkRect::MakeLTRB(one.left, one.top, one.right, one.bottom), one.start, one.sweep, false,
-                    paint);
+  template <class P>
+  static void drawMark(const P &p, const mark::arc &one, skia::SkColor colour, bool filled, float width, float alpha) {
+    const skia::SkRect oval = skia::SkRect::MakeLTRB(one.left, one.top, one.right, one.bottom);
+    if (filled)
+      p.fillArc(oval, one.start, one.sweep, colour, alpha);
+    else
+      p.arc(oval, one.start, one.sweep, width, colour, alpha);
   }
-  static void drawMark(skia::SkCanvas *canvas, const mark::rect &one, const skia::SkPaint &paint) {
-    canvas->drawRoundRect(skia::SkRect::MakeLTRB(one.left, one.top, one.right, one.bottom), one.radius, one.radius,
-                          paint);
+  template <class P>
+  static void drawMark(const P &p, const mark::rect &one, skia::SkColor colour, bool filled, float width, float alpha) {
+    const skia::SkRect box = skia::SkRect::MakeLTRB(one.left, one.top, one.right, one.bottom);
+    if (filled)
+      p.fillRounded(box, one.radius, colour, alpha);
+    else
+      p.strokeRounded(box, one.radius, colour, width, alpha);
   }
-  static void drawMark(skia::SkCanvas *canvas, const mark::path &one, const skia::SkPaint &paint) {
-    skia::SkPathBuilder built;
+  template <class P>
+  static void drawMark(const P &p, const mark::path &one, skia::SkColor colour, bool filled, float width, float alpha) {
+    typename P::Path built;
     for (const PathStep &step : one.steps)
       spl::visit(spl::overloaded{[&](const path_step::move &at) { built.moveTo(at.x, at.y); },
-                            [&](const path_step::line &at) { built.lineTo(at.x, at.y); },
-                            [&](const path_step::cubic &at) { built.cubicTo(at.x1, at.y1, at.x2, at.y2, at.x, at.y); },
-                            [&](const path_step::close &) { built.close(); }},
+                                 [&](const path_step::line &at) { built.lineTo(at.x, at.y); },
+                                 [&](const path_step::cubic &at) { built.cubicTo(at.x1, at.y1, at.x2, at.y2, at.x, at.y); },
+                                 [&](const path_step::close &) { built.close(); }},
                  step);
-    canvas->drawPath(built.detach(), paint);
+    if (filled)
+      p.fill(built, colour, alpha);
+    else
+      p.stroke(built, width, colour, alpha);
   }
 
   IconShape fShape;

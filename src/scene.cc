@@ -2893,6 +2893,17 @@ template <class T, class Hooks>
 void drawSelfOf(T &node, Hooks &hooks, skia::SkCanvas *canvas, float alpha) {
   node.drawSelf(hooks, canvas, alpha);
 }
+// A node that draws through the painter alone -- drawSelf(Painter &, alpha)
+// -- is given one over the canvas: what it draws, a painter that is not
+// Skia's can draw too.
+template <class T, class Hooks>
+  requires requires(T &node, skiff::paint::Painter &p) { node.drawSelf(p, 1.0f); }
+void drawSelfOf(T &node, Hooks &, skia::SkCanvas *canvas, float alpha) {
+  skia::SkFont *font = skiff::paint::defaultFont();
+  static skia::SkFont fallback;
+  skiff::paint::Painter p(canvas, font != nullptr ? *font : fallback);
+  node.drawSelf(p, alpha);
+}
 
 template <class T>
 void drawNode(T &node, Painting &painting, skia::SkCanvas *canvas, float inheritedAlpha) {

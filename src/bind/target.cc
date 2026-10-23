@@ -50,11 +50,31 @@ template <class M, class C> struct Targeting {
   }
   template <class N, class Here, class... Frames>
   void bound(N &, const Here &, const Frames &...) {}
+  // What a mount made as it was shown: all of it, whole.
+  template <class N, class Here, class... Frames>
+  void fresh(N &node, const Here &here, const Frames &...frames) {
+    visitChildren(fFull, node, here, frames...);
+  }
 
   template <class N>
     requires ReadsItself<N, M>
   void itself(N &node) {
     node.refresh(fModel);
+  }
+  // One that lists which models it reads (fRefreshes: refreshFrom,
+  // refreshFromRoot), its refresh not one call on this model -- as the
+  // runtime walks call them, so the walks made of templates do too: the
+  // entries for this model, or for its root, each called on the class that
+  // lists them (the node may be one made around it).
+  template <class N>
+    requires(!ReadsItself<N, M> && requires(N &n) { n.fRefreshes.fEntries; })
+  void itself(N &node) {
+    auto &lister = static_cast<typename ListerOf<decltype(&N::fRefreshes)>::type &>(node);
+    for (const auto &entry : lister.fRefreshes.fEntries) {
+      if (entry.fByRoot ? entry.fType == model::rt::keyOf<typename M::RootType>() : entry.fType == model::rt::keyOf<M>())
+        entry.fRefresh(std::addressof(lister), entry.fByRoot ? static_cast<const void *>(&fModel.root())
+                                                             : static_cast<const void *>(&fModel));
+    }
   }
   template <class N> void itself(N &) {}
   template <class N> static constexpr bool kWants = true;
@@ -133,8 +153,27 @@ template <class M, class Changes> struct ChangedTargeting {
   }
   template <class N, class Here, class... Frames>
   void bound(N &, const Here &, const Frames &...) {}
+  template <class N, class Here, class... Frames>
+  void fresh(N &node, const Here &here, const Frames &...frames) {
+    visitChildren(fFull, node, here, frames...);
+  }
   template <class N> requires ReadsItself<N, M>
   void itself(N &node) { node.refresh(fModel); }
+  // One that lists which models it reads (fRefreshes: refreshFrom,
+  // refreshFromRoot), its refresh not one call on this model -- as the
+  // runtime walks call them, so the walks made of templates do too: the
+  // entries for this model, or for its root, each called on the class that
+  // lists them (the node may be one made around it).
+  template <class N>
+    requires(!ReadsItself<N, M> && requires(N &n) { n.fRefreshes.fEntries; })
+  void itself(N &node) {
+    auto &lister = static_cast<typename ListerOf<decltype(&N::fRefreshes)>::type &>(node);
+    for (const auto &entry : lister.fRefreshes.fEntries) {
+      if (entry.fByRoot ? entry.fType == model::rt::keyOf<typename M::RootType>() : entry.fType == model::rt::keyOf<M>())
+        entry.fRefresh(std::addressof(lister), entry.fByRoot ? static_cast<const void *>(&fModel.root())
+                                                             : static_cast<const void *>(&fModel));
+    }
+  }
   template <class N> void itself(N &) {}
   template <class N> static constexpr bool kWants = true;
   template <class N> static constexpr bool kOwns = kOfModel<typename M::RootType, N>;
@@ -200,6 +239,10 @@ template <class M, class L, class C> struct LocalTargeting {
   }
   template <class N, class Here, class... Frames>
   void bound(N &, const Here &, const Frames &...) {}
+  template <class N, class Here, class... Frames>
+  void fresh(N &node, const Here &here, const Frames &...frames) {
+    visitChildren(fFull, node, here, frames...);
+  }
   template <class N> void itself(N &) {}
   template <class N> static constexpr bool kWants = true;
   // Its model's nodes, not another model's in the same tree.
