@@ -6,7 +6,7 @@ import std;
 import splice;
 import skiff.aggregate;
 import skiff.model;
-import skiff.scene;
+import skiff.core;
 import :frames;
 
 export namespace skiff::bind {
@@ -62,13 +62,13 @@ void visitHeld(Op &op, std::tuple<Ts...> &held, const Here &here,
 template <class Op, class Here, class... Frames>
 void visitHeld(Op &, scene::AnyNode &, const Here &, const Frames &...) {}
 template <class Op, class R, class Here, class... Frames>
-  requires(std::ranges::range<R> && !std::derived_from<R, scene::Node>)
+  requires(std::ranges::range<R> && !std::derived_from<R, scene::NodeBase>)
 void visitHeld(Op &op, R &held, const Here &here, const Frames &...frames) {
   for (auto &each : held)
     visitHeld(op, each, here, frames...);
 }
 template <class Op, class N, class Here, class... Frames>
-  requires std::derived_from<N, scene::Node>
+  requires std::derived_from<N, scene::NodeBase>
 void visitHeld(Op &op, N &node, const Here &here, const Frames &...frames) {
   if constexpr (kWalks<N> && Op::template kWants<N>)
     visitNode(op, node, here, frames...);

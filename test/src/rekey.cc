@@ -38,7 +38,7 @@ TEST(Compose, DragAndRightPressKeepTheirActions) {
   auto left = button.onPointer(scene::phase::target{}, scene::pointer::down{0.0f, 0.0f, 1}, reply);
   EXPECT_FALSE(left);
   static_assert(std::same_as<decltype(button.onPress()), jump_to_mark>);
-  (void)scene::AnyNode::opsOf<decltype(button)>();
+  (void)scene::tableOf<decltype(button)>();
   auto& work = scene::hostWork();
   work.answerNow.reset();
   work.answerType = nullptr;

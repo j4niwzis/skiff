@@ -6,7 +6,7 @@ import std;
 import splice;
 import skiff.aggregate;
 import skiff.model;
-import skiff.scene;
+import skiff.core;
 import :kinds;
 
 export namespace skiff::bind {
@@ -169,7 +169,7 @@ consteval bool walksOf(Rank<2>) {
                   Seen..., T>::value;
 }
 template <class T, class... Seen>
-  requires std::derived_from<T, scene::Node>
+  requires std::derived_from<T, scene::NodeBase>
 consteval bool walksOf(Rank<1>) {
   return true;
 }

@@ -6,7 +6,7 @@ import std;
 import splice;
 import skiff.aggregate;
 import skiff.model;
-import skiff.scene;
+import skiff.core;
 import :ops;
 import :runtime;
 

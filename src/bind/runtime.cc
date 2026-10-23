@@ -14,7 +14,7 @@ export module skiff.bind:runtime;
 import std;
 import splice;
 import skiff.model;
-import skiff.scene;
+import skiff.core;
 import :kinds;
 import :frames;
 import :walk;
@@ -541,7 +541,7 @@ struct RefreshNameProbe {
 };
 template <class T> struct RefreshNameOf : T, RefreshNameProbe {};
 template <class T>
-concept NamesRefresh = std::derived_from<T, scene::Node> && !std::is_final_v<T> && !requires { &RefreshNameOf<T>::refresh; };
+concept NamesRefresh = std::derived_from<T, scene::NodeBase> && !std::is_final_v<T> && !requires { &RefreshNameOf<T>::refresh; };
 // A node that reads the model itself where the walks cannot see how: its
 // refresh overloaded or a template, and no list of its refreshes. The
 // static walks call it; these would pass it by, and it would never be

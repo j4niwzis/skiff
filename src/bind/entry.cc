@@ -6,7 +6,7 @@ export module skiff.bind:entry;
 
 import std;
 import skiff.model;
-import skiff.scene;
+import skiff.core;
 import :press;
 import :runtime;
 

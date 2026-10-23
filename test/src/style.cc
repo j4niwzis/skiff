@@ -520,7 +520,7 @@ TEST(Children, AVectorOfNodesAndOfAnyNodes) {
   scene.root().parts.mixed.emplace_back(make<Box>({.y = 10.0f, .width = 20.0f, .height = 5.0f}, kCard));
   scene.root().parts.mixed.emplace_back(make<ClickProbe>({.y = 20.0f, .width = 20.0f, .height = 10.0f}));
   EXPECT_TRUE(scene.layoutIfNeeded(kViewport));
-  EXPECT_FLOAT_EQ(scene.root().parts.mixed[0].state().fBounds.width(), 20.0f);
+  EXPECT_FLOAT_EQ(stateOf(scene.root().parts.mixed[0]).fBounds.width(), 20.0f);
 
   PointerEvent down = pointer::down{5.0f, 25.0f};
   EXPECT_TRUE(scene.dispatchPointer(down));

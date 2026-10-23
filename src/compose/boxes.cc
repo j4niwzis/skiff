@@ -179,7 +179,7 @@ struct Held : Stacked {
   void ownAxes(scene::Axes axes) {
     adopt();
     fOwnAxes = axes;
-    scene::State &node = parts.held.state();
+    scene::State &node = scene::stateOf(parts.held);
     restore(node);
     followSize(node);
     invalidateLayout();
@@ -199,7 +199,7 @@ struct Held : Stacked {
     // recorded -- nothing: the content lost its fill and was laid out 0
     // wide, a slid-in column with every row's text gone.
     self.adopt();
-    scene::State &node = self.parts.held.state();
+    scene::State &node = scene::stateOf(self.parts.held);
     // Its own size back first, so the spec and the following start from
     // what it says, not from how it was last made to fill the wrapper.
     self.restore(node);
@@ -248,8 +248,8 @@ struct Held : Stacked {
   void setMargin(this Held &self, scene::Margin margin) { self.apply({.margin = margin}); }
   void setScale(this Held &self, float scale) { self.apply({.scale = scale}); }
   void setAlpha(this Held &self, float alpha) { self.apply({.alpha = alpha}); }
-  void markDamaged(this Held &self) { self.parts.held.state().markDamaged(); }
-  void invalidateLayout(this Held &self) { self.parts.held.state().invalidateLayout(); }
+  void markDamaged(this Held &self) { scene::stateOf(self.parts.held).markDamaged(); }
+  void invalidateLayout(this Held &self) { scene::stateOf(self.parts.held).invalidateLayout(); }
   template <class Self>
     requires HeldWrapper<Self>
   void setPosition(this Self &self, float x, float y) { self.fState.setPosition(x, y); }
@@ -276,7 +276,7 @@ struct Held : Stacked {
   void invalidateLayout(this Self &self) { self.fState.invalidateLayout(); }
   // What is asked of it as a node: Held itself is not in the tree, so the
   // node it holds answers -- as the walks see it; a wrapper answers itself.
-  [[nodiscard]] const scene::State &state(this const Held &self) { return self.parts.held.ref().state(); }
+  [[nodiscard]] const scene::State &state(this const Held &self) { return scene::stateOf(self.parts.held.ref()); }
   template <class Self>
     requires HeldWrapper<Self>
   [[nodiscard]] const scene::State &state(this const Self &self) { return self.fState; }
@@ -319,7 +319,7 @@ struct Held : Stacked {
     // one laid the row out again.
     if (parts.held)
       this->adopt();
-    this->fState.fVisible = fHeldShown && (!parts.held || parts.held.state().fVisible);
+    this->fState.fVisible = fHeldShown && (!parts.held || scene::stateOf(parts.held).fVisible);
     return this->fState;
   }
 
@@ -332,7 +332,7 @@ struct Held : Stacked {
     if (std::exchange(fAdopted, true))
       return;
     scene::State &mine = this->fState;
-    scene::State &node = parts.held.state();
+    scene::State &node = scene::stateOf(parts.held);
     const auto take = [](auto &own, auto &theirs, const auto &rest) {
       const std::remove_cvref_t<decltype(own)> atRest = rest;
       if (own == atRest)
@@ -521,13 +521,13 @@ export namespace skiff::compose {
 // -- a wrapper over held content too -- its own. For a node's own rules over
 // its parts (a bubble placing its time), whatever each part is.
 template <class N> [[nodiscard]] scene::State &state_of(N &node) { return node.fState; }
-template <NamedOverHeld N> [[nodiscard]] scene::State &state_of(N &node) { return static_cast<Held &>(node).held().state(); }
-[[nodiscard]] inline scene::State &state_of(Held &held) { return held.held().state(); }
+template <NamedOverHeld N> [[nodiscard]] scene::State &state_of(N &node) { return scene::stateOf(static_cast<Held &>(node).held()); }
+[[nodiscard]] inline scene::State &state_of(Held &held) { return scene::stateOf(held.held()); }
 template <class N> [[nodiscard]] const scene::State &state_of(const N &node) { return node.fState; }
 template <NamedOverHeld N> [[nodiscard]] const scene::State &state_of(const N &node) {
-  return const_cast<Held &>(static_cast<const Held &>(node)).held().state();
+  return scene::stateOf(const_cast<Held &>(static_cast<const Held &>(node)).held());
 }
-[[nodiscard]] inline const scene::State &state_of(const Held &held) { return const_cast<Held &>(held).held().state(); }
+[[nodiscard]] inline const scene::State &state_of(const Held &held) { return scene::stateOf(const_cast<Held &>(held).held()); }
 
 // A part as a combinator keeps it. A view named where it was written
 // (SKIFF_NAMED) is a type of its own -- what the compiler names, what a
@@ -609,7 +609,7 @@ template <class Self> struct Named<Self, Held> : Held {
   using NamedOver = Held;
   using NamedSelf = Self;
   using SeenAs = Held;
-  explicit Named(Held made) : Held(std::move(made)) { this->held().state().fViewName = Self::viewName(); }
+  explicit Named(Held made) : Held(std::move(made)) { scene::stateOf(this->held()).fViewName = Self::viewName(); }
 };
 // Over a view named over held content in turn (a view made of a view of its
 // own, named once more): the same Held, named again -- the outer name the
@@ -621,7 +621,7 @@ struct Named<Self, Base> : Held {
   using NamedOver = Held;
   using NamedSelf = Self;
   using SeenAs = Held;
-  explicit Named(Base made) : Held(static_cast<Held &&>(made)) { this->held().state().fViewName = Self::viewName(); }
+  explicit Named(Base made) : Held(static_cast<Held &&>(made)) { scene::stateOf(this->held()).fViewName = Self::viewName(); }
 };
 
 template <class Tag, class N> struct Marked : N {
@@ -2105,7 +2105,7 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
         }
         seen.forEachChild([&](scene::AnyNodeRef &part) {
           if (std::exchange(first, false))
-            f(part.state());
+            f(scene::stateOf(part));
         });
       } else {
         scene::eachChild(one, [&](auto &part) {

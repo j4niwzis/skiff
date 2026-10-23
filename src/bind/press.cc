@@ -7,7 +7,7 @@ export module skiff.bind:press;
 import std;
 import splice;
 import skiff.model;
-import skiff.scene;
+import skiff.core;
 import :kinds;
 import :frames;
 import :walk;
@@ -36,7 +36,7 @@ template <class... Ts, class F> bool pressPart(spl::variant<Ts...> &held, std::u
   return spl::visit([&](auto &one) { return pressPart(one, left, f); }, held);
 }
 template <class V, class F>
-  requires(scene::one_of_several<V> && !std::derived_from<V, scene::Node>)
+  requires(scene::one_of_several<V> && !std::derived_from<V, scene::NodeBase>)
 bool pressPart(V &held, std::uint32_t &left, F &&f) {
   bool found = false;
   held.visit([&](auto &one) { found = pressPart(one, left, f); });
@@ -69,12 +69,12 @@ template <class F> bool pressPart(scene::AnyNode &held, std::uint32_t &left, F &
   return true;
 }
 template <class R, class F>
-  requires(std::ranges::range<R> && !scene::kTreatAsNode<R> && !std::derived_from<R, scene::Node>)
+  requires(std::ranges::range<R> && !scene::kTreatAsNode<R> && !std::derived_from<R, scene::NodeBase>)
 bool pressPart(R &held, std::uint32_t &left, F &&f) {
   return std::ranges::any_of(held, [&](auto &each) { return pressPart(each, left, f); });
 }
 template <class N, class F>
-  requires(std::derived_from<N, scene::Node> || scene::kTreatAsNode<N>)
+  requires(std::derived_from<N, scene::NodeBase> || scene::kTreatAsNode<N>)
 bool pressPart(N &held, std::uint32_t &left, F &&f) {
   if (left != 0) {
     --left;

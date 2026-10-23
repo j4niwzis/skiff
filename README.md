@@ -3,10 +3,11 @@
 A small retained-mode UI framework on top of Skia, in the shape osu!framework
 gives its drawables, sized for machines with no GPU acceleration.
 
-It is four modules:
+It is five modules:
 
 | module | what is in it |
 | --- | --- |
+| `skiff.core` | what every backend shares, and no backend is in: `Spec`, roles and typed stylesheets, events, replies and semantics, the host's work, a node of any type by the table of its type; `skiff.bind` is written on it, so a model binds to a tree that is not Skia's |
 | `skia` | a module wrapper over the Skia headers, so nothing downstream needs a global module fragment |
 | `skiff.paint` | a font stack with fallbacks behind a primary face, a canvas painter, easing curves |
 | `skiff.scene` | the graph: layout, typed stylesheets, transforms, routed input, accessibility semantics, and frame scheduling |

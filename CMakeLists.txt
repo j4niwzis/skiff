@@ -6,6 +6,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # skiff -- a small retained-mode UI framework on Skia, in the shape
 # osu!framework gives its drawables, sized for software rasterisation.
 #
+#   skiff.core   what every backend shares, with no Skia in it: the words a
+#                tree is written in, its events and semantics, a node of any
+#                type by the table of its type; skiff.bind is built on it
 #   skia         a module wrapper over the Skia headers, so nothing else in
 #                the tree needs a global module fragment
 #   skiff.paint  the font stack with fallbacks, the canvas painter, easings
@@ -240,19 +243,6 @@ if(skiff_cxx_standard LESS 26)
   target_link_libraries(skiff_model PUBLIC $<BUILD_INTERFACE:Boost::pfr>)
 endif()
 
-if(SKIFF_UI)
-set(skiff_sources
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/skia.cc
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/paint.cc
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/scene.cc
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/nodes.cc
-  ${skiff_node_partitions}
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/bind.cc
-  ${skiff_bind_partitions}
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/compose.cc
-  ${skiff_compose_partitions}
-)
-
 if(SKIFF_EMSCRIPTEN)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions -pthread -msimd128")
 endif()
@@ -275,19 +265,35 @@ cme_declare_port(NAME splice PROVIDES splice
 cme_options(splice "SPLICE_TESTS OFF")
 cme_find_package(splice 0.4 REQUIRED)
 
-add_library(${PROJECT_NAME} STATIC ${skiff_sources})
-add_library(skiff::skiff ALIAS ${PROJECT_NAME})
-# In this build only, as Skia and Boost.PFR: an installed copy finds splice
-# again, in its config.
-target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:splice>)
-target_link_libraries(${PROJECT_NAME} PUBLIC skiff_model)
+# skiff.core and skiff.bind: what every backend shares -- the vocabulary a
+# tree is written in, the events it is sent and the semantics it exposes, the
+# host's work, a node of any type seen through the table of its type -- and
+# the binding of a tree to a model through it. Nothing of Skia in it: a
+# program's model, its tree's protocol and the binding between them are
+# built and tested without a window, and compiled for a browser, where what
+# draws is the page. skiff below links it; a backend that is not Skia's
+# links it instead.
+add_library(skiff_core STATIC)
+add_library(skiff::core ALIAS skiff_core)
+set_target_properties(skiff_core PROPERTIES
+  EXPORT_NAME core CXX_STANDARD ${skiff_cxx_standard})
+target_compile_features(skiff_core PUBLIC cxx_std_${skiff_cxx_standard})
+target_sources(skiff_core PUBLIC
+  FILE_SET CXX_MODULES FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/core.cc
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/bind.cc
+                             ${skiff_bind_partitions})
+target_link_libraries(skiff_core PUBLIC $<BUILD_INTERFACE:splice>)
+target_link_libraries(skiff_core PUBLIC skiff_model)
+if(skiff_cxx_standard LESS 26)
+  target_link_libraries(skiff_core PUBLIC $<BUILD_INTERFACE:Boost::pfr>)
+endif()
 # Outside a release build, the walks over a tree see each child through an
 # AnyNode (scene.cc, kErasedWalks): made once, not per type of node. Off,
 # every build walks its tree statically, as a release build does.
 # The same debug mode combines model changes into one binding walk, avoiding
 # a separate specialization of the whole tree for each tracked model path.
 option(SKIFF_ERASE_WALKS "Outside a release build, walk every child through an AnyNode" ON)
-target_compile_definitions(${PROJECT_NAME} PUBLIC
+target_compile_definitions(skiff_core PUBLIC
   $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<NOT:$<CONFIG:Release>>>:SKIFF_ERASED_WALKS>)
 # And outside a release build, the model's edits and looks go through its
 # runtime layer (skiff.model:schema): nothing made for each place's path.
@@ -295,7 +301,29 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC
 # (compose::Held); this keeps them concrete with the walks still erased: for
 # skiff's own tests, which call a widget's members on what made it.
 option(SKIFF_CONCRETE_COMBINATORS "Keep what combinators return concrete outside a release build" OFF)
-target_compile_definitions(${PROJECT_NAME} PUBLIC $<$<BOOL:${SKIFF_CONCRETE_COMBINATORS}>:SKIFF_CONCRETE_COMBINATORS>)
+target_compile_definitions(skiff_core PUBLIC $<$<BOOL:${SKIFF_CONCRETE_COMBINATORS}>:SKIFF_CONCRETE_COMBINATORS>)
+if(SKIFF_EMSCRIPTEN)
+  target_compile_options(skiff_core PRIVATE -fexceptions -pthread -msimd128)
+endif()
+
+if(SKIFF_UI)
+set(skiff_sources
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/skia.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/paint.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/scene.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/nodes.cc
+  ${skiff_node_partitions}
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/compose.cc
+  ${skiff_compose_partitions}
+)
+
+
+add_library(${PROJECT_NAME} STATIC ${skiff_sources})
+add_library(skiff::skiff ALIAS ${PROJECT_NAME})
+# In this build only, as Skia and Boost.PFR: an installed copy finds splice
+# again, in its config.
+target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:splice>)
+target_link_libraries(${PROJECT_NAME} PUBLIC skiff_core)
 option(SKIFF_RUNTIME_MODEL "Outside a release build, edit and look at a model through its runtime layer" ON)
 target_compile_definitions(skiff_model PUBLIC
   $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<BOOL:${SKIFF_RUNTIME_MODEL}>,$<NOT:$<CONFIG:Release>>>:SKIFF_RUNTIME_MODEL>)
@@ -344,8 +372,8 @@ if(SKIFF_EMSCRIPTEN)
   target_compile_options(${PROJECT_NAME} PRIVATE -fexceptions -pthread -msimd128)
 endif()
 endif()
-set(skiff_targets skiff::model)
-set(skiff_built skiff_model)
+set(skiff_targets skiff::core skiff::model)
+set(skiff_built skiff_core skiff_model)
 if(SKIFF_UI)
   list(PREPEND skiff_targets skiff::skiff)
   list(PREPEND skiff_built ${PROJECT_NAME})
