@@ -154,7 +154,9 @@ EM_JS(void, skiffDomFire, (int h, const char *e, int el, const char *v, int vl),
   t.dispatchEvent(new Event(name, { bubbles: true }));
 });
 EM_JS(void, skiffDomReset, (), {
-  const root = Module.skiffDom ? Module.skiffDom.els[1] : null;
+  // The page's root, whether or not anything has been made in it yet: what a
+  // page written beforehand put there is cleared too.
+  const root = Module.skiffDom ? Module.skiffDom.els[1] : document.getElementById('skiff');
   if (root) root.replaceChildren();
   Module.skiffDom = null;
   skiffDomInit();
