@@ -562,6 +562,12 @@ if(SKIFF_INSTALL)
   endif()
   endif()
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake" "${skiff_config}")
+  # And which version it is: find_package(skiff 0.1.0) -- skiff-widgets'
+  # -- passes over a config file that does not say, as one of no version.
+  include(CMakePackageConfigHelpers)
+  write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/skiffConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/skiffConfig.cmake"
+                "${CMAKE_CURRENT_BINARY_DIR}/skiffConfigVersion.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/skiff)
 endif()

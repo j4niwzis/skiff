@@ -154,6 +154,7 @@ jobs:
         run: |
           find prefix -type f | sort
           test -f prefix/lib/cmake/skiff/skiffConfig.cmake
+          test -f prefix/lib/cmake/skiff/skiffConfigVersion.cmake
           test -f prefix/lib/cmake/skiff/skiffTargets.cmake
 
       # And a consumer, with find_package and cmake-everywhere -- which brings
