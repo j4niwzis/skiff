@@ -550,7 +550,16 @@ if(SKIFF_INSTALL)
     "  cme_find_package(splice REQUIRED)\n")
   endif()
   if(skiff_cxx_standard LESS 26)
-    string(APPEND skiff_config "  cme_find_package(Boost COMPONENTS pfr[modules] REQUIRED)\n")
+    # As this build did: the module of Boost.PFR imports std, and CMake
+    # gives a target the std module only at C++23 -- its own target asks
+    # for C++20, so the standard is said before it is made. Left unsaid, a
+    # consumer of the installed skiff built it at C++20 and stopped at
+    # "module 'std' not found".
+    string(APPEND skiff_config
+      "  if(NOT DEFINED CMAKE_CXX_STANDARD)\n"
+      "    set(CMAKE_CXX_STANDARD 23)\n"
+      "  endif()\n"
+      "  cme_find_package(Boost COMPONENTS pfr[modules] REQUIRED)\n")
   endif()
   string(APPEND skiff_config "else()\n")
   if(SKIFF_UI)
