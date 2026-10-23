@@ -30,18 +30,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Clang 22 and the distribution's libstdc++: this is a C++23 module
+      # Clang 23 and the distribution's libstdc++: this is a C++23 module
       # library, so the compiler has to scan for imports, and every library
       # on this machine was built against libstdc++.
-      - name: clang 22
+      - name: clang 23
         run: |
           sudo apt-get update || true
           sudo apt-get install -y ninja-build python3 pkg-config \
             lsb-release software-properties-common gnupg curl
           curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
           chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh 22 all
-          echo /usr/lib/llvm-22/bin >> "$GITHUB_PATH"
+          sudo /tmp/llvm.sh 23 all
+          echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
 
       - name: cmake
         run: |
@@ -99,8 +99,8 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=clang-22 \
-            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_C_COMPILER=clang-23 \
+            -DCMAKE_CXX_COMPILER=clang++-23 \
             -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
             -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
             -DCME_STORE_ENABLED=ON \
@@ -116,8 +116,8 @@ jobs:
         run: |
           cmake -S test -B build/test -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=clang-22 \
-            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_C_COMPILER=clang-23 \
+            -DCMAKE_CXX_COMPILER=clang++-23 \
             -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
             -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
             -DCME_STORE_ENABLED=ON \
@@ -132,8 +132,8 @@ jobs:
           cmake -S . -B build-model -G Ninja \
             -DSKIFF_UI=OFF \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=clang-22 \
-            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_C_COMPILER=clang-23 \
+            -DCMAKE_CXX_COMPILER=clang++-23 \
             -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
             -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
             -DCME_STORE_ENABLED=ON \
@@ -201,8 +201,8 @@ jobs:
           EOF
           cmake -S /tmp/consumer -B /tmp/consumer/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=clang-22 \
-            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_C_COMPILER=clang-23 \
+            -DCMAKE_CXX_COMPILER=clang++-23 \
             -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
             -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
             -DCMAKE_PREFIX_PATH="$PWD/prefix" \

@@ -43,21 +43,15 @@ public:
     fNodeStyleActive = active;
   }
 
-  template <class Hooks> void drawSelf(Hooks &hooks, skia::SkCanvas *canvas, float alpha) {
+  template <class Hooks, class P> void drawSelf(Hooks &hooks, P &p, float alpha) {
     const skiff::scene::State &state = fState;
-    const skia::SkRRect shape = skia::SkRRect::MakeRectXY(state.fBounds, state.fCornerRadius, state.fCornerRadius);
     // Its colour as the program paints fills -- at an opacity, over what
     // it paints under them, or not at all (ProgramPaint).
-    const std::optional<skia::SkColor> colour = hooks.under(state, fColour, canvas, alpha);
-    if (colour) {
-      skia::SkPaint paint;
-      paint.setAntiAlias(true);
-      paint.setColor(*colour);
-      // The colour's own alpha, and the node's on top of it.
-      paint.setAlphaf(alpha * static_cast<float>((*colour >> 24) & 0xffu) / 255.0f);
-      canvas->drawRRect(shape, paint);
-    }
-    hooks.over(state, canvas, alpha);
+    const std::optional<skia::SkColor> colour = skiff::scene::detail::paintUnder(hooks, state, fColour, p, alpha);
+    // The colour's own alpha, and the node's on top of it.
+    if (colour)
+      p.fillRounded(state.fBounds, state.fCornerRadius, *colour, alpha);
+    skiff::scene::detail::paintOver(hooks, state, p, alpha);
   }
 
   std::tuple<Children...> fChildren;

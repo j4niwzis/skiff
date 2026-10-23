@@ -8,65 +8,50 @@ import skiff.scene;
 export namespace skiff::nodes {
 
 // The painter a Canvas node draws with: the words of the page's
-// CanvasPainter (skiff.web), on a Skia canvas. Coordinates are the node's
-// own, from its top left.
-class SkiaPainter {
+// CanvasPainter (skiff.web), over the scene's painter -- Skia's, or any
+// other. Coordinates are the node's own, from its top left.
+template <class P> class CanvasPainterOf {
 public:
   // Nothing stays: the scene paints the node whole each time it is damaged.
   static constexpr bool kRetains = false;
-  SkiaPainter(skia::SkCanvas *canvas, float width, float height, float alpha)
-      : fCanvas(canvas), fWidth(width), fHeight(height), fAlpha(alpha) {}
-  void clear(scene::Colour colour) {
-    fCanvas->drawRect(skia::SkRect::MakeWH(fWidth, fHeight), fill(colour));
-  }
+  CanvasPainterOf(const P &painter, float width, float height, float alpha)
+      : fPainter(painter), fWidth(width), fHeight(height), fAlpha(alpha) {}
+  void clear(scene::Colour colour) { fPainter.fillRect(skia::SkRect::MakeWH(fWidth, fHeight), colour, fAlpha); }
   void fillPolygon(std::span<const scene::Point> points, scene::Colour colour) {
-    fCanvas->drawPath(path(points), fill(colour));
+    fPainter.fill(path(points), colour, fAlpha);
   }
   void strokePolygon(std::span<const scene::Point> points, float width, scene::Colour colour) {
-    fCanvas->drawPath(path(points), stroke(width, colour));
+    fPainter.stroke(path(points), width, colour, fAlpha, P::Cap::square, false);
   }
   void line(scene::Point a, scene::Point b, float width, scene::Colour colour) {
-    fCanvas->drawLine(a.fX, a.fY, b.fX, b.fY, stroke(width, colour));
+    fPainter.line(a.fX, a.fY, b.fX, b.fY, width, colour, fAlpha, P::Cap::square);
   }
   void circle(scene::Point centre, float radius, scene::Colour colour) {
-    fCanvas->drawCircle(centre.fX, centre.fY, radius, fill(colour));
+    fPainter.circle(centre.fX, centre.fY, radius, colour, fAlpha);
   }
+  // Centred on `at`, bold; nothing where the program set no font.
   void text(scene::Point at, std::string_view text, float size, scene::Colour colour) {
-    skia::SkFont *font = skiff::paint::defaultFont();
-    if (!font) return;
-    const skiff::paint::Painter p(fCanvas, *font);
+    if (!skiff::paint::defaultFont()) return;
     const std::string s(text);
-    const float width = p.measure(s, size, true);
-    p.text(s, at.fX - width / 2.0f, at.fY + size * 0.35f, size, colour, fAlpha, true);
+    const float width = fPainter.measure(s, size, true);
+    fPainter.text(s, at.fX - width / 2.0f, at.fY + size * 0.35f, size, colour, fAlpha, true);
   }
 
 private:
-  [[nodiscard]] skia::SkPaint fill(scene::Colour colour) const {
-    skia::SkPaint p;
-    p.setAntiAlias(true);
-    p.setColor(colour);
-    p.setAlphaf(fAlpha * static_cast<float>((colour >> 24) & 0xffu) / 255.0f);
-    return p;
-  }
-  [[nodiscard]] skia::SkPaint stroke(float width, scene::Colour colour) const {
-    skia::SkPaint p = fill(colour);
-    p.setStyle(skia::kStrokeStyle);
-    p.setStrokeWidth(width);
-    p.setStrokeCap(skia::SkPaint::kSquare_Cap);
-    return p;
-  }
-  [[nodiscard]] static skia::SkPath path(std::span<const scene::Point> points) {
-    skia::SkPathBuilder builder;
+  [[nodiscard]] static typename P::Path path(std::span<const scene::Point> points) {
+    typename P::Path built;
     for (std::size_t i = 0; i < points.size(); ++i) {
-      if (i == 0) builder.moveTo(points[i].fX, points[i].fY);
-      else builder.lineTo(points[i].fX, points[i].fY);
+      if (i == 0) built.moveTo(points[i].fX, points[i].fY);
+      else built.lineTo(points[i].fX, points[i].fY);
     }
-    builder.close();
-    return builder.detach();
+    built.close();
+    return built;
   }
-  skia::SkCanvas *fCanvas;
+  const P &fPainter;
   float fWidth, fHeight, fAlpha;
 };
+// On Skia, as the scene draws it.
+using SkiaPainter = CanvasPainterOf<skiff::paint::Painter>;
 
 // A node that draws itself through a painter -- its own paint(painter); `draw`
 // is the scene's hook on every node -- in
@@ -92,16 +77,16 @@ public:
   void redraw() { this->markDamaged(); }
   [[nodiscard]] bool acceptsInput() const { return true; }
 
-  template <class Hooks> void drawSelf(this auto &self, Hooks &hooks, skia::SkCanvas *canvas, float alpha) {
+  template <class Hooks, class P> void drawSelf(this auto &self, Hooks &hooks, P &p, float alpha) {
     const scene::State &state = self.fState;
     const skia::SkRect &bounds = state.fBounds;
-    canvas->save();
-    canvas->translate(bounds.left(), bounds.top());
-    canvas->clipRect(skia::SkRect::MakeWH(bounds.width(), bounds.height()));
-    SkiaPainter painter(canvas, bounds.width(), bounds.height(), alpha);
+    p.save();
+    p.translate(bounds.left(), bounds.top());
+    p.clipRect(skia::SkRect::MakeWH(bounds.width(), bounds.height()));
+    CanvasPainterOf<P> painter(p, bounds.width(), bounds.height(), alpha);
     self.paint(painter);
-    canvas->restore();
-    hooks.over(state, canvas, alpha);
+    p.restore();
+    skiff::scene::detail::paintOver(hooks, state, p, alpha);
   }
 
   // A press and its release inside: a click, by the button pressed.

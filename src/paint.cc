@@ -1033,10 +1033,25 @@ public:
   void clipOval(const skia::SkRect &oval) const {
     if (fCanvas) fCanvas->clipRRect(skia::SkRRect::MakeOval(oval), true);
   }
+  // Cut to a rounded box of its own radii, each corner its own.
+  void clip(const skia::SkRRect &shape) const {
+    if (fCanvas) fCanvas->clipRRect(shape, true);
+  }
   void layer(float alpha) const {
     if (fCanvas) fCanvas->saveLayerAlphaf(nullptr, alpha);
   }
   void endLayer() const { restore(); }
+  // How a stroke's ends are drawn: cut at the end, rounded past it, or
+  // squared past it by half its width.
+  enum class Cap { butt, round, square };
+  void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, Cap cap) const {
+    if (!fCanvas) return;
+    skia::SkPaint paint = solid(color, alpha);
+    paint.setStyle(skia::kStrokeStyle);
+    paint.setStrokeWidth(width);
+    paint.setStrokeCap(capOf(cap));
+    fCanvas->drawLine(x1, y1, x2, y2, paint);
+  }
   void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, bool round = true) const {
     if (!fCanvas) return;
     skia::SkPaint paint;
@@ -1109,6 +1124,24 @@ public:
     paint.setColor(color);
     paint.setAlphaf(paint.getAlphaf() * alpha);
     fCanvas->drawPath(path.snapshot(), paint);
+  }
+  // Its ends as `cap` says, its corners rounded where `roundJoin`.
+  void stroke(const Path &path, float width, skia::SkColor color, float alpha, Cap cap, bool roundJoin) const {
+    if (!fCanvas) return;
+    skia::SkPaint paint = solid(color, alpha);
+    paint.setStyle(skia::kStrokeStyle);
+    paint.setStrokeWidth(width);
+    paint.setStrokeCap(capOf(cap));
+    paint.setStrokeJoin(roundJoin ? skia::kRoundJoin : skia::kMiterJoin);
+    fCanvas->drawPath(path.snapshot(), paint);
+  }
+  // A rounded box of its own radii, its edge stroked.
+  void stroke(const skia::SkRRect &shape, float width, skia::SkColor color, float alpha = 1.0f) const {
+    if (!fCanvas) return;
+    skia::SkPaint paint = solid(color, alpha);
+    paint.setStyle(skia::kStrokeStyle);
+    paint.setStrokeWidth(width);
+    fCanvas->drawRRect(shape, paint);
   }
   void stroke(const Path &path, float width, skia::SkColor color, float alpha, bool round = true) const {
     if (!fCanvas) return;
@@ -1557,6 +1590,13 @@ private:
     paint.setColor(color);
     paint.setAlphaf(combinedAlpha(color, alpha));
     return paint;
+  }
+  [[nodiscard]] static skia::Cap capOf(Cap cap) {
+    switch (cap) {
+    case Cap::butt: return skia::kButtCap;
+    case Cap::square: return skia::kSquareCap;
+    default: return skia::kRoundCap;
+    }
   }
   [[nodiscard]] static skia::SkPaint faded(float alpha) {
     skia::SkPaint paint;

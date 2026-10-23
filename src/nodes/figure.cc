@@ -36,43 +36,29 @@ protected:
       this->markDamaged();
     }
   }
-  [[nodiscard]] skia::SkPaint paintFill(float alpha) const {
-    skia::SkPaint p;
-    p.setAntiAlias(true);
-    p.setColor(fFill);
-    p.setAlphaf(alpha * fOpacity * static_cast<float>((fFill >> 24) & 0xffu) / 255.0f);
-    return p;
-  }
-  [[nodiscard]] skia::SkPaint paintStroke(float alpha) const {
-    skia::SkPaint p;
-    p.setAntiAlias(true);
-    p.setColor(fStroke);
-    p.setAlphaf(alpha * fOpacity * static_cast<float>((fStroke >> 24) & 0xffu) / 255.0f);
-    p.setStyle(skia::kStrokeStyle);
-    p.setStrokeWidth(fStrokeWidth);
-    p.setStrokeCap(skia::SkPaint::kSquare_Cap);
-    return p;
-  }
   [[nodiscard]] bool fills() const noexcept { return ((fFill >> 24) & 0xffu) != 0; }
   [[nodiscard]] bool strokes() const noexcept { return ((fStroke >> 24) & 0xffu) != 0 && fStrokeWidth > 0.0f; }
-  [[nodiscard]] static skia::SkPath pathOf(std::span<const scene::Point> points, bool close) {
-    skia::SkPathBuilder builder;
+  // The points as a path in the painter's own: closed, for a polygon.
+  template <class P> [[nodiscard]] static typename P::Path pathOf(std::span<const scene::Point> points, bool close) {
+    typename P::Path path;
     for (std::size_t i = 0; i < points.size(); ++i) {
-      if (i == 0) builder.moveTo(points[i].fX, points[i].fY);
-      else builder.lineTo(points[i].fX, points[i].fY);
+      if (i == 0) path.moveTo(points[i].fX, points[i].fY);
+      else path.lineTo(points[i].fX, points[i].fY);
     }
-    if (close) builder.close();
-    return builder.detach();
+    if (close) path.close();
+    return path;
   }
-  template <class Hooks, class Draw> void drawShape(Hooks &hooks, skia::SkCanvas *canvas, float alpha, Draw &&draw) {
+  // Drawn in the figure's own coordinates, at the shape's opacity; the
+  // program's paint over it.
+  template <class Hooks, class P, class Draw> void drawShape(Hooks &hooks, const P &p, float alpha, Draw &&draw) {
     const scene::State &state = fState;
     if (fOpacity > 0.0f) {
-      canvas->save();
-      canvas->translate(state.fBounds.left(), state.fBounds.top());
-      draw();
-      canvas->restore();
+      p.save();
+      p.translate(state.fBounds.left(), state.fBounds.top());
+      draw(alpha * fOpacity);
+      p.restore();
     }
-    hooks.over(state, canvas, alpha);
+    skiff::scene::detail::paintOver(hooks, state, p, alpha);
   }
 };
 class Polygon : public Shape {
@@ -80,11 +66,11 @@ public:
   explicit Polygon(std::vector<scene::Point> points = {}, scene::Colour fill = 0xffffffffu) : fPoints(std::move(points)) { fFill = fill; }
   void setPoints(std::vector<scene::Point> points) { change(fPoints, std::move(points)); }
   [[nodiscard]] const std::vector<scene::Point> &points() const noexcept { return fPoints; }
-  template <class Hooks> void drawSelf(Hooks &hooks, skia::SkCanvas *canvas, float alpha) {
-    drawShape(hooks, canvas, alpha, [&] {
-      const skia::SkPath path = pathOf(fPoints, true);
-      if (fills()) canvas->drawPath(path, paintFill(alpha));
-      if (strokes()) canvas->drawPath(path, paintStroke(alpha));
+  template <class Hooks, class P> void drawSelf(Hooks &hooks, P &p, float alpha) {
+    drawShape(hooks, p, alpha, [&](float shown) {
+      const auto path = pathOf<P>(fPoints, true);
+      if (fills()) p.fill(path, fFill, shown);
+      if (strokes()) p.stroke(path, fStrokeWidth, fStroke, shown, P::Cap::square, false);
     });
   }
 
@@ -100,13 +86,10 @@ public:
   }
   void setPoints(std::vector<scene::Point> points) { change(fPoints, std::move(points)); }
   [[nodiscard]] const std::vector<scene::Point> &points() const noexcept { return fPoints; }
-  template <class Hooks> void drawSelf(Hooks &hooks, skia::SkCanvas *canvas, float alpha) {
-    drawShape(hooks, canvas, alpha, [&] {
+  template <class Hooks, class P> void drawSelf(Hooks &hooks, P &p, float alpha) {
+    drawShape(hooks, p, alpha, [&](float shown) {
       if (fPoints.size() < 2 || !strokes()) return;
-      skia::SkPaint p = paintStroke(alpha);
-      p.setStrokeCap(skia::SkPaint::kRound_Cap);
-      p.setStrokeJoin(skia::SkPaint::kRound_Join);
-      canvas->drawPath(pathOf(fPoints, false), p);
+      p.stroke(pathOf<P>(fPoints, false), fStrokeWidth, fStroke, shown, P::Cap::round, true);
     });
   }
 
@@ -127,9 +110,9 @@ public:
       this->markDamaged();
     }
   }
-  template <class Hooks> void drawSelf(Hooks &hooks, skia::SkCanvas *canvas, float alpha) {
-    drawShape(hooks, canvas, alpha, [&] {
-      if (strokes()) canvas->drawLine(fA.fX, fA.fY, fB.fX, fB.fY, paintStroke(alpha));
+  template <class Hooks, class P> void drawSelf(Hooks &hooks, P &p, float alpha) {
+    drawShape(hooks, p, alpha, [&](float shown) {
+      if (strokes()) p.line(fA.fX, fA.fY, fB.fX, fB.fY, fStrokeWidth, fStroke, shown, P::Cap::square);
     });
   }
 
@@ -147,10 +130,10 @@ public:
   }
   void setRadius(float radius) { change(fRadius, radius); }
   [[nodiscard]] scene::Point centre() const noexcept { return fCentre; }
-  template <class Hooks> void drawSelf(Hooks &hooks, skia::SkCanvas *canvas, float alpha) {
-    drawShape(hooks, canvas, alpha, [&] {
-      if (fills()) canvas->drawCircle(fCentre.fX, fCentre.fY, fRadius, paintFill(alpha));
-      if (strokes()) canvas->drawCircle(fCentre.fX, fCentre.fY, fRadius, paintStroke(alpha));
+  template <class Hooks, class P> void drawSelf(Hooks &hooks, P &p, float alpha) {
+    drawShape(hooks, p, alpha, [&](float shown) {
+      if (fills()) p.circle(fCentre.fX, fCentre.fY, fRadius, fFill, shown);
+      if (strokes()) p.strokeCircle(fCentre.fX, fCentre.fY, fRadius, fStrokeWidth, fStroke, shown);
     });
   }
 

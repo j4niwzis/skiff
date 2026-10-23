@@ -2772,20 +2772,47 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
 // hands to the scene's draw, and drawing hands down (Painting). skiff's own
 // does nothing; a program says its own by specializing ProgramPaint<> once,
 // where every unit that draws its tree sees it.
-//   under(state, fill, canvas, alpha): painted under the fill, the fill to
+//   under(state, fill, painter, alpha): painted under the fill, the fill to
 //     paint returned -- the same, another (at an opacity, say), or none;
-//   over(state, canvas, alpha): painted over the fill, under the border;
+//   over(state, painter, alpha): painted over the fill, under the border;
 //   scope: made from a node's State and held while its subtree is drawn --
 //     what the program knows of the boxes above (inside a panel, say).
+// Hooks that take a Skia canvas where the painter goes -- a program's, from
+// before the painter drew everything -- are given the painter's canvas, as
+// they were (paintUnder, paintOver).
 struct PlainPaint : Painting {
-  std::optional<skia::SkColor> under(const State &, std::optional<skia::SkColor> fill, skia::SkCanvas *, float) {
+  template <class P>
+  std::optional<skia::SkColor> under(const State &, std::optional<skia::SkColor> fill, const P &, float) {
     return fill;
   }
-  void over(const State &, skia::SkCanvas *, float) {}
+  template <class P> void over(const State &, const P &, float) {}
   struct scope {
     scope(PlainPaint &, const State &) {}
   };
 };
+// The program's paint around a fill, with what draws it: the painter, where
+// its hooks take one; else its canvas.
+template <class Hooks, class P>
+std::optional<skia::SkColor> paintUnder(Hooks &hooks, const State &state, std::optional<skia::SkColor> fill, const P &p,
+                                        float alpha) {
+  if constexpr (requires { hooks.under(state, fill, p, alpha); })
+    return hooks.under(state, fill, p, alpha);
+  else
+    return hooks.under(state, fill, p.canvas(), alpha);
+}
+template <class Hooks, class P> void paintOver(Hooks &hooks, const State &state, const P &p, float alpha) {
+  if constexpr (requires { hooks.over(state, p, alpha); })
+    hooks.over(state, p, alpha);
+  else
+    hooks.over(state, p.canvas(), alpha);
+}
+// The font Skia's painter is made with as the scene draws: the program's
+// default, or one with no face where it set none -- measuring nothing.
+inline skia::SkFont &fontToDrawWith() {
+  static skia::SkFont none;
+  skia::SkFont *font = skiff::paint::defaultFont();
+  return font != nullptr ? *font : none;
+}
 template <class = void> struct ProgramPaint {
   using type = PlainPaint;
 };
@@ -2840,47 +2867,31 @@ inline std::map<NodeId, LiveBackdrop> &liveBackdrops() {
 
 // is hovered -- and its border, in its corner radius; what the program
 // paints with a fill (Hooks: ProgramPaint's) under it and over it.
-template <class Hooks> void paintBox(Hooks &hooks, const State &state, skia::SkCanvas *canvas, float alpha) {
+template <class Hooks, class P> void paintBox(Hooks &hooks, const State &state, const P &p, float alpha) {
   std::optional<skia::SkColor> fill = state.fSelected && state.fSelectedBackground ? state.fSelectedBackground
                                             : state.fFocused && state.fFocusBackground     ? state.fFocusBackground
                                             // A disabled node does not light up under the pointer.
                                             : state.fHovered && !state.fDisabled && state.fHoverBackground
                                                 ? state.fHoverBackground
                                                                                             : state.fBackground;
-  fill = hooks.under(state, fill, canvas, alpha);
-  if (state.fShadow) {
-    skia::SkPaint paint;
-    paint.setAntiAlias(true);
-    paint.setColor(state.fShadow->colour);
-    paint.setAlphaf(paint.getAlphaf() * alpha);
-    canvas->drawRRect(roundedBox(state, state.fBounds.makeOffset(0.0f, state.fShadow->offsetY)), paint);
-  }
+  fill = paintUnder(hooks, state, fill, p, alpha);
+  if (state.fShadow)
+    p.fill(roundedBox(state, state.fBounds.makeOffset(0.0f, state.fShadow->offsetY)), state.fShadow->colour, alpha);
   if (state.fGradient && !fill) {
-    const int saved = canvas->save();
-    canvas->clipRRect(roundedBox(state, state.fBounds), true);
-    paint::verticalGradient(canvas, state.fBounds, state.fGradient->top, state.fGradient->bottom, alpha);
-    canvas->restoreToCount(saved);
+    p.save();
+    p.clip(roundedBox(state, state.fBounds));
+    p.verticalGradient(state.fBounds, state.fGradient->top, state.fGradient->bottom, alpha);
+    p.restore();
   }
   if (fill) {
-    skia::SkPaint paint;
-    paint.setAntiAlias(true);
-    paint.setColor(*fill);
-    paint.setAlphaf(paint.getAlphaf() * alpha);
     if (state.fTail)
-      canvas->drawPath(boxWithTail(state, state.fBounds), paint);
+      p.fill(boxWithTail(state, state.fBounds), *fill, alpha);
     else
-      canvas->drawRRect(roundedBox(state, state.fBounds), paint);
+      p.fill(roundedBox(state, state.fBounds), *fill, alpha);
   }
-  hooks.over(state, canvas, alpha);
-  if (state.fBorder && state.fBorder->width > 0.0f) {
-    skia::SkPaint paint;
-    paint.setAntiAlias(true);
-    paint.setStyle(skia::kStrokeStyle);
-    paint.setStrokeWidth(state.fBorder->width);
-    paint.setColor(state.fBorder->colour);
-    paint.setAlphaf(paint.getAlphaf() * alpha);
-    canvas->drawRRect(roundedBox(state, state.fBounds, state.fBorder->width * 0.5f), paint);
-  }
+  paintOver(hooks, state, p, alpha);
+  if (state.fBorder && state.fBorder->width > 0.0f)
+    p.stroke(roundedBox(state, state.fBounds, state.fBorder->width * 0.5f), state.fBorder->width, state.fBorder->colour, alpha);
 }
 
 // A node's own drawing: with the program's paint where it asks for it (a
@@ -2888,20 +2899,28 @@ template <class Hooks> void paintBox(Hooks &hooks, const State &state, skia::SkC
 template <class T, class Hooks> void drawSelfOf(T &node, Hooks &, skia::SkCanvas *canvas, float alpha) {
   node.drawSelf(canvas, alpha);
 }
+// A node that draws through the painter -- drawSelf(Painter &, alpha), or
+// with the program's paint, drawSelf(hooks, Painter &, alpha) -- is given
+// one over the canvas: what it draws, a painter that is not Skia's can draw
+// too. One taking the canvas itself is given it, as it was.
 template <class T, class Hooks>
-  requires requires(T &node, Hooks &hooks, skia::SkCanvas *canvas) { node.drawSelf(hooks, canvas, 1.0f); }
+concept DrawsWithHooksThroughPainter = requires(T &node, Hooks &hooks, skiff::paint::Painter &p) { node.drawSelf(hooks, p, 1.0f); };
+template <class T, class Hooks>
+  requires(requires(T &node, Hooks &hooks, skia::SkCanvas *canvas) { node.drawSelf(hooks, canvas, 1.0f); } &&
+           !DrawsWithHooksThroughPainter<T, Hooks>)
 void drawSelfOf(T &node, Hooks &hooks, skia::SkCanvas *canvas, float alpha) {
   node.drawSelf(hooks, canvas, alpha);
 }
-// A node that draws through the painter alone -- drawSelf(Painter &, alpha)
-// -- is given one over the canvas: what it draws, a painter that is not
-// Skia's can draw too.
+template <class T, class Hooks>
+  requires DrawsWithHooksThroughPainter<T, Hooks>
+void drawSelfOf(T &node, Hooks &hooks, skia::SkCanvas *canvas, float alpha) {
+  skiff::paint::Painter p(canvas, fontToDrawWith());
+  node.drawSelf(hooks, p, alpha);
+}
 template <class T, class Hooks>
   requires requires(T &node, skiff::paint::Painter &p) { node.drawSelf(p, 1.0f); }
 void drawSelfOf(T &node, Hooks &, skia::SkCanvas *canvas, float alpha) {
-  skia::SkFont *font = skiff::paint::defaultFont();
-  static skia::SkFont fallback;
-  skiff::paint::Painter p(canvas, font != nullptr ? *font : fallback);
+  skiff::paint::Painter p(canvas, fontToDrawWith());
   node.drawSelf(p, alpha);
 }
 
@@ -2961,7 +2980,7 @@ void drawNode(T &node, Painting &painting, skia::SkCanvas *canvas, float inherit
       state.fRecordedAt = now;
     }
     if (!state.fPicture && state.fRecordedInARow >= 3) {
-      paintBox(hooks, state, canvas, alpha);
+      paintBox(hooks, state, skiff::paint::Painter(canvas, fontToDrawWith()), alpha);
       drawSelfOf(node, hooks, canvas, alpha);
       eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, painting, canvas, alpha); });
     } else if (!state.fPicture) {
@@ -2970,7 +2989,7 @@ void drawNode(T &node, Painting &painting, skia::SkCanvas *canvas, float inherit
       // past it -- placed or shifted out of it -- was culled with the picture
       // wherever only that part was repainted.
       skia::SkCanvas *into = recorder.beginRecording(joined(state.fBounds, state.fReach).makeOutset(64.0f, 64.0f));
-      paintBox(hooks, state, into, 1.0f);
+      paintBox(hooks, state, skiff::paint::Painter(into, fontToDrawWith()), 1.0f);
       drawSelfOf(node, hooks, into, 1.0f);
       eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, painting, into, 1.0f); });
       state.fPicture = recorder.finishRecordingAsPicture();
@@ -2985,7 +3004,7 @@ void drawNode(T &node, Painting &painting, skia::SkCanvas *canvas, float inherit
       }
     }
   } else {
-    paintBox(hooks, state, canvas, alpha);
+    paintBox(hooks, state, skiff::paint::Painter(canvas, fontToDrawWith()), alpha);
     drawSelfOf(node, hooks, canvas, alpha);
     eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) {
       draw(child, painting, canvas, alpha);
