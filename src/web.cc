@@ -1373,7 +1373,7 @@ template <class Compute, class N> struct Projected : N {
 };
 template <class Want, class Compute, class N>
 [[nodiscard]] auto projected(Compute compute, N node) {
-  return bound<Want>(Projected<Compute, N>(std::move(compute), std::move(node)));
+  return ::skiff::web::bound<Want>(Projected<Compute, N>(std::move(compute), std::move(node)));
 }
 // A node whose Spec is read from the part: shown, sized, coloured by it.
 template <class N> struct SpecOf : N {
@@ -1382,7 +1382,7 @@ template <class N> struct SpecOf : N {
 };
 template <class Want, class Compute, class N>
 [[nodiscard]] auto spec_for(Compute compute, N node) {
-  return projected<Want>(std::move(compute), SpecOf<N>(std::move(node)));
+  return ::skiff::web::projected<Want>(std::move(compute), SpecOf<N>(std::move(node)));
 }
 // A text read from the part: its words.
 struct TextOf : Text {
@@ -1392,7 +1392,7 @@ struct TextOf : Text {
 };
 template <class Want, class Compute>
 [[nodiscard]] auto text_for(Compute compute, Text text) {
-  return projected<Want>(std::move(compute), TextOf(std::move(text)));
+  return ::skiff::web::projected<Want>(std::move(compute), TextOf(std::move(text)));
 }
 // A node reading what is computed from parts: computed again only where
 // one of them moved (skiff.bind's Derived).
@@ -1449,7 +1449,7 @@ template <class T, class Handlers, class N>
 template <class T, class N>
   requires std::derived_from<N, Node>
 [[nodiscard]] auto state(N node) {
-  return state<T>(Handlers<>{}, std::move(node));
+  return ::skiff::web::state<T>(Handlers<>{}, std::move(node));
 }
 
 // A view named where it is written (SKIFF_NAMED): a type of its own over

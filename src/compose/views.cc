@@ -239,7 +239,7 @@ template <class N> struct Slid : N {
   }
 };
 template <class Want, class Compute, class N> auto slid_for(Compute compute, N node) {
-  return projected<Want>(std::move(compute), Slid<part_t<N>>(as_part(std::move(node))));
+  return ::skiff::compose::projected<Want>(std::move(compute), Slid<part_t<N>>(as_part(std::move(node))));
 }
 
 // What lies under some layers drawn once, while anything over it moves (a

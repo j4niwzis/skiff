@@ -1040,7 +1040,7 @@ auto state(Handlers handlers, N node) {
 template <class T, class N>
   requires std::derived_from<N, scene::NodeBase>
 auto state(N node) {
-  return state<T>(Handlers<>{}, std::move(node));
+  return ::skiff::compose::state<T>(Handlers<>{}, std::move(node));
 }
 
 // Answers a press with a copy of its event.
@@ -1197,8 +1197,10 @@ template <class N> auto named(std::string label, std::string hint, N node) {
 template <class N> auto said(std::optional<scene::SemanticRole> role, bool chosen, N node) {
   return erased(Said<part_t<N>>(std::move(role), chosen, as_part(std::move(node))));
 }
+// Declared before what uses it, called by its own name (projected, below).
+template <class Want, class Compute, class N> auto projected(Compute compute, N node);
 template <class Want, class Compute, class N> auto chosen_for(Compute compute, std::optional<scene::SemanticRole> role, N node) {
-  return projected<Want>(std::move(compute), Said<part_t<N>>(std::move(role), false, as_part(std::move(node))));
+  return ::skiff::compose::projected<Want>(std::move(compute), Said<part_t<N>>(std::move(role), false, as_part(std::move(node))));
 }
 
 // Answers a key with a copy of its event: Esc, as a bar is let go.
@@ -1338,7 +1340,7 @@ auto projected(Compute compute, N node) {
   using In = typename bind::BoundValueT<Want>::type;
   using Out = std::invoke_result_t<Compute &, const In &>;
   auto fn = erased_fn<Out(const In &)>(std::move(compute));
-  return bound<Want>(
+  return ::skiff::compose::bound<Want>(
       Projected<decltype(fn), part_t<N>>(std::move(fn), as_part(std::move(node))));
 }
 // What Compute makes of one part, the part taken: projected from it, wherever
@@ -1348,7 +1350,7 @@ auto projected(Compute compute, N node) {
 template <class Read, class Compute, class N>
   requires kTakesOnePart<Compute, Read>
 auto derived(Compute compute, N node) {
-  return projected<Read>(std::move(compute), std::move(node));
+  return ::skiff::compose::projected<Read>(std::move(compute), std::move(node));
 }
 // And as a part of the model says they do: `ask(now, press)` with the part
 // as last read -- in the phase given: on their way down (capture), before a
@@ -1374,12 +1376,12 @@ template <class Phase, class K, class Ask, class N> struct KeysFor : N {
 };
 template <class Want, class Phase, class Compute, class Ask, class N> auto keys_for(Compute compute, Ask ask, N node) {
   using K = std::remove_cvref_t<std::invoke_result_t<Compute &, const typename bind::BoundValueT<Want>::type &>>;
-  return projected<Want>(std::move(compute), KeysFor<Phase, K, Ask, part_t<N>>(std::move(ask), as_part(std::move(node))));
+  return ::skiff::compose::projected<Want>(std::move(compute), KeysFor<Phase, K, Ask, part_t<N>>(std::move(ask), as_part(std::move(node))));
 }
 // Visibility projected from a bound part, including a scope or local model.
 template <class Want, class Compute, class N>
 auto shown_for(Compute compute, N node) {
-  return projected<Want>(std::move(compute), ShownBy<part_t<N>>(as_part(std::move(node))));
+  return ::skiff::compose::projected<Want>(std::move(compute), ShownBy<part_t<N>>(as_part(std::move(node))));
 }
 // A node shown what it reads by a function said where it is put --
 // `apply(node, value)` -- for a leaf with no read of its own: an icon's shape
@@ -1404,7 +1406,7 @@ auto applied(Compute compute, Apply apply, N node) {
   using In = typename bind::BoundValueT<Want>::type;
   using Out = std::remove_cvref_t<std::invoke_result_t<Compute &, const In &>>;
   auto fn = erased_fn<void(N &, const Out &)>(std::move(apply));
-  return projected<Want>(std::move(compute), Applied<decltype(fn), N>(std::move(fn), std::move(node)));
+  return ::skiff::compose::projected<Want>(std::move(compute), Applied<decltype(fn), N>(std::move(fn), std::move(node)));
 }
 // A field given the keys as the model says: each new request -- a count the
 // model raises for it, `compute(value)` -- asks its scene to focus it at its
@@ -1429,7 +1431,7 @@ template <class N> struct FocusedBy : N {
 };
 template <class Want, class Compute, class N>
 auto focused_by(Compute compute, N node) {
-  return projected<Want>(std::move(compute), FocusedBy<part_t<N>>(as_part(std::move(node))));
+  return ::skiff::compose::projected<Want>(std::move(compute), FocusedBy<part_t<N>>(as_part(std::move(node))));
 }
 template <class N> struct SpecOf : N {
   // Its content's handlers at its own level (as Bound keeps them): a call
@@ -1443,11 +1445,11 @@ template <class N> struct SpecOf : N {
 };
 template <class Want, class Compute, class N>
 auto spec_for(Compute compute, N node) {
-  return projected<Want>(std::move(compute), SpecOf<part_t<N>>(as_part(std::move(node))));
+  return ::skiff::compose::projected<Want>(std::move(compute), SpecOf<part_t<N>>(as_part(std::move(node))));
 }
 template <class Want, class Compute>
 auto text_for(Compute compute, nodes::Text text) {
-  return projected<Want>(std::move(compute), TextOf(std::move(text)));
+  return ::skiff::compose::projected<Want>(std::move(compute), TextOf(std::move(text)));
 }
 // A scope at the part what it reads says -- the chat chosen, as what is
 // shown has it: Compute makes the scope's keys of the value read, and the
@@ -1468,7 +1470,7 @@ template <class Compute, class N> struct Rekeyed : N {
 };
 template <class Want, class Compute, class N>
 auto rekeyed_by(Compute compute, N node) {
-  return bound<Want>(Rekeyed<Compute, part_t<N>>(std::move(compute), as_part(std::move(node))));
+  return ::skiff::compose::bound<Want>(Rekeyed<Compute, part_t<N>>(std::move(compute), as_part(std::move(node))));
 }
 
 // What sections show: their parts, one under another, the tabs of every
@@ -1927,7 +1929,7 @@ private:
   }
 };
 template <class Want, class Compute, class N> auto placed_at(Compute compute, N node) {
-  return projected<Want>(std::move(compute), PlacedAt<part_t<N>>(as_part(std::move(node))));
+  return ::skiff::compose::projected<Want>(std::move(compute), PlacedAt<part_t<N>>(as_part(std::move(node))));
 }
 
 // Where a popover opens, in window coordinates: at a point (a menu, at the
@@ -2023,7 +2025,7 @@ private:
   }
 };
 template <class Want, class Compute, class N> auto popped_at(Compute compute, float edge, N node) {
-  return projected<Want>(std::move(compute), Popped<part_t<N>>(edge, as_part(std::move(node))));
+  return ::skiff::compose::projected<Want>(std::move(compute), Popped<part_t<N>>(edge, as_part(std::move(node))));
 }
 
 

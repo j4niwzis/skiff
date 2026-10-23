@@ -256,7 +256,7 @@ template <class N> struct HeldOff : Box<N> {
   void onPointer(scene::phase::capture, const scene::pointer::cancel &, scene::PointerReply &) { fHeld = false; }
 };
 template <class Want, class Take, class N> auto held_off_for(Take take, N node) {
-  return projected<Want>(std::move(take), HeldOff<N>(std::move(node)));
+  return ::skiff::compose::projected<Want>(std::move(take), HeldOff<N>(std::move(node)));
 }
 
 // A window list whose rows are picked by a press -- or a span of them by a
@@ -404,7 +404,7 @@ template <class Key, class Ask, class Contents> struct Fetching : nodes::ScrollC
 };
 template <class Want, class Key, class Compute, class Ask, class Contents>
 auto fetching_for(Compute compute, Ask ask, nodes::ScrollContainer<Contents> scroll) {
-  return projected<Want>(std::move(compute), Fetching<Key, Ask, Contents>(std::move(ask), std::move(scroll)));
+  return ::skiff::compose::projected<Want>(std::move(compute), Fetching<Key, Ask, Contents>(std::move(ask), std::move(scroll)));
 }
 
 // A picture seen whole -- a viewer's: fitted in its room less a margin
@@ -521,7 +521,7 @@ private:
 };
 template <class Want, class Tag, class Compute, class Off, class On, class Picture>
 auto zoomable_for(Compute compute, float margin, Off off, On on, Picture picture, scene::Spec spec = {}) {
-  return projected<Want>(std::move(compute), Zoomable<Tag, Off, On, Picture>(margin, std::move(off), std::move(on), std::move(picture), std::move(spec)));
+  return ::skiff::compose::projected<Want>(std::move(compute), Zoomable<Tag, Off, On, Picture>(margin, std::move(off), std::move(on), std::move(picture), std::move(spec)));
 }
 
 // A right press on a node -- a long press, on a phone -- answered by what
@@ -732,7 +732,7 @@ template <class N> struct Fading : N {
   }
 };
 template <class Want, class Compute, class N> auto fading_for(Compute compute, double hold, N node) {
-  return projected<Want>(std::move(compute), Fading<part_t<N>>(hold, as_part(std::move(node))));
+  return ::skiff::compose::projected<Want>(std::move(compute), Fading<part_t<N>>(hold, as_part(std::move(node))));
 }
 
 // A node swiped to the left to do something with it -- a message answered,
@@ -923,7 +923,7 @@ private:
   }
 };
 template <class Want, class Compute, class N> auto washed_for(skia::SkColor colour, float held, float flash, Compute compute, N node) {
-  return projected<Want>(std::move(compute), Washed<part_t<N>>(colour, held, flash, as_part(std::move(node))));
+  return ::skiff::compose::projected<Want>(std::move(compute), Washed<part_t<N>>(colour, held, flash, as_part(std::move(node))));
 }
 
 // A node that comes in moving, where it is made so: from below, fading in,
