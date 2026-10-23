@@ -361,6 +361,15 @@ set(skiff_sources
 
 add_library(${PROJECT_NAME} STATIC ${skiff_sources})
 add_library(skiff::skiff ALIAS ${PROJECT_NAME})
+# The stand-in for Skia draws through the browser's 2D context under
+# Emscripten, nowhere elsewhere.
+if(NOT SKIFF_SKIA)
+  if(SKIFF_EMSCRIPTEN)
+    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/skia_lite_page.cc)
+  else()
+    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/skia_lite_none.cc)
+  endif()
+endif()
 # In this build only, as Skia and Boost.PFR: an installed copy finds splice
 # again, in its config.
 target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:splice>)

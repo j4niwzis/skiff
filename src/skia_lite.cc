@@ -401,7 +401,17 @@ private:
   float fKY = 0.0f, fSY = 1.0f, fTY = 0.0f;
 };
 
-// A path: what it is made of, kept as points -- its bounds are what is asked.
+// The kinds in a path's list of numbers, each followed by what it says: a
+// move or a line to x y; a quad x1 y1 x y; a cubic x1 y1 x2 y2 x y; a close;
+// a rect l t w h; a rounded rect l t w h and each corner's x y radii (upper
+// left, upper right, lower right, lower left); an oval cx cy rx ry; an arc
+// of one cx cy rx ry start sweep (degrees).
+namespace pathkind {
+inline constexpr float kMove = 1, kLine = 2, kQuad = 3, kCubic = 4, kClose = 5, kRect = 6, kRRect = 7, kOval = 8, kArc = 9;
+} // namespace pathkind
+
+// A path: what it is made of, as the numbers above -- for a canvas that
+// draws it -- and its bounds.
 class SkPath {
 public:
   [[nodiscard]] const SkRect &getBounds() const noexcept { return fBounds; }
@@ -430,38 +440,64 @@ public:
                  std::max(fBounds.fBottom, p.fY)};
     fPoints.push_back(p);
   }
+  void say(std::initializer_list<float> numbers) { fSaid.insert(fSaid.end(), numbers); }
+  [[nodiscard]] const std::vector<float> &said() const noexcept { return fSaid; }
 
 private:
   std::vector<SkPoint> fPoints;
+  std::vector<float> fSaid;
   SkRect fBounds{};
 };
 
 class SkPathBuilder {
 public:
-  SkPathBuilder &moveTo(float x, float y) { fPath.add({x, y}); return *this; }
+  SkPathBuilder &moveTo(float x, float y) { fPath.add({x, y}); fPath.say({pathkind::kMove, x, y}); return *this; }
   SkPathBuilder &moveTo(SkPoint p) { return moveTo(p.fX, p.fY); }
-  SkPathBuilder &lineTo(float x, float y) { fPath.add({x, y}); return *this; }
+  SkPathBuilder &lineTo(float x, float y) { fPath.add({x, y}); fPath.say({pathkind::kLine, x, y}); return *this; }
   SkPathBuilder &lineTo(SkPoint p) { return lineTo(p.fX, p.fY); }
-  SkPathBuilder &quadTo(float x1, float y1, float x2, float y2) { fPath.add({x1, y1}); fPath.add({x2, y2}); return *this; }
+  SkPathBuilder &quadTo(float x1, float y1, float x2, float y2) {
+    fPath.add({x1, y1}); fPath.add({x2, y2}); fPath.say({pathkind::kQuad, x1, y1, x2, y2});
+    return *this;
+  }
   SkPathBuilder &conicTo(float x1, float y1, float x2, float y2, float) { return quadTo(x1, y1, x2, y2); }
   SkPathBuilder &cubicTo(float x1, float y1, float x2, float y2, float x3, float y3) {
     fPath.add({x1, y1}); fPath.add({x2, y2}); fPath.add({x3, y3});
+    fPath.say({pathkind::kCubic, x1, y1, x2, y2, x3, y3});
     return *this;
   }
-  SkPathBuilder &close() { return *this; }
+  SkPathBuilder &close() { fPath.say({pathkind::kClose}); return *this; }
   SkPathBuilder &addRect(const SkRect &r) {
     fPath.add({r.fLeft, r.fTop}); fPath.add({r.fRight, r.fBottom});
+    fPath.say({pathkind::kRect, r.fLeft, r.fTop, r.width(), r.height()});
     return *this;
   }
-  SkPathBuilder &addRRect(const SkRRect &r) { return addRect(r.rect()); }
-  SkPathBuilder &addOval(const SkRect &r) { return addRect(r); }
-  SkPathBuilder &addCircle(float x, float y, float radius) { return addRect(SkRect::MakeLTRB(x - radius, y - radius, x + radius, y + radius)); }
+  SkPathBuilder &addRRect(const SkRRect &r) {
+    const SkRect &b = r.rect();
+    fPath.add({b.fLeft, b.fTop}); fPath.add({b.fRight, b.fBottom});
+    const SkVector a = r.radii(SkRRect::kUpperLeft_Corner), c = r.radii(SkRRect::kUpperRight_Corner),
+                   d = r.radii(SkRRect::kLowerRight_Corner), e = r.radii(SkRRect::kLowerLeft_Corner);
+    fPath.say({pathkind::kRRect, b.fLeft, b.fTop, b.width(), b.height(), a.fX, a.fY, c.fX, c.fY, d.fX, d.fY, e.fX, e.fY});
+    return *this;
+  }
+  SkPathBuilder &addOval(const SkRect &r) {
+    fPath.add({r.fLeft, r.fTop}); fPath.add({r.fRight, r.fBottom});
+    fPath.say({pathkind::kOval, r.centerX(), r.centerY(), r.width() * 0.5f, r.height() * 0.5f});
+    return *this;
+  }
+  SkPathBuilder &addCircle(float x, float y, float radius) { return addOval(SkRect::MakeLTRB(x - radius, y - radius, x + radius, y + radius)); }
   SkPathBuilder &addPath(const SkPath &path) {
-    if (!path.isEmpty())
-      addRect(path.getBounds());
+    for (const float n : path.said()) fPath.say({n});
+    if (!path.isEmpty()) {
+      fPath.add({path.getBounds().fLeft, path.getBounds().fTop});
+      fPath.add({path.getBounds().fRight, path.getBounds().fBottom});
+    }
     return *this;
   }
-  SkPathBuilder &arcTo(const SkRect &oval, float, float, bool) { return addRect(oval); }
+  SkPathBuilder &arcTo(const SkRect &oval, float start, float sweep, bool) {
+    fPath.add({oval.fLeft, oval.fTop}); fPath.add({oval.fRight, oval.fBottom});
+    fPath.say({pathkind::kArc, oval.centerX(), oval.centerY(), oval.width() * 0.5f, oval.height() * 0.5f, start, sweep});
+    return *this;
+  }
   [[nodiscard]] SkRect computeBounds() const { return fPath.getBounds(); }
   [[nodiscard]] SkPath snapshot() const { return fPath; }
   SkPath detach() { return std::exchange(fPath, {}); }
@@ -491,9 +527,15 @@ struct SkSamplingOptions {
   constexpr SkSamplingOptions(SkFilterMode f, SkMipmapMode m) : filter(f), mipmap(m) {}
 };
 
+// What paints a shape other than its colour: a linear gradient's points and
+// colours, which a canvas that draws takes; anything else (an image's) is
+// drawn as the paint's colour.
 class SkShader {
 public:
   virtual ~SkShader() = default;
+  bool linear = false;
+  SkPoint from{}, to{};
+  std::vector<SkColor4f> colours;
 };
 class SkImageFilter {
 public:
@@ -527,7 +569,14 @@ public:
 private:
   Colors fColors;
 };
-inline Sp<SkShader> LinearGradient(const SkPoint[2], const SkGradient &) { return std::make_shared<SkShader>(); }
+inline Sp<SkShader> LinearGradient(const SkPoint points[2], const SkGradient &gradient) {
+  auto shader = std::make_shared<SkShader>();
+  shader->linear = true;
+  shader->from = points[0];
+  shader->to = points[1];
+  shader->colours = gradient.colors().colors;
+  return shader;
+}
 
 class SkPaint {
 public:
@@ -727,26 +776,64 @@ inline Sp<SkImage> RasterFromBitmap(const SkBitmap &bitmap) { return bitmap.asIm
 
 // ---- what is drawn and kept ------------------------------------------------------
 
-class SkPicture {
-public:
-  explicit SkPicture(SkRect cull) : fCull(cull) {}
-  [[nodiscard]] SkRect cullRect() const noexcept { return fCull; }
-  [[nodiscard]] int approximateOpCount() const noexcept { return 0; }
-
-private:
-  SkRect fCull;
-};
-
 class SkTypeface;
 class SkFont;
 class SkTextBlob;
 class SkSurface;
+class SkPicture;
 enum class SkTextEncoding { kUTF8, kUTF16, kUTF32, kGlyphID };
 
+} // namespace skia
+
+// Where a canvas's draws go, other than nowhere: a page's <canvas>, drawn by
+// the browser's 2D context (skia_lite_page.cc, under Emscripten); and how wide
+// the browser makes a text. Without a browser (skia_lite_none.cc) nothing is
+// drawn and nothing measured: the faces' own widths are taken.
+namespace skia::lite {
+using Target = int;
+void draw(Target, const SkMatrix &, const std::vector<float> &shape, const SkPaint &);
+void clip(Target, const SkMatrix &, const std::vector<float> &shape);
+void save(Target);
+void restore(Target);
+void layer(Target, float alpha);
+void text(Target, const SkMatrix &, std::string_view text, float x, float y, float size, bool bold, const SkPaint &);
+void clear(Target, SkColor);
+[[nodiscard]] Target attach(std::string_view id, int width, int height, float scale);
+[[nodiscard]] std::optional<float> measure(std::string_view text, float size, bool bold);
+[[nodiscard]] std::optional<std::pair<float, float>> metrics(float size, bool bold);
+// A draw kept for later, as a picture keeps what was drawn into it.
+struct Command {
+  enum Kind { kDraw, kClip, kSave, kRestore, kLayer, kText, kClear } kind = kDraw;
+  SkMatrix matrix;
+  std::vector<float> shape;
+  SkPaint paint;
+  std::string text;
+  float x = 0.0f, y = 0.0f, size = 0.0f, alpha = 1.0f;
+  bool bold = false;
+  SkColor colour = 0;
+};
+} // namespace skia::lite
+
+export namespace skia {
+
+class SkPicture {
+public:
+  explicit SkPicture(SkRect cull, std::vector<lite::Command> commands = {}) : fCull(cull), fCommands(std::move(commands)) {}
+  [[nodiscard]] SkRect cullRect() const noexcept { return fCull; }
+  [[nodiscard]] int approximateOpCount() const noexcept { return static_cast<int>(fCommands.size()); }
+  [[nodiscard]] const std::vector<lite::Command> &commands() const noexcept { return fCommands; }
+
+private:
+  SkRect fCull;
+  std::vector<lite::Command> fCommands;
+};
+
 // A canvas that keeps where it is -- its matrix and the box its clips leave,
-// saved and restored -- and draws nothing: what is skipped (quickReject),
-// mapped (getTotalMatrix) and kept (the save count) is as on Skia's. A clear
-// fills the pixels it was made over.
+// saved and restored -- so what is skipped (quickReject), mapped
+// (getTotalMatrix) and kept (the save count) is as on Skia's. What it draws
+// goes to a page's <canvas> where it is made over one (OnPage), into a
+// picture where it records one, and nowhere else. A clear fills the pixels
+// it was made over.
 class SkCanvas {
 public:
   enum SrcRectConstraint { kStrict_SrcRectConstraint, kFast_SrcRectConstraint };
@@ -769,21 +856,40 @@ public:
   SkCanvas &operator=(const SkCanvas &) = delete;
   virtual ~SkCanvas() = default;
 
+  // Over the page's <canvas> of this id, `width` by `height` of the page's
+  // pixels, `scale` device pixels each: drawn by the browser's 2D context.
+  // Without a browser, nowhere.
+  [[nodiscard]] static std::unique_ptr<SkCanvas> OnPage(std::string_view id, int width, int height, float scale) {
+    auto canvas = std::make_unique<SkCanvas>(SkRect::MakeIWH(width, height));
+    canvas->fPage = lite::attach(id, width, height, scale);
+    return canvas;
+  }
   void attach(Pixels *target) { fTarget = target; }
+  void record(std::vector<lite::Command> *into) { fRecord = into; }
 
-  int save() { fStack.push_back(fStack.back()); return static_cast<int>(fStack.size()) - 1; }
-  int saveLayer(const SkRect *, const SkPaint *) { return save(); }
+  int save() {
+    fStack.push_back(fStack.back());
+    keep({.kind = lite::Command::kSave});
+    return static_cast<int>(fStack.size()) - 1;
+  }
+  int saveLayer(const SkRect *, const SkPaint *paint) { return saveLayerAlphaf(nullptr, paint ? paint->getAlphaf() : 1.0f); }
   int saveLayer(const SkRect &bounds, const SkPaint *paint) { return saveLayer(&bounds, paint); }
-  int saveLayer(const SaveLayerRec &) { return save(); }
-  int saveLayerAlphaf(const SkRect *, float) { return save(); }
-  int saveLayerAlpha(const SkRect *, std::uint32_t) { return save(); }
+  int saveLayer(const SaveLayerRec &rec) { return saveLayer(rec.fBounds, rec.fPaint); }
+  int saveLayerAlphaf(const SkRect *, float alpha) {
+    fStack.push_back(fStack.back());
+    keep({.kind = lite::Command::kLayer, .alpha = alpha});
+    return static_cast<int>(fStack.size()) - 1;
+  }
+  int saveLayerAlpha(const SkRect *bounds, std::uint32_t alpha) { return saveLayerAlphaf(bounds, static_cast<float>(alpha) / 255.0f); }
   void restore() {
-    if (fStack.size() > 1)
+    if (fStack.size() > 1) {
       fStack.pop_back();
+      keep({.kind = lite::Command::kRestore});
+    }
   }
   void restoreToCount(int count) {
     while (static_cast<int>(fStack.size()) > std::max(1, count))
-      fStack.pop_back();
+      restore();
   }
   [[nodiscard]] int getSaveCount() const noexcept { return static_cast<int>(fStack.size()); }
 
@@ -801,13 +907,22 @@ public:
   [[nodiscard]] SkMatrix getTotalMatrix() const { return fStack.back().matrix; }
   [[nodiscard]] SkMatrix getLocalToDeviceAs3x3() const { return getTotalMatrix(); }
 
-  void clipRect(const SkRect &r, SkClipOp op, bool) { clipDevice(top().matrix.mapRect(r), op); }
+  void clipRect(const SkRect &r, SkClipOp op, bool) {
+    clipDevice(top().matrix.mapRect(r), op);
+    if (op == SkClipOp::kIntersect) keep({.kind = lite::Command::kClip, .shape = {pathkind::kRect, r.fLeft, r.fTop, r.width(), r.height()}});
+  }
   void clipRect(const SkRect &r, SkClipOp op) { clipRect(r, op, false); }
   void clipRect(const SkRect &r, bool aa = false) { clipRect(r, SkClipOp::kIntersect, aa); }
   void clipIRect(const SkIRect &r, SkClipOp op = SkClipOp::kIntersect) { clipRect(SkRect::Make(r), op); }
-  void clipRRect(const SkRRect &r, SkClipOp op, bool aa) { clipRect(r.rect(), op, aa); }
+  void clipRRect(const SkRRect &r, SkClipOp op, bool) {
+    clipDevice(top().matrix.mapRect(r.rect()), op);
+    if (op == SkClipOp::kIntersect) keep({.kind = lite::Command::kClip, .shape = shapeOf(r)});
+  }
   void clipRRect(const SkRRect &r, bool aa = false) { clipRRect(r, SkClipOp::kIntersect, aa); }
-  void clipPath(const SkPath &p, SkClipOp op, bool aa) { clipRect(p.getBounds(), op, aa); }
+  void clipPath(const SkPath &p, SkClipOp op, bool) {
+    clipDevice(top().matrix.mapRect(p.getBounds()), op);
+    if (op == SkClipOp::kIntersect) keep({.kind = lite::Command::kClip, .shape = p.said()});
+  }
   void clipPath(const SkPath &p, bool aa = false) { clipPath(p, SkClipOp::kIntersect, aa); }
   [[nodiscard]] bool quickReject(const SkRect &r) const {
     const SkRect device = fStack.back().matrix.mapRect(r);
@@ -833,21 +948,30 @@ public:
   void clear(SkColor c) {
     if (fTarget != nullptr)
       std::ranges::fill(fTarget->colours, c);
+    keep({.kind = lite::Command::kClear, .colour = c});
   }
   void clear(const SkColor4f &c) { clear(c.toSkColor()); }
   void drawColor(SkColor c, SkBlendMode = SkBlendMode::kSrcOver) { clear(c); }
   void drawPaint(const SkPaint &) {}
-  void drawRect(const SkRect &, const SkPaint &) {}
-  void drawIRect(const SkIRect &, const SkPaint &) {}
-  void drawRRect(const SkRRect &, const SkPaint &) {}
+  void drawRect(const SkRect &r, const SkPaint &p) { shape({pathkind::kRect, r.fLeft, r.fTop, r.width(), r.height()}, p); }
+  void drawIRect(const SkIRect &r, const SkPaint &p) { drawRect(SkRect::Make(r), p); }
+  void drawRRect(const SkRRect &r, const SkPaint &p) { shape(shapeOf(r), p); }
   void drawDRRect(const SkRRect &, const SkRRect &, const SkPaint &) {}
-  void drawOval(const SkRect &, const SkPaint &) {}
-  void drawCircle(float, float, float, const SkPaint &) {}
-  void drawCircle(SkPoint, float, const SkPaint &) {}
-  void drawArc(const SkRect &, float, float, bool, const SkPaint &) {}
-  void drawLine(float, float, float, float, const SkPaint &) {}
-  void drawLine(SkPoint, SkPoint, const SkPaint &) {}
-  void drawPath(const SkPath &, const SkPaint &) {}
+  void drawOval(const SkRect &r, const SkPaint &p) {
+    shape({pathkind::kOval, r.centerX(), r.centerY(), r.width() * 0.5f, r.height() * 0.5f}, p);
+  }
+  void drawCircle(float x, float y, float radius, const SkPaint &p) { shape({pathkind::kOval, x, y, radius, radius}, p); }
+  void drawCircle(SkPoint c, float radius, const SkPaint &p) { drawCircle(c.fX, c.fY, radius, p); }
+  void drawArc(const SkRect &oval, float start, float sweep, bool, const SkPaint &p) {
+    shape({pathkind::kArc, oval.centerX(), oval.centerY(), oval.width() * 0.5f, oval.height() * 0.5f, start, sweep}, p);
+  }
+  void drawLine(float x0, float y0, float x1, float y1, const SkPaint &p) {
+    SkPaint stroked = p;
+    stroked.setStyle(SkPaint::kStroke_Style);
+    shape({pathkind::kMove, x0, y0, pathkind::kLine, x1, y1}, stroked);
+  }
+  void drawLine(SkPoint a, SkPoint b, const SkPaint &p) { drawLine(a.fX, a.fY, b.fX, b.fY, p); }
+  void drawPath(const SkPath &path, const SkPaint &p) { shape(path.said(), p); }
   void drawImage(const SkImage *, float, float) {}
   void drawImage(const SkImage *, float, float, const SkSamplingOptions &, const SkPaint * = nullptr) {}
   void drawImage(const Sp<SkImage> &, float, float) {}
@@ -858,11 +982,30 @@ public:
                      SrcRectConstraint) {}
   void drawImageRect(const Sp<SkImage> &, const SkRect &, const SkRect &, const SkSamplingOptions &, const SkPaint *,
                      SrcRectConstraint) {}
-  void drawPicture(const SkPicture *) {}
-  void drawPicture(const Sp<SkPicture> &) {}
-  void drawPicture(const SkPicture *, const SkMatrix *, const SkPaint *) {}
-  void drawPicture(const Sp<SkPicture> &, const SkMatrix *, const SkPaint *) {}
-  void drawSimpleText(const void *, std::size_t, SkTextEncoding, float, float, const SkFont &, const SkPaint &) {}
+  // What a picture kept, drawn again here: through this canvas's matrix, and
+  // the matrix and the paint's alpha given.
+  void drawPicture(const SkPicture *picture, const SkMatrix *matrix, const SkPaint *paint) {
+    if (picture == nullptr || (fPage == 0 && fRecord == nullptr))
+      return;
+    const float alpha = paint ? paint->getAlphaf() : 1.0f;
+    if (alpha < 1.0f) saveLayerAlphaf(nullptr, alpha);
+    else save();
+    if (matrix) concat(*matrix);
+    const SkMatrix base = top().matrix;
+    for (const lite::Command &one : picture->commands()) {
+      lite::Command again = one;
+      again.matrix = SkMatrix::Concat(base, one.matrix);
+      keep(again, true);
+    }
+    restore();
+  }
+  void drawPicture(const SkPicture *picture) { drawPicture(picture, nullptr, nullptr); }
+  void drawPicture(const Sp<SkPicture> &picture) { drawPicture(picture.get(), nullptr, nullptr); }
+  void drawPicture(const Sp<SkPicture> &picture, const SkMatrix *matrix, const SkPaint *paint) {
+    drawPicture(picture.get(), matrix, paint);
+  }
+  void drawSimpleText(const void *text, std::size_t bytes, SkTextEncoding encoding, float x, float y, const SkFont &font,
+                      const SkPaint &paint);
   void drawTextBlob(const SkTextBlob *, float, float, const SkPaint &) {}
   void drawTextBlob(const Sp<SkTextBlob> &, float, float, const SkPaint &) {}
 
@@ -880,9 +1023,44 @@ private:
     if (!clip.intersect(device))
       clip.setEmpty();
   }
+  [[nodiscard]] static std::vector<float> shapeOf(const SkRRect &r) {
+    const SkRect &b = r.rect();
+    const SkVector a = r.radii(SkRRect::kUpperLeft_Corner), c = r.radii(SkRRect::kUpperRight_Corner),
+                   d = r.radii(SkRRect::kLowerRight_Corner), e = r.radii(SkRRect::kLowerLeft_Corner);
+    return {pathkind::kRRect, b.fLeft, b.fTop, b.width(), b.height(), a.fX, a.fY, c.fX, c.fY, d.fX, d.fY, e.fX, e.fY};
+  }
+  void shape(std::vector<float> numbers, const SkPaint &paint) {
+    if (fPage == 0 && fRecord == nullptr)
+      return;
+    keep({.kind = lite::Command::kDraw, .shape = std::move(numbers), .paint = paint});
+  }
+  // A command: kept in the picture being recorded, or drawn on the page --
+  // through this canvas's matrix, unless it carries its own (`placed`).
+  void keep(lite::Command one, bool placed = false) {
+    if (fPage == 0 && fRecord == nullptr)
+      return;
+    if (!placed)
+      one.matrix = top().matrix;
+    if (fRecord != nullptr) {
+      fRecord->push_back(std::move(one));
+      return;
+    }
+    switch (one.kind) {
+    case lite::Command::kDraw: lite::draw(fPage, one.matrix, one.shape, one.paint); break;
+    case lite::Command::kClip: lite::clip(fPage, one.matrix, one.shape); break;
+    case lite::Command::kSave: lite::save(fPage); break;
+    case lite::Command::kRestore: lite::restore(fPage); break;
+    case lite::Command::kLayer: lite::layer(fPage, one.alpha); break;
+    case lite::Command::kText: lite::text(fPage, one.matrix, one.text, one.x, one.y, one.size, one.bold, one.paint); break;
+    case lite::Command::kClear: lite::clear(fPage, one.colour); break;
+    }
+  }
+  friend class SkFont;
   std::vector<Level> fStack;
   SkRect fDevice{};
   Pixels *fTarget = nullptr;
+  lite::Target fPage = 0;
+  std::vector<lite::Command> *fRecord = nullptr;
 };
 
 struct SkSurfaceProps {};
@@ -913,21 +1091,26 @@ inline Sp<SkSurface> Raster(const SkImageInfo &info, std::size_t = 0, const SkSu
 }
 inline Sp<SkSurface> SkCanvas::makeSurface(const SkImageInfo &info) const { return Raster(info); }
 
+// What is drawn into its canvas, kept as commands and drawn again where the
+// picture is drawn.
 class SkPictureRecorder {
 public:
   SkCanvas *beginRecording(const SkRect &bounds) {
     fBounds = bounds;
+    fCommands.clear();
     fCanvas = std::make_unique<SkCanvas>();
+    fCanvas->record(&fCommands);
     return fCanvas.get();
   }
   [[nodiscard]] SkCanvas *getRecordingCanvas() noexcept { return fCanvas.get(); }
   [[nodiscard]] Sp<SkPicture> finishRecordingAsPicture() {
     fCanvas.reset();
-    return std::make_shared<SkPicture>(fBounds);
+    return std::make_shared<SkPicture>(fBounds, std::exchange(fCommands, {}));
   }
 
 private:
   SkRect fBounds{};
+  std::vector<lite::Command> fCommands;
   std::unique_ptr<SkCanvas> fCanvas;
 };
 
@@ -1058,11 +1241,20 @@ public:
   void setBaselineSnap(bool) noexcept {}
   void setForceAutoHinting(bool) noexcept {}
 
-  // Each character's width; none where there is no face, as Skia's empty one.
+  // Whether it is drawn bold: emboldened, or a bold face.
+  [[nodiscard]] bool bold() const noexcept { return fEmbolden || (fFace && fFace->isBold()); }
+  // How wide the browser draws it, where there is one; else each character's
+  // width. None where there is no face, as Skia's empty one.
   float measureText(const void *text, std::size_t bytes, SkTextEncoding encoding, SkRect *bounds = nullptr,
                     const SkPaint * = nullptr) const {
     float width = 0.0f;
-    if (fFace)
+    const std::optional<float> browser =
+        fFace && encoding == SkTextEncoding::kUTF8
+            ? lite::measure(std::string_view(static_cast<const char *>(text), bytes), fSize, bold())
+            : std::nullopt;
+    if (browser)
+      width = *browser * fScaleX;
+    else if (fFace)
       forEach(text, bytes, encoding, [&](SkUnichar cp) { width += liteAdvance(cp) * fSize * fScaleX; });
     if (bounds != nullptr)
       *bounds = width > 0.0f ? SkRect::MakeLTRB(0.0f, -0.75f * fSize, width, 0.2f * fSize) : SkRect::MakeEmpty();
@@ -1072,9 +1264,10 @@ public:
     if (metrics != nullptr) {
       *metrics = {};
       if (fFace) {
+        const auto browser = lite::metrics(fSize, bold());
         metrics->fTop = -0.95f * fSize;
-        metrics->fAscent = -0.8f * fSize;
-        metrics->fDescent = 0.2f * fSize;
+        metrics->fAscent = browser ? browser->first : -0.8f * fSize;
+        metrics->fDescent = browser ? browser->second : 0.2f * fSize;
         metrics->fBottom = 0.25f * fSize;
         metrics->fXHeight = 0.5f * fSize;
         metrics->fCapHeight = 0.7f * fSize;
@@ -1138,6 +1331,16 @@ private:
   SkFontHinting fHinting = SkFontHinting::kNormal;
   Edging fEdging = Edging::kAntiAlias;
 };
+
+// Drawn on the page, or kept in the picture: the text, where it is, at the
+// font's size and weight, in the paint's colour.
+inline void SkCanvas::drawSimpleText(const void *text, std::size_t bytes, SkTextEncoding encoding, float x, float y,
+                                     const SkFont &font, const SkPaint &paint) {
+  if ((fPage == 0 && fRecord == nullptr) || encoding != SkTextEncoding::kUTF8 || font.getTypeface() == nullptr)
+    return;
+  keep({.kind = lite::Command::kText, .paint = paint, .text = std::string(static_cast<const char *>(text), bytes), .x = x, .y = y,
+        .size = font.getSize(), .bold = font.bold()});
+}
 
 class SkFontStyleSet {
 public:
