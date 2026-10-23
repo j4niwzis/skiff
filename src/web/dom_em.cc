@@ -197,9 +197,8 @@ void canvasText(Handle h, float x, float y, float size, Colour c, std::string_vi
   skiffDomCanvasText(static_cast<int>(h), x, y, size, c, text.data(), static_cast<int>(text.size()));
 }
 std::string drawn(Handle) { return {}; }
-std::string objectUrl(std::span<const std::byte> bytes, std::string_view mime) {
-  char *p = skiffDomObjectUrl(reinterpret_cast<const unsigned char *>(bytes.data()), static_cast<int>(bytes.size()), mime.data(),
-                              static_cast<int>(mime.size()));
+std::string objectUrl(std::span<const unsigned char> bytes, std::string_view mime) {
+  char *p = skiffDomObjectUrl(bytes.data(), static_cast<int>(bytes.size()), mime.data(), static_cast<int>(mime.size()));
   std::string out(p);
   std::free(p);
   return out;

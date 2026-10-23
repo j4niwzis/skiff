@@ -208,7 +208,55 @@ TEST(Web, FlowsScrollingPicturesAndIconsAreTheBrowsersOwn) {
   scroll.scrollToEnd();
   page.sync();
   EXPECT_NE(dom::dump(scroll.element()).find("data-skiff-scroll=\"end\""), std::string::npos) << dom::dump(scroll.element());
-  EXPECT_FALSE(dom::objectUrl(std::span<const std::byte>(), "image/png").empty());
+  EXPECT_FALSE(dom::objectUrl(std::span<const unsigned char>(), "image/png").empty());
+}
+
+// A text reading a number: for a derived value.
+struct Doubled : Text {
+  Doubled() : Text("") {}
+  void read(int n) { setText(std::to_string(n)); }
+};
+
+TEST(Web, StyledProjectedAndDerivedNodesAreThePagesToo) {
+  dom::reset();
+  Model m;
+  Page page(scoped<Root>(handlers(),
+                         column(styled({.width = 50.0f}, Text("s")), projected<Count>([](const Count &c) { return std::to_string(c.n); }, TextOf("0")),
+                                spec_for<Count>([](const Count &c) { return scene::Spec{.visible = c.n > 0}; }, Box()),
+                                text_for<Count>([](const Count &c) { return std::format("n={}", c.n); }, Text("")),
+                                derived<Count>([](const Count &c) { return c.n * 2; }, Doubled()))),
+            m);
+  page.mount();
+  std::string html = dom::dump(dom::root());
+  EXPECT_NE(html.find("width:50px;"), std::string::npos) << html;
+  EXPECT_NE(html.find(">0</span>"), std::string::npos) << html;
+  EXPECT_NE(html.find("display:none;"), std::string::npos) << html;  // n is 0: the box is hidden
+  EXPECT_NE(html.find(">n=0</span>"), std::string::npos) << html;
+  m.apply(model::over<Count>([](Count c) {
+    c.n = 3;
+    return c;
+  }));
+  page.refresh();
+  html = dom::dump(dom::root());
+  EXPECT_NE(html.find(">3</span>"), std::string::npos) << html;
+  EXPECT_EQ(html.find("display:none;"), std::string::npos) << html;
+  EXPECT_NE(html.find(">n=3</span>"), std::string::npos) << html;
+  EXPECT_NE(html.find(">6</span>"), std::string::npos) << html;
+}
+
+TEST(Web, ATextAsTheSceneMakesItAndAColouredBoxWithChildren) {
+  dom::reset();
+  Model m;
+  Text styled("hello world", 13.0f, 0xff112233u, true);
+  styled.setStyles({{.first = 0, .last = 5, .emphasis = true}, {.first = 6, .last = 11, .code = true}}, 0xff445566u);
+  styled.setLinks({{.first = 6, .last = 11, .target = "https://x.y"}}, 0xff8ab4f8u);
+  Page page(column(std::move(styled), Box(0xff202020u, Text("in a box"))), m);
+  page.mount();
+  const std::string html = dom::dump(dom::root());
+  EXPECT_NE(html.find("font-size:13px;color:rgba(17,34,51,1);font-weight:600;"), std::string::npos) << html;
+  EXPECT_NE(html.find("<span style=\"font-style:italic;\">hello</span>"), std::string::npos) << html;
+  EXPECT_NE(html.find("<a href=\"https://x.y\" style=\"color:rgba(138,180,248,1);font-family:ui-monospace, monospace;"), std::string::npos) << html;
+  EXPECT_NE(html.find("background-color:rgba(32,32,32,1);\"><span class=\"skiff-text\">in a box</span>"), std::string::npos) << html;
 }
 
 TEST(Web, ANodeHiddenAndShownAgainIsShownAsItWas) {

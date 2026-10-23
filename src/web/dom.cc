@@ -56,7 +56,7 @@ void canvasText(Handle canvas, float x, float y, float size, Colour colour, std:
 [[nodiscard]] std::string drawn(Handle canvas);
 // A picture's bytes as a URL the page can show: an object URL (a fake one
 // without a browser).
-[[nodiscard]] std::string objectUrl(std::span<const std::byte> bytes, std::string_view mime);
+[[nodiscard]] std::string objectUrl(std::span<const unsigned char> bytes, std::string_view mime);
 // Scrolled to an offset along its way, or -- below zero -- to its end.
 void scrollTo(Handle element, float offset);
 

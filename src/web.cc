@@ -359,6 +359,10 @@ struct Node : scene::NodeBase {
 
   void apply(const scene::Spec &spec) { fState.apply(spec); }
   void markDirty() { fState.fDirty = true; }
+  // The scene's words for the same: a node that changed how it looks is
+  // written to the page at the next sync; nothing floats over a page.
+  void markDamaged() { markDirty(); }
+  void setFloats(bool) {}
   // What skiff.bind asks of a list's container when its rows changed: the
   // browser lays the page out, so nothing but the next sync.
   void invalidateLayout() { fState.fDirty = true; }
@@ -415,10 +419,30 @@ template <class T>
 
 // ---- nodes -------------------------------------------------------------------
 
-// A box: an element with a Spec and nothing of its own -- a plate, a spacer.
-struct Box : Node {
-  explicit Box(scene::Spec spec = {}) { fState.apply(spec); }
+// A box: an element with a Spec and nothing of its own -- a plate, a
+// spacer -- or, as the scene's Box, a colour with children in it.
+template <class... Parts> struct Box : Node {
+  std::tuple<Parts...> fParts;
+  explicit Box(scene::Spec spec = {})
+    requires(sizeof...(Parts) == 0)
+  {
+    fState.apply(spec);
+  }
+  explicit Box(scene::Colour colour, Parts... parts) : fParts(std::move(parts)...), fColour(colour) { fState.apply({.background = colour}); }
+  void forEachChild(auto &&f) {
+    std::apply([&](auto &...each) { (f(each), ...); }, fParts);
+  }
+  void setColour(scene::Colour colour) {
+    fColour = colour;
+    fState.apply({.background = colour});
+    markDirty();
+  }
+  [[nodiscard]] scene::Colour colour() const noexcept { return fColour; }
+  scene::Colour fColour = 0;
 };
+template <class... Parts> Box(scene::Colour, Parts...) -> Box<Parts...>;
+Box(scene::Spec) -> Box<>;
+Box() -> Box<>;
 
 // A stylesheet put into the document, under `into`: what dresses a page's
 // elements, written by whoever knows the look -- skiff.widgets.web's theme.
@@ -432,10 +456,99 @@ inline dom::Handle mountStylesheet(dom::Handle into, std::string_view css) {
 // A text: a span whose textContent is the text.
 class Text : public Node {
 public:
+  using Styled = scene::TextStyled;
+  using Link = scene::TextLink;
   explicit Text(std::string text, scene::Spec spec = {}) : fText(std::move(text)) { fState.apply(spec); }
+  // As the scene's Text is made: its words, their size and colour, bold or not, selectable or not.
+  Text(std::string text, float size, scene::Colour colour, bool bold = false, bool selectable = false)
+      : fText(std::move(text)), fSize(size), fColour(colour), fBold(bold), fSelectable(selectable) {}
   [[nodiscard]] static constexpr std::string_view tag() { return "span"; }
   void mounted() { dom::attr(fState.fHandle, "class", "skiff-text"); }
-  void sync() { dom::text(fState.fHandle, fText); }
+  void sync() {
+    const dom::Handle h = fState.fHandle;
+    if (fSize) dom::style(h, "font-size", px(*fSize));
+    if (fColour) dom::style(h, "color", rgba(*fColour));
+    dom::style(h, "font-weight", fBold ? "600" : "");
+    dom::style(h, "font-family", fMonospace ? "ui-monospace, monospace" : "");
+    dom::style(h, "user-select", fSelectable ? "text" : "");
+    dom::style(h, "white-space", fWrapped ? "" : "nowrap");
+    dom::style(h, "overflow", fElided || fMaxLines ? "hidden" : "");
+    dom::style(h, "text-overflow", fElided ? "ellipsis" : "");
+    if (fMaxWidth > 0.0f) dom::style(h, "max-width", px(fMaxWidth));
+    if (fMaxLines) {
+      dom::style(h, "display", "-webkit-box");
+      dom::style(h, "-webkit-box-orient", "vertical");
+      dom::style(h, "-webkit-line-clamp", std::to_string(*fMaxLines));
+    }
+    for (const dom::Handle span : fSpans) dom::destroy(span);
+    fSpans.clear();
+    if (fStyles.empty() && fLinks.empty()) {
+      dom::text(h, fText);
+      return;
+    }
+    // Stretches styled or linked: a span (or an a) for each run between the
+    // boundaries of the styles and the links, dressed as the scene draws them.
+    dom::text(h, "");
+    std::vector<std::size_t> cuts{0, fText.size()};
+    for (const Styled &one : fStyles) {
+      cuts.push_back(std::min(one.first, fText.size()));
+      cuts.push_back(std::min(one.last, fText.size()));
+    }
+    for (const Link &one : fLinks) {
+      cuts.push_back(std::min(one.first, fText.size()));
+      cuts.push_back(std::min(one.last, fText.size()));
+    }
+    std::ranges::sort(cuts);
+    cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
+    for (std::size_t i = 0; i + 1 < cuts.size(); ++i) {
+      const std::size_t from = cuts[i], to = cuts[i + 1];
+      const Link *link = nullptr;
+      for (const Link &one : fLinks)
+        if (one.first <= from && to <= one.last) link = &one;
+      const dom::Handle run = dom::create(link ? "a" : "span");
+      std::string words = fText.substr(from, to - from);
+      if (link) {
+        dom::attr(run, "href", link->target);
+        dom::style(run, "color", rgba(fLinkColour));
+        if (link->pill) {
+          dom::attr(run, "class", "skiff-link-pill");
+          dom::style(run, "background-color", rgba((fLinkColour & 0x00ffffffu) | 0x30000000u));
+          dom::style(run, "border-radius", "6px");
+          dom::style(run, "padding", "0 4px");
+        }
+        if (link->picture) words = link->plain;
+      }
+      for (const Styled &one : fStyles) {
+        if (!(one.first <= from && to <= one.last)) continue;
+        if (one.strong) dom::style(run, "font-weight", "600");
+        if (one.emphasis) dom::style(run, "font-style", "italic");
+        if (one.struck || one.underline)
+          dom::style(run, "text-decoration", std::string(one.struck ? "line-through" : "") + (one.struck && one.underline ? " " : "") + (one.underline ? "underline" : ""));
+        if (one.code) {
+          dom::style(run, "font-family", "ui-monospace, monospace");
+          dom::style(run, "background-color", "rgba(255,255,255,0.08)");
+          dom::style(run, "border-radius", "3px");
+          if (one.block) dom::style(run, "display", "block");
+        }
+        if (one.quote) {
+          dom::style(run, "color", rgba(fQuoteColour));
+          if (one.first == from) {
+            dom::style(run, "border-left", "2px solid " + rgba(fQuoteColour));
+            dom::style(run, "padding-left", "6px");
+          }
+        }
+        if (one.marked) dom::style(run, "background-color", rgba((fQuoteColour & 0x00ffffffu) | 0x40000000u));
+        if (one.spoiler) {
+          dom::attr(run, "class", "skiff-spoiler");
+          dom::style(run, "background-color", "rgba(128,128,128,0.6)");
+          dom::style(run, "color", "transparent");
+        }
+      }
+      dom::text(run, words);
+      dom::append(h, run);
+      fSpans.push_back(run);
+    }
+  }
   void setText(std::string text) {
     if (text != fText) {
       fText = std::move(text);
@@ -443,9 +556,79 @@ public:
     }
   }
   [[nodiscard]] const std::string &text() const noexcept { return fText; }
+  void setColour(scene::Colour colour) {
+    fColour = colour;
+    markDirty();
+  }
+  [[nodiscard]] scene::Colour colour() const noexcept { return fColour.value_or(0xffffffffu); }
+  void setFontSize(float size) {
+    fSize = size;
+    markDirty();
+  }
+  void setSize(float size) { setFontSize(size); }
+  void setBold(bool bold) {
+    if (bold != fBold) {
+      fBold = bold;
+      markDirty();
+    }
+  }
+  [[nodiscard]] bool bold() const noexcept { return fBold; }
+  void setMonospace(bool monospace) {
+    fMonospace = monospace;
+    markDirty();
+  }
+  void setSelectable(bool selectable) {
+    fSelectable = selectable;
+    markDirty();
+  }
+  void setSelectionColour(scene::Colour) {}
+  void setStyles(std::vector<Styled> styles, scene::Colour quoteColour) {
+    fStyles = std::move(styles);
+    fQuoteColour = quoteColour;
+    markDirty();
+  }
+  [[nodiscard]] const std::vector<Styled> &styles() const noexcept { return fStyles; }
+  void setLinks(std::vector<Link> links, scene::Colour colour) {
+    fLinks = std::move(links);
+    fLinkColour = colour;
+    markDirty();
+  }
+  [[nodiscard]] const std::vector<Link> &links() const noexcept { return fLinks; }
+  void setMaxWidth(float width) {
+    fMaxWidth = width;
+    markDirty();
+  }
+  void setShrinksToLines(bool) {}
+  void setWrapped(bool wrapped) {
+    fWrapped = wrapped;
+    markDirty();
+  }
+  void setElided(bool elided) {
+    fElided = elided;
+    markDirty();
+  }
+  void setMaxLines(std::optional<int> lines) {
+    fMaxLines = lines;
+    markDirty();
+  }
+  template <class Pictures> void setPictures(Pictures) {}
 
 private:
   std::string fText;
+  std::optional<float> fSize;
+  std::optional<scene::Colour> fColour;
+  bool fBold = false;
+  bool fSelectable = false;
+  bool fMonospace = false;
+  bool fWrapped = true;
+  bool fElided = false;
+  std::optional<int> fMaxLines;
+  float fMaxWidth = 0.0f;
+  std::vector<Styled> fStyles;
+  std::vector<Link> fLinks;
+  scene::Colour fQuoteColour = 0xff8ab4f8u;
+  scene::Colour fLinkColour = 0xff8ab4f8u;
+  std::vector<dom::Handle> fSpans;
 };
 
 // A canvas: an element a node draws on, through a painter, when it is
@@ -1171,6 +1354,55 @@ template <class T, class Handlers, class N>
 [[nodiscard]] bind::Local<T, Handlers, N> local(Handlers handlers, N node, T initial = {}) {
   return bind::Local<T, Handlers, N>(std::move(handlers), std::move(node), std::move(initial));
 }
+// A node with its spec applied: a leaf said as it is put in its place.
+template <class N>
+  requires std::derived_from<N, Node>
+[[nodiscard]] N styled(scene::Spec spec, N node) {
+  node.apply(spec);
+  return node;
+}
+// A node read through a function of the part: what the part is, made into
+// what the node reads. As skiff.compose spells it for a scene.
+template <class Compute, class N> struct Projected : N {
+  Compute fCompute;
+  Projected(Compute compute, N node) : N(std::move(node)), fCompute(std::move(compute)) {}
+  template <class T> void read(const T &value) { N::read(fCompute(value)); }
+};
+template <class Want, class Compute, class N>
+[[nodiscard]] auto projected(Compute compute, N node) {
+  return bound<Want>(Projected<Compute, N>(std::move(compute), std::move(node)));
+}
+// A node whose Spec is read from the part: shown, sized, coloured by it.
+template <class N> struct SpecOf : N {
+  explicit SpecOf(N node) : N(std::move(node)) {}
+  void read(const scene::Spec &spec) { this->apply(spec); }
+};
+template <class Want, class Compute, class N>
+[[nodiscard]] auto spec_for(Compute compute, N node) {
+  return projected<Want>(std::move(compute), SpecOf<N>(std::move(node)));
+}
+// A text read from the part: its words.
+struct TextOf : Text {
+  using Text::Text;
+  explicit TextOf(Text text) : Text(std::move(text)) {}
+  void read(const std::string &words) { this->setText(words); }
+};
+template <class Want, class Compute>
+[[nodiscard]] auto text_for(Compute compute, Text text) {
+  return projected<Want>(std::move(compute), TextOf(std::move(text)));
+}
+// A node reading what is computed from parts: computed again only where
+// one of them moved (skiff.bind's Derived).
+template <class... Reads, class Compute, class N>
+[[nodiscard]] auto derived(Compute compute, N node) {
+  return bind::Derived<Compute, N, Reads...>(std::move(node), std::move(compute));
+}
+// The scene's erasure of a node, where a page has none: the node itself.
+template <class N> [[nodiscard]] N erased(N node) { return node; }
+// A swipe the scene takes on a node: a page has no swipes of its own (the
+// browser's are the browser's), so the node stands as it is.
+template <class Act, class N> [[nodiscard]] N flicked(float, Act, N node) { return node; }
+
 // What a scope answers an event with: the handler for E, given the event
 // and the scope's place, either, or neither.
 template <class E, class F> struct Handle {

@@ -32,49 +32,8 @@ inline constexpr std::array<skia::SkColor, 7> kQuoteColours{
   }
 }
 
-// Links in the text: a range of it, and where it goes. Drawn in their own
-// colour, underlined, where they stand; a press on one that does not
-// become a selection opens it through skiff::scene::openLink.
-struct TextLink {
-  std::size_t first = 0;
-  std::size_t last = 0;
-  std::string target;
-  // A pill, as a mention is drawn: a rounded plate behind it and, at its
-  // start, a picture the program paints (its text leaves room for it).
-  bool pill = false;
-  // A picture in the line, in place of its range: a custom emoji. The
-  // range is a placeholder the program put in the text for the room it
-  // takes (an em space); the picture is the program's, for the target,
-  // as the text's Pictures say.
-  bool picture = false;
-  std::string plain;  // custom emoji label, copied in place of its placeholder
-};
-
-// Stretches of the text drawn otherwise: strong, emphasised (slanted),
-// struck through, as code (on a tinted plate), as a quote (in the quote's
-// colour, a bar at its line's start) -- what a message's HTML says of it.
-struct TextStyled {
-  std::size_t first = 0;
-  std::size_t last = 0;
-  bool strong = false;
-  bool emphasis = false;
-  bool struck = false;
-  bool code = false;
-  bool quote = false;
-  bool underline = false;
-  // A spoiler: hidden under a plate of dots until the text is pressed,
-  // which shows all of its spoilers.
-  bool spoiler = false;
-  // How deep in quotes, as styleAt() sums it: a quote inside a quote is 2.
-  int depth = 0;
-  // Marked: a stretch pointed at -- the part of a message a reply quoted
-  // -- on a plate of the quote's colour, apart from what is selected.
-  bool marked = false;
-  // A block of code (HTML's <pre>), and the language it says it is in: what
-  // holds the text may draw it as a block of its own.
-  bool block = false;
-  std::string language;
-};
+using skiff::scene::TextLink;
+using skiff::scene::TextStyled;
 
 // What a text draws of the program's, by what it stands for: a pill's
 // picture, and a picture in the line (a custom emoji). A type with static
