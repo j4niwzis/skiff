@@ -25,15 +25,23 @@
 // interfaces cannot export one.
 #pragma once
 
+// What a named view is over: compose::Named, the scene's, unless the build
+// says otherwise -- skiff.ui on the page says web::Named. Either way it is
+// what the expression made, named, with the hooks declared again at its
+// level.
+#ifndef SKIFF_NAMED_BASE
+#define SKIFF_NAMED_BASE ::skiff::compose::Named
+#endif
+
 #define SKIFF_NAMED(name, ...)                                                                                          \
   [&] {                                                                                                                \
     auto skiff_named_made = [&] { return __VA_ARGS__; };                                                               \
-    struct name : ::skiff::compose::Named<name, decltype(skiff_named_made())> {                                         \
-      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::Named;                                        \
-      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onKey;                                        \
-      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onPointer;                                    \
-      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onText;                                       \
-      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onSemantic;                                   \
+    struct name : SKIFF_NAMED_BASE<name, decltype(skiff_named_made())> {                                         \
+      using SKIFF_NAMED_BASE<name, decltype(skiff_named_made())>::Named;                                        \
+      using SKIFF_NAMED_BASE<name, decltype(skiff_named_made())>::onKey;                                        \
+      using SKIFF_NAMED_BASE<name, decltype(skiff_named_made())>::onPointer;                                    \
+      using SKIFF_NAMED_BASE<name, decltype(skiff_named_made())>::onText;                                       \
+      using SKIFF_NAMED_BASE<name, decltype(skiff_named_made())>::onSemantic;                                   \
       static constexpr const char *viewName() { return #name; }                                                        \
     };                                                                                                                 \
     return name(skiff_named_made());                                                                                   \

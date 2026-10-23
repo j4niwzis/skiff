@@ -8,7 +8,7 @@ It is six modules:
 | module | what is in it |
 | --- | --- |
 | `skiff.core` | what every backend shares, and no backend is in: `Spec`, roles and typed stylesheets, events, replies and semantics, the host's work, a node of any type by the table of its type; `skiff.bind` is written on it, so a model binds to a tree that is not Skia's |
-| `skiff.web` | the HTML backend: a tree that is a page -- stacks are flex boxes, texts spans, a toggle a checkbox, a slider a range input, a choice tabs or a select -- bound to a model through `skiff.bind` exactly as the scene's nodes are, so a settings page written once is a scene on Skia and a page in a browser |
+| `skiff.web` | the HTML backend: a tree that is a page -- stacks are flex boxes, texts spans, boxes divs, a `Spec` the element's CSS, a named view (`SKIFF_NAMED`) its `data-view` -- bound to a model through `skiff.bind` exactly as the scene's nodes are. The controls on it are [skiff-widgets](../skiff-widgets)' `skiff.widgets.web`, and its `skiff.ui` is the one vocabulary a page is written in once, for Skia and for a browser |
 | `skia` | a module wrapper over the Skia headers, so nothing downstream needs a global module fragment |
 | `skiff.paint` | a font stack with fallbacks behind a primary face, a canvas painter, easing curves |
 | `skiff.scene` | the graph: layout, typed stylesheets, transforms, routed input, accessibility semantics, and frame scheduling |

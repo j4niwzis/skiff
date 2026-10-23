@@ -317,6 +317,10 @@ target_compile_definitions(skiff_core PUBLIC $<$<BOOL:${SKIFF_CONCRETE_COMBINATO
 if(SKIFF_EMSCRIPTEN)
   target_compile_options(skiff_core PRIVATE ${skiff_emscripten_flags})
 endif()
+# SKIFF_NAMED, a macro: a header, as a module cannot export one. The core's
+# rather than the scene's: it names a view over whichever backend's Named the
+# build says (SKIFF_NAMED_BASE), so every consumer of skiff.core has it.
+target_sources(skiff_core PUBLIC FILE_SET HEADERS BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/skiff/named.h)
 
 if(SKIFF_UI)
 set(skiff_sources
@@ -347,8 +351,6 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC
 # `import skiff.scene` and `import skiff.nodes`.
 target_sources(${PROJECT_NAME} PUBLIC
   FILE_SET CXX_MODULES FILES ${skiff_sources})
-# SKIFF_NAMED, a macro: a header, as a module cannot export one.
-target_sources(${PROJECT_NAME} PUBLIC FILE_SET HEADERS BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/skiff/named.h)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD ${skiff_cxx_standard})
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_${skiff_cxx_standard})
@@ -415,24 +417,6 @@ if(SKIFF_WEB)
   target_link_libraries(skiff_web PUBLIC skiff_core)
   list(PREPEND skiff_targets skiff::web)
   list(PREPEND skiff_built skiff_web)
-endif()
-
-# The page on skiff.web a browser can be shown: demo/web, built under
-# Emscripten only -- a maze visualizer's settings, every control native.
-option(SKIFF_WEB_DEMO "Build demo/web, a settings page on skiff.web (Emscripten)" OFF)
-if(SKIFF_WEB AND SKIFF_WEB_DEMO AND SKIFF_EMSCRIPTEN)
-  add_executable(skiff_web_demo ${CMAKE_CURRENT_SOURCE_DIR}/demo/web/main.cc)
-  set_target_properties(skiff_web_demo PROPERTIES
-    OUTPUT_NAME index SUFFIX .html CXX_STANDARD ${skiff_cxx_standard} CXX_SCAN_FOR_MODULES ON)
-  target_link_libraries(skiff_web_demo PRIVATE skiff::web)
-  target_compile_options(skiff_web_demo PRIVATE ${skiff_emscripten_flags})
-  target_link_options(skiff_web_demo PRIVATE ${skiff_emscripten_flags}
-    -sALLOW_MEMORY_GROWTH=1 -sEXPORTED_RUNTIME_METHODS=ccall
-    # A page's tree is one deep expression of tuples, mounted recursively: more
-    # stack than Emscripten's 64 KB, and the overflow caught rather than written over the heap.
-    -sSTACK_SIZE=4194304 -sSTACK_OVERFLOW_CHECK=1
-    -sEXPORTED_FUNCTIONS=_main,_skiff_web_event
-    --shell-file ${CMAKE_CURRENT_SOURCE_DIR}/demo/web/index.html)
 endif()
 
 # ---- What this library is, said by the library ----

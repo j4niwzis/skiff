@@ -8,154 +8,105 @@ import skiff.web;
 
 #include "gtest/gtest-macros.h"
 
-// A page: the tree mounted as the document's elements, each control showing
-// its part of the model; what is done to a control sets its part, and what
-// the model says is written back to the page.
+// A page: the tree mounted as the document's elements in the order a press
+// walks them, a Spec written as CSS, a named view named in the document, and
+// an event on an element delivered down the tree as a press -- with nodes
+// made here, as a program makes its own.
 
 namespace {
 using namespace skiff;
 using namespace skiff::web;
 
-enum class Look { kSolid, kFrosted };
-struct Settings {
-  bool sound = false;
-  float volume = 0.5f;
-  int lines = 3;
-  Look look = Look::kSolid;
-  std::string name;
+struct Clicked {};
+// A button of the test's own: a press sends its event.
+struct Clicker : Node {
+  using Out = model::Types<Clicked>;
+  [[nodiscard]] static constexpr std::string_view tag() { return "button"; }
+  void mounted() { dom::listen(fState.fHandle, "click"); }
+  bool onDom(dom::Handle, std::string_view event, std::string_view) { return event == "click"; }
+  Clicked onPress() { return {}; }
+};
+struct Count {
+  int n = 0;
+};
+// A text showing a count.
+struct Counter : Text {
+  Counter() : Text("0") {}
+  void read(const Count &now) { setText(std::to_string(now.n)); }
 };
 struct Root {
-  model::Tracked<Settings> settings;
+  model::Tracked<Count> count;
 };
 struct Reactions {};
 using Model = model::Model<Root, Reactions>;
 
-auto settingsPage() {
-  return column(vbox(8.0f, {.padding = scene::Margin::all(12.0f)}),
-                row(hbox(8.0f), Text("Sound"), bound<model::Field<&Settings::sound>>(ToggleField())),
-                row(hbox(8.0f), Text("Volume"), bound<model::Field<&Settings::volume>>(SliderField<float>(0.0f, 1.0f))),
-                bound<model::Field<&Settings::lines>>(SliderField<int>(1, 11)),
-                bound<model::Field<&Settings::look>>(ChoiceTabs<Look>({{"Solid", Look::kSolid}, {"Frosted", Look::kFrosted}})),
-                bound<model::Field<&Settings::name>>(TextField<std::string>("Name")),
-                bound<model::Field<&Settings::look>>(Dropdown<Look>({{"Solid", Look::kSolid}, {"Frosted", Look::kFrosted}})));
+auto counterPage() {
+  return scoped<Root>(handlers(handle<Clicked>([](const Clicked &, const auto &) {
+                        return model::over<Count>([](Count c) {
+                          ++c.n;
+                          return c;
+                        });
+                      })),
+                      column(vbox(8.0f, {.padding = scene::Margin::all(12.0f)}), row(hbox(8.0f), Text("Clicks"), bound<Count>(Counter())), Clicker()));
 }
-using PageTree = decltype(settingsPage());
 
-TEST(Web, TheTreeIsMountedAsElementsShowingTheModel) {
+TEST(Web, TheTreeIsMountedAsElementsInTheOrderAPressWalksThem) {
   dom::reset();
   Model m;
-  Page page(settingsPage(), m);
+  Page page(counterPage(), m);
   page.mount();
   const std::string html = dom::dump(dom::root());
-  EXPECT_NE(html.find("<input class=\"skiff-toggle\" type=\"checkbox\""), std::string::npos) << html;
-  EXPECT_NE(html.find("type=\"range\""), std::string::npos);
-  EXPECT_NE(html.find("value=\"500\""), std::string::npos) << html;       // volume 0.5 of 1000
-  EXPECT_NE(html.find("role=\"tablist\""), std::string::npos);
-  EXPECT_NE(html.find("aria-selected=\"true\""), std::string::npos);
-  EXPECT_NE(html.find("<select"), std::string::npos);
-  EXPECT_NE(html.find("display:flex;"), std::string::npos);
-  EXPECT_NE(html.find("padding:12px 12px 12px 12px;"), std::string::npos) << html;
-  EXPECT_NE(html.find("<span class=\"skiff-text\">Sound</span>"), std::string::npos) << html;
-  EXPECT_NE(html.find("<style>.skiff-text{"), std::string::npos) << html.substr(0, 200);
+  EXPECT_NE(html.find("<div class=\"skiff-stack\" style=\"display:flex;flex-direction:column;gap:8px;"), std::string::npos) << html;
+  EXPECT_NE(html.find("<span class=\"skiff-text\">Clicks</span><span class=\"skiff-text\">0</span>"), std::string::npos) << html;
+  EXPECT_NE(html.find("<button>"), std::string::npos) << html;
 }
 
-TEST(Web, WhatIsDoneToAControlSetsItsPartAndThePageShowsIt) {
+TEST(Web, AnEventOnAnElementIsAPressDownTheTreeAndThePageFollows) {
   dom::reset();
   Model m;
-  Page page(settingsPage(), m);
+  Page page(counterPage(), m);
   page.mount();
-  auto &sound = std::get<1>(std::get<0>(page.root().fParts).fParts);
-  auto &volume = std::get<1>(std::get<1>(page.root().fParts).fParts);
-  auto &look = std::get<3>(page.root().fParts);
-  auto &name = std::get<4>(page.root().fParts);
-  auto &pick = std::get<5>(page.root().fParts);
-
-  fire(page, sound.element(), "change", "");
-  EXPECT_TRUE(m.look<Settings>()->sound);
-  EXPECT_TRUE(sound.on());
-
-  fire(page, volume.element(), "input", "250");
-  EXPECT_NEAR(m.look<Settings>()->volume, 0.25f, 0.001f);
-  EXPECT_NE(dom::dump(volume.element()).find("value=\"250\""), std::string::npos);
-
-  fire(page, look.tabs()[1], "click", "");
-  EXPECT_EQ(m.look<Settings>()->look, Look::kFrosted);
-  EXPECT_EQ(look.selected(), 1);
-  EXPECT_EQ(pick.selected(), 1);  // the select shows the same part
-  EXPECT_NE(dom::dump(look.tabs()[1]).find("aria-selected=\"true\""), std::string::npos);
-
-  fire(page, name.element(), "input", "bob");
-  EXPECT_EQ(m.look<Settings>()->name, "bob");
-
-  fire(page, pick.element(), "change", "0");
-  EXPECT_EQ(m.look<Settings>()->look, Look::kSolid);
-  EXPECT_EQ(look.selected(), 0);
+  auto &button = std::get<1>(page.root().fParts);
+  fire(page, button.element(), "click", "");
+  fire(page, button.element(), "click", "");
+  EXPECT_EQ(m.look<Count>()->n, 2);
+  auto &counter = std::get<1>(std::get<0>(page.root().fParts).fParts);
+  EXPECT_EQ(counter.text(), "2");
+  EXPECT_NE(dom::dump(counter.element()).find(">2<"), std::string::npos);
 }
 
 TEST(Web, AnEditMadeElsewhereIsWrittenToThePage) {
   dom::reset();
   Model m;
-  Page page(settingsPage(), m);
+  Page page(counterPage(), m);
   page.mount();
-  auto &volume = std::get<1>(std::get<1>(page.root().fParts).fParts);
-  m.apply(model::over<Settings>([](Settings s) {
-    s.volume = 1.0f;
-    s.name = "loud";
-    return s;
+  m.apply(model::over<Count>([](Count c) {
+    c.n = 41;
+    return c;
   }));
   page.refresh();
-  EXPECT_NE(dom::dump(volume.element()).find("value=\"1000\""), std::string::npos);
-  auto &name = std::get<4>(page.root().fParts);
-  EXPECT_EQ(name.text(), "loud");
-  EXPECT_NE(dom::dump(name.element()).find("value=\"loud\""), std::string::npos);
+  auto &counter = std::get<1>(std::get<0>(page.root().fParts).fParts);
+  EXPECT_EQ(counter.text(), "41");
 }
 
-struct Clicked {};
-struct Count {
-  int n = 0;
-};
-struct CountRoot {
-  model::Tracked<Count> count;
-};
-using CountModel = model::Model<CountRoot, Reactions>;
-
-TEST(Web, AButtonSendsItsEventToTheScopeAroundIt) {
-  dom::reset();
-  CountModel m;
-  Page page(scoped<CountRoot>(handlers(handle<Clicked>([](const Clicked &, const auto &) {
-                                return model::over<Count>([](Count c) {
-                                  ++c.n;
-                                  return c;
-                                });
-                              })),
-                              column(SendButton<Clicked>("Count", Clicked{}))),
-            m);
-  page.mount();
-  auto &button = std::get<0>(page.root().fParts);
-  EXPECT_NE(dom::dump(button.element()).find("<button class=\"skiff-button\" type=\"button\">Count</button>"), std::string::npos) << dom::dump(dom::root());
-  fire(page, button.element(), "click", "");
-  fire(page, button.element(), "click", "");
-  EXPECT_EQ(m.look<Count>()->n, 2);
-}
-
-struct SoundRow : Named<SoundRow, decltype(row(hbox(8.0f), Text("Sound"), bound<model::Field<&Settings::sound>>(ToggleField())))> {
+struct CountRow : Named<CountRow, decltype(row(hbox(8.0f), Text("Clicks"), bound<Count>(Counter())))> {
   using Named::Named;
-  static constexpr const char *viewName() { return "SoundRow"; }
+  static constexpr const char *viewName() { return "CountRow"; }
 };
 
 TEST(Web, ANamedViewIsWrittenToThePageByItsName) {
   dom::reset();
   Model m;
-  Page page(column(SoundRow(row(hbox(8.0f), Text("Sound"), bound<model::Field<&Settings::sound>>(ToggleField())))), m);
+  Page page(column(CountRow(row(hbox(8.0f), Text("Clicks"), bound<Count>(Counter())))), m);
   page.mount();
-  EXPECT_NE(dom::dump(dom::root()).find("data-view=\"SoundRow\""), std::string::npos) << dom::dump(dom::root());
+  EXPECT_NE(dom::dump(dom::root()).find("data-view=\"CountRow\""), std::string::npos) << dom::dump(dom::root());
 }
 
 TEST(Web, ASpecIsCssOnTheElement) {
   dom::reset();
   Model m;
   Page page(column(Box({.width = 120.0f, .height = 40.0f, .cornerRadius = 6.0f, .background = 0xff336699u, .alpha = 0.5f}),
-                   Text("hidden", {.visible = false})),
+                   Text("hidden", {.visible = false}), row(hbox(), Box({.fill = true}), Box({.fill = true}))),
             m);
   page.mount();
   const std::string html = dom::dump(dom::root());
@@ -165,6 +116,16 @@ TEST(Web, ASpecIsCssOnTheElement) {
   EXPECT_NE(html.find("background-color:rgba(51,102,153,1);"), std::string::npos) << html;
   EXPECT_NE(html.find("opacity:0.5;"), std::string::npos);
   EXPECT_NE(html.find("display:none;"), std::string::npos);
+  EXPECT_NE(html.find("flex:1 1 0%;"), std::string::npos);
+}
+
+TEST(Web, AStylesheetIsMountedBeforeTheTree) {
+  dom::reset();
+  Model m;
+  mountStylesheet(dom::root(), ".skiff-text{color:red}");
+  Page page(column(Text("x")), m);
+  page.mount();
+  EXPECT_EQ(dom::dump(dom::root()).find("<style>.skiff-text{color:red}</style><div"), 6u) << dom::dump(dom::root());
 }
 
 } // namespace
