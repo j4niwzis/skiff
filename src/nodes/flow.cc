@@ -692,10 +692,13 @@ private:
 // model for it (bind::Derived calls read), with nothing passed but the view.
 template <class View, class Content, class Make> class MemoOf : public Memo<View, Content> {
 public:
-  MemoOf() = default;
+  // Made with nothing only where its Make is made so (as MemoRows).
+  MemoOf()
+    requires std::default_initializable<Make>
+      : fMake{} {}
   explicit MemoOf(Make make) : fMake(std::move(make)) {}
   bool read(const View &view) { return this->show(view, fMake); }
-  Make fMake{};
+  Make fMake;
 };
 
 // One row of MemoRows: its key, the view it was made from, and the row
@@ -727,7 +730,13 @@ class MemoRows : public Container {
 public:
   using Kept = KeptRow<Key, View, Row>;
   using BindingChildren = std::tuple<Kept>;
-  MemoRows() = default;
+  // Made with nothing only where what makes its rows is made so: a lambda
+  // that captures is not, and the member's own initializer, read as
+  // libstdc++ asks whether this is (a tuple of them), was an error there
+  // rather than an answer.
+  MemoRows()
+    requires std::default_initializable<Make>
+      : fMake{} {}
   // A vertical list fills across by default. Horizontal items and wrapped
   // tabs can instead keep their natural size through their wrapper.
   explicit MemoRows(Make make, Container container = {},
@@ -749,7 +758,7 @@ public:
   template <class Self, class F> void forEachChild(this Self &self, F &&f) { f(self.fRows); }
   [[nodiscard]] std::size_t size() const noexcept { return fRows.size(); }
   std::vector<Kept> fRows;
-  Make fMake{};
+  Make fMake;
   skiff::scene::Spec fRowSpec{.fillX = true, .autoSize = skiff::scene::axes::kY};
 };
 
