@@ -956,6 +956,15 @@ auto each(F make, Look look = vbox()) {
   return erased(bind::Each<Key, T, Row, Container, MakeRow<T, F>>(
       MakeRow<T, F>{std::move(make)}, Container(std::move(look))));
 }
+// The rows of a list each in the container's box, over one another: the
+// shapes of a figure (nodes::Figure), as many as the model has. The page
+// has the same (skiff.web's group), as an SVG group.
+template <class Key, class T, class F>
+auto group(F make) {
+  using Row = RowOf<T, F>;
+  using Container = scene::Group<>;
+  return erased(bind::Each<Key, T, Row, Container, MakeRow<T, F>>(MakeRow<T, F>{std::move(make)}, Container()));
+}
 
 // Handlers written where they are used: handle<Removed>([](auto &here) { ... })
 // -- given the place (or the event and the place) -- and several put

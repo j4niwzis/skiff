@@ -357,8 +357,8 @@ private:
 };
 
 // A canvas: an element a node draws on, through a painter, when it is
-// synced -- the node's own draw(painter), as a Box draws itself on the
-// scene. The painter's words are the scene's painter's too (skiff.nodes'
+// synced -- the node's own paint(painter) (not `draw`, which is the scene's
+// own hook on every node), as a Box draws itself on the scene. The painter's words are the scene's painter's too (skiff.nodes'
 // Canvas), so a drawing is written once for either. A click or a context
 // menu on it comes to the node as pressed(Press) -- where, which button --
 // and then as its press (onPress), as any control's.
@@ -414,7 +414,7 @@ struct Canvas : Node {
       self.fResize = false;
     }
     CanvasPainter painter(self.fState.fHandle);
-    self.draw(painter);
+    self.paint(painter);
   }
   // What the document sent for a pointer event: "x,y,button".
   [[nodiscard]] static std::optional<Press> pressOf(std::string_view value) {
@@ -533,7 +533,23 @@ struct Shape : Node {
   }
   void setOpacity(float opacity) { change(fOpacity, opacity); }
   void setClass(std::string name) { change(fClass, std::move(name)); }
+  // A style of the shape's own, beyond its fill and stroke: an offset-path,
+  // a dash, a transition -- written as given.
+  void style(std::string name, std::string value) {
+    for (auto &[n, v] : fStyles)
+      if (n == name) {
+        if (v != value) {
+          v = std::move(value);
+          markDirty();
+        }
+        return;
+      }
+    fStyles.emplace_back(std::move(name), std::move(value));
+    markDirty();
+  }
+  std::vector<std::pair<std::string, std::string>> fStyles;
   void syncShape() {
+    for (const auto &[n, v] : fStyles) dom::style(fState.fHandle, n, v);
     dom::attr(fState.fHandle, "fill", hexOf(fFill));
     dom::attr(fState.fHandle, "stroke", hexOf(fStroke));
     dom::attr(fState.fHandle, "stroke-width", number(fStrokeWidth));
@@ -633,6 +649,7 @@ private:
 // The figure: an svg of its parts, of a size in CSS pixels, its own
 // coordinates the same.
 template <class... Parts> struct Figure : Node {
+  using Press = Canvas::Press;  // where and which button, as a Canvas has it
   std::tuple<Parts...> fParts;
   float fWidth, fHeight;
   Figure(float width, float height, Parts... parts) : fParts(std::move(parts)...), fWidth(width), fHeight(height) {}
@@ -647,8 +664,34 @@ template <class... Parts> struct Figure : Node {
       markDirty();
     }
   }
-  void mounted() { dom::attr(fState.fHandle, "class", "skiff-figure"); }
+  // Its class, for a stylesheet to know it by: "skiff-figure" and what the figure adds.
+  void setClass(std::string name) {
+    if (name != fClass) {
+      fClass = std::move(name);
+      markDirty();
+    }
+  }
+  std::string fClass = "skiff-figure";
+  void mounted() {
+    dom::attr(fState.fHandle, "class", fClass);
+    dom::listen(fState.fHandle, "click");
+    dom::listen(fState.fHandle, "contextmenu");
+  }
+  // A click or a context menu on the figure: pressed(Press) on the figure
+  // that has it -- where, in its own coordinates, and which button -- then
+  // its press (onPress), as a Canvas has it.
+  [[nodiscard]] bool onDom(this auto &self, dom::Handle, std::string_view event, std::string_view value) {
+    if (event != "click" && event != "contextmenu") return false;
+    const std::optional<Canvas::Press> press = Canvas::pressOf(value);
+    if (!press) return false;
+    if constexpr (requires { self.pressed(*press); }) {
+      self.pressed(*press);
+      return true;
+    }
+    return false;
+  }
   void sync() {
+    dom::attr(fState.fHandle, "class", fClass);
     dom::attr(fState.fHandle, "width", number(fWidth));
     dom::attr(fState.fHandle, "height", number(fHeight));
     dom::attr(fState.fHandle, "viewBox", "0 0 " + number(fWidth) + " " + number(fHeight));

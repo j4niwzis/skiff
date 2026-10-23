@@ -11,6 +11,7 @@ import skiff.scene;
 
 export import skiff.nodes.box;
 export import skiff.nodes.canvas;
+export import skiff.nodes.figure;
 export import skiff.nodes.text;
 export import skiff.nodes.sprite;
 export import skiff.nodes.flow;
