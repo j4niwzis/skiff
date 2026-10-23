@@ -32,7 +32,27 @@ void checked(Handle element, bool on);
 // for the page it has -- extern "C", for the document's listeners to call --
 // forwarding to Page::event: no pointer kept anywhere, the page's type known
 // where the event arrives. A test calls Page::event itself (web::fire).
+// A pointer event on a canvas (click, contextmenu) carries where and which:
+// its value is "x,y,button", in the element's CSS pixels.
 void listen(Handle element, std::string_view event);
+
+// A canvas element drawn on, in CSS pixels (the device's ratio is the
+// browser's business): a path begun, extended, closed, filled or stroked;
+// a circle; a line of text centred on a point. Colours are 0xAARRGGBB.
+using Colour = std::uint32_t;
+void canvasSize(Handle canvas, int width, int height);
+void canvasClear(Handle canvas, Colour colour);
+void canvasBegin(Handle canvas);
+void canvasMoveTo(Handle canvas, float x, float y);
+void canvasLineTo(Handle canvas, float x, float y);
+void canvasClose(Handle canvas);
+void canvasFill(Handle canvas, Colour colour);
+void canvasStroke(Handle canvas, float width, Colour colour);
+void canvasCircle(Handle canvas, float cx, float cy, float r, Colour colour);
+void canvasText(Handle canvas, float x, float y, float size, Colour colour, std::string_view text);
+// What was drawn on a canvas, as the in-memory document keeps it: a word per
+// call ("size clear begin moveto lineto close fill ..."). Nothing in a browser.
+[[nodiscard]] std::string drawn(Handle canvas);
 
 // What the page under `element` is, as HTML -- the fake's for a test; the
 // browser's innerHTML under Emscripten.

@@ -10,6 +10,7 @@ import skiff.scene;
 // scene::Node and holds its children as members of their own types.
 
 export import skiff.nodes.box;
+export import skiff.nodes.canvas;
 export import skiff.nodes.text;
 export import skiff.nodes.sprite;
 export import skiff.nodes.flow;

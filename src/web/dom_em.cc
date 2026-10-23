@@ -14,7 +14,16 @@ import std;
 // clang-format off
 EM_JS(void, skiffDomInit, (), {
   if (Module.skiffDom) return;
-  Module.skiffDom = { els: [null, document.getElementById('skiff') || document.body] };
+  Module.skiffDom = { els: [null, document.getElementById('skiff') || document.body], ctx: {} };
+  // A colour as CSS, from 0xAARRGGBB; a canvas's context, kept once made.
+  Module.skiffDom.rgba = function(c) {
+    c = c >>> 0;
+    return 'rgba(' + ((c >> 16) & 255) + ',' + ((c >> 8) & 255) + ',' + (c & 255) + ',' + (((c >>> 24) & 255) / 255) + ')';
+  };
+  Module.skiffDom.context = function(h) {
+    const D = Module.skiffDom;
+    return D.ctx[h] || (D.ctx[h] = D.els[h].getContext('2d'));
+  };
 });
 EM_JS(int, skiffDomCreate, (const char *tag, int len), {
   const el = document.createElement(UTF8ToString(tag, len));
@@ -53,10 +62,62 @@ EM_JS(void, skiffDomListen, (int h, const char *e, int el), {
   target.addEventListener(name, function(ev) {
     const t = ev.currentTarget;
     let value = '';
-    if (t.tagName === 'SELECT') value = String(t.selectedIndex);
+    if (t.tagName === 'CANVAS' && typeof ev.offsetX === 'number') {
+      value = ev.offsetX + ',' + ev.offsetY + ',' + ev.button;
+      if (name === 'contextmenu') ev.preventDefault();
+    } else if (t.tagName === 'SELECT') value = String(t.selectedIndex);
     else if ('value' in t) value = String(t.value);
     Module.ccall('skiff_web_event', null, ['number', 'string', 'string'], [h, name, value]);
   });
+});
+EM_JS(void, skiffDomCanvasSize, (int h, int w, int hh), {
+  const el = Module.skiffDom.els[h];
+  const r = window.devicePixelRatio || 1;
+  el.width = Math.max(1, Math.round(w * r));
+  el.height = Math.max(1, Math.round(hh * r));
+  el.style.width = w + 'px';
+  el.style.height = hh + 'px';
+  const ctx = el.getContext('2d');
+  ctx.setTransform(r, 0, 0, r, 0, 0);
+  Module.skiffDom.ctx[h] = ctx;
+});
+EM_JS(void, skiffDomCanvasClear, (int h, unsigned c), {
+  const el = Module.skiffDom.els[h];
+  const ctx = Module.skiffDom.context(h);
+  ctx.fillStyle = Module.skiffDom.rgba(c);
+  ctx.fillRect(0, 0, el.width, el.height);
+});
+EM_JS(void, skiffDomCanvasBegin, (int h), { Module.skiffDom.context(h).beginPath(); });
+EM_JS(void, skiffDomCanvasMoveTo, (int h, float x, float y), { Module.skiffDom.context(h).moveTo(x, y); });
+EM_JS(void, skiffDomCanvasLineTo, (int h, float x, float y), { Module.skiffDom.context(h).lineTo(x, y); });
+EM_JS(void, skiffDomCanvasClose, (int h), { Module.skiffDom.context(h).closePath(); });
+EM_JS(void, skiffDomCanvasFill, (int h, unsigned c), {
+  const ctx = Module.skiffDom.context(h);
+  ctx.fillStyle = Module.skiffDom.rgba(c);
+  ctx.fill();
+});
+EM_JS(void, skiffDomCanvasStroke, (int h, float w, unsigned c), {
+  const ctx = Module.skiffDom.context(h);
+  ctx.lineWidth = w;
+  ctx.lineCap = 'square';
+  ctx.lineJoin = 'miter';
+  ctx.strokeStyle = Module.skiffDom.rgba(c);
+  ctx.stroke();
+});
+EM_JS(void, skiffDomCanvasCircle, (int h, float x, float y, float r, unsigned c), {
+  const ctx = Module.skiffDom.context(h);
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = Module.skiffDom.rgba(c);
+  ctx.fill();
+});
+EM_JS(void, skiffDomCanvasText, (int h, float x, float y, float size, unsigned c, const char *s, int len), {
+  const ctx = Module.skiffDom.context(h);
+  ctx.font = 'bold ' + size + 'px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = Module.skiffDom.rgba(c);
+  ctx.fillText(UTF8ToString(s, len), x, y);
 });
 EM_JS(char *, skiffDomDump, (int h), {
   const s = Module.skiffDom.els[h].outerHTML;
@@ -74,7 +135,9 @@ EM_JS(void, skiffDomFire, (int h, const char *e, int el, const char *v, int vl),
 EM_JS(void, skiffDomReset, (), {
   const root = Module.skiffDom ? Module.skiffDom.els[1] : null;
   if (root) root.replaceChildren();
-  Module.skiffDom = { els: [null, root || document.body] };
+  Module.skiffDom = null;
+  skiffDomInit();
+  if (root) Module.skiffDom.els[1] = root;
 });
 // clang-format on
 
@@ -100,6 +163,19 @@ void style(Handle h, std::string_view p, std::string_view v) {
 void value(Handle h, std::string_view v) { skiffDomValue(static_cast<int>(h), v.data(), static_cast<int>(v.size())); }
 void checked(Handle h, bool on) { skiffDomChecked(static_cast<int>(h), on ? 1 : 0); }
 void listen(Handle h, std::string_view e) { skiffDomListen(static_cast<int>(h), e.data(), static_cast<int>(e.size())); }
+void canvasSize(Handle h, int width, int height) { skiffDomCanvasSize(static_cast<int>(h), width, height); }
+void canvasClear(Handle h, Colour c) { skiffDomCanvasClear(static_cast<int>(h), c); }
+void canvasBegin(Handle h) { skiffDomCanvasBegin(static_cast<int>(h)); }
+void canvasMoveTo(Handle h, float x, float y) { skiffDomCanvasMoveTo(static_cast<int>(h), x, y); }
+void canvasLineTo(Handle h, float x, float y) { skiffDomCanvasLineTo(static_cast<int>(h), x, y); }
+void canvasClose(Handle h) { skiffDomCanvasClose(static_cast<int>(h)); }
+void canvasFill(Handle h, Colour c) { skiffDomCanvasFill(static_cast<int>(h), c); }
+void canvasStroke(Handle h, float width, Colour c) { skiffDomCanvasStroke(static_cast<int>(h), width, c); }
+void canvasCircle(Handle h, float cx, float cy, float r, Colour c) { skiffDomCanvasCircle(static_cast<int>(h), cx, cy, r, c); }
+void canvasText(Handle h, float x, float y, float size, Colour c, std::string_view text) {
+  skiffDomCanvasText(static_cast<int>(h), x, y, size, c, text.data(), static_cast<int>(text.size()));
+}
+std::string drawn(Handle) { return {}; }
 std::string dump(Handle h) {
   char *p = skiffDomDump(static_cast<int>(h));
   std::string out(p);

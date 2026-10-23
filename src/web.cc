@@ -313,6 +313,104 @@ private:
   std::string fText;
 };
 
+// A canvas: an element a node draws on, through a painter, when it is
+// synced -- the node's own draw(painter), as a Box draws itself on the
+// scene. The painter's words are the scene's painter's too (skiff.nodes'
+// Canvas), so a drawing is written once for either. A click or a context
+// menu on it comes to the node as pressed(Press) -- where, which button --
+// and then as its press (onPress), as any control's.
+class CanvasPainter {
+public:
+  explicit CanvasPainter(dom::Handle canvas) : fCanvas(canvas) {}
+  void clear(scene::Colour colour) { dom::canvasClear(fCanvas, colour); }
+  void fillPolygon(std::span<const scene::Point> points, scene::Colour colour) {
+    path(points);
+    dom::canvasFill(fCanvas, colour);
+  }
+  void strokePolygon(std::span<const scene::Point> points, float width, scene::Colour colour) {
+    path(points);
+    dom::canvasStroke(fCanvas, width, colour);
+  }
+  void line(scene::Point a, scene::Point b, float width, scene::Colour colour) {
+    dom::canvasBegin(fCanvas);
+    dom::canvasMoveTo(fCanvas, a.fX, a.fY);
+    dom::canvasLineTo(fCanvas, b.fX, b.fY);
+    dom::canvasStroke(fCanvas, width, colour);
+  }
+  void circle(scene::Point centre, float radius, scene::Colour colour) { dom::canvasCircle(fCanvas, centre.fX, centre.fY, radius, colour); }
+  void text(scene::Point at, std::string_view text, float size, scene::Colour colour) { dom::canvasText(fCanvas, at.fX, at.fY, size, colour, text); }
+
+private:
+  void path(std::span<const scene::Point> points) {
+    dom::canvasBegin(fCanvas);
+    for (std::size_t i = 0; i < points.size(); ++i) {
+      if (i == 0) dom::canvasMoveTo(fCanvas, points[i].fX, points[i].fY);
+      else dom::canvasLineTo(fCanvas, points[i].fX, points[i].fY);
+    }
+    dom::canvasClose(fCanvas);
+  }
+  dom::Handle fCanvas;
+};
+struct Canvas : Node {
+  struct Press {
+    scene::Point at;
+    int button = 0;  // 0 the main, 2 the secondary, as the document numbers them
+  };
+  [[nodiscard]] static constexpr std::string_view tag() { return "canvas"; }
+  void mounted() {
+    dom::attr(fState.fHandle, "class", "skiff-canvas");
+    dom::listen(fState.fHandle, "click");
+    dom::listen(fState.fHandle, "contextmenu");
+    fResize = true;
+  }
+  void sync(this auto &self) {
+    if (self.fResize) {
+      dom::canvasSize(self.fState.fHandle, self.fWidth, self.fHeight);
+      self.fResize = false;
+    }
+    CanvasPainter painter(self.fState.fHandle);
+    self.draw(painter);
+  }
+  // What the document sent for a pointer event: "x,y,button".
+  [[nodiscard]] static std::optional<Press> pressOf(std::string_view value) {
+    Press press;
+    float *fields[] = {&press.at.fX, &press.at.fY};
+    std::size_t at = 0;
+    for (float *f : fields) {
+      const std::size_t comma = value.find(',', at);
+      if (comma == std::string_view::npos) return std::nullopt;
+      if (std::from_chars(value.data() + at, value.data() + comma, *f).ec != std::errc{}) return std::nullopt;
+      at = comma + 1;
+    }
+    if (std::from_chars(value.data() + at, value.data() + value.size(), press.button).ec != std::errc{}) return std::nullopt;
+    return press;
+  }
+  [[nodiscard]] bool onDom(this auto &self, dom::Handle, std::string_view event, std::string_view value) {
+    if (event != "click" && event != "contextmenu") return false;
+    const std::optional<Press> press = pressOf(value);
+    if (!press) return false;
+    if constexpr (requires { self.pressed(*press); }) {
+      self.pressed(*press);
+      return true;
+    }
+    return false;
+  }
+  void setSize(int width, int height) {
+    if (width != fWidth || height != fHeight) {
+      fWidth = width;
+      fHeight = height;
+      fResize = true;
+      markDirty();
+    }
+  }
+  [[nodiscard]] int width() const noexcept { return fWidth; }
+  [[nodiscard]] int height() const noexcept { return fHeight; }
+  void redraw() { markDirty(); }
+
+  int fWidth = 1, fHeight = 1;
+  bool fResize = true;
+};
+
 // A stack: a flex box of its parts, down or across, with a gap between them.
 struct Look {
   bool fHorizontal = false;

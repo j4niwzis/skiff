@@ -128,4 +128,52 @@ TEST(Web, AStylesheetIsMountedBeforeTheTree) {
   EXPECT_EQ(dom::dump(dom::root()).find("<style>.skiff-text{color:red}</style><div"), 6u) << dom::dump(dom::root());
 }
 
+
+// A canvas: drawn by the node's own hand when synced, and pressed where it
+// was clicked.
+struct Plot : Canvas {
+  using Out = model::Types<Clicked>;
+  Press fLast;
+  void pressed(Press press) { fLast = press; }
+  Clicked onPress() { return {}; }
+  template <class P> void draw(P &p) {
+    p.clear(0xff000000u);
+    const scene::Point tri[] = {{0.0f, 0.0f}, {10.0f, 0.0f}, {5.0f, 8.0f}};
+    p.fillPolygon(tri, 0xffffffffu);
+    p.line({0.0f, 0.0f}, {10.0f, 10.0f}, 1.0f, 0xff00ff00u);
+    p.circle({5.0f, 5.0f}, 2.0f, 0xffff0000u);
+    p.text({5.0f, 5.0f}, "x", 8.0f, 0xffffffffu);
+  }
+};
+auto plotPage() {
+  return scoped<Root>(handlers(handle<Clicked>([](const Clicked &, const auto &) {
+                        return model::over<Count>([](Count c) {
+                          ++c.n;
+                          return c;
+                        });
+                      })),
+                      column(Plot()));
+}
+
+TEST(Web, ACanvasIsDrawnByItsNodeAndPressedWhereItWasClicked) {
+  dom::reset();
+  Model m;
+  Page page(plotPage(), m);
+  page.mount();
+  auto &plot = std::get<0>(page.root().fParts);
+  plot.setSize(120, 80);
+  page.sync();
+  const std::string html = dom::dump(dom::root());
+  EXPECT_NE(html.find("<canvas class=\"skiff-canvas\" width=\"120\" height=\"80\""), std::string::npos) << html;
+  const std::string drawn = dom::drawn(plot.element());
+  EXPECT_TRUE(drawn.ends_with("size clear begin moveto lineto lineto close fill begin moveto lineto stroke circle text")) << drawn;
+  fire(page, plot.element(), "contextmenu", "12.5,34,2");
+  EXPECT_EQ(m.look<Count>()->n, 1);
+  EXPECT_FLOAT_EQ(plot.fLast.at.fX, 12.5f);
+  EXPECT_FLOAT_EQ(plot.fLast.at.fY, 34.0f);
+  EXPECT_EQ(plot.fLast.button, 2);
+  fire(page, plot.element(), "click", "not a place");
+  EXPECT_EQ(m.look<Count>()->n, 1);
+}
+
 } // namespace

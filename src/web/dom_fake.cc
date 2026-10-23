@@ -16,6 +16,7 @@ struct Element {
   bool alive = true;
   std::vector<Handle> children;
   std::vector<std::string> listened;
+  std::string drawn;  // a canvas: a word per drawing call
 };
 std::vector<Element> &elements() {
   static std::vector<Element> all = {Element{}, Element{.tag = "body"}};
@@ -86,6 +87,29 @@ void style(Handle h, std::string_view p, std::string_view v) { set(at(h).styles,
 void value(Handle h, std::string_view v) { at(h).value = std::string(v); }
 void checked(Handle h, bool on) { at(h).checked = on; }
 void listen(Handle h, std::string_view event) { at(h).listened.emplace_back(event); }
+
+namespace {
+void drew(Handle h, std::string_view word) {
+  std::string &d = at(h).drawn;
+  if (!d.empty()) d += ' ';
+  d += word;
+}
+} // namespace
+void canvasSize(Handle h, int width, int height) {
+  set(at(h).attrs, "width", std::to_string(width));
+  set(at(h).attrs, "height", std::to_string(height));
+  drew(h, "size");
+}
+void canvasClear(Handle h, Colour) { drew(h, "clear"); }
+void canvasBegin(Handle h) { drew(h, "begin"); }
+void canvasMoveTo(Handle h, float, float) { drew(h, "moveto"); }
+void canvasLineTo(Handle h, float, float) { drew(h, "lineto"); }
+void canvasClose(Handle h) { drew(h, "close"); }
+void canvasFill(Handle h, Colour) { drew(h, "fill"); }
+void canvasStroke(Handle h, float, Colour) { drew(h, "stroke"); }
+void canvasCircle(Handle h, float, float, float, Colour) { drew(h, "circle"); }
+void canvasText(Handle h, float, float, float, Colour, std::string_view) { drew(h, "text"); }
+std::string drawn(Handle h) { return at(h).drawn; }
 
 std::string dump(Handle h) {
   std::string out;
