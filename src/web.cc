@@ -969,6 +969,11 @@ struct Canvas : Node {
   [[nodiscard]] static constexpr std::string_view tag() { return "canvas"; }
   void markup(this auto &self, Markup &to) {
     to.attr("class", "skiff-canvas");
+    // Its size an attribute too, so that a page written as HTML has it (the
+    // browser's page writes only what changed: the same size is not set
+    // again, which would clear what is drawn).
+    to.attr("width", std::to_string(self.fWidth));
+    to.attr("height", std::to_string(self.fHeight));
     to.listen("click");
     to.listen("contextmenu");
     if (self.fResize) {
