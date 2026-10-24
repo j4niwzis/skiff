@@ -241,4 +241,15 @@ void fire(Handle h, std::string_view e, std::string_view v) {
 }
 void reset() { skiffDomReset(); }
 
+// In a browser there is the page's document alone, and it shows its own
+// changes: these are nothing here.
+Document makeDocument() { return kFirstDocument; }
+void use(Document) {}
+void dropDocument(Document) {}
+std::vector<Handle> takeChanged() { return {}; }
+std::string tagOf(Handle) { return {}; }
+std::vector<std::pair<std::string, std::string>> attrsOf(Handle) { return {}; }
+std::vector<std::string> listenedOn(Handle) { return {}; }
+Handle parentOf(Handle) { return kNone; }
+
 } // namespace skiff::web::dom

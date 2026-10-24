@@ -545,3 +545,49 @@ TEST(Web, AModelIsThePartsItsTreesViewsSayTheyKeep) {
 }
 
 } // namespace
+
+// A document of its own: two pages, each mounted in a document of its own --
+// as a server keeps one for each client it writes a page for -- each with
+// its own elements, neither seeing the other's.
+TEST(Web, EachDocumentIsAPageOfItsOwn) {
+  dom::reset();
+  Model first;
+  Page one(counterPage(), first);
+  one.mount();
+  const dom::Document other = dom::makeDocument();
+  dom::use(other);
+  EXPECT_EQ(dom::children(dom::root()), 0u);
+  Model second;
+  (void)second.apply(model::over<Count>([](Count c) {
+    c.n = 7;
+    return c;
+  }));
+  Page two(counterPage(), second);
+  two.mount();
+  EXPECT_NE(dom::dump(dom::root()).find(">7<"), std::string::npos) << dom::dump(dom::root());
+  dom::use(dom::kFirstDocument);
+  EXPECT_NE(dom::dump(dom::root()).find(">0<"), std::string::npos) << dom::dump(dom::root());
+  EXPECT_EQ(dom::dump(dom::root()).find(">7<"), std::string::npos);
+  dom::dropDocument(other);
+}
+
+// What changed in a document is said once, until it is taken: after a click,
+// the count's text and nothing of the rest of the page.
+TEST(Web, WhatChangedIsTheElementsAnEventChanged) {
+  dom::reset();
+  Model m;
+  Page page(counterPage(), m);
+  page.mount();
+  EXPECT_FALSE(dom::takeChanged().empty());  // the page, made
+  EXPECT_TRUE(dom::takeChanged().empty());   // and said once
+  auto &button = std::get<1>(page.root().fParts);
+  fire(page, button.element(), "click", "");
+  auto &counter = std::get<1>(std::get<0>(page.root().fParts).fParts);
+  const std::vector<dom::Handle> changed = dom::takeChanged();
+  EXPECT_TRUE(std::ranges::contains(changed, counter.element()));
+  for (const dom::Handle one : changed)
+    EXPECT_TRUE(one == counter.element() || one == button.element()) << dom::tagOf(one);
+  EXPECT_EQ(dom::tagOf(button.element()), "button");
+  EXPECT_TRUE(std::ranges::contains(dom::listenedOn(button.element()), std::string("click")));
+  EXPECT_NE(dom::parentOf(counter.element()), dom::kNone);
+}
