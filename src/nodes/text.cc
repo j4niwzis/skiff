@@ -79,6 +79,9 @@ struct TextStyled {
   // innermost stretch's where they nest.
   std::optional<skia::SkColor> colour;
   std::optional<skia::SkColor> background;
+  // Its size, as a share of the text's: a heading's (HTML's <h1>..<h6>),
+  // drawn on lines of its own, each as tall as its size.
+  float scale = 1.0f;
 };
 
 // What a text draws of the program's, by what it stands for: a pill's
@@ -261,11 +264,12 @@ public:
   // How far down from its top the line an offset is on starts, as drawn.
   [[nodiscard]] float lineTopOf(std::size_t offset) const {
     float y = 0.0f;
+    std::size_t index = 0;
     for (const auto &[start, line] : this->shownLines()) {
       if (offset < start + line.size() + 1) {
         return y;
       }
-      y += this->lineHeight();
+      y += this->lineHeightOf(index++);
     }
     return y;
   }
@@ -303,6 +307,8 @@ public:
           out.colour = one.colour;
         if (one.background)
           out.background = one.background;
+        if (one.scale != 1.0f)
+          out.scale = one.scale;
       }
     }
     return out;
@@ -360,8 +366,9 @@ public:
     std::ranges::sort(cuts);
     cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
     float width = this->indentOf(start);
+    const float size = this->lineSizeOf(lines.size() - 1);
     for (std::size_t i = 0; i + 1 < cuts.size(); ++i)
-      width += p.measure(std::string(line.substr(cuts[i] - start, cuts[i + 1] - cuts[i])), fSize,
+      width += p.measure(std::string(line.substr(cuts[i] - start, cuts[i + 1] - cuts[i])), size,
                          fBold || this->styleAt(cuts[i]).strong);
     return width;
   }
@@ -589,6 +596,18 @@ public:
   [[nodiscard]] float lineHeight() const {
     return fSize * (std::ranges::any_of(fLinks, [](const Link& link) { return link.pill; }) ? 1.5f : 1.25f);
   }
+  // A wrapped line's size and height: its run's scale of the text's (a
+  // heading's), as it was wrapped; the text's own where nothing is scaled.
+  [[nodiscard]] float lineSizeOf(std::size_t index) const {
+    return fSize * (index < fLineScales.size() ? fLineScales[index] : 1.0f);
+  }
+  [[nodiscard]] float lineHeightOf(std::size_t index) const {
+    return this->lineHeight() * (index < fLineScales.size() ? fLineScales[index] : 1.0f);
+  }
+  // Whether any of it is drawn at a size of its own.
+  [[nodiscard]] bool scaled() const {
+    return std::ranges::any_of(fStyles, [](const Styled& one) { return one.scale != 1.0f; });
+  }
   [[nodiscard]] float fontSize() const noexcept { return fSize; }
   [[nodiscard]] skia::SkColor colour() const noexcept { return fColour; }
   [[nodiscard]] bool bold() const noexcept { return fBold; }
@@ -694,7 +713,7 @@ public:
     }
     if (automatic) {
       const float room = state.fMaxWidth > 0.0f ? state.fMaxWidth : parent.width() - state.fMargin.totalX();
-      const bool wrap = room > 0.0f && fNatural > room + 0.5f;
+      const bool wrap = room > 0.0f && (fNatural > room + 0.5f || this->scaled());
       if (wrap != fWrapped) {
         fWrapped = wrap;
         // Wrapped: at its parent's width, not at the one-line width it had
@@ -728,10 +747,31 @@ public:
         }
       }
       const float indent = kQuoteIndent * static_cast<float>(deepest) + (deepest > 0 ? kQuoteRight : 0.0f);
-      fLines = p.wrap(fText, room - indent, fSize, fBold);
-      state.fHeight =
-          static_cast<float>(std::max<std::size_t>(1, fLines.size())) *
-          this->lineHeight();
+      fLineScales.clear();
+      if (!this->scaled()) {
+        fLines = p.wrap(fText, room - indent, fSize, fBold);
+      } else {
+        // A paragraph at a time, each at its own size: a heading's lines are
+        // its own, so a paragraph's size is its first character's.
+        fLines.clear();
+        for (std::size_t from = 0;;) {
+          const std::size_t end = std::min(fText.find('\n', from), fText.size());
+          const Styled at = this->styleAt(from);
+          auto pieces = p.wrap(fText.substr(from, end - from), room - indent, fSize * at.scale, fBold || at.strong);
+          if (pieces.empty())
+            pieces.emplace_back();
+          for (std::string &one : pieces) {
+            fLines.push_back(std::move(one));
+            fLineScales.push_back(at.scale);
+          }
+          if (end >= fText.size())
+            break;
+          from = end + 1;
+        }
+      }
+      state.fHeight = 0.0f;
+      for (std::size_t i = 0; i < std::max<std::size_t>(1, fLines.size()); ++i)
+        state.fHeight += this->lineHeightOf(i);
       // Its width is the room it wraps in -- unless that width is its
       // parent's to give, as a share of the parent's width, or its glyphs'.
       // One given no width at all keeps taking the parent's: the width
@@ -743,8 +783,8 @@ public:
         state.fWidth = room;
         if (fShrinks) {
           float widest = 0.0f;
-          for (const std::string &line : fLines) {
-            widest = std::max(widest, p.measure(line, fSize, fBold));
+          for (std::size_t i = 0; i < fLines.size(); ++i) {
+            widest = std::max(widest, p.measure(fLines[i], this->lineSizeOf(i), fBold || (!fLineScales.empty() && fLineScales[i] != 1.0f)));
           }
           state.fWidth = std::min(room, std::ceil(widest + indent) + 1.0f);
         }
@@ -794,9 +834,11 @@ public:
           y += this->lineHeight();
         }
       } else {
+        float top = bounds.fTop;
+        std::size_t index = 0;
         for (const auto &[start, line] : this->shownLines()) {
-          this->drawWithLinks(canvas, p, start, line, bounds.fLeft, y, alpha);
-          y += this->lineHeight();
+          this->drawWithLinks(canvas, p, start, line, bounds.fLeft, top + this->lineSizeOf(index), alpha, index);
+          top += this->lineHeightOf(index++);
         }
       }
       canvas->restoreToCount(saved);
@@ -862,10 +904,11 @@ private:
     }
     const skiff::paint::Painter p(nullptr, *font, fMonospace);
     const skia::SkRect &bounds = fState.fBounds;
-    const float lineHeight = this->lineHeight();
-    const auto index = static_cast<std::size_t>(
-        std::clamp((y - bounds.fTop) / lineHeight, 0.0f, static_cast<float>(lines.size() - 1)));
+    std::size_t index = 0;
+    for (float top = bounds.fTop + this->lineHeightOf(0); index + 1 < lines.size() && y >= top;)
+      top += this->lineHeightOf(++index);
     const auto [start, line] = lines[index];
+    const float size = this->lineSizeOf(index);
     const float into = x - bounds.fLeft - this->indentOf(start);
     // The character boundaries, and among them the one nearest: found by
     // halving, the width up to a boundary growing with it -- measuring up to
@@ -878,7 +921,7 @@ private:
       }
     }
     const auto widthTo = [&](std::size_t cut) {
-      return cut == 0 ? 0.0f : p.measure(std::string(line.substr(0, cut)), fSize, fBold);
+      return cut == 0 ? 0.0f : p.measure(std::string(line.substr(0, cut)), size, fBold);
     };
     std::size_t low = 0, high = cuts.size() - 1;
     while (low < high) {
@@ -946,17 +989,19 @@ private:
     }
     const std::size_t low = std::min(fAnchor, fCaret), high = std::max(fAnchor, fCaret);
     const skia::SkRect &bounds = fState.fBounds;
-    const float lineHeight = this->lineHeight();
     float top = bounds.fTop;
+    std::size_t index = 0;
     skia::SkPaint plate;
     plate.setColor(fSelectionColour);
     plate.setAlphaf(plate.getAlphaf() * alpha);
     for (const auto &[start, line] : this->shownLines()) {
       const std::size_t end = start + line.size();
+      const float size = this->lineSizeOf(index);
+      const float lineHeight = this->lineHeightOf(index++);
       if (high > start && low < end) {
         const std::size_t a = std::max(low, start) - start, b = std::min(high, end) - start;
-        const float left = p.measure(std::string(line.substr(0, a)), fSize, fBold);
-        const float right = p.measure(std::string(line.substr(0, b)), fSize, fBold);
+        const float left = p.measure(std::string(line.substr(0, a)), size, fBold);
+        const float right = p.measure(std::string(line.substr(0, b)), size, fBold);
         const float from = bounds.fLeft + this->indentOf(start);
         canvas->drawRect(skia::SkRect::MakeLTRB(from + left, top, from + right, top + lineHeight), plate);
       }
@@ -987,7 +1032,10 @@ private:
   // A line in pieces: plain in the text's colour, links in theirs and
   // underlined.
   float drawWithLinks(skia::SkCanvas *canvas, const skiff::paint::Painter &p, std::size_t start,
-                     std::string_view line, float x, float y, float alpha) const {
+                     std::string_view line, float x, float y, float alpha, std::size_t index = 0) const {
+    // The line's own size and height: a heading's, or the text's.
+    const float size = this->lineSizeOf(index);
+    const float lineHeight = this->lineHeightOf(index);
     const std::size_t end = start + line.size();
     std::vector<std::size_t> cuts{start, end};
     for (const Link &one : fLinks) {
@@ -1012,14 +1060,14 @@ private:
       const Styled style = this->styleAt(cuts[i]);
       const bool bold = fBold || style.strong;
       const skia::SkColor colour = linked ? fLinkColour : style.colour.value_or(fColour);
-      const float width = p.measure(piece, fSize, bold);
+      const float width = p.measure(piece, size, bold);
       // Its own background: a plate behind it, as wide as it.
       if (style.background) {
         skia::SkPaint plate;
         plate.setAntiAlias(true);
         plate.setColor(*style.background);
         plate.setAlphaf(plate.getAlphaf() * alpha);
-        canvas->drawRect(skia::SkRect::MakeXYWH(at, y - fSize, width, this->lineHeight()), plate);
+        canvas->drawRect(skia::SkRect::MakeXYWH(at, y - size, width, lineHeight), plate);
       }
       // Marked: on a plate of the quote's colour.
       if (style.marked) {
@@ -1027,7 +1075,7 @@ private:
         plate.setAntiAlias(true);
         plate.setColor(fQuoteColour);
         plate.setAlphaf(0.28f * alpha);
-        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight()), 3.0f, 3.0f,
+        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - size, width + 2.0f, lineHeight), 3.0f, 3.0f,
                               plate);
       }
       // Code: on a plate of the text's colour, faint.
@@ -1036,7 +1084,7 @@ private:
         plate.setAntiAlias(true);
         plate.setColor(fColour);
         plate.setAlphaf(0.10f * alpha);
-        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight()), 3.0f, 3.0f,
+        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - size, width + 2.0f, lineHeight), 3.0f, 3.0f,
                               plate);
       }
       // Struck: a line through its middle.
@@ -1044,7 +1092,7 @@ private:
         skia::SkPaint line;
         line.setColor(colour);
         line.setAlphaf(line.getAlphaf() * alpha);
-        canvas->drawRect(skia::SkRect::MakeXYWH(at, y - fSize * 0.32f, width, 1.0f), line);
+        canvas->drawRect(skia::SkRect::MakeXYWH(at, y - size * 0.32f, width, 1.0f), line);
       }
       // A spoiler not shown yet: a faint plate under a scatter of dots in
       // the text's colour, its text not drawn.
@@ -1053,7 +1101,7 @@ private:
         plate.setAntiAlias(true);
         plate.setColor(colour);
         plate.setAlphaf(0.12f * alpha);
-        const skia::SkRect box = skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight());
+        const skia::SkRect box = skia::SkRect::MakeXYWH(at - 1.0f, y - size, width + 2.0f, lineHeight);
         canvas->drawRoundRect(box, 3.0f, 3.0f, plate);
         skia::SkPaint dot;
         dot.setAntiAlias(true);
@@ -1086,11 +1134,11 @@ private:
               !(picture && *picture)) {
             waitFor(pictureWaitersOf(link->target));
           } else {
-            const float side = fSize * 1.2f;
+            const float side = size * 1.2f;
             skia::SkPaint paint;
             paint.setAlphaf(alpha);
             canvas->drawImageRect(*picture,
-                                  skia::SkRect::MakeXYWH(at + (width - side) * 0.5f, y - fSize * 0.98f, side, side),
+                                  skia::SkRect::MakeXYWH(at + (width - side) * 0.5f, y - size * 0.98f, side, side),
                                   skia::SkSamplingOptions(skia::SkFilterMode::kLinear), &paint);
           }
         }
@@ -1104,8 +1152,8 @@ private:
         // Its picture not here yet: drawn again when it comes.
         if (look && !(look->picture && *look->picture))
           waitFor(pillWaitersOf(link->target));
-        drawPill(canvas, p, at, y, width, fSize, colour, look, alpha);
-        p.text(piece, at, y, fSize, colour, alpha, fBold);
+        drawPill(canvas, p, at, y, width, size, colour, look, alpha);
+        p.text(piece, at, y, size, colour, alpha, fBold);
         at += width;
         continue;
       }
@@ -1115,12 +1163,12 @@ private:
         plate.setAntiAlias(true);
         plate.setColor(fLinkColour);
         plate.setAlphaf(0.16f * alpha);
-        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, fSize * 1.3f), 3.0f, 3.0f,
+        canvas->drawRoundRect(skia::SkRect::MakeXYWH(at - 1.0f, y - size, width + 2.0f, size * 1.3f), 3.0f, 3.0f,
                               plate);
       }
       if (style.emphasis && skiff::paint::defaultFont())
         skiff::paint::defaultFont()->setSkewX(-0.2f);
-      p.text(piece, at, y, fSize, colour, alpha, bold);
+      p.text(piece, at, y, size, colour, alpha, bold);
       if (style.emphasis && skiff::paint::defaultFont())
         skiff::paint::defaultFont()->setSkewX(0.0f);
       if (linked) {
@@ -1147,12 +1195,14 @@ private:
   // text's colour, readable on any bubble.
   void drawQuotes(skia::SkCanvas *canvas, const skiff::paint::Painter &p, float alpha) const {
     const skia::SkRect &bounds = fState.fBounds;
-    const float lineHeight = this->lineHeight();
     std::vector<int> depths;
+    // Where each line starts down the text, and where the last ends.
+    std::vector<float> tops{0.0f};
     int deepest = 0;
     for (const auto &[start, line] : this->shownLines()) {
       depths.push_back(this->styleAt(start).depth);
       deepest = std::max(deepest, depths.back());
+      tops.push_back(tops.back() + this->lineHeightOf(depths.size() - 1));
     }
     for (int level = 0; level < deepest; ++level) {
       const skia::SkColor tint = quoteColourAt(fQuoteColour, level + 1);
@@ -1166,8 +1216,7 @@ private:
           ++j;
         }
         const float left = bounds.fLeft + static_cast<float>(level) * kQuoteIndent;
-        const skia::SkRect plate = skia::SkRect::MakeLTRB(left, bounds.fTop + static_cast<float>(i) * lineHeight,
-                                                          bounds.fRight, bounds.fTop + static_cast<float>(j) * lineHeight);
+        const skia::SkRect plate = skia::SkRect::MakeLTRB(left, bounds.fTop + tops[i], bounds.fRight, bounds.fTop + tops[j]);
         const int saved = canvas->save();
         canvas->clipRRect(skia::SkRRect::MakeRectXY(plate, kQuoteRadius, kQuoteRadius), true);
         skia::SkPaint fill;
@@ -1234,6 +1283,9 @@ private:
   bool fSpoilersShown = false;
   skia::SkColor fQuoteColour = 0;
   std::vector<std::string> fLines;
+  // Each wrapped line's scale of the text's size, where any of it is scaled
+  // (a heading's): empty where nothing is.
+  std::vector<float> fLineScales;
   float fMeasuredSize = -1.0f;
   float fBaseSize = 0.0f;
   skia::SkColor fBaseColour = 0;
