@@ -652,6 +652,13 @@ struct Node : scene::NodeBase {
   // browser lays the page out, so nothing but the next sync.
   void invalidateLayout() { fState.fDirty = true; }
   [[nodiscard]] dom::Handle element() const noexcept { return fState.fHandle; }
+  // The element the node made in itself as that part (kNone before it is
+  // written, or for a part it has not made); its own for kOwn.
+  [[nodiscard]] dom::Handle element(Part part) const noexcept {
+    if (part.index == kOwn.index) return fState.fHandle;
+    const auto found = std::ranges::find(fState.fInner, part, &std::pair<Part, dom::Handle>::first);
+    return found == fState.fInner.end() ? dom::kNone : found->second;
+  }
   [[nodiscard]] bool visible() const noexcept { return fState.fVisible; }
   [[nodiscard]] bool selected() const noexcept { return fState.fSelected; }
   [[nodiscard]] bool disabled() const noexcept { return fState.fDisabled; }
