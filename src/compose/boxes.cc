@@ -1765,10 +1765,16 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
     const std::size_t to = std::min(fElements.size(), indexAt(at + 2.0f * view) + 1);
     if (!changed && from == fFrom && to == fTo)
       return false;
+    // Those still near the view kept as they are, only those come near
+    // made: all of them made again at every step of the range, a scroll
+    // through a panel of emoji made three screens of them each time.
+    auto &was = parts();
+    const std::size_t wasFrom = fFrom, wasTo = fTo;
+    parts() = std::views::iota(from, to) | std::views::transform([&](std::size_t at) {
+                return !changed && at >= wasFrom && at < wasTo ? std::move(was[at - wasFrom]) : std::invoke(fMakePart, fElements[at]);
+              }) | std::ranges::to<std::vector>();
     fFrom = from;
     fTo = to;
-    parts() = std::ranges::subrange(fElements.begin() + static_cast<std::ptrdiff_t>(from), fElements.begin() + static_cast<std::ptrdiff_t>(to)) |
-              std::views::transform(std::ref(fMakePart)) | std::ranges::to<std::vector>();
     std::get<0>(fList.fChildren).apply({.padding = {fTops[from], 0.0f, fTops.back() - fTops[to], 0.0f}});
     fList.invalidateLayout();
     return true;
