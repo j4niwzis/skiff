@@ -2302,6 +2302,9 @@ public:
     std::string css;
     // More of the <head>: a title, a description.
     std::string head;
+    // What comes first in the body, before the page: the program's own
+    // (a bar of links, say), sent once and never changed.
+    std::string lead;
     // The page made better where the browser runs script (live::kScript):
     // presses posted without the page leaving the field it is in, and what
     // is typed posted as it is typed. Without script, the same page.
@@ -2320,7 +2323,7 @@ public:
     out += fOptions.head;
     out += "<style>" + fOptions.css + std::string(live::kCss) + "</style>\n";
     if (fOptions.script) out += "<script>" + std::string(live::kScript) + "</script>\n";
-    out += "</head>\n<body>\n<iframe name=\"skiff-sink\" hidden></iframe>\n";
+    out += "</head>\n<body>\n" + fOptions.lead + "<iframe name=\"skiff-sink\" hidden></iframe>\n";
     out += form();
     out += generation();
     return out;

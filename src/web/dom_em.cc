@@ -14,7 +14,10 @@ import std;
 // clang-format off
 EM_JS(void, skiffDomInit, (), {
   if (Module.skiffDom) return;
-  Module.skiffDom = { els: [null, document.getElementById('skiff') || document.body], ctx: {} };
+  // Where there is no document -- the program in a worker, serving pages --
+  // a table with no root: nothing of it is reached there.
+  const page = typeof document === "undefined" ? null : (document.getElementById("skiff") || document.body);
+  Module.skiffDom = { els: [null, page], ctx: {} };
   // A colour as CSS, from 0xAARRGGBB; a canvas's context, kept once made.
   Module.skiffDom.rgba = function(c) {
     c = c >>> 0;
