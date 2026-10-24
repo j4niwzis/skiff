@@ -602,3 +602,161 @@ TEST(Web, AnEventOnAnElementANodeMadeInItselfComesBackByItsPart) {
   page.sync();
   EXPECT_EQ(dom::child(page.root().element(), 1), second);
 }
+
+// A page kept on the server: sent as one stream only ever appended to. Its
+// containers a generation's shadow root, its leaves islands at their slots;
+// what changed sent again as a new version, the old one hidden; a press and
+// what a field holds posted as a form.
+namespace {
+// A field of the test's own: a text input whose value is the model's name.
+struct Name {
+  std::string text;
+};
+struct NamedRoot {
+  model::Tracked<Name> name;
+  model::Tracked<Count> count;
+};
+using NamedModel = model::Model<NamedRoot, Reactions>;
+struct Typed {
+  std::string text;
+};
+struct NameField : Node {
+  using Out = model::Types<Typed>;
+  std::string fText;
+  [[nodiscard]] static constexpr std::string_view tag() { return "input"; }
+  void read(const Name &now) {
+    if (now.text != fText) {
+      fText = now.text;
+      markDirty();
+    }
+  }
+  void markup(Markup &to) {
+    to.attr("type", "text");
+    to.listen("input");
+    to.value(fText);
+  }
+  bool onDom(Part, std::string_view event, std::string_view value) {
+    if (event != "input" && event != "change") return false;
+    fText = std::string(value);
+    return true;
+  }
+  Typed onPress() { return {fText}; }
+};
+struct NameText : Text {
+  NameText() : Text("") {}
+  void read(const Name &now) { setText("hello " + now.text); }
+};
+auto namedPage() {
+  return scoped<NamedRoot>(handlers(handle<Typed>([](const Typed &t, const auto &) { return model::over<Name>([&](Name) { return Name{t.text}; }); }),
+                                    handle<Clicked>([](const Clicked &, const auto &) {
+                                      return model::over<Count>([](Count c) {
+                                        ++c.n;
+                                        return c;
+                                      });
+                                    })),
+                           column(vbox(8.0f), bound<Name>(NameText()), bound<Name>(NameField()), bound<Count>(Counter()), Clicker()));
+}
+// The id of the island a node is, as the page names it ("nID").
+template <class N> std::string island(const N &node) { return "n" + std::to_string(node.element()); }
+} // namespace
+
+TEST(Live, ThePageIsAGenerationOfContainersWithItsLeavesAtTheirSlots) {
+  NamedModel m;
+  Live page(namedPage(), m, {.action = "/e?s=1", .css = ".x{}"});
+  const std::string html = page.begin();
+  EXPECT_NE(html.find("<form id=\"skiff-f\" method=\"post\" action=\"/e?s=1\" target=\"skiff-sink\">"), std::string::npos) << html;
+  EXPECT_NE(html.find("<skiff-live id=\"skiff-g1\"><template shadowrootmode=\"open\"><style>.x{}"), std::string::npos) << html;
+  auto &parts = page.root().fParts;
+  const auto &text = std::get<0>(parts);
+  // In the shadow root, the column and a slot for each leaf; after it, each leaf at its slot.
+  const std::string slot = "<slot name=\"" + island(text) + "\"></slot>";
+  EXPECT_NE(html.find("<div class=\"skiff-stack\""), std::string::npos) << html;
+  EXPECT_LT(html.find(slot), html.find("</template>")) << html;
+  EXPECT_NE(html.find("slot=\"" + island(text) + "\" id=\"" + island(text) + "v"), std::string::npos) << html;
+  EXPECT_GT(html.find(">hello </span>"), html.find("</template>")) << html;
+  // The field is the form's, the button a submit of its press.
+  const auto &field = std::get<1>(parts);
+  EXPECT_NE(html.find("form=\"skiff-f\" name=\"v." + std::to_string(field.element()) + ".0."), std::string::npos) << html;
+  const auto &button = std::get<3>(parts);
+  EXPECT_NE(html.find("type=\"submit\" form=\"skiff-f\" name=\"e\" value=\"" + std::to_string(button.element()) + ".0.click\""), std::string::npos) << html;
+  EXPECT_EQ(page.update(), "");  // nothing moved: nothing sent
+  // A container's own element changed: the tree sent again, the old generation hidden.
+  page.root().setVisible(false);
+  const std::string again = page.update();
+  EXPECT_NE(again.find("</skiff-live>\n<style>#skiff-g1{display:none!important}</style>"), std::string::npos) << again;
+  EXPECT_NE(again.find("<skiff-live id=\"skiff-g2\">"), std::string::npos) << again;
+  EXPECT_NE(again.find(">hello </span>"), std::string::npos) << again;
+}
+
+TEST(Live, APostedFormIsWhatItsFieldsHoldThenItsPressAndWhatMovedIsSentAgain) {
+  NamedModel m;
+  Live page(namedPage(), m, {});
+  const std::string first = page.begin();
+  auto &parts = page.root().fParts;
+  const auto &text = std::get<0>(parts);
+  const auto &field = std::get<1>(parts);
+  const auto &counter = std::get<2>(parts);
+  const auto &button = std::get<3>(parts);
+  // The field's name as the page has it, its version among it.
+  const std::string prefix = "name=\"v." + std::to_string(field.element()) + ".0.";
+  const std::size_t at = first.find(prefix) + prefix.size();
+  const std::string version = first.substr(at, first.find('"', at) - at);
+  page.post("v." + std::to_string(field.element()) + ".0." + version + "=ann+%26+bo&e=" + std::to_string(button.element()) + ".0.click");
+  EXPECT_EQ(m.look<Name>()->text, "ann & bo");
+  EXPECT_EQ(m.look<Count>()->n, 1);
+  const std::string next = page.update();
+  // The text and the count sent again, each a new version, the old ones hidden.
+  EXPECT_NE(next.find("hello ann &amp; bo"), std::string::npos) << next;
+  EXPECT_NE(next.find("<style>#" + island(text) + "v"), std::string::npos) << next;
+  EXPECT_NE(next.find(">1</span>"), std::string::npos) << next;
+  EXPECT_NE(next.find("slot=\"" + island(counter) + "\""), std::string::npos) << next;
+  EXPECT_EQ(next.find("skiff-live"), std::string::npos) << next;  // no new generation
+  // A field posted from a version gone is not taken.
+  page.post("v." + std::to_string(field.element()) + ".0." + version + "=stale");
+  EXPECT_EQ(m.look<Name>()->text, "ann & bo");
+}
+
+TEST(Live, AListsRowsComeAndGoAtItsSlotAndARowBetweenOthersIsANewGeneration) {
+  ListModel m;
+  m.apply(model::put<Item>(std::string("b"), Item{"bee", 2}));
+  Live page(listPage(), m, {});
+  const std::string first = page.begin();
+  auto &rows = std::get<1>(page.root().fParts);
+  const std::string slot = "<slot name=\"" + island(rows) + "\"></slot>";
+  EXPECT_LT(first.find(slot), first.find("</template>")) << first;
+  EXPECT_NE(first.find("slot=\"" + island(rows.fRows[0]) + "\""), std::string::npos) << first;
+  EXPECT_NE(first.find("bee:2"), std::string::npos) << first;
+  // One come after: sent at the list's slot, by its place.
+  m.apply(model::put<Item>(std::string("c"), Item{"sea", 0}));
+  std::string next = page.update();
+  EXPECT_NE(next.find("sea:0"), std::string::npos) << next;
+  EXPECT_NE(next.find("order:1;"), std::string::npos) << next;
+  EXPECT_EQ(next.find("bee:2"), std::string::npos) << next;
+  EXPECT_EQ(next.find("skiff-live"), std::string::npos) << next;
+  // One gone: hidden.
+  const std::string gone = island(rows.fRows[0]);
+  m.apply(model::take<Item>(std::string("b")));
+  next = page.update();
+  EXPECT_NE(next.find("<style>#" + gone + "v"), std::string::npos) << next;
+  EXPECT_EQ(next.find("skiff-live"), std::string::npos) << next;
+  // One put after the rest (a list keeps what it was given in its order):
+  // sent at the slot, after the one there.
+  m.apply(model::put<Item>(std::string("a"), Item{"ay", 1}));
+  next = page.update();
+  EXPECT_NE(next.find("ay:1"), std::string::npos) << next;
+  EXPECT_EQ(next.find("skiff-live"), std::string::npos) << next;
+}
+
+TEST(Live, AFormsBodyIsReadOnceIntoPressesAndFields) {
+  const std::vector<live::Posted> all = live::form("e=12.3.click&v.4.0.7=a+b%2Bc%25&other=1&v.x=2");
+  ASSERT_EQ(all.size(), 2u);
+  // What the test made, in the order it made them: each one alternative, known.
+  const auto &press = std::get<live::Press>(all[0]);
+  EXPECT_EQ(press.node, 12u);
+  EXPECT_EQ(press.part.index, 3u);
+  EXPECT_EQ(press.kind, "click");
+  const auto &typed = std::get<live::Typed>(all[1]);
+  EXPECT_EQ(typed.node, 4u);
+  EXPECT_EQ(typed.version, 7u);
+  EXPECT_EQ(typed.value, "a b+c%");
+}

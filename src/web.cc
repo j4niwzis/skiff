@@ -2019,4 +2019,494 @@ void fire(Page<Root, Model> &page, dom::Handle target, std::string_view event, s
   page.event(target, event, value);
 }
 
+
+// ---- a page kept on the server: live --------------------------------------
+//
+// The tree kept where the program runs, and the browser shown it as one HTML
+// stream that is never closed and only ever appended to -- with no script.
+// An element once sent is never changed, so the page is sent in pieces that
+// can be put aside and sent again:
+//
+//   a generation   the tree's containers -- stacks, boxes, lists -- written
+//                  once into a Declarative Shadow DOM (<template
+//                  shadowrootmode>) of an element left open, each leaf of the
+//                  tree a <slot> there, each list's rows a slot;
+//   an island      a leaf (a text, a control), or a list's row with all it
+//                  holds: an element of the generation's own, named for its
+//                  slot, which the browser puts in place. A leaf or a row
+//                  that changed is sent again, a new version, and the one
+//                  before it hidden by a stylesheet sent with it; a row
+//                  gone, hidden; a row come, sent, ordered by its place.
+//
+// What cannot be said so -- a container's own element changed, a row put
+// between others -- is a new generation: the old one closed and hidden, the
+// tree sent again. What is done on the page comes back as one form posted
+// into a hidden frame (the server answers 204: the page stays): a press is
+// the button pressed ("e": node.part.kind, a clickable element that is no
+// button made one), and every field of the page is posted with it, under
+// its node, part and version -- the server takes what changed of the
+// current versions as each field's change. A field's value goes with the
+// next press, or with Enter in a text field (the form's default button).
+// A canvas of the page's own is drawn by script, and is blank here.
+namespace live {
+// What a form posted, read where it comes in: a press, or what a field holds.
+struct Press {
+  dom::Handle node = dom::kNone;
+  Part part;
+  std::string kind;
+};
+struct Typed {
+  dom::Handle node = dom::kNone;
+  Part part;
+  std::uint32_t version = 0;
+  std::string value;
+};
+using Posted = std::variant<Press, Typed>;
+
+// Where a version goes in a piece of the page before it is sent: the piece
+// is compared with the last sent without it.
+inline constexpr char kVersion = '\x01';
+// What keeps a quiet stream open past the proxies on the way.
+inline constexpr std::string_view kHeartbeat = "  ";
+// The page's own rules, before and in each generation.
+inline constexpr std::string_view kCss =
+    "skiff-live{display:block}slot{display:contents}.skiff-press{all:unset;display:contents;cursor:pointer}";
+
+// A form's text decoded: '+' a space, %XX the byte it says.
+[[nodiscard]] inline std::string decoded(std::string_view text) {
+  const auto hex = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+  };
+  const std::string spaced = text | std::views::transform([](char c) { return c == '+' ? ' ' : c; }) | std::ranges::to<std::string>();
+  return spaced | std::views::split('%') | std::views::enumerate | std::views::transform([&](auto piece) {
+           const auto &[at, chars] = piece;
+           const std::string_view one(chars.begin(), chars.end());
+           if (at == 0) return std::string(one);
+           if (one.size() < 2 || hex(one[0]) < 0 || hex(one[1]) < 0) return "%" + std::string(one);
+           return std::string(1, static_cast<char>(hex(one[0]) * 16 + hex(one[1]))) + std::string(one.substr(2));
+         }) |
+         std::views::join | std::ranges::to<std::string>();
+}
+// "a.b.c...": the numbers before the rest, the rest after them.
+[[nodiscard]] inline std::optional<std::pair<std::vector<std::uint32_t>, std::string_view>> numbered(std::string_view text, std::size_t count) {
+  std::vector<std::uint32_t> numbers;
+  std::size_t at = 0;
+  for (std::size_t i = 0; i < count; ++i) {
+    const std::size_t dot = std::min(text.find('.', at), text.size());
+    std::uint32_t n = 0;
+    const auto [end, ec] = std::from_chars(text.data() + at, text.data() + dot, n);
+    if (ec != std::errc{} || end != text.data() + dot) return std::nullopt;
+    numbers.push_back(n);
+    at = std::min(dot + 1, text.size());
+  }
+  return std::pair{std::move(numbers), text.substr(at)};
+}
+// A field of the form, by its name: "e" a press, "v.NODE.PART.VERSION" what
+// a field holds; anything else, no field of the page's.
+[[nodiscard]] inline std::optional<Posted> posted(std::string_view name, std::string value) {
+  if (name == "e") {
+    const auto read = numbered(value, 2);
+    if (!read || read->second.empty()) return std::nullopt;
+    return Posted(Press{read->first[0], Part{read->first[1]}, std::string(read->second)});
+  }
+  if (name.starts_with("v.")) {
+    const auto read = numbered(name.substr(2), 3);
+    if (!read || !read->second.empty()) return std::nullopt;
+    return Posted(Typed{read->first[0], Part{read->first[1]}, read->first[2], std::move(value)});
+  }
+  return std::nullopt;
+}
+// A form's body (application/x-www-form-urlencoded), read into what it says.
+[[nodiscard]] inline std::vector<Posted> form(std::string_view body) {
+  return body | std::views::split('&') | std::views::transform([](auto pair) {
+           const std::string_view one(pair.begin(), pair.end());
+           const std::size_t eq = std::min(one.find('='), one.size());
+           return posted(decoded(one.substr(0, eq)), decoded(one.substr(std::min(eq + 1, one.size()))));
+         }) |
+         std::views::filter([](const std::optional<Posted> &one) { return one.has_value(); }) |
+         std::views::transform([](std::optional<Posted> one) { return *std::move(one); }) | std::ranges::to<std::vector>();
+}
+} // namespace live
+
+template <class Root, class Model> class Live {
+public:
+  struct Options {
+    // Where the page's form posts, the session said in it.
+    std::string action = "/skiff/event";
+    // The page's stylesheets -- the theme's, the program's -- in the head
+    // and in each generation (whose shadow root the head's do not reach).
+    std::string css;
+    // More of the <head>: a title, a description.
+    std::string head;
+  };
+  Live(Root root, Model &model, Options options) : fRoot(std::move(root)), fModel(&model), fOptions(std::move(options)) {}
+  Live(const Live &) = delete;
+  Live &operator=(const Live &) = delete;
+
+  // The page's beginning, up to and into its first generation: the stream
+  // stays open after it.
+  [[nodiscard]] std::string begin() {
+    fBinding.refresh(fRoot, *fModel);
+    std::string out = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+                      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
+    out += fOptions.head;
+    out += "<style>" + fOptions.css + std::string(live::kCss) + "</style>\n</head>\n<body>\n<iframe name=\"skiff-sink\" hidden></iframe>\n";
+    out += form();
+    out += generation();
+    return out;
+  }
+  // What changed since the last piece, as HTML to append: empty where
+  // nothing did.
+  [[nodiscard]] std::string update() {
+    fBinding.refresh(fRoot, *fModel);
+    std::string out;
+    bool again = false;
+    changes(fRoot, out, again);
+    return again ? generation() : out;
+  }
+  // The end of the stream, where it is closed.
+  [[nodiscard]] static std::string_view end() { return "</skiff-live>\n</body>\n</html>\n"; }
+
+  // A form posted from the page: what each field holds now, then the press.
+  void post(std::string_view body) {
+    const std::vector<live::Posted> all = live::form(body);
+    std::vector<std::pair<dom::Handle, Part>> ticked;
+    for (const live::Posted &one : all) std::visit(Typing{*this, ticked}, one);
+    // A checkbox posts nothing where it is not ticked: one shown ticked and
+    // not posted is one unticked.
+    const std::vector<Field> ticks = fIslands | std::views::values | std::views::transform(&Island::fFields) | std::views::join |
+                                     std::views::filter([&](const Field &f) {
+                                       return f.fChecked.value_or(false) && !std::ranges::contains(ticked, std::pair{f.fNode, f.fPart});
+                                     }) |
+                                     std::ranges::to<std::vector>();
+    for (const Field &f : ticks) event(f.fNode, f.fPart, "change", "");
+    for (const live::Posted &one : all) std::visit(Pressing{*this}, one);
+  }
+  // An event on a node's element, or on one it made, as the page's.
+  void event(dom::Handle node, Part part, std::string_view kind, std::string_view value) {
+    scene::Path path;
+    bool press = false, found = false;
+    find(fRoot, node, path, [&](auto &at) {
+      found = true;
+      press = at.onDom(part, kind, value);
+    });
+    if (found && press) bind::press(fRoot, *fModel, path);
+    fBinding.refresh(fRoot, *fModel);
+  }
+
+  [[nodiscard]] Root &root() noexcept { return fRoot; }
+  [[nodiscard]] Model &model() noexcept { return *fModel; }
+
+private:
+  // A field written into an island: what the page shows of it.
+  struct Field {
+    dom::Handle fNode = dom::kNone;
+    Part fPart;
+    std::optional<std::string> fValue;
+    std::optional<bool> fChecked;
+  };
+  struct Island {
+    std::string fBare;  // as written, its version left out
+    std::uint32_t fVersion = 0;
+    std::vector<Field> fFields;
+  };
+  struct Own {
+    std::string fBare;  // its own element, what it holds left out
+    std::vector<dom::Handle> fRows;
+  };
+  struct Writing {
+    dom::Handle fIsland = dom::kNone;
+    std::vector<Field> fFields;
+  };
+  struct Typing {
+    Live &live;
+    std::vector<std::pair<dom::Handle, Part>> &ticked;
+    void operator()(const live::Typed &typed) const { live.typed(typed, ticked); }
+    void operator()(const live::Press &) const {}
+  };
+  struct Pressing {
+    Live &live;
+    void operator()(const live::Typed &) const {}
+    void operator()(const live::Press &press) const { live.event(press.node, press.part, press.kind, ""); }
+  };
+  void typed(const live::Typed &typed, std::vector<std::pair<dom::Handle, Part>> &ticked) {
+    const auto island = fIslandOf.find(typed.node);
+    if (island == fIslandOf.end()) return;
+    const auto shown = fIslands.find(island->second);
+    if (shown == fIslands.end() || shown->second.fVersion != typed.version) return;
+    const auto field = std::ranges::find_if(shown->second.fFields, [&](const Field &f) { return f.fNode == typed.node && f.fPart == typed.part; });
+    if (field == shown->second.fFields.end()) return;
+    const Field now = *field;
+    if (now.fChecked.has_value()) {
+      ticked.emplace_back(now.fNode, now.fPart);
+      if (!*now.fChecked) event(now.fNode, now.fPart, "change", typed.value);
+    } else if (now.fValue.value_or("") != typed.value) {
+      event(now.fNode, now.fPart, "change", typed.value);
+    }
+  }
+
+  template <class N> static constexpr bool kList = requires(N &n) {
+    n.fRows;
+    n.fShownRows;
+  };
+  template <class N> static bool leaf(N &node) {
+    if constexpr (kList<N>) return false;
+    bool any = false;
+    detail::eachChild(node, [&](auto &) { any = true; });
+    return !any;
+  }
+  template <class N> dom::Handle idOf(N &node) {
+    if (node.fState.fHandle == dom::kNone) node.fState.fHandle = fNext++;
+    return node.fState.fHandle;
+  }
+  template <class N, class C> static bool isRow(N &list, C &child) {
+    return std::ranges::any_of(list.fRows, [&](auto &row) { return static_cast<const void *>(std::addressof(row)) == static_cast<const void *>(std::addressof(child)); });
+  }
+  template <class N, class C> static void placed(N &node, C &child) {
+    if constexpr (requires { node.fLook.fHorizontal; }) child.fState.fInRow = node.fLook.fHorizontal;
+  }
+  [[nodiscard]] std::string form() const {
+    return "<form id=\"skiff-f\" method=\"post\" action=\"" + escapedHtml(fOptions.action) +
+           "\" target=\"skiff-sink\"><button type=\"submit\" name=\"e\" value=\"\" hidden></button></form>\n";
+  }
+  [[nodiscard]] static std::string versioned(std::string_view bare, std::uint32_t version) {
+    const std::string v = std::to_string(version);
+    return bare | std::views::split(live::kVersion) | std::views::join_with(std::string_view(v)) | std::ranges::to<std::string>();
+  }
+
+  // Nothing held: one type, so that an element's inner elements are written
+  // by the same function as it, not by one made for each.
+  struct Nothing {
+    void operator()(std::string &) const {}
+  };
+  // An element, as the page without script has it: a field named for the
+  // form, a press a submit button; then what it holds (children), and the
+  // elements its node made in itself, each the same way.
+  template <class Children>
+  void element(std::string &out, std::string_view tag, Markup m, dom::Handle node, Part part, Writing &w, const Markup *naming, Children &&children) {
+    const auto listens = [&](std::string_view event) { return std::ranges::contains(m.fListened, event); };
+    const bool clicked = listens("click") || listens("contextmenu");
+    const bool field = (tag == "input" || tag == "textarea" || tag == "select") && (listens("input") || listens("change"));
+    const std::string at = std::to_string(node) + "." + std::to_string(part.index);
+    if (field) {
+      m.attr("form", "skiff-f");
+      m.attr("name", "v." + at + "." + live::kVersion);
+      w.fFields.push_back(Field{node, part, m.fValue, m.fChecked});
+    }
+    const bool wrapped = clicked && tag != "button";
+    if (clicked && !wrapped) {
+      m.attr("type", "submit");
+      m.attr("form", "skiff-f");
+      m.attr("name", "e");
+      m.attr("value", at + ".click");
+    }
+    if (wrapped) {
+      Markup press;
+      press.attr("class", "skiff-press");
+      press.attr("type", "submit");
+      press.attr("form", "skiff-f");
+      press.attr("name", "e");
+      press.attr("value", at + ".click");
+      if (naming) {
+        for (const auto &[n, v] : naming->fAttrs) press.attr(n, v);
+        for (const auto &[p, v] : naming->fStyles) press.style(p, v);
+      }
+      writeStart(out, "button", press);
+    } else if (naming) {
+      for (const auto &[n, v] : naming->fAttrs) m.attr(n, v);
+      for (const auto &[p, v] : naming->fStyles) m.style(p, v);
+    }
+    writeStart(out, tag, m);
+    if (!voidElement(tag)) {
+      if (tag == "textarea" && m.fValue.has_value()) out += escapedHtml(*m.fValue);
+      else if (m.fText.has_value()) out += escapedHtml(*m.fText);
+      children(out);
+      for (const InnerElement &one : m.fInner) element(out, one.fTag, one.fMarkup, node, one.fPart, w, nullptr, Nothing{});
+      out += "</";
+      out += tag;
+      out += '>';
+    }
+    if (wrapped) out += "</button>";
+  }
+  // A node and all it holds, into an island.
+  template <class N> void subtree(N &node, std::string &out, Writing &w, const Markup *naming) {
+    const dom::Handle id = idOf(node);
+    fIslandOf[id] = w.fIsland;
+    const Markup m = markupOf(node);
+    node.fState.fDirty = false;
+    element(out, node.tag(), m, id, kOwn, w, naming, [&](std::string &into) {
+      detail::eachChild(node, [&](auto &child) {
+        placed(node, child);
+        subtree(child, into, w, nullptr);
+      });
+    });
+  }
+  // An island sent where it is new or changed -- the version before it
+  // hidden -- at its slot; a row ordered by its place in its list.
+  template <class N> void island(N &node, std::string &out, std::optional<std::size_t> place = std::nullopt) {
+    const dom::Handle id = idOf(node);
+    Markup naming;
+    naming.attr("slot", "n" + std::to_string(id));
+    naming.attr("id", "n" + std::to_string(id) + "v" + live::kVersion);
+    if (place) naming.style("order", std::to_string(*place));
+    Writing w{id, {}};
+    std::string bare;
+    subtree(node, bare, w, &naming);
+    Island &shown = fIslands[id];
+    if (shown.fVersion != 0 && shown.fBare == bare) return;
+    if (shown.fVersion != 0) out += hide(id, shown.fVersion);
+    shown.fVersion = ++fStamp;
+    shown.fBare = std::move(bare);
+    shown.fFields = std::move(w.fFields);
+    out += versioned(shown.fBare, shown.fVersion);
+  }
+  [[nodiscard]] static std::string hide(dom::Handle id, std::uint32_t version) {
+    return "<style>#n" + std::to_string(id) + "v" + std::to_string(version) + "{display:none!important}</style>";
+  }
+  // A container's own element, what it holds left out.
+  template <class N> std::string own(N &node, const Markup &m) {
+    std::string out;
+    Writing none;
+    element(out, node.tag(), m, idOf(node), kOwn, none, nullptr, Nothing{});
+    return out;
+  }
+  template <class N> std::vector<dom::Handle> rowsOf(N &node) {
+    if constexpr (kList<N>)
+      return node.fRows | std::views::transform([&](auto &row) { return idOf(row); }) | std::ranges::to<std::vector>();
+    else
+      return {};
+  }
+  // The generation's frame: the containers, each leaf and each list's rows a slot.
+  template <class N> void skeleton(N &node, std::string &out) {
+    const dom::Handle id = idOf(node);
+    if (leaf(node)) {
+      out += "<slot name=\"n" + std::to_string(id) + "\"></slot>";
+      return;
+    }
+    const Markup m = markupOf(node);
+    node.fState.fDirty = false;
+    fOwn[id] = Own{own(node, m), rowsOf(node)};
+    Writing w{dom::kNone, {}};
+    element(out, node.tag(), m, id, kOwn, w, nullptr, [&](std::string &into) {
+      detail::eachChild(node, [&](auto &child) {
+        placed(node, child);
+        if constexpr (kList<N>)
+          if (isRow(node, child)) return;
+        skeleton(child, into);
+      });
+      if constexpr (kList<N>) into += "<slot name=\"n" + std::to_string(id) + "\"></slot>";
+    });
+  }
+  // The generation's islands: every leaf, every list's rows.
+  template <class N> void islands(N &node, std::string &out) {
+    if (leaf(node)) {
+      island(node, out);
+      return;
+    }
+    std::size_t place = 0;
+    detail::eachChild(node, [&](auto &child) {
+      if constexpr (kList<N>)
+        if (isRow(node, child)) {
+          island(child, out, place++);
+          return;
+        }
+      islands(child, out);
+    });
+  }
+  [[nodiscard]] std::string generation() {
+    std::string out;
+    if (fGeneration != 0) out += "</skiff-live>\n<style>#skiff-g" + std::to_string(fGeneration) + "{display:none!important}</style>\n";
+    ++fGeneration;
+    fIslands.clear();
+    fIslandOf.clear();
+    fOwn.clear();
+    out += "<skiff-live id=\"skiff-g" + std::to_string(fGeneration) + "\"><template shadowrootmode=\"open\"><style>" + fOptions.css +
+           std::string(live::kCss) + "</style>" + form();
+    skeleton(fRoot, out);
+    out += "</template>\n";
+    islands(fRoot, out);
+    out += '\n';
+    return out;
+  }
+  // What changed, walked: a leaf or a row sent again; a row gone hidden,
+  // one come sent; anything else, a new generation (again).
+  template <class N> void changes(N &node, std::string &out, bool &again) {
+    if (again) return;
+    if (leaf(node)) {
+      island(node, out);
+      return;
+    }
+    const dom::Handle id = idOf(node);
+    const Markup m = markupOf(node);
+    node.fState.fDirty = false;
+    const auto was = fOwn.find(id);
+    if (was == fOwn.end() || was->second.fBare != own(node, m)) {
+      again = true;
+      return;
+    }
+    if constexpr (kList<N>) {
+      const std::vector<dom::Handle> now = rowsOf(node);
+      const std::vector<dom::Handle> &before = was->second.fRows;
+      const std::vector<dom::Handle> kept = before | std::views::filter([&](dom::Handle r) { return std::ranges::contains(now, r); }) | std::ranges::to<std::vector>();
+      // Rows kept in their order, new ones after them, in a list laid out
+      // by its order (a flex box): else the list is sent again.
+      bool flex = true;
+      if constexpr (requires { node.fFlex; }) flex = node.fFlex;
+      const bool kept_in_order = now.size() >= kept.size() && std::ranges::equal(now | std::views::take(kept.size()), kept);
+      if (!kept_in_order || (!flex && now != before)) {
+        again = true;
+        return;
+      }
+      for (dom::Handle gone : before | std::views::filter([&](dom::Handle r) { return !std::ranges::contains(now, r); })) {
+        if (const auto shown = fIslands.find(gone); shown != fIslands.end()) {
+          out += hide(gone, shown->second.fVersion);
+          fIslands.erase(shown);
+        }
+      }
+      was->second.fRows = now;
+    }
+    std::size_t place = 0;
+    detail::eachChild(node, [&](auto &child) {
+      if (again) return;
+      placed(node, child);
+      if constexpr (kList<N>)
+        if (isRow(node, child)) {
+          island(child, out, place++);
+          return;
+        }
+      changes(child, out, again);
+    });
+  }
+  template <class N, class F> static bool find(N &node, dom::Handle target, scene::Path &path, F &&f) {
+    if (node.fState.fHandle == target) {
+      f(node);
+      return true;
+    }
+    std::uint32_t place = 0;
+    bool found = false;
+    detail::eachChild(node, [&](auto &child) {
+      if (found) return;
+      path.push_back(place++);
+      found = find(child, target, path, f);
+      if (!found) path.pop_back();
+    });
+    return found;
+  }
+
+  Root fRoot;
+  Model *fModel;
+  Options fOptions;
+  bind::Binding<Model> fBinding;
+  dom::Handle fNext = 1;
+  std::uint32_t fStamp = 0;
+  std::uint32_t fGeneration = 0;
+  std::unordered_map<dom::Handle, Island> fIslands;
+  std::unordered_map<dom::Handle, dom::Handle> fIslandOf;
+  std::unordered_map<dom::Handle, Own> fOwn;
+};
+template <class Root, class Model> Live(Root, Model &, typename Live<Root, Model>::Options) -> Live<Root, Model>;
+
 } // namespace skiff::web
