@@ -2202,6 +2202,9 @@ inline constexpr std::string_view kScript = R"js((() => {
   new MutationObserver((changes) => {
     for (const change of changes) for (const added of change.addedNodes) {
       if (!(added instanceof Element) || added.localName !== 'skiff-client' || added.hasAttribute('data-skiff-hydrated')) continue;
+      // The program, where it runs here, woken to take it over: it does not
+      // look for it at intervals.
+      if (window.Module && Module._skiff_app_wake) queueMicrotask(() => Module._skiff_app_wake());
       const index = added.getAttribute('data-skiff-client');
       const taken = [...document.querySelectorAll('skiff-client[data-skiff-hydrated]')].find((c) => c.getAttribute('data-skiff-client') === index);
       if (!taken) continue;
