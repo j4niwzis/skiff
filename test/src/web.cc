@@ -735,7 +735,8 @@ TEST(Live, AListsRowsComeAndGoAtItsSlotAndARowBetweenOthersIsANewGeneration) {
   auto &rows = std::get<1>(page.root().fParts);
   const std::string slot = "<slot name=\"" + island(rows) + "\"></slot>";
   EXPECT_LT(first.find(slot), first.find("</template>")) << first;
-  EXPECT_NE(first.find("slot=\"" + island(rows.fRows[0]) + "\""), std::string::npos) << first;
+  // A row at its list's slot -- else the browser puts it nowhere.
+  EXPECT_NE(first.find("slot=\"" + island(rows) + "\" id=\"" + island(rows.fRows[0]) + "v"), std::string::npos) << first;
   EXPECT_NE(first.find("bee:2"), std::string::npos) << first;
   // One come after: sent at the list's slot, by its place.
   m.apply(model::put<Item>(std::string("c"), Item{"sea", 0}));

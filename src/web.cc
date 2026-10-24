@@ -2385,6 +2385,7 @@ private:
     std::uint32_t fVersion = 0;
     std::vector<Field> fFields;
     std::optional<std::size_t> fPlace;  // a row's, in its list
+    dom::Handle fSlot = dom::kNone;     // the slot it is at: a row's, its list's
   };
   struct Own {
     std::string fBare;  // its own element, what it holds left out
@@ -2527,10 +2528,12 @@ private:
   }
   // An island sent where it is new or changed -- the version before it
   // hidden -- at its slot; a row ordered by its place in its list.
-  template <class N> void island(N &node, std::string &out, std::optional<std::size_t> place = std::nullopt) {
+  // A row's slot is its list's, the rest their own.
+  template <class N>
+  void island(N &node, std::string &out, std::optional<std::size_t> place = std::nullopt, std::optional<dom::Handle> slot = std::nullopt) {
     const dom::Handle id = idOf(node);
     Writing w{id, {}};
-    std::string bare = written(node, place, w);
+    std::string bare = written(node, place, slot.value_or(id), w);
     Island &shown = fIslands[id];
     if (shown.fVersion != 0 && shown.fBare == bare) return;
     if (shown.fVersion != 0) out += hide(id, shown.fVersion);
@@ -2538,13 +2541,14 @@ private:
     shown.fBare = std::move(bare);
     shown.fFields = std::move(w.fFields);
     shown.fPlace = place;
+    shown.fSlot = slot.value_or(id);
     out += versioned(shown.fBare, shown.fVersion);
   }
   // An island as it is now, its version left out: at its slot, a row by its place.
-  template <class N> std::string written(N &node, std::optional<std::size_t> place, Writing &w) {
+  template <class N> std::string written(N &node, std::optional<std::size_t> place, dom::Handle slot, Writing &w) {
     const dom::Handle id = idOf(node);
     Markup naming;
-    naming.attr("slot", "n" + std::to_string(id));
+    naming.attr("slot", "n" + std::to_string(slot));
     naming.attr("id", "n" + std::to_string(id) + "v" + live::kVersion);
     if (place) naming.style("order", std::to_string(*place));
     std::string bare;
@@ -2563,7 +2567,7 @@ private:
       scene::Path path;
       find(fRoot, id, path, [&](auto &node) {
         Writing w{id, {}};
-        std::string bare = written(node, shown->second.fPlace, w);
+        std::string bare = written(node, shown->second.fPlace, shown->second.fSlot, w);
         const bool holds = std::ranges::all_of(typed, [&](const live::Typed &one) {
           return fIslandOf.at(one.node) != id || std::ranges::any_of(w.fFields, [&](const Field &f) {
                    return f.fNode == one.node && f.fPart == one.part && (f.fChecked.has_value() || f.fValue.value_or("") == one.value);
@@ -2622,7 +2626,7 @@ private:
     detail::eachChild(node, [&](auto &child) {
       if constexpr (kList<N>)
         if (isRow(node, child)) {
-          island(child, out, place++);
+          island(child, out, place++, idOf(node));
           return;
         }
       islands(child, out);
@@ -2687,7 +2691,7 @@ private:
       placed(node, child);
       if constexpr (kList<N>)
         if (isRow(node, child)) {
-          island(child, out, place++);
+          island(child, out, place++, idOf(node));
           return;
         }
       changes(child, out, again);
