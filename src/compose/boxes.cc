@@ -1710,6 +1710,13 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
     this->fStack.justify = look.fJustify;
     fList.apply({.fillX = true, .grow = scene::axes::kY});
     std::get<0>(fList.fChildren).apply({.fillX = true, .autoSize = scene::axes::kY});
+    // Made near the view, its sections are all made again as it scrolls:
+    // the list keeps its offset, not the first row in view -- that row was
+    // gone, another took its place (its id given again), and the view was
+    // moved by the difference at every step of a wheel's glide, upward
+    // whichever way the wheel went. A drag set the offset over it.
+    if constexpr (kVirtual)
+      fList.setHoldsInView(false);
   }
   template <class Self, class F> void forEachChild(this Self &self, F &&f) {
     f(self.fList);
