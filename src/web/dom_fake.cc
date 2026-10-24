@@ -210,12 +210,6 @@ std::vector<std::pair<std::string, std::string>> attrsOf(Handle h) {
   return h < elements().size() ? at(h).attrs : std::vector<std::pair<std::string, std::string>>{};
 }
 std::vector<std::string> listenedOn(Handle h) { return h < elements().size() ? at(h).listened : std::vector<std::string>{}; }
-std::string textOf(Handle h) { return h < elements().size() ? at(h).text : std::string(); }
-std::vector<std::pair<std::string, std::string>> stylesOf(Handle h) {
-  return h < elements().size() ? at(h).styles : std::vector<std::pair<std::string, std::string>>{};
-}
-std::string valueOf(Handle h) { return h < elements().size() ? at(h).value : std::string(); }
-bool checkedOf(Handle h) { return h < elements().size() && at(h).checked; }
 Handle parentOf(Handle h) {
   for (Handle parent = 0; parent < elements().size(); ++parent)
     if (std::ranges::contains(at(parent).children, h)) return parent;
