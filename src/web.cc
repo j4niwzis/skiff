@@ -2178,7 +2178,9 @@ inline constexpr std::string_view kScript = R"js((() => {
     const body = new URLSearchParams();
     for (const form of all) for (const [name, value] of new FormData(form)) if (name !== 'e') body.append(name, value);
     if (press) body.append('e', press);
-    fetch(all[0].action, {method: 'POST', body});
+    // The session gone (the server let it go, or started again): the page
+    // loaded again, rather than left showing what no longer answers.
+    fetch(all[0].action, {method: 'POST', body}).then((answer) => { if (answer.status === 410) location.reload(); });
   };
   let typing = 0;
   document.addEventListener('click', (e) => {
