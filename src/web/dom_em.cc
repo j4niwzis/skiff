@@ -86,7 +86,7 @@ EM_JS(void, skiffDomListen, (int h, const char *e, int el), {
   const target = Module.skiffDom.els[h];
   target.addEventListener(name, function(ev) {
     const t = ev.currentTarget;
-    let value = '';
+    let value = "";
     if ((t.tagName === 'CANVAS' || t.tagName === 'svg') && typeof ev.clientX === 'number') {
       // Where in the element, whatever child of it was hit.
       const r = t.getBoundingClientRect();
