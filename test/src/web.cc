@@ -680,6 +680,11 @@ TEST(Live, ThePageIsAGenerationOfContainersWithItsLeavesAtTheirSlots) {
   const auto &button = std::get<3>(parts);
   EXPECT_NE(html.find("type=\"submit\" form=\"skiff-f\" name=\"e\" value=\"" + std::to_string(button.element()) + ".0.click\""), std::string::npos) << html;
   EXPECT_EQ(page.update(), "");  // nothing moved: nothing sent
+  // The script that makes it better where there is script, in the head.
+  EXPECT_LT(html.find("<script>"), html.find("</head>")) << html;
+  NamedModel bare;
+  Live without(namedPage(), bare, {.script = false});
+  EXPECT_EQ(without.begin().find("<script>"), std::string::npos);
   // A container's own element changed: the tree sent again, the old generation hidden.
   page.root().setVisible(false);
   const std::string again = page.update();
@@ -711,9 +716,15 @@ TEST(Live, APostedFormIsWhatItsFieldsHoldThenItsPressAndWhatMovedIsSentAgain) {
   EXPECT_NE(next.find(">1</span>"), std::string::npos) << next;
   EXPECT_NE(next.find("slot=\"" + island(counter) + "\""), std::string::npos) << next;
   EXPECT_EQ(next.find("skiff-live"), std::string::npos) << next;  // no new generation
-  // A field posted from a version gone is not taken.
-  page.post("v." + std::to_string(field.element()) + ".0." + version + "=stale");
-  EXPECT_EQ(m.look<Name>()->text, "ann & bo");
+  // The field holds what was typed: taken as the page shows it, not sent
+  // again under the hand typing.
+  EXPECT_EQ(next.find("slot=\"" + island(field) + "\""), std::string::npos) << next;
+  // The field's version is still the one shown, and takes what is typed
+  // next; one posted from a version not shown is not taken.
+  page.post("v." + std::to_string(field.element()) + ".0." + version + "=cy");
+  EXPECT_EQ(m.look<Name>()->text, "cy");
+  page.post("v." + std::to_string(field.element()) + ".0.0=stale");
+  EXPECT_EQ(m.look<Name>()->text, "cy");
 }
 
 TEST(Live, AListsRowsComeAndGoAtItsSlotAndARowBetweenOthersIsANewGeneration) {

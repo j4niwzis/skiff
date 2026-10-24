@@ -2077,6 +2077,41 @@ inline constexpr std::string_view kHeartbeat = "  ";
 inline constexpr std::string_view kCss =
     "skiff-live{display:block}slot{display:contents}.skiff-press{all:unset;display:contents;cursor:pointer}";
 
+// Where the browser runs script, the same page posted by it: a press by
+// fetch rather than by the form (the page keeps the field it is in), and a
+// field's value as it is typed (a quarter of a second after the last key).
+// What is posted is what the form would post, from the page's forms -- the
+// document's and each generation's own.
+inline constexpr std::string_view kScript = R"js((() => {
+  const forms = () => [document, ...[...document.querySelectorAll('skiff-live')].map((h) => h.shadowRoot).filter(Boolean)]
+    .map((root) => root.getElementById('skiff-f')).filter(Boolean);
+  const send = (press) => {
+    const all = forms();
+    if (!all.length) return;
+    const body = new URLSearchParams();
+    for (const form of all) for (const [name, value] of new FormData(form)) if (name !== 'e') body.append(name, value);
+    if (press) body.append('e', press);
+    fetch(all[0].action, {method: 'POST', body});
+  };
+  let typing = 0;
+  document.addEventListener('click', (e) => {
+    const pressed = e.composedPath().find((n) => n instanceof HTMLButtonElement && n.name === 'e');
+    if (!pressed) return;
+    e.preventDefault();
+    clearTimeout(typing);
+    send(pressed.value);
+  }, true);
+  document.addEventListener('submit', (e) => { e.preventDefault(); clearTimeout(typing); send(''); }, true);
+  const typed = (e) => {
+    const field = e.composedPath()[0];
+    if (!field.name || !field.name.startsWith('v.')) return;
+    clearTimeout(typing);
+    typing = setTimeout(() => send(''), field.type === 'checkbox' || field.tagName === 'SELECT' ? 0 : 250);
+  };
+  document.addEventListener('input', typed, true);
+  document.addEventListener('change', typed, true);
+})();)js";
+
 // A form's text decoded: '+' a space, %XX the byte it says.
 [[nodiscard]] inline std::string decoded(std::string_view text) {
   const auto hex = [](char c) -> int {
@@ -2146,6 +2181,10 @@ public:
     std::string css;
     // More of the <head>: a title, a description.
     std::string head;
+    // The page made better where the browser runs script (live::kScript):
+    // presses posted without the page leaving the field it is in, and what
+    // is typed posted as it is typed. Without script, the same page.
+    bool script = true;
   };
   Live(Root root, Model &model, Options options) : fRoot(std::move(root)), fModel(&model), fOptions(std::move(options)) {}
   Live(const Live &) = delete;
@@ -2158,7 +2197,9 @@ public:
     std::string out = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
                       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
     out += fOptions.head;
-    out += "<style>" + fOptions.css + std::string(live::kCss) + "</style>\n</head>\n<body>\n<iframe name=\"skiff-sink\" hidden></iframe>\n";
+    out += "<style>" + fOptions.css + std::string(live::kCss) + "</style>\n";
+    if (fOptions.script) out += "<script>" + std::string(live::kScript) + "</script>\n";
+    out += "</head>\n<body>\n<iframe name=\"skiff-sink\" hidden></iframe>\n";
     out += form();
     out += generation();
     return out;
@@ -2179,7 +2220,8 @@ public:
   void post(std::string_view body) {
     const std::vector<live::Posted> all = live::form(body);
     std::vector<std::pair<dom::Handle, Part>> ticked;
-    for (const live::Posted &one : all) std::visit(Typing{*this, ticked}, one);
+    std::vector<live::Typed> taken;
+    for (const live::Posted &one : all) std::visit(Typing{*this, ticked, taken}, one);
     // A checkbox posts nothing where it is not ticked: one shown ticked and
     // not posted is one unticked.
     const std::vector<Field> ticks = fIslands | std::views::values | std::views::transform(&Island::fFields) | std::views::join |
@@ -2188,6 +2230,7 @@ public:
                                      }) |
                                      std::ranges::to<std::vector>();
     for (const Field &f : ticks) event(f.fNode, f.fPart, "change", "");
+    absorb(taken);
     for (const live::Posted &one : all) std::visit(Pressing{*this}, one);
   }
   // An event on a node's element, or on one it made, as the page's.
@@ -2217,6 +2260,7 @@ private:
     std::string fBare;  // as written, its version left out
     std::uint32_t fVersion = 0;
     std::vector<Field> fFields;
+    std::optional<std::size_t> fPlace;  // a row's, in its list
   };
   struct Own {
     std::string fBare;  // its own element, what it holds left out
@@ -2229,7 +2273,10 @@ private:
   struct Typing {
     Live &live;
     std::vector<std::pair<dom::Handle, Part>> &ticked;
-    void operator()(const live::Typed &typed) const { live.typed(typed, ticked); }
+    std::vector<live::Typed> &taken;
+    void operator()(const live::Typed &typed) const {
+      if (live.typed(typed, ticked)) taken.push_back(typed);
+    }
     void operator()(const live::Press &) const {}
   };
   struct Pressing {
@@ -2237,13 +2284,15 @@ private:
     void operator()(const live::Typed &) const {}
     void operator()(const live::Press &press) const { live.event(press.node, press.part, press.kind, ""); }
   };
-  void typed(const live::Typed &typed, std::vector<std::pair<dom::Handle, Part>> &ticked) {
+  // A field posted from the version shown: its change taken. Whether it
+  // was a field of the page's.
+  bool typed(const live::Typed &typed, std::vector<std::pair<dom::Handle, Part>> &ticked) {
     const auto island = fIslandOf.find(typed.node);
-    if (island == fIslandOf.end()) return;
+    if (island == fIslandOf.end()) return false;
     const auto shown = fIslands.find(island->second);
-    if (shown == fIslands.end() || shown->second.fVersion != typed.version) return;
+    if (shown == fIslands.end() || shown->second.fVersion != typed.version) return false;
     const auto field = std::ranges::find_if(shown->second.fFields, [&](const Field &f) { return f.fNode == typed.node && f.fPart == typed.part; });
-    if (field == shown->second.fFields.end()) return;
+    if (field == shown->second.fFields.end()) return false;
     const Field now = *field;
     if (now.fChecked.has_value()) {
       ticked.emplace_back(now.fNode, now.fPart);
@@ -2251,6 +2300,7 @@ private:
     } else if (now.fValue.value_or("") != typed.value) {
       event(now.fNode, now.fPart, "change", typed.value);
     }
+    return true;
   }
 
   template <class N> static constexpr bool kList = requires(N &n) {
@@ -2353,20 +2403,51 @@ private:
   // hidden -- at its slot; a row ordered by its place in its list.
   template <class N> void island(N &node, std::string &out, std::optional<std::size_t> place = std::nullopt) {
     const dom::Handle id = idOf(node);
-    Markup naming;
-    naming.attr("slot", "n" + std::to_string(id));
-    naming.attr("id", "n" + std::to_string(id) + "v" + live::kVersion);
-    if (place) naming.style("order", std::to_string(*place));
     Writing w{id, {}};
-    std::string bare;
-    subtree(node, bare, w, &naming);
+    std::string bare = written(node, place, w);
     Island &shown = fIslands[id];
     if (shown.fVersion != 0 && shown.fBare == bare) return;
     if (shown.fVersion != 0) out += hide(id, shown.fVersion);
     shown.fVersion = ++fStamp;
     shown.fBare = std::move(bare);
     shown.fFields = std::move(w.fFields);
+    shown.fPlace = place;
     out += versioned(shown.fBare, shown.fVersion);
+  }
+  // An island as it is now, its version left out: at its slot, a row by its place.
+  template <class N> std::string written(N &node, std::optional<std::size_t> place, Writing &w) {
+    const dom::Handle id = idOf(node);
+    Markup naming;
+    naming.attr("slot", "n" + std::to_string(id));
+    naming.attr("id", "n" + std::to_string(id) + "v" + live::kVersion);
+    if (place) naming.style("order", std::to_string(*place));
+    std::string bare;
+    subtree(node, bare, w, &naming);
+    return bare;
+  }
+  // An island whose fields were typed into, taken as the page shows it now
+  // where each typed field holds what was typed: nothing sent, so the field
+  // typed into is not made again under the hand typing.
+  void absorb(const std::vector<live::Typed> &typed) {
+    const std::vector<dom::Handle> touched = typed | std::views::transform([&](const live::Typed &one) { return fIslandOf.at(one.node); }) |
+                                             std::ranges::to<std::vector>();
+    for (const dom::Handle id : touched) {
+      const auto shown = fIslands.find(id);
+      if (shown == fIslands.end()) continue;
+      scene::Path path;
+      find(fRoot, id, path, [&](auto &node) {
+        Writing w{id, {}};
+        std::string bare = written(node, shown->second.fPlace, w);
+        const bool holds = std::ranges::all_of(typed, [&](const live::Typed &one) {
+          return fIslandOf.at(one.node) != id || std::ranges::any_of(w.fFields, [&](const Field &f) {
+                   return f.fNode == one.node && f.fPart == one.part && (f.fChecked.has_value() || f.fValue.value_or("") == one.value);
+                 });
+        });
+        if (!holds) return;
+        shown->second.fBare = std::move(bare);
+        shown->second.fFields = std::move(w.fFields);
+      });
+    }
   }
   [[nodiscard]] static std::string hide(dom::Handle id, std::uint32_t version) {
     return "<style>#n" + std::to_string(id) + "v" + std::to_string(version) + "{display:none!important}</style>";
