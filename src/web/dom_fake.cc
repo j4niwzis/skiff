@@ -84,6 +84,13 @@ Handle child(Handle parent, std::size_t index) {
   return index < all.size() ? all[index] : kNone;
 }
 std::size_t children(Handle parent) { return parent == kNone || parent >= elements().size() ? 0 : at(parent).children.size(); }
+Handle marked(std::string_view attribute, std::string_view value) {
+  const auto &all = elements();
+  const auto found = std::ranges::find_last_if(all, [&](const Element &e) {
+    return e.alive && std::ranges::contains(e.attrs, std::pair<std::string, std::string>(std::string(attribute), std::string(value)));
+  });
+  return found.empty() ? kNone : static_cast<Handle>(found.begin() - all.begin());
+}
 void clear(Handle h) {
   if (h == kNone || h >= elements().size()) return;
   at(h).children.clear();

@@ -771,3 +771,49 @@ TEST(Live, AFormsBodyIsReadOnceIntoPressesAndFields) {
   EXPECT_EQ(typed.version, 7u);
   EXPECT_EQ(typed.value, "a b+c%");
 }
+
+// A part that is the browser's own (client): a model of its own, not the
+// tree's; a press in it its own page's; on a page kept on the server, written
+// once for the browser to take over.
+namespace {
+auto hybridPage() { return column(vbox(), state<Shown>(Text("server")), client(clicks())); }
+} // namespace
+
+TEST(Client, APartWithAModelOfItsOwnIsNotTheTreesAndAPressInItIsItsOwn) {
+  using Tree = decltype(hybridPage());
+  static_assert(std::same_as<bind::PartsOf<Tree>, model::Types<model::Tracked<Shown>>>);
+  dom::reset();
+  bind::ModelOf<Tree> m;
+  Page page(hybridPage(), m);
+  page.mount();
+  auto &part = std::get<1>(page.root().fParts);
+  auto &clicked = part.client().root();
+  auto &button = std::get<1>(clicked.fParts);
+  fire(page, button.element(), "click", "");
+  EXPECT_EQ(part.model().look<Count>()->n, 1);
+  EXPECT_EQ(std::get<0>(clicked.fParts).text(), "1");
+  const std::string html = dom::dump(dom::root());
+  EXPECT_NE(html.find("<skiff-client data-skiff-client=\"0\""), std::string::npos) << html;
+  EXPECT_NE(html.find(">1</span>"), std::string::npos) << html;
+  EXPECT_TRUE(page.owns(button.element()));
+}
+
+TEST(Client, OnAPageKeptOnTheServerAClientIsWrittenOnceForTheBrowser) {
+  bind::ModelOf<decltype(hybridPage())> m;
+  Live page(hybridPage(), m, {});
+  const std::string html = page.begin();
+  const std::size_t at = html.find("<skiff-client data-skiff-client=\"0\"");
+  ASSERT_NE(at, std::string::npos) << html;
+  EXPECT_GT(at, html.find("</template>")) << html;  // an island, at its slot
+  const std::string inside = html.substr(at, html.find("</skiff-client>", at) - at);
+  EXPECT_NE(inside.find(">0</span>"), std::string::npos) << inside;
+  EXPECT_EQ(inside.find("form=\"skiff-f\""), std::string::npos) << inside;  // the browser's, not the form's
+  EXPECT_EQ(page.update(), "");
+  // Found by the browser by its index, where the server wrote it.
+  dom::reset();
+  const dom::Handle written = dom::create("skiff-client");
+  dom::attr(written, "data-skiff-client", "0");
+  dom::append(dom::root(), written);
+  EXPECT_EQ(dom::marked("data-skiff-client", "0"), written);
+  EXPECT_EQ(dom::marked("data-skiff-client", "1"), dom::kNone);
+}

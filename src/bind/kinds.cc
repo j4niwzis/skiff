@@ -376,7 +376,10 @@ template <template <class...> class X, class... A> struct ArgumentParts<X<A...>>
   using type = typename model::detail::Concat<typename NodePartsIn<A>::type...>::type;
 };
 template <class T> consteval auto partsOf() {
-  if constexpr (requires { typename T::StatePart; })
+  // A node with a model of its own (a client part of a page): none of the tree's.
+  if constexpr (requires { typename T::OwnModel; })
+    return model::Types<>{};
+  else if constexpr (requires { typename T::StatePart; })
     return typename model::detail::Concat<model::Types<typename T::StatePart>, PartsInT<typename T::StateContent>>::type{};
   else if constexpr (requires { typename T::NamedContent; })
     return PartsInT<typename T::NamedContent>{};

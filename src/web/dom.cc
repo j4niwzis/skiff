@@ -25,6 +25,10 @@ void append(Handle parent, Handle child);
 // and an element emptied of what it holds: what a page taken over reads.
 [[nodiscard]] Handle child(Handle parent, std::size_t index);
 [[nodiscard]] std::size_t children(Handle parent);
+// The last element of the document with an attribute of that value: one the
+// server wrote, found by the browser's part of the program (none without a
+// browser but those made here).
+[[nodiscard]] Handle marked(std::string_view attribute, std::string_view value);
 void clear(Handle element);
 void text(Handle element, std::string_view text);
 void attr(Handle element, std::string_view name, std::string_view value);

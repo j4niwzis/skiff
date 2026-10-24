@@ -1829,6 +1829,12 @@ template <class N> [[nodiscard]] Markup markupOf(N &node) {
   return m;
 }
 
+// A part of the page that is the browser's own (Client, below): its tree, its
+// model and its page inside it, which the page holding it mounts, writes and
+// forwards events to -- never its binding's.
+template <class N>
+concept IsClient = requires(N &n) { n.client(); };
+
 // ---- the page -----------------------------------------------------------------
 //
 // A tree mounted into an element: each node made an element in eachChild
@@ -1880,10 +1886,20 @@ public:
   [[nodiscard]] Root &root() noexcept { return fRoot; }
   [[nodiscard]] const Root &root() const noexcept { return fRoot; }
   [[nodiscard]] Model &model() noexcept { return *fModel; }
+  // Whether an element is this page's: one of its nodes', or made by one.
+  [[nodiscard]] bool owns(dom::Handle target) {
+    scene::Path path;
+    return findNode(fRoot, target, path, [](auto &, Part) {}) || forward(fRoot, target, {}, {}, false);
+  }
 
   // An event on one of the page's elements: from the document's listener,
   // through the program's skiff_web_event; from a test, through web::fire.
   void event(dom::Handle target, std::string_view kind, std::string_view value) {
+    // An element of a part that is the browser's own: its page's event.
+    if (forward(fRoot, target, kind, value)) {
+      refresh();
+      return;
+    }
     // The node that answers on the element, found down the tree with the
     // path to it -- the one a press is delivered along. Walked rather than
     // kept, as a list's rows come and go.
@@ -1906,6 +1922,7 @@ private:
     state.fShown = {};
     state.fInner.clear();
     state.fDirty = true;
+    if constexpr (IsClient<N>) node.client().mount(state.fHandle);
     detail::eachChild(node, [&](auto &child) {
       if constexpr (requires { node.fLook.fHorizontal; }) child.fState.fInRow = node.fLook.fHorizontal;
       mountNode(child, state.fHandle);
@@ -1919,6 +1936,13 @@ private:
       return;
     }
     state.fHandle = found;
+    if constexpr (IsClient<N>) {
+      state.fShown = {};
+      state.fInner.clear();
+      state.fDirty = true;
+      node.client().hydrate(found, 0);
+      return;
+    }
     std::size_t under = 0;
     detail::eachChild(node, [&](auto &) { ++under; });
     // What the node made in itself is written after the tree's children: it
@@ -1968,6 +1992,7 @@ private:
       writeElement(state, markupOf(node));
       state.fDirty = false;
     }
+    if constexpr (IsClient<N>) node.client().refresh();
     detail::eachChild(node, [&](auto &child) { syncNode(child); });
   }
   template <class N> static void writeNode(N &node, std::string &out) {
@@ -1975,11 +2000,26 @@ private:
     node.fState.fDirty = false;
     writeStart(out, node.tag(), m);
     writeRest(out, node.tag(), m, [&](std::string &into) {
+      if constexpr (IsClient<N>) into += node.client().write();
       detail::eachChild(node, [&](auto &child) {
         if constexpr (requires { node.fLook.fHorizontal; }) child.fState.fInRow = node.fLook.fHorizontal;
         writeNode(child, into);
       });
     });
+  }
+  // An event on an element of a part that is the browser's own, given to
+  // its page (where `deliver`); whether it was one.
+  template <class N>
+  static bool forward(N &node, dom::Handle target, std::string_view kind, std::string_view value, bool deliver = true) {
+    if constexpr (IsClient<N>) {
+      if (!node.client().owns(target)) return false;
+      if (deliver) node.client().event(target, kind, value);
+      return true;
+    } else {
+      bool found = false;
+      detail::eachChild(node, [&](auto &child) { found = found || forward(child, target, kind, value, deliver); });
+      return found;
+    }
   }
   template <class N, class F> static bool findNode(N &node, dom::Handle target, scene::Path &path, F &&f) {
     if (node.fState.fHandle == target) {
@@ -2024,6 +2064,53 @@ void fire(Page<Root, Model> &page, dom::Handle target, std::string_view event, s
   page.event(target, event, value);
 }
 
+
+// ---- a part that is the browser's own: Client -----------------------------
+//
+// A subtree with a model of its own (bind::ModelOf of it), which the tree
+// holding it does not bind: its parts are not the tree's, and a press in it
+// is its own page's. On a page made in the browser it is simply that page's,
+// mounted and synced with it; on a page kept on the server (Live) it is
+// written once, as the server's copy of its model says, and then left to the
+// browser: the program, built for the browser, takes over each one where the
+// page was served (forEachClient, by its index) -- what runs where script runs.
+template <class C> class Client : public Node {
+public:
+  using Model = bind::ModelOf<C>;
+  // Its parts its own, not the tree's (skiff.bind's PartsOf).
+  using OwnModel = Model;
+  explicit Client(C content) : fHeld(std::make_unique<Held>(std::move(content))) {}
+  [[nodiscard]] static constexpr std::string_view tag() { return "skiff-client"; }
+  void markup(Markup &to) { to.attr("data-skiff-client", std::to_string(fIndex)); }
+  [[nodiscard]] Page<C, Model> &client() { return fHeld->fPage; }
+  [[nodiscard]] Model &model() { return fHeld->fModel; }
+  // Its place among the tree's clients, in the tree's order (numberClients).
+  std::uint32_t fIndex = 0;
+
+private:
+  struct Held {
+    Model fModel;
+    Page<C, Model> fPage;
+    explicit Held(C content) : fPage(std::move(content), fModel) {}
+  };
+  std::unique_ptr<Held> fHeld;
+};
+template <class C> [[nodiscard]] Client<C> client(C content) { return Client<C>(std::move(content)); }
+
+// Each client in a tree, in its order -- not those inside a client, which
+// are that client's page's.
+template <class N, class F> void forEachClient(N &node, F &&f) {
+  if constexpr (IsClient<N>)
+    f(node);
+  else
+    detail::eachChild(node, [&](auto &child) { forEachClient(child, f); });
+}
+// The tree's clients numbered in its order: what the server writes and the
+// browser finds them by.
+template <class N> void numberClients(N &root) {
+  std::uint32_t next = 0;
+  forEachClient(root, [&](auto &one) { one.fIndex = next++; });
+}
 
 // ---- a page kept on the server: live --------------------------------------
 //
@@ -2110,6 +2197,19 @@ inline constexpr std::string_view kScript = R"js((() => {
   };
   document.addEventListener('input', typed, true);
   document.addEventListener('change', typed, true);
+  // A part the browser took over (a client, hydrated by the program) sent
+  // again by the server: what the browser made of it moved into the new one.
+  new MutationObserver((changes) => {
+    for (const change of changes) for (const added of change.addedNodes) {
+      if (!(added instanceof Element) || added.localName !== 'skiff-client' || added.hasAttribute('data-skiff-hydrated')) continue;
+      const index = added.getAttribute('data-skiff-client');
+      const taken = [...document.querySelectorAll('skiff-client[data-skiff-hydrated]')].find((c) => c.getAttribute('data-skiff-client') === index);
+      if (!taken) continue;
+      added.replaceChildren(...taken.childNodes);
+      added.setAttribute('data-skiff-hydrated', '');
+      taken.removeAttribute('data-skiff-hydrated');
+    }
+  }).observe(document, {childList: true, subtree: true});
 })();)js";
 
 // A form's text decoded: '+' a space, %XX the byte it says.
@@ -2393,6 +2493,8 @@ private:
     const Markup m = markupOf(node);
     node.fState.fDirty = false;
     element(out, node.tag(), m, id, kOwn, w, naming, [&](std::string &into) {
+      // A client's page, as its model is now: the browser's from then on.
+      if constexpr (IsClient<N>) into += node.client().write();
       detail::eachChild(node, [&](auto &child) {
         placed(node, child);
         subtree(child, into, w, nullptr);
@@ -2506,6 +2608,7 @@ private:
     std::string out;
     if (fGeneration != 0) out += "</skiff-live>\n<style>#skiff-g" + std::to_string(fGeneration) + "{display:none!important}</style>\n";
     ++fGeneration;
+    numberClients(fRoot);
     fIslands.clear();
     fIslandOf.clear();
     fOwn.clear();

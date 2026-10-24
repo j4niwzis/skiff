@@ -40,6 +40,13 @@ EM_JS(int, skiffDomChild, (int parent, int index), {
   Module.skiffDom.els.push(el);
   return Module.skiffDom.els.length - 1;
 });
+EM_JS(int, skiffDomMarked, (const char *a, int al, const char *v, int vl), {
+  const name = UTF8ToString(a, al), value = UTF8ToString(v, vl);
+  const all = [...document.querySelectorAll('[' + name + ']')].filter((el) => el.getAttribute(name) === value);
+  if (!all.length) return 0;
+  Module.skiffDom.els.push(all[all.length - 1]);
+  return Module.skiffDom.els.length - 1;
+});
 EM_JS(int, skiffDomChildren, (int parent), {
   const p = Module.skiffDom.els[parent];
   return p ? p.children.length : 0;
@@ -192,6 +199,10 @@ void destroy(Handle h) { skiffDomDestroy(static_cast<int>(h)); }
 Handle child(Handle parent, std::size_t index) {
   skiffDomInit();
   return static_cast<Handle>(skiffDomChild(static_cast<int>(parent), static_cast<int>(index)));
+}
+Handle marked(std::string_view attribute, std::string_view value) {
+  skiffDomInit();
+  return static_cast<Handle>(skiffDomMarked(attribute.data(), static_cast<int>(attribute.size()), value.data(), static_cast<int>(value.size())));
 }
 std::size_t children(Handle parent) {
   skiffDomInit();
