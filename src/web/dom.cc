@@ -101,6 +101,10 @@ void dropDocument(Document document);
 [[nodiscard]] std::string tagOf(Handle element);
 [[nodiscard]] std::vector<std::pair<std::string, std::string>> attrsOf(Handle element);
 [[nodiscard]] std::vector<std::string> listenedOn(Handle element);
+[[nodiscard]] std::string textOf(Handle element);
+[[nodiscard]] std::vector<std::pair<std::string, std::string>> stylesOf(Handle element);
+[[nodiscard]] std::string valueOf(Handle element);
+[[nodiscard]] bool checkedOf(Handle element);
 // The element an element is in: kNone for the root, or one not placed.
 [[nodiscard]] Handle parentOf(Handle element);
 

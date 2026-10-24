@@ -250,6 +250,10 @@ std::vector<Handle> takeChanged() { return {}; }
 std::string tagOf(Handle) { return {}; }
 std::vector<std::pair<std::string, std::string>> attrsOf(Handle) { return {}; }
 std::vector<std::string> listenedOn(Handle) { return {}; }
+std::string textOf(Handle) { return {}; }
+std::vector<std::pair<std::string, std::string>> stylesOf(Handle) { return {}; }
+std::string valueOf(Handle) { return {}; }
+bool checkedOf(Handle) { return false; }
 Handle parentOf(Handle) { return kNone; }
 
 } // namespace skiff::web::dom

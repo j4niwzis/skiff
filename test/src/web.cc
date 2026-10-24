@@ -590,4 +590,5 @@ TEST(Web, WhatChangedIsTheElementsAnEventChanged) {
   EXPECT_EQ(dom::tagOf(button.element()), "button");
   EXPECT_TRUE(std::ranges::contains(dom::listenedOn(button.element()), std::string("click")));
   EXPECT_NE(dom::parentOf(counter.element()), dom::kNone);
+  EXPECT_EQ(dom::textOf(counter.element()), "1");
 }
