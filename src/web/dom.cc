@@ -76,32 +76,4 @@ void fire(Handle target, std::string_view event, std::string_view value);
 // Everything forgotten: for a test to start a page from nothing.
 void reset();
 
-// Documents of their own, natively: a server that keeps a live page for each
-// client it serves -- a page with no script in it, followed by what is
-// appended to it -- has a document for each, and says which one what follows
-// is done to. The one there is from the start is the one used where none is
-// said. In a browser there is the page's one alone: these do nothing.
-using Document = std::uint32_t;
-inline constexpr Document kFirstDocument = 0;
-[[nodiscard]] Document makeDocument();
-// What follows is done to `document`, on this thread, until another is said.
-void use(Document document);
-// A document no longer kept: what was in it, gone. Never the first one.
-void dropDocument(Document document);
-// The elements of the document in use whose own state was changed -- text,
-// attributes, style, value, an element added, taken away or emptied of
-// what it held -- since this was last asked, each once, in the order they
-// were first changed; and from now, none. What a page written out and then
-// appended to tells its reader: the parts of it to write again. Nothing in
-// a browser, which shows its changes itself.
-[[nodiscard]] std::vector<Handle> takeChanged();
-// What an element is, natively, as what writes a page out for a browser
-// with no script reads it: its tag, its attributes, and the events listened
-// on it. Nothing in a browser.
-[[nodiscard]] std::string tagOf(Handle element);
-[[nodiscard]] std::vector<std::pair<std::string, std::string>> attrsOf(Handle element);
-[[nodiscard]] std::vector<std::string> listenedOn(Handle element);
-// The element an element is in: kNone for the root, or one not placed.
-[[nodiscard]] Handle parentOf(Handle element);
-
 } // namespace skiff::web::dom
