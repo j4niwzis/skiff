@@ -14,7 +14,7 @@ EM_JS(void, skiaLiteInit, (), {
   if (Module.skiaLite) return;
   const L = Module.skiaLite = { ctx: [null], els: [null], scale: [1] };
   L.font = function(size, bold) {
-    return (bold ? '600 ' : '') + size + 'px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+    return (bold ? "600 " : "") + size + 'px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
   };
   L.rgba = function(r, g, b, a) {
     return 'rgba(' + Math.round(r * 255) + ',' + Math.round(g * 255) + ',' + Math.round(b * 255) + ',' + a + ')';
