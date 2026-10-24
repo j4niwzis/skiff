@@ -247,6 +247,10 @@ public:
         out.spoiler = out.spoiler || one.spoiler;
         out.depth += one.quote ? 1 : 0;  // quotes inside quotes overlap
         out.marked = out.marked || one.marked;
+        if (one.colour)
+          out.colour = one.colour;
+        if (one.background)
+          out.background = one.background;
       }
     }
     return out;
@@ -971,8 +975,16 @@ private:
       const bool linked = link != nullptr;
       const Styled style = this->styleAt(cuts[i]);
       const bool bold = fBold || style.strong;
-      const skia::SkColor colour = linked ? fLinkColour : fColour;
+      const skia::SkColor colour = linked ? fLinkColour : style.colour.value_or(fColour);
       const float width = p.measure(piece, fSize, bold);
+      // Its own background: a plate behind it, as wide as it.
+      if (style.background) {
+        skia::SkPaint plate;
+        plate.setAntiAlias(true);
+        plate.setColor(*style.background);
+        plate.setAlphaf(plate.getAlphaf() * alpha);
+        canvas->drawRect(skia::SkRect::MakeXYWH(at, y - fSize, width, this->lineHeight()), plate);
+      }
       // Marked: on a plate of the quote's colour.
       if (style.marked) {
         p.fillRounded(skia::SkRect::MakeXYWH(at - 1.0f, y - fSize, width + 2.0f, this->lineHeight()), 3.0f, fQuoteColour,

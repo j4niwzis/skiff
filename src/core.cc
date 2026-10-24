@@ -610,6 +610,11 @@ struct TextStyled {
   // holds the text may draw it as a block of its own.
   bool block = false;
   std::string language;
+  // Its own colour, and a plate behind it in another, where the message's
+  // HTML says (<font color>, data-mx-color, data-mx-bg-color): the
+  // innermost stretch's where they nest.
+  std::optional<skia::SkColor> colour;
+  std::optional<skia::SkColor> background;
 };
 
 struct Spec {
