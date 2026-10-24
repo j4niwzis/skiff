@@ -325,10 +325,36 @@ public:
       return 0.0f;
     }
     const skiff::paint::Painter p(nullptr, *font, fMonospace);
-    if (!fWrapped || fLines.empty()) {
-      return p.measure(fText, fSize, fBold);
+    // As drawn (drawWithLinks): past its quote's indent, and each piece in
+    // its own weight. Measured in the text's own alone, a quoted or bold
+    // last line -- a heading, made bold -- was wider than it was said to
+    // be, and what was put beside it (a message's time) stood over it.
+    const auto lines = this->shownLines();
+    if (lines.empty()) {
+      return 0.0f;
     }
-    return p.measure(fLines.back(), fSize, fBold);
+    const auto& [start, line] = lines.back();
+    const std::size_t end = start + line.size();
+    std::vector<std::size_t> cuts{start, end};
+    for (const Link &one : fLinks) {
+      if (one.last > start && one.first < end) {
+        cuts.push_back(std::max(one.first, start));
+        cuts.push_back(std::min(one.last, end));
+      }
+    }
+    for (const Styled &one : fStyles) {
+      if (one.last > start && one.first < end) {
+        cuts.push_back(std::max(one.first, start));
+        cuts.push_back(std::min(one.last, end));
+      }
+    }
+    std::ranges::sort(cuts);
+    cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
+    float width = this->indentOf(start);
+    for (std::size_t i = 0; i + 1 < cuts.size(); ++i)
+      width += p.measure(std::string(line.substr(cuts[i] - start, cuts[i + 1] - cuts[i])), fSize,
+                         fBold || this->styleAt(cuts[i]).strong);
+    return width;
   }
   [[nodiscard]] bool hasSelection() const noexcept { return fAnchor != fCaret; }
   [[nodiscard]] scene::ClipboardFragment copiedRange(std::size_t first, std::size_t last) const {
