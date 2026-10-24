@@ -1657,7 +1657,16 @@ Split<Element, Second, MakeFirst, MakeThen> split(Look look, Second second, Make
 // is shown says so. Made from what it reads (SectionsShown), each element's tab
 // made by `makeTab`, its section by `makePart`, the strip by `makeStrip`:
 // a picker's packs, an emoji panel's groups.
-template <class Element, class MakeTab, class MakePart, class MakeStrip, class OnTab> struct Sections : nodes::Stack {
+// A section's height, where it is known before it is made: none, every
+// section made at once.
+struct AllMade {};
+template <class Element, class MakeTab, class MakePart, class MakeStrip, class OnTab, class Height = AllMade> struct Sections : nodes::Stack {
+  // Its sections' heights known, from each element and the width
+  // (Height(element, width)): only those near the view made, the rest stood
+  // for by the list's padding above and below them, as virtual_rows keeps
+  // known-height rows. A panel of thousands of emoji made every one, and
+  // each frame of a scroll walked them all.
+  static constexpr bool kVirtual = std::invocable<const Height &, const Element &, float>;
   using Tab = std::invoke_result_t<MakeTab &, const Element &>;
   using Part = std::invoke_result_t<MakePart &, const Element &>;
   // A tab's press: what its owner says, and its section brought.
@@ -1682,9 +1691,18 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
   bool fLit = true;
   std::optional<std::size_t> fBringing;
 
-  Sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip &makeStrip, OnTab onTab)
+  Height fHeight;
+  // What it shows, every section's; where each begins down the list, and
+  // where the last ends, at the width they were reckoned at; the sections
+  // made, from and to.
+  std::vector<Element> fElements;
+  std::vector<float> fTops{0.0f};
+  float fReckonedAt = -1.0f;
+  std::size_t fFrom = 0, fTo = 0;
+
+  Sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip &makeStrip, OnTab onTab, Height height = {})
       : fMakeTab(std::move(makeTab)), fMakePart(std::move(makePart)), fOnTab(std::move(onTab)),
-        fList(Many<Part>(std::move(parts), {})), fStrip(makeStrip(std::type_identity<TabButton>{})) {
+        fList(Many<Part>(std::move(parts), {})), fStrip(makeStrip(std::type_identity<TabButton>{})), fHeight(std::move(height)) {
     if (look.fHorizontal)
       this->setHorizontal();
     this->setGap(look.fGap);
@@ -1702,7 +1720,14 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
   // The parts made again, the view at its start; the tabs too, where they
   // are others.
   void read(const SectionsShown<Element> &shown) {
-    parts() = shown.parts | std::views::transform(std::ref(fMakePart)) | std::ranges::to<std::vector>();
+    if constexpr (kVirtual) {
+      fElements = shown.parts;
+      fReckonedAt = -1.0f;
+      fList.scrollTo(0.0f);
+      this->showNear(true);
+    } else {
+      parts() = shown.parts | std::views::transform(std::ref(fMakePart)) | std::ranges::to<std::vector>();
+    }
     fStrip.put(shown.tabs, shown.tabs | std::views::enumerate | std::views::transform([&](const auto &one) {
                              const auto &[at, element] = one;
                              return TabButton(Bring{this, static_cast<std::size_t>(at)}, fMakeTab(element), {});
@@ -1711,8 +1736,45 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
     fList.invalidateLayout();
     fList.scrollTo(0.0f);
   }
+  // The sections near the view made, where the heights are known: from a
+  // screen above it to two below; again only where that moved, or the
+  // width they were reckoned at.
+  bool showNear(bool changed) {
+    const float width = fList.bounds().width();
+    if (width != fReckonedAt) {
+      fReckonedAt = width;
+      fTops.assign(1, 0.0f);
+      for (const Element &one : fElements)
+        fTops.push_back(fTops.back() + std::max(0.0f, static_cast<float>(std::invoke(fHeight, one, width > 0.0f ? width : 320.0f))));
+      changed = true;
+    }
+    const float view = std::max(fList.bounds().height(), 400.0f);
+    const float at = fList.current();
+    const auto indexAt = [&](float y) {
+      const auto next = std::ranges::upper_bound(fTops, std::max(0.0f, y));
+      return std::min(fElements.size(), static_cast<std::size_t>(next - fTops.begin()) - 1);
+    };
+    const std::size_t from = indexAt(at - view);
+    const std::size_t to = std::min(fElements.size(), indexAt(at + 2.0f * view) + 1);
+    if (!changed && from == fFrom && to == fTo)
+      return false;
+    fFrom = from;
+    fTo = to;
+    parts() = std::ranges::subrange(fElements.begin() + static_cast<std::ptrdiff_t>(from), fElements.begin() + static_cast<std::ptrdiff_t>(to)) |
+              std::views::transform(std::ref(fMakePart)) | std::ranges::to<std::vector>();
+    std::get<0>(fList.fChildren).apply({.padding = {fTops[from], 0.0f, fTops.back() - fTops[to], 0.0f}});
+    fList.invalidateLayout();
+    return true;
+  }
   // A section brought to the top of the view.
   void bring(std::size_t at) {
+    if constexpr (kVirtual) {
+      if (at + 1 < fTops.size()) {
+        fList.scrollTo(fTops[at]);
+        this->showNear(false);
+      }
+      return;
+    }
     if (at >= parts().size() || parts()[at].bounds().isEmpty())
       return;
     fList.scrollTo(std::max(0.0f, fList.current() + (fList.toView(parts()[at].bounds()).fTop - fList.bounds().fTop)));
@@ -1721,6 +1783,18 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
   // the section at the top lit.
   [[nodiscard]] bool settling() const { return fBringing.has_value(); }
   void update(double) {
+    if constexpr (kVirtual) {
+      if (fBringing)
+        bring(*std::exchange(fBringing, std::nullopt));
+      this->showNear(false);
+      // The last whose top the view has reached: by the tops, every
+      // section's, made or not.
+      const auto reached = std::ranges::upper_bound(fTops, fList.current() + 1.0f);
+      const std::size_t lit = std::min(fElements.empty() ? 0 : fElements.size() - 1,
+                                       static_cast<std::size_t>(std::max<std::ptrdiff_t>(1, reached - fTops.begin()) - 1));
+      fStrip.light(fLit ? lit : std::numeric_limits<std::size_t>::max());
+      return;
+    }
     if (fBringing && fBringing < parts().size() && !parts()[*fBringing].bounds().isEmpty())
       bring(*std::exchange(fBringing, std::nullopt));
     const float top = fList.bounds().fTop + 1.0f;
@@ -1742,6 +1816,15 @@ auto sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const M
   // Concrete in every build: what reads the model for it reads it as itself.
   return Sections<Element, MakeTab, MakePart, MakeStrip, OnTab>(std::move(look), std::move(parts), std::move(makeTab),
                                                                 std::move(makePart), makeStrip, std::move(onTab));
+}
+// The same, each section's height known before it is made -- Height(element,
+// width) -- and only those near the view made.
+template <class Element, class MakeTab, class MakePart, class MakeStrip, class OnTab, class Height>
+  requires std::invocable<const Height &, const Element &, float>
+auto sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip &makeStrip, OnTab onTab, Height height) {
+  return Sections<Element, MakeTab, MakePart, MakeStrip, OnTab, Height>(std::move(look), std::move(parts), std::move(makeTab),
+                                                                        std::move(makePart), makeStrip, std::move(onTab),
+                                                                        std::move(height));
 }
 
 // A picture sized as a chat sizes one: its own size, or its picture's own
