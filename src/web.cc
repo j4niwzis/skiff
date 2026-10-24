@@ -17,11 +17,16 @@
 //
 // How a node is an element, each hook found where a node declares it:
 //   tag()                 the element's tag; "div" unless said
-//   mounted()             the element exists: its attributes, elements of its own
-//   sync()                its state written to the element (it was marked dirty)
-//   handles(f)            every element it answers events on; its own by default
-//   onDom(target, event, value)   an event on one of them, before the press;
-//                         false where there is nothing to press for
+//   markup(to)            all the element is now -- its attributes, its style,
+//                         its text, the events listened on it, the elements it
+//                         makes in itself (inner, by Part) -- written to `to`
+//                         (a Markup) whenever it is dirty: nothing of the
+//                         document is touched by a node. A browser's page writes
+//                         what changed of it to the element (State::shown);
+//                         a page written out as HTML writes it whole (write).
+//   onDom(part, event, value)     an event on its element or on one it made
+//                         (Part), before the press; false where there is
+//                         nothing to press for
 export module skiff.web;
 
 export import :dom;
@@ -153,6 +158,175 @@ inline void overlay(scene::Spec &into, const scene::Spec &from) {
 }
 
 
+// ---- what an element is, written --------------------------------------------
+//
+// A node says what its element is -- not to a document, to a Markup -- whole,
+// each time it is written: a page in a browser writes the difference to what
+// it wrote before to the element (State::shown), and a page written out as HTML
+// writes it as it is (write). A node with elements of its own inside its own --
+// a text's runs, an icon's marks, a row of tabs -- says them too (inner), each
+// by a Part, which an event on it comes back with.
+
+// Which of a node's elements: its own (the first), or one it made in itself,
+// by the number it gave it.
+struct Part {
+  std::uint32_t index = 0;
+  friend bool operator==(Part, Part) = default;
+};
+inline constexpr Part kOwn{};
+
+// A drawing on a canvas, a call at a time: written by its painter, made on
+// the canvas in a browser; nothing written out as HTML.
+namespace draw {
+struct size {
+  int width, height;
+};
+struct clear {
+  scene::Colour colour;
+};
+struct begin {};
+struct move {
+  float x, y;
+};
+struct line {
+  float x, y;
+};
+struct close {};
+struct fill {
+  scene::Colour colour;
+};
+struct stroke {
+  float width;
+  scene::Colour colour;
+};
+struct circle {
+  float x, y, radius;
+  scene::Colour colour;
+};
+struct text {
+  float x, y, size;
+  scene::Colour colour;
+  std::string words;
+};
+} // namespace draw
+using DrawCall = spl::variant<draw::size, draw::clear, draw::begin, draw::move, draw::line, draw::close, draw::fill, draw::stroke, draw::circle,
+                              draw::text>;
+
+struct InnerElement;
+// An element as it is now: what a node writes of itself.
+struct Markup {
+  std::vector<std::pair<std::string, std::string>> fAttrs;
+  std::vector<std::pair<std::string, std::string>> fStyles;
+  std::optional<std::string> fText;
+  // A control's value and a checkbox's state, set as the model says.
+  std::optional<std::string> fValue;
+  std::optional<bool> fChecked;
+  std::vector<std::string> fListened;
+  // Scrolled to an offset, or (below zero) to its end, as it is written.
+  std::optional<float> fScroll;
+  std::vector<DrawCall> fDrawn;
+  // The elements it makes in itself, after the tree's children it holds.
+  std::vector<InnerElement> fInner;
+
+  void attr(std::string_view name, std::string_view value) { set(fAttrs, name, value); }
+  // An empty value is no style: what was there is taken away.
+  void style(std::string_view property, std::string_view value) {
+    if (value.empty()) std::erase_if(fStyles, [&](const auto &one) { return one.first == property; });
+    else set(fStyles, property, value);
+  }
+  void text(std::string_view words) { fText = std::string(words); }
+  void value(std::string_view now) { fValue = std::string(now); }
+  void checked(bool on) { fChecked = on; }
+  void listen(std::string_view event) {
+    if (!std::ranges::contains(fListened, event)) fListened.emplace_back(event);
+  }
+  void scroll(float offset) { fScroll = offset; }
+  void drawn(DrawCall call) { fDrawn.push_back(std::move(call)); }
+  // An element made in this one: its tag, its Part, and what it is (f).
+  template <class F> void inner(std::string_view tag, Part part, F &&f);
+  [[nodiscard]] std::optional<std::string_view> attrOf(std::string_view name) const {
+    for (const auto &[n, v] : fAttrs)
+      if (n == name) return std::string_view(v);
+    return std::nullopt;
+  }
+
+private:
+  static void set(std::vector<std::pair<std::string, std::string>> &pairs, std::string_view name, std::string_view value) {
+    for (auto &[n, v] : pairs)
+      if (n == name) {
+        v = std::string(value);
+        return;
+      }
+    pairs.emplace_back(std::string(name), std::string(value));
+  }
+};
+struct InnerElement {
+  std::string fTag;
+  Part fPart;
+  Markup fMarkup;
+};
+template <class F> void Markup::inner(std::string_view tag, Part part, F &&f) {
+  fInner.push_back(InnerElement{std::string(tag), part, {}});
+  f(fInner.back().fMarkup);
+}
+
+// ---- written as HTML ---------------------------------------------------------
+
+[[nodiscard]] inline std::string escapedHtml(std::string_view s) {
+  return s | std::views::transform([](char c) -> std::string {
+           switch (c) {
+           case '<': return "&lt;";
+           case '>': return "&gt;";
+           case '&': return "&amp;";
+           case '"': return "&quot;";
+           default: return std::string(1, c);
+           }
+         }) |
+         std::views::join | std::ranges::to<std::string>();
+}
+// An element HTML has no end tag for, nor anything in.
+[[nodiscard]] inline bool voidElement(std::string_view tag) {
+  return tag == "input" || tag == "img" || tag == "br" || tag == "hr" || tag == "meta" || tag == "link" || tag == "source" ||
+         tag == "area" || tag == "base" || tag == "col" || tag == "embed" || tag == "track" || tag == "wbr";
+}
+// The element's start tag, written as HTML: its attributes, its style, a
+// control's value and state.
+inline void writeStart(std::string &out, std::string_view tag, const Markup &m) {
+  out += '<';
+  out += tag;
+  for (const auto &[n, v] : m.fAttrs) {
+    out += ' ';
+    out += n;
+    if (!v.empty() || n.starts_with("data-")) out += "=\"" + escapedHtml(v) + '"';
+  }
+  if (!m.fStyles.empty()) {
+    out += " style=\"";
+    for (const auto &[p, v] : m.fStyles) out += escapedHtml(p) + ':' + escapedHtml(v) + ';';
+    out += '"';
+  }
+  if (m.fValue && tag != "textarea" && tag != "select") out += " value=\"" + escapedHtml(*m.fValue) + '"';
+  if (m.fChecked && *m.fChecked) out += " checked";
+  out += '>';
+}
+// The elements a node made in itself, written: each and what it holds.
+inline void writeInnerHtml(std::string &out, const InnerElement &one);
+// The rest of it: its text, what `children` writes (the tree's), then the
+// elements it made in itself, and its end.
+template <class Children> void writeRest(std::string &out, std::string_view tag, const Markup &m, Children &&children) {
+  if (voidElement(tag)) return;
+  if (tag == "textarea" && m.fValue.has_value()) out += escapedHtml(*m.fValue);
+  else if (m.fText.has_value()) out += escapedHtml(*m.fText);
+  children(out);
+  for (const InnerElement &one : m.fInner) writeInnerHtml(out, one);
+  out += "</";
+  out += tag;
+  out += '>';
+}
+inline void writeInnerHtml(std::string &out, const InnerElement &one) {
+  writeStart(out, one.fTag, one.fMarkup);
+  writeRest(out, one.fTag, one.fMarkup, [](std::string &) {});
+}
+
 // ---- a node's state --------------------------------------------------------
 
 struct State {
@@ -169,13 +343,21 @@ struct State {
   // The way of the stack it is in -- a row, or a column -- where it is in
   // one: what a grow means there (along it, a share; across it, its breadth).
   std::optional<bool> fInRow;
+  // What another node gives it -- a drawer its sheet -- beside what it says
+  // of itself: a class, and styles.
+  std::vector<std::string> fClasses;
+  std::vector<std::pair<std::string, std::string>> fStyles;
+  // In a browser: what was written to the element last, and the elements the
+  // node made in itself, by their Part.
+  Markup fShown;
+  std::vector<std::pair<Part, dom::Handle>> fInner;
 
   // The element is the state's: it goes with a move and with the node (a row
   // gone from a list takes its element out of the page); a copy has none.
   State() = default;
   State(const State &other)
       : fSpec(other.fSpec), fVisible(other.fVisible), fSelected(other.fSelected), fDisabled(other.fDisabled), fDisplay(other.fDisplay),
-        fInRow(other.fInRow) {}
+        fInRow(other.fInRow), fClasses(other.fClasses), fStyles(other.fStyles) {}
   State &operator=(const State &other) {
     if (this != &other) {
       drop();
@@ -185,13 +367,16 @@ struct State {
       fDisabled = other.fDisabled;
       fDisplay = other.fDisplay;
       fInRow = other.fInRow;
+      fClasses = other.fClasses;
+      fStyles = other.fStyles;
       fDirty = true;
     }
     return *this;
   }
   State(State &&other) noexcept
       : fSpec(std::move(other.fSpec)), fVisible(other.fVisible), fSelected(other.fSelected), fDisabled(other.fDisabled),
-        fHandle(std::exchange(other.fHandle, dom::kNone)), fDisplay(std::move(other.fDisplay)), fDirty(other.fDirty), fInRow(other.fInRow) {}
+        fHandle(std::exchange(other.fHandle, dom::kNone)), fDisplay(std::move(other.fDisplay)), fDirty(other.fDirty), fInRow(other.fInRow),
+        fClasses(std::move(other.fClasses)), fStyles(std::move(other.fStyles)), fShown(std::move(other.fShown)), fInner(std::move(other.fInner)) {}
   State &operator=(State &&other) noexcept {
     if (this != &other) {
       drop();
@@ -203,11 +388,17 @@ struct State {
       fDisplay = std::move(other.fDisplay);
       fDirty = other.fDirty;
       fInRow = other.fInRow;
+      fClasses = std::move(other.fClasses);
+      fStyles = std::move(other.fStyles);
+      fShown = std::move(other.fShown);
+      fInner = std::move(other.fInner);
     }
     return *this;
   }
   ~State() { drop(); }
   void drop() {
+    fInner.clear();  // gone with the element they are in
+    fShown = {};
     if (fHandle != dom::kNone) dom::destroy(std::exchange(fHandle, dom::kNone));
   }
 
@@ -324,9 +515,87 @@ struct State {
   }
   return css;
 }
-inline void applyCss(dom::Handle element, const Css &css) {
-  for (const auto &[p, v] : css.fRules) dom::style(element, p, v);
-  for (const auto &[n, v] : css.fAttrs) dom::attr(element, n, v);
+
+// ---- written to a browser's element -----------------------------------------
+namespace detail {
+inline void play(dom::Handle canvas, const DrawCall &call) {
+  spl::visit(spl::overloaded{[&](const draw::size &one) { dom::canvasSize(canvas, one.width, one.height); },
+                             [&](const draw::clear &one) { dom::canvasClear(canvas, one.colour); },
+                             [&](const draw::begin &) { dom::canvasBegin(canvas); },
+                             [&](const draw::move &one) { dom::canvasMoveTo(canvas, one.x, one.y); },
+                             [&](const draw::line &one) { dom::canvasLineTo(canvas, one.x, one.y); },
+                             [&](const draw::close &) { dom::canvasClose(canvas); },
+                             [&](const draw::fill &one) { dom::canvasFill(canvas, one.colour); },
+                             [&](const draw::stroke &one) { dom::canvasStroke(canvas, one.width, one.colour); },
+                             [&](const draw::circle &one) { dom::canvasCircle(canvas, one.x, one.y, one.radius, one.colour); },
+                             [&](const draw::text &one) { dom::canvasText(canvas, one.x, one.y, one.size, one.colour, one.words); }},
+             call);
+}
+// What changed of an element, written to it: the attributes, styles and
+// listeners now and not before, those before and not now taken away; its text
+// where it changed; a control's value and state as said; a drawing, played.
+inline void writeOwn(dom::Handle h, const Markup &now, const Markup &was) {
+  for (const auto &[n, v] : now.fAttrs)
+    if (was.attrOf(n) != std::optional<std::string_view>(v)) dom::attr(h, n, v);
+  for (const auto &[n, v] : was.fAttrs)
+    if (!now.attrOf(n)) dom::dropAttr(h, n);
+  const auto styleOf = [](const Markup &m, std::string_view p) -> std::optional<std::string_view> {
+    for (const auto &[q, v] : m.fStyles)
+      if (q == p) return std::string_view(v);
+    return std::nullopt;
+  };
+  for (const auto &[p, v] : now.fStyles)
+    if (styleOf(was, p) != std::optional<std::string_view>(v)) dom::style(h, p, v);
+  for (const auto &[p, v] : was.fStyles)
+    if (!styleOf(now, p)) dom::style(h, p, "");
+  for (const std::string &event : now.fListened)
+    if (!std::ranges::contains(was.fListened, event)) dom::listen(h, event);
+  if (now.fText && now.fText != was.fText) dom::text(h, *now.fText);
+  else if (!now.fText && was.fText) dom::text(h, "");
+  if (now.fValue) dom::value(h, *now.fValue);
+  if (now.fChecked) dom::checked(h, *now.fChecked);
+  if (now.fScroll) dom::scrollTo(h, *now.fScroll);
+  for (const DrawCall &call : now.fDrawn) play(h, call);
+}
+// The elements a node made in itself, as they are now: kept where their Part
+// and tag are the same (and written to where they changed), made where new,
+// taken away where gone. Each in its parent: the node's own element, or one of
+// them.
+inline void writeInner(dom::Handle parent, const std::vector<InnerElement> &now, const std::vector<InnerElement> &was,
+                       std::vector<std::pair<Part, dom::Handle>> &kept, std::vector<std::pair<Part, dom::Handle>> &made) {
+  for (const InnerElement &one : now) {
+    const auto before = std::ranges::find(was, one.fPart, &InnerElement::fPart);
+    const auto handle = std::ranges::find(kept, one.fPart, &std::pair<Part, dom::Handle>::first);
+    dom::Handle h = dom::kNone;
+    static const Markup kNothing;
+    const Markup *shown = &kNothing;
+    const std::vector<InnerElement> *shownInner = &kNothing.fInner;
+    if (before != was.end() && handle != kept.end() && before->fTag == one.fTag) {
+      h = handle->second;
+      shown = &before->fMarkup;
+      shownInner = &before->fMarkup.fInner;
+    } else {
+      h = dom::create(one.fTag);
+      dom::append(parent, h);
+    }
+    made.emplace_back(one.fPart, h);
+    writeOwn(h, one.fMarkup, *shown);
+    writeInner(h, one.fMarkup.fInner, *shownInner, kept, made);
+  }
+}
+} // namespace detail
+// A node's element written as the node says it is now: only what changed;
+// the elements it made in itself, kept, made or taken away.
+inline void writeElement(State &state, Markup now) {
+  detail::writeOwn(state.fHandle, now, state.fShown);
+  std::vector<std::pair<Part, dom::Handle>> made;
+  detail::writeInner(state.fHandle, now.fInner, state.fShown.fInner, state.fInner, made);
+  for (const auto &[part, h] : state.fInner)
+    if (!std::ranges::contains(made, h, &std::pair<Part, dom::Handle>::second)) dom::destroy(h);
+  state.fInner = std::move(made);
+  now.fDrawn.clear();  // played, not kept
+  now.fScroll.reset();
+  state.fShown = std::move(now);
 }
 
 // ---- the node ---------------------------------------------------------------
@@ -352,16 +621,29 @@ struct Node : scene::NodeBase {
 
   // How it is an element: the defaults, a node declaring its own.
   [[nodiscard]] static constexpr std::string_view tag() { return "div"; }
-  void mounted(this auto &) {}
-  void sync(this auto &) {}
-  // Synced at every sync, not only when something of its own changed: a
+  void markup(this auto &, Markup &) {}
+  // Written at every sync, not only when something of its own changed: a
   // picture waiting on its source.
   [[nodiscard]] bool wantsSync(this auto &) { return false; }
-  template <class F> void handles(this auto &self, F &&f) { f(self.fState.fHandle); }
-  [[nodiscard]] bool onDom(this auto &, dom::Handle, std::string_view, std::string_view) { return true; }
+  [[nodiscard]] bool onDom(this auto &, Part, std::string_view, std::string_view) { return true; }
 
   void apply(const scene::Spec &spec) { fState.apply(spec); }
   void markDirty() { fState.fDirty = true; }
+  // What another node gives it, beside what it says of itself: a class, a
+  // style (empty: none).
+  void addClass(std::string_view name) {
+    if (!std::ranges::contains(fState.fClasses, name)) {
+      fState.fClasses.emplace_back(name);
+      markDirty();
+    }
+  }
+  void setStyle(std::string_view property, std::string_view value) {
+    const auto found = std::ranges::find(fState.fStyles, property, &std::pair<std::string, std::string>::first);
+    if (found != fState.fStyles.end() && found->second == value) return;
+    if (found != fState.fStyles.end()) fState.fStyles.erase(found);
+    if (!value.empty()) fState.fStyles.emplace_back(std::string(property), std::string(value));
+    markDirty();
+  }
   // The scene's words for the same: a node that changed how it looks is
   // written to the page at the next sync; nothing floats over a page.
   void markDamaged() { markDirty(); }
@@ -466,32 +748,30 @@ public:
   Text(std::string text, float size, scene::Colour colour, bool bold = false, bool selectable = false)
       : fText(std::move(text)), fSize(size), fColour(colour), fBold(bold), fSelectable(selectable) {}
   [[nodiscard]] static constexpr std::string_view tag() { return "span"; }
-  void mounted() { dom::attr(fState.fHandle, "class", "skiff-text"); }
-  void sync() {
-    const dom::Handle h = fState.fHandle;
-    if (fSize) dom::style(h, "font-size", px(*fSize));
-    if (fColour) dom::style(h, "color", rgba(*fColour));
-    dom::style(h, "font-weight", fBold ? "600" : "");
-    dom::style(h, "font-family", fMonospace ? "ui-monospace, monospace" : "");
-    dom::style(h, "user-select", fSelectable ? "text" : "");
-    dom::style(h, "white-space", fWrapped ? "" : "nowrap");
-    dom::style(h, "overflow", fElided || fMaxLines ? "hidden" : "");
-    dom::style(h, "text-overflow", fElided ? "ellipsis" : "");
-    if (fMaxWidth > 0.0f) dom::style(h, "max-width", px(fMaxWidth));
+  void markup(Markup &to) {
+    to.attr("class", "skiff-text");
+    if (fSize) to.style("font-size", px(*fSize));
+    if (fColour) to.style("color", rgba(*fColour));
+    to.style("font-weight", fBold ? "600" : "");
+    to.style("font-family", fMonospace ? "ui-monospace, monospace" : "");
+    to.style("user-select", fSelectable ? "text" : "");
+    to.style("white-space", fWrapped ? "" : "nowrap");
+    to.style("overflow", fElided || fMaxLines ? "hidden" : "");
+    to.style("text-overflow", fElided ? "ellipsis" : "");
+    if (fMaxWidth > 0.0f) to.style("max-width", px(fMaxWidth));
+    // Lines at most: a box of its own kind -- its display the state's, so that
+    // hidden it is still none.
+    fState.fDisplay = fMaxLines ? "-webkit-box" : "";
     if (fMaxLines) {
-      dom::style(h, "display", "-webkit-box");
-      dom::style(h, "-webkit-box-orient", "vertical");
-      dom::style(h, "-webkit-line-clamp", std::to_string(*fMaxLines));
+      to.style("-webkit-box-orient", "vertical");
+      to.style("-webkit-line-clamp", std::to_string(*fMaxLines));
     }
-    for (const dom::Handle span : fSpans) dom::destroy(span);
-    fSpans.clear();
     if (fStyles.empty() && fLinks.empty()) {
-      dom::text(h, fText);
+      to.text(fText);
       return;
     }
     // Stretches styled or linked: a span (or an a) for each run between the
     // boundaries of the styles and the links, dressed as the scene draws them.
-    dom::text(h, "");
     std::vector<std::size_t> cuts{0, fText.size()};
     for (const Styled &one : fStyles) {
       cuts.push_back(std::min(one.first, fText.size()));
@@ -504,52 +784,51 @@ public:
     std::ranges::sort(cuts);
     cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
     for (std::size_t i = 0; i + 1 < cuts.size(); ++i) {
-      const std::size_t from = cuts[i], to = cuts[i + 1];
+      const std::size_t from = cuts[i], to_ = cuts[i + 1];
       const Link *link = nullptr;
       for (const Link &one : fLinks)
-        if (one.first <= from && to <= one.last) link = &one;
-      const dom::Handle run = dom::create(link ? "a" : "span");
-      std::string words = fText.substr(from, to - from);
-      if (link) {
-        dom::attr(run, "href", link->target);
-        dom::style(run, "color", rgba(fLinkColour));
-        if (link->pill) {
-          dom::attr(run, "class", "skiff-link-pill");
-          dom::style(run, "background-color", rgba((fLinkColour & 0x00ffffffu) | 0x30000000u));
-          dom::style(run, "border-radius", "6px");
-          dom::style(run, "padding", "0 4px");
+        if (one.first <= from && to_ <= one.last) link = &one;
+      to.inner(link ? "a" : "span", Part{static_cast<std::uint32_t>(i + 1)}, [&](Markup &run) {
+        std::string words = fText.substr(from, to_ - from);
+        if (link) {
+          run.attr("href", link->target);
+          run.style("color", rgba(fLinkColour));
+          if (link->pill) {
+            run.attr("class", "skiff-link-pill");
+            run.style("background-color", rgba((fLinkColour & 0x00ffffffu) | 0x30000000u));
+            run.style("border-radius", "6px");
+            run.style("padding", "0 4px");
+          }
+          if (link->picture) words = link->plain;
         }
-        if (link->picture) words = link->plain;
-      }
-      for (const Styled &one : fStyles) {
-        if (!(one.first <= from && to <= one.last)) continue;
-        if (one.strong) dom::style(run, "font-weight", "600");
-        if (one.emphasis) dom::style(run, "font-style", "italic");
-        if (one.struck || one.underline)
-          dom::style(run, "text-decoration", std::string(one.struck ? "line-through" : "") + (one.struck && one.underline ? " " : "") + (one.underline ? "underline" : ""));
-        if (one.code) {
-          dom::style(run, "font-family", "ui-monospace, monospace");
-          dom::style(run, "background-color", "rgba(255,255,255,0.08)");
-          dom::style(run, "border-radius", "3px");
-          if (one.block) dom::style(run, "display", "block");
-        }
-        if (one.quote) {
-          dom::style(run, "color", rgba(fQuoteColour));
-          if (one.first == from) {
-            dom::style(run, "border-left", "2px solid " + rgba(fQuoteColour));
-            dom::style(run, "padding-left", "6px");
+        for (const Styled &one : fStyles) {
+          if (!(one.first <= from && to_ <= one.last)) continue;
+          if (one.strong) run.style("font-weight", "600");
+          if (one.emphasis) run.style("font-style", "italic");
+          if (one.struck || one.underline)
+            run.style("text-decoration", std::string(one.struck ? "line-through" : "") + (one.struck && one.underline ? " " : "") + (one.underline ? "underline" : ""));
+          if (one.code) {
+            run.style("font-family", "ui-monospace, monospace");
+            run.style("background-color", "rgba(255,255,255,0.08)");
+            run.style("border-radius", "3px");
+            if (one.block) run.style("display", "block");
+          }
+          if (one.quote) {
+            run.style("color", rgba(fQuoteColour));
+            if (one.first == from) {
+              run.style("border-left", "2px solid " + rgba(fQuoteColour));
+              run.style("padding-left", "6px");
+            }
+          }
+          if (one.marked) run.style("background-color", rgba((fQuoteColour & 0x00ffffffu) | 0x40000000u));
+          if (one.spoiler) {
+            run.attr("class", "skiff-spoiler");
+            run.style("background-color", "rgba(128,128,128,0.6)");
+            run.style("color", "transparent");
           }
         }
-        if (one.marked) dom::style(run, "background-color", rgba((fQuoteColour & 0x00ffffffu) | 0x40000000u));
-        if (one.spoiler) {
-          dom::attr(run, "class", "skiff-spoiler");
-          dom::style(run, "background-color", "rgba(128,128,128,0.6)");
-          dom::style(run, "color", "transparent");
-        }
-      }
-      dom::text(run, words);
-      dom::append(h, run);
-      fSpans.push_back(run);
+        run.text(words);
+      });
     }
   }
   void setText(std::string text) {
@@ -631,7 +910,6 @@ private:
   std::vector<Link> fLinks;
   scene::Colour fQuoteColour = 0xff8ab4f8u;
   scene::Colour fLinkColour = 0xff8ab4f8u;
-  std::vector<dom::Handle> fSpans;
 };
 
 // A canvas: an element a node draws on, through a painter, when it is
@@ -644,35 +922,37 @@ class CanvasPainter {
 public:
   // What was drawn stays until drawn over: a node may draw only what changed.
   static constexpr bool kRetains = true;
-  explicit CanvasPainter(dom::Handle canvas) : fCanvas(canvas) {}
-  void clear(scene::Colour colour) { dom::canvasClear(fCanvas, colour); }
+  explicit CanvasPainter(Markup &to) : fTo(&to) {}
+  void clear(scene::Colour colour) { fTo->drawn(draw::clear{colour}); }
   void fillPolygon(std::span<const scene::Point> points, scene::Colour colour) {
     path(points);
-    dom::canvasFill(fCanvas, colour);
+    fTo->drawn(draw::fill{colour});
   }
   void strokePolygon(std::span<const scene::Point> points, float width, scene::Colour colour) {
     path(points);
-    dom::canvasStroke(fCanvas, width, colour);
+    fTo->drawn(draw::stroke{width, colour});
   }
   void line(scene::Point a, scene::Point b, float width, scene::Colour colour) {
-    dom::canvasBegin(fCanvas);
-    dom::canvasMoveTo(fCanvas, a.fX, a.fY);
-    dom::canvasLineTo(fCanvas, b.fX, b.fY);
-    dom::canvasStroke(fCanvas, width, colour);
+    fTo->drawn(draw::begin{});
+    fTo->drawn(draw::move{a.fX, a.fY});
+    fTo->drawn(draw::line{b.fX, b.fY});
+    fTo->drawn(draw::stroke{width, colour});
   }
-  void circle(scene::Point centre, float radius, scene::Colour colour) { dom::canvasCircle(fCanvas, centre.fX, centre.fY, radius, colour); }
-  void text(scene::Point at, std::string_view text, float size, scene::Colour colour) { dom::canvasText(fCanvas, at.fX, at.fY, size, colour, text); }
+  void circle(scene::Point centre, float radius, scene::Colour colour) { fTo->drawn(draw::circle{centre.fX, centre.fY, radius, colour}); }
+  void text(scene::Point at, std::string_view text, float size, scene::Colour colour) {
+    fTo->drawn(draw::text{at.fX, at.fY, size, colour, std::string(text)});
+  }
 
 private:
   void path(std::span<const scene::Point> points) {
-    dom::canvasBegin(fCanvas);
+    fTo->drawn(draw::begin{});
     for (std::size_t i = 0; i < points.size(); ++i) {
-      if (i == 0) dom::canvasMoveTo(fCanvas, points[i].fX, points[i].fY);
-      else dom::canvasLineTo(fCanvas, points[i].fX, points[i].fY);
+      if (i == 0) fTo->drawn(draw::move{points[i].fX, points[i].fY});
+      else fTo->drawn(draw::line{points[i].fX, points[i].fY});
     }
-    dom::canvasClose(fCanvas);
+    fTo->drawn(draw::close{});
   }
-  dom::Handle fCanvas;
+  Markup *fTo;
 };
 struct Canvas : Node {
   struct Press {
@@ -680,18 +960,15 @@ struct Canvas : Node {
     int button = 0;  // 0 the main, 2 the secondary, as the document numbers them
   };
   [[nodiscard]] static constexpr std::string_view tag() { return "canvas"; }
-  void mounted() {
-    dom::attr(fState.fHandle, "class", "skiff-canvas");
-    dom::listen(fState.fHandle, "click");
-    dom::listen(fState.fHandle, "contextmenu");
-    fResize = true;
-  }
-  void sync(this auto &self) {
+  void markup(this auto &self, Markup &to) {
+    to.attr("class", "skiff-canvas");
+    to.listen("click");
+    to.listen("contextmenu");
     if (self.fResize) {
-      dom::canvasSize(self.fState.fHandle, self.fWidth, self.fHeight);
+      to.drawn(draw::size{self.fWidth, self.fHeight});
       self.fResize = false;
     }
-    CanvasPainter painter(self.fState.fHandle);
+    CanvasPainter painter(to);
     self.paint(painter);
   }
   // What the document sent for a pointer event: "x,y,button".
@@ -708,7 +985,7 @@ struct Canvas : Node {
     if (std::from_chars(value.data() + at, value.data() + value.size(), press.button).ec != std::errc{}) return std::nullopt;
     return press;
   }
-  [[nodiscard]] bool onDom(this auto &self, dom::Handle, std::string_view event, std::string_view value) {
+  [[nodiscard]] bool onDom(this auto &self, Part, std::string_view event, std::string_view value) {
     if (event != "click" && event != "contextmenu") return false;
     const std::optional<Press> press = pressOf(value);
     if (!press) return false;
@@ -752,21 +1029,21 @@ template <class... Parts> struct Stack : Node {
   void forEachChild(auto &&f) {
     std::apply([&](auto &...each) { (f(each), ...); }, fParts);
   }
-  void mounted() {
-    dom::attr(fState.fHandle, "class", "skiff-stack");
-    dom::style(fState.fHandle, "display", "flex");
-    dom::style(fState.fHandle, "flex-direction", fLook.fHorizontal ? "row" : "column");
-    if (fLook.fGap > 0.0f) dom::style(fState.fHandle, "gap", px(fLook.fGap));
+  void markup(Markup &to) {
+    to.attr("class", "skiff-stack");
+    to.style("display", "flex");
+    to.style("flex-direction", fLook.fHorizontal ? "row" : "column");
+    if (fLook.fGap > 0.0f) to.style("gap", px(fLook.fGap));
     // Across its way, a child is its own size -- as in a scene's flow -- unless it fills or grows there.
-    dom::style(fState.fHandle, "align-items", fLook.fHorizontal ? "center" : "flex-start");
+    to.style("align-items", fLook.fHorizontal ? "center" : "flex-start");
   }
   void setGap(float gap) {
     fLook.fGap = gap;
-    if (fState.fHandle != dom::kNone) dom::style(fState.fHandle, "gap", gap > 0.0f ? px(gap) : std::string());
+    markDirty();
   }
   void setHorizontal() {
     fLook.fHorizontal = true;
-    if (fState.fHandle != dom::kNone) dom::style(fState.fHandle, "flex-direction", "row");
+    markDirty();
   }
 };
 template <class... Parts> [[nodiscard]] Stack<Parts...> column(Look look, Parts... parts) {
@@ -835,16 +1112,15 @@ template <class... Children> struct Flow : Node {
     fOptions.justify = how;
     markDirty();
   }
-  void mounted() { dom::attr(fState.fHandle, "class", "skiff-flow"); }
-  void sync() {
-    const dom::Handle h = fState.fHandle;
-    dom::style(h, "flex-direction", fLook.fHorizontal ? "row" : "column");
-    dom::style(h, "flex-wrap", fOptions.wrap ? "wrap" : "nowrap");
-    dom::style(h, "column-gap", px(fOptions.spacingX));
-    dom::style(h, "row-gap", px(fOptions.spacingY));
-    dom::style(h, "align-items", std::string(alignment(fOptions.crossAlign)));
-    dom::style(h, "justify-content", fOptions.centreRows ? std::string("center") : std::string(justified(fOptions.justify)));
-    dom::style(h, "position", "relative");
+  void markup(Markup &to) {
+    to.attr("class", "skiff-flow");
+    to.style("flex-direction", fLook.fHorizontal ? "row" : "column");
+    to.style("flex-wrap", fOptions.wrap ? "wrap" : "nowrap");
+    to.style("column-gap", px(fOptions.spacingX));
+    to.style("row-gap", px(fOptions.spacingY));
+    to.style("align-items", std::string(alignment(fOptions.crossAlign)));
+    to.style("justify-content", fOptions.centreRows ? std::string("center") : std::string(justified(fOptions.justify)));
+    to.style("position", "relative");
   }
 };
 template <class... Children> Flow(scene::FlowOptions, Children...) -> Flow<Children...>;
@@ -864,18 +1140,15 @@ template <class... Children> struct ScrollContainer : Node {
     fLook.fHorizontal = true;
     markDirty();
   }
-  void mounted() {
-    dom::attr(fState.fHandle, "class", "skiff-scroll");
-    dom::listen(fState.fHandle, "scroll");
-  }
-  void sync() {
-    const dom::Handle h = fState.fHandle;
-    dom::style(h, "flex-direction", fLook.fHorizontal ? "row" : "column");
-    dom::style(h, "overflow-x", fLook.fHorizontal ? "auto" : "hidden");
-    dom::style(h, "overflow-y", fLook.fHorizontal ? "hidden" : "auto");
-    dom::style(h, "position", "relative");
+  void markup(Markup &to) {
+    to.attr("class", "skiff-scroll");
+    to.listen("scroll");
+    to.style("flex-direction", fLook.fHorizontal ? "row" : "column");
+    to.style("overflow-x", fLook.fHorizontal ? "auto" : "hidden");
+    to.style("overflow-y", fLook.fHorizontal ? "hidden" : "auto");
+    to.style("position", "relative");
     if (fWanted) {
-      dom::scrollTo(h, *fWanted);
+      to.scroll(*fWanted);
       fWanted.reset();
     }
   }
@@ -900,7 +1173,7 @@ template <class... Children> struct ScrollContainer : Node {
   void setHoldsInView(bool) {}
   void setDrawsAhead(bool) {}
   // Scrolled by the user: where it is now -- not a press.
-  bool onDom(dom::Handle, std::string_view event, std::string_view value) {
+  bool onDom(Part, std::string_view event, std::string_view value) {
     if (event != "scroll") return false;
     fCurrent = std::strtof(std::string(value).c_str(), nullptr);
     return false;
@@ -933,16 +1206,12 @@ template <PictureSource Source> struct Image : Node {
     return found && !found->url.empty() ? found : nullptr;
   }
   [[nodiscard]] bool wantsSync() const { return fShown.empty(); }
-  void mounted() { dom::attr(fState.fHandle, "class", "skiff-image"); }
-  void sync() {
+  void markup(Markup &to) {
+    to.attr("class", "skiff-image");
     const scene::Picture *found = picture();
-    const std::string url = found ? found->url : std::string();
-    if (url != fShown) {
-      fShown = url;
-      if (url.empty()) dom::dropAttr(fState.fHandle, "src");
-      else dom::attr(fState.fHandle, "src", url);
-    }
-    dom::style(fState.fHandle, "object-fit", spl::holds_alternative<scene::fit::contain>(fFit) ? "contain" : "cover");
+    fShown = found ? found->url : std::string();
+    if (!fShown.empty()) to.attr("src", fShown);
+    to.style("object-fit", spl::holds_alternative<scene::fit::contain>(fFit) ? "contain" : "cover");
   }
 
 private:
@@ -971,81 +1240,76 @@ struct Icon : Node {
     }
   }
   [[nodiscard]] scene::Colour colour() const noexcept { return fColour; }
-  void mounted() {
-    dom::attr(fState.fHandle, "class", "skiff-icon");
-    fGroup = dom::create("g");
-    dom::append(fState.fHandle, fGroup);
-  }
-  void sync() {
+  void markup(Markup &to) {
+    to.attr("class", "skiff-icon");
     const float w = fState.fSpec.width.value_or(24.0f), h = fState.fSpec.height.value_or(24.0f);
-    dom::attr(fState.fHandle, "width", number(w));
-    dom::attr(fState.fHandle, "height", number(h));
-    dom::attr(fState.fHandle, "viewBox", number(-w / 2.0f) + " " + number(-h / 2.0f) + " " + number(w) + " " + number(h));
-    if (fShape.rotation != 0.0f) dom::attr(fGroup, "transform", "rotate(" + number(fShape.rotation) + ")");
-    else dom::dropAttr(fGroup, "transform");
-    for (const dom::Handle old : fMarks) dom::destroy(old);
-    fMarks.clear();
-    for (const scene::Mark &one : fShape.marks) {
-      const dom::Handle made = spl::visit([&](const auto &shape) { return markElement(shape); }, one.shape);
-      const std::string colour = rgba(one.colour.value_or(fColour));
-      if (one.filled) {
-        dom::attr(made, "fill", colour);
-        dom::attr(made, "stroke", "none");
-      } else {
-        dom::attr(made, "fill", "none");
-        dom::attr(made, "stroke", colour);
-        dom::attr(made, "stroke-width", number(one.width));
-        dom::attr(made, "stroke-linecap", "round");
-        dom::attr(made, "stroke-linejoin", "round");
+    to.attr("width", number(w));
+    to.attr("height", number(h));
+    to.attr("viewBox", number(-w / 2.0f) + " " + number(-h / 2.0f) + " " + number(w) + " " + number(h));
+    // Its marks in a group, the group turned: the group Part 1, the marks after it.
+    to.inner("g", Part{1}, [&](Markup &group) {
+      if (fShape.rotation != 0.0f) group.attr("transform", "rotate(" + number(fShape.rotation) + ")");
+      std::uint32_t at = 2;
+      for (const scene::Mark &one : fShape.marks) {
+        spl::visit([&](const auto &shape) {
+          group.inner(markTag(shape), Part{at++}, [&](Markup &made) {
+            markShape(made, shape);
+            const std::string colour = rgba(one.colour.value_or(fColour));
+            if (one.filled) {
+              made.attr("fill", colour);
+              made.attr("stroke", "none");
+            } else {
+              made.attr("fill", "none");
+              made.attr("stroke", colour);
+              made.attr("stroke-width", number(one.width));
+              made.attr("stroke-linecap", "round");
+              made.attr("stroke-linejoin", "round");
+            }
+          });
+        }, one.shape);
       }
-      dom::append(fGroup, made);
-      fMarks.push_back(made);
-    }
+    });
   }
 
 private:
-  static dom::Handle markElement(const scene::mark::line &one) {
-    const dom::Handle h = dom::create("line");
-    dom::attr(h, "x1", number(one.x1));
-    dom::attr(h, "y1", number(one.y1));
-    dom::attr(h, "x2", number(one.x2));
-    dom::attr(h, "y2", number(one.y2));
-    return h;
+  static std::string_view markTag(const scene::mark::line &) { return "line"; }
+  static std::string_view markTag(const scene::mark::circle &) { return "circle"; }
+  static std::string_view markTag(const scene::mark::rect &) { return "rect"; }
+  static std::string_view markTag(const scene::mark::arc &) { return "path"; }
+  static std::string_view markTag(const scene::mark::path &) { return "path"; }
+  static void markShape(Markup &h, const scene::mark::line &one) {
+    h.attr("x1", number(one.x1));
+    h.attr("y1", number(one.y1));
+    h.attr("x2", number(one.x2));
+    h.attr("y2", number(one.y2));
   }
-  static dom::Handle markElement(const scene::mark::circle &one) {
-    const dom::Handle h = dom::create("circle");
-    dom::attr(h, "cx", number(one.x));
-    dom::attr(h, "cy", number(one.y));
-    dom::attr(h, "r", number(one.radius));
-    return h;
+  static void markShape(Markup &h, const scene::mark::circle &one) {
+    h.attr("cx", number(one.x));
+    h.attr("cy", number(one.y));
+    h.attr("r", number(one.radius));
   }
-  static dom::Handle markElement(const scene::mark::rect &one) {
-    const dom::Handle h = dom::create("rect");
-    dom::attr(h, "x", number(one.left));
-    dom::attr(h, "y", number(one.top));
-    dom::attr(h, "width", number(one.right - one.left));
-    dom::attr(h, "height", number(one.bottom - one.top));
+  static void markShape(Markup &h, const scene::mark::rect &one) {
+    h.attr("x", number(one.left));
+    h.attr("y", number(one.top));
+    h.attr("width", number(one.right - one.left));
+    h.attr("height", number(one.bottom - one.top));
     if (one.radius > 0.0f) {
-      dom::attr(h, "rx", number(one.radius));
-      dom::attr(h, "ry", number(one.radius));
+      h.attr("rx", number(one.radius));
+      h.attr("ry", number(one.radius));
     }
-    return h;
   }
   // An arc of the oval in its box, from a start angle through a sweep (degrees, clockwise), as Skia draws one.
-  static dom::Handle markElement(const scene::mark::arc &one) {
+  static void markShape(Markup &h, const scene::mark::arc &one) {
     const float rx = (one.right - one.left) / 2.0f, ry = (one.bottom - one.top) / 2.0f;
     const float cx = (one.left + one.right) / 2.0f, cy = (one.top + one.bottom) / 2.0f;
     const float sweep = std::clamp(one.sweep, -359.99f, 359.99f);
     const float toRadians = std::numbers::pi_v<float> / 180.0f;
     const float a0 = one.start * toRadians, a1 = (one.start + sweep) * toRadians;
-    const dom::Handle h = dom::create("path");
-    dom::attr(h, "d",
-              "M" + number(cx + rx * std::cos(a0)) + " " + number(cy + ry * std::sin(a0)) + " A" + number(rx) + " " + number(ry) + " 0 " +
-                  (std::abs(sweep) > 180.0f ? "1" : "0") + " " + (sweep > 0.0f ? "1" : "0") + " " + number(cx + rx * std::cos(a1)) + " " +
-                  number(cy + ry * std::sin(a1)));
-    return h;
+    h.attr("d", "M" + number(cx + rx * std::cos(a0)) + " " + number(cy + ry * std::sin(a0)) + " A" + number(rx) + " " + number(ry) + " 0 " +
+                    (std::abs(sweep) > 180.0f ? "1" : "0") + " " + (sweep > 0.0f ? "1" : "0") + " " + number(cx + rx * std::cos(a1)) + " " +
+                    number(cy + ry * std::sin(a1)));
   }
-  static dom::Handle markElement(const scene::mark::path &one) {
+  static void markShape(Markup &h, const scene::mark::path &one) {
     std::string d;
     for (const scene::PathStep &step : one.steps) {
       spl::visit(spl::overloaded{[&](const scene::path_step::move &at) { d += "M" + number(at.x) + " " + number(at.y); },
@@ -1057,14 +1321,10 @@ private:
                                  [&](const scene::path_step::close &) { d += "Z"; }},
                  step);
     }
-    const dom::Handle h = dom::create("path");
-    dom::attr(h, "d", d);
-    return h;
+    h.attr("d", d);
   }
   scene::IconShape fShape;
   scene::Colour fColour;
-  dom::Handle fGroup = dom::kNone;
-  std::vector<dom::Handle> fMarks;
 };
 
 // ---- figures: shapes as nodes ----------------------------------------------
@@ -1114,15 +1374,13 @@ struct Shape : Node {
     markDirty();
   }
   std::vector<std::pair<std::string, std::string>> fStyles;
-  void syncShape() {
-    for (const auto &[n, v] : fStyles) dom::style(fState.fHandle, n, v);
-    dom::attr(fState.fHandle, "fill", hexOf(fFill));
-    dom::attr(fState.fHandle, "stroke", hexOf(fStroke));
-    dom::attr(fState.fHandle, "stroke-width", number(fStrokeWidth));
-    if (fOpacity < 1.0f) dom::attr(fState.fHandle, "opacity", number(fOpacity));
-    else dom::dropAttr(fState.fHandle, "opacity");
-    if (!fClass.empty()) dom::attr(fState.fHandle, "class", fClass);
-    else dom::dropAttr(fState.fHandle, "class");
+  void markupShape(Markup &to) {
+    for (const auto &[n, v] : fStyles) to.style(n, v);
+    to.attr("fill", hexOf(fFill));
+    to.attr("stroke", hexOf(fStroke));
+    to.attr("stroke-width", number(fStrokeWidth));
+    if (fOpacity < 1.0f) to.attr("opacity", number(fOpacity));
+    if (!fClass.empty()) to.attr("class", fClass);
   }
   template <class V> void change(V &field, V value) {
     if (field != value) {
@@ -1137,9 +1395,9 @@ public:
   [[nodiscard]] static constexpr std::string_view tag() { return "polygon"; }
   void setPoints(std::vector<scene::Point> points) { change(fPoints, std::move(points)); }
   [[nodiscard]] const std::vector<scene::Point> &points() const noexcept { return fPoints; }
-  void sync() {
-    dom::attr(fState.fHandle, "points", pointsOf(fPoints));
-    syncShape();
+  void markup(Markup &to) {
+    to.attr("points", pointsOf(fPoints));
+    markupShape(to);
   }
 
 private:
@@ -1155,9 +1413,9 @@ public:
   [[nodiscard]] static constexpr std::string_view tag() { return "polyline"; }
   void setPoints(std::vector<scene::Point> points) { change(fPoints, std::move(points)); }
   [[nodiscard]] const std::vector<scene::Point> &points() const noexcept { return fPoints; }
-  void sync() {
-    dom::attr(fState.fHandle, "points", pointsOf(fPoints));
-    syncShape();
+  void markup(Markup &to) {
+    to.attr("points", pointsOf(fPoints));
+    markupShape(to);
   }
 
 private:
@@ -1178,12 +1436,12 @@ public:
       markDirty();
     }
   }
-  void sync() {
-    dom::attr(fState.fHandle, "x1", number(fA.fX));
-    dom::attr(fState.fHandle, "y1", number(fA.fY));
-    dom::attr(fState.fHandle, "x2", number(fB.fX));
-    dom::attr(fState.fHandle, "y2", number(fB.fY));
-    syncShape();
+  void markup(Markup &to) {
+    to.attr("x1", number(fA.fX));
+    to.attr("y1", number(fA.fY));
+    to.attr("x2", number(fB.fX));
+    to.attr("y2", number(fB.fY));
+    markupShape(to);
   }
 
 private:
@@ -1201,11 +1459,11 @@ public:
   }
   void setRadius(float radius) { change(fRadius, radius); }
   [[nodiscard]] scene::Point centre() const noexcept { return fCentre; }
-  void sync() {
-    dom::attr(fState.fHandle, "cx", number(fCentre.fX));
-    dom::attr(fState.fHandle, "cy", number(fCentre.fY));
-    dom::attr(fState.fHandle, "r", number(fRadius));
-    syncShape();
+  void markup(Markup &to) {
+    to.attr("cx", number(fCentre.fX));
+    to.attr("cy", number(fCentre.fY));
+    to.attr("r", number(fRadius));
+    markupShape(to);
   }
 
 private:
@@ -1251,15 +1509,11 @@ template <class... Parts> struct Figure : Node {
     }
   }
   std::string fClass = "skiff-figure";
-  void mounted() {
-    dom::attr(fState.fHandle, "class", fClass);
-    dom::listen(fState.fHandle, "click");
-    dom::listen(fState.fHandle, "contextmenu");
-  }
+
   // A click or a context menu on the figure: pressed(Press) on the figure
   // that has it -- where, in its own coordinates, and which button -- then
   // its press (onPress), as a Canvas has it.
-  [[nodiscard]] bool onDom(this auto &self, dom::Handle, std::string_view event, std::string_view value) {
+  [[nodiscard]] bool onDom(this auto &self, Part, std::string_view event, std::string_view value) {
     if (event != "click" && event != "contextmenu") return false;
     const std::optional<Canvas::Press> press = Canvas::pressOf(value);
     if (!press) return false;
@@ -1269,11 +1523,13 @@ template <class... Parts> struct Figure : Node {
     }
     return false;
   }
-  void sync() {
-    dom::attr(fState.fHandle, "class", fClass);
-    dom::attr(fState.fHandle, "width", number(fWidth));
-    dom::attr(fState.fHandle, "height", number(fHeight));
-    dom::attr(fState.fHandle, "viewBox", "0 0 " + number(fWidth) + " " + number(fHeight));
+  void markup(Markup &to) {
+    to.attr("class", fClass);
+    to.listen("click");
+    to.listen("contextmenu");
+    to.attr("width", number(fWidth));
+    to.attr("height", number(fHeight));
+    to.attr("viewBox", "0 0 " + number(fWidth) + " " + number(fHeight));
   }
 };
 template <class... Parts> [[nodiscard]] Figure<Parts...> figure(float width, float height, Parts... parts) {
@@ -1300,14 +1556,14 @@ struct Rows : Node {
   void forEachChild(this auto &self, auto &&f) {
     if constexpr (requires { self.fRows; }) f(self.fRows);
   }
-  void mounted() {
+  void markup(Markup &to) {
     if (!fFlex) return;
-    dom::attr(fState.fHandle, "class", "skiff-stack");
-    dom::style(fState.fHandle, "display", "flex");
-    dom::style(fState.fHandle, "flex-direction", fLook.fHorizontal ? "row" : "column");
-    if (fLook.fGap > 0.0f) dom::style(fState.fHandle, "gap", px(fLook.fGap));
+    to.attr("class", "skiff-stack");
+    to.style("display", "flex");
+    to.style("flex-direction", fLook.fHorizontal ? "row" : "column");
+    if (fLook.fGap > 0.0f) to.style("gap", px(fLook.fGap));
     // Across its way, a child is its own size -- as in a scene's flow -- unless it fills or grows there.
-    dom::style(fState.fHandle, "align-items", fLook.fHorizontal ? "center" : "flex-start");
+    to.style("align-items", fLook.fHorizontal ? "center" : "flex-start");
   }
 };
 namespace detail {
@@ -1531,6 +1787,36 @@ template <class N, class F> bool childAt(N &node, std::uint32_t place, F &&f) {
 }
 } // namespace detail
 
+// ---- a node, written ---------------------------------------------------------
+
+// All a node's element is now: its name where it is a named view, what the
+// node says of itself, what another node gave it (a class, a style), its
+// Spec as CSS, and whether it is disabled.
+template <class N> [[nodiscard]] Markup markupOf(N &node) {
+  Markup m;
+  // A named view is named in the document too: the page reads as the source does.
+  if constexpr (requires { std::string_view(std::remove_cvref_t<N>::viewName()); })
+    m.attr("data-view", std::string_view(std::remove_cvref_t<N>::viewName()));
+  // Shown or not first, as the browser reads an element's style: what the
+  // node says after it, then the rest of its Spec.
+  m.style("display", node.fState.fVisible ? node.fState.fDisplay : "none");
+  node.markup(m);
+  const State &state = node.fState;
+  if (!state.fClasses.empty()) {
+    std::string classes(m.attrOf("class").value_or(""));
+    for (const std::string &one : state.fClasses)
+      if (!std::ranges::contains(classes | std::views::split(' ') | std::views::transform([](auto word) { return std::string_view(word); }), one))
+        classes += (classes.empty() ? "" : " ") + one;
+    m.attr("class", classes);
+  }
+  const Css css = cssOf(state);
+  for (const auto &[property, value] : css.fRules) m.style(property, value);
+  for (const auto &[name, value] : css.fAttrs) m.attr(name, value);
+  for (const auto &[property, value] : state.fStyles) m.style(property, value);
+  if (state.fDisabled) m.attr("disabled", "");
+  return m;
+}
+
 // ---- the page -----------------------------------------------------------------
 //
 // A tree mounted into an element: each node made an element in eachChild
@@ -1570,6 +1856,15 @@ public:
     sync();
   }
   void sync() { syncNode(fRoot); }
+  // The page as HTML, written whole from the tree -- natively, for a page
+  // written out (prerender, a server's), with no document made: what the
+  // model says now (the tree read first).
+  [[nodiscard]] std::string write() {
+    fBinding.refresh(fRoot, *fModel);
+    std::string out;
+    writeNode(fRoot, out);
+    return out;
+  }
   [[nodiscard]] Root &root() noexcept { return fRoot; }
   [[nodiscard]] const Root &root() const noexcept { return fRoot; }
   [[nodiscard]] Model &model() noexcept { return *fModel; }
@@ -1582,9 +1877,9 @@ public:
     // kept, as a list's rows come and go.
     scene::Path path;
     bool press = false, found = false;
-    findNode(fRoot, target, path, [&](auto &node) {
+    findNode(fRoot, target, path, [&](auto &node, Part part) {
       found = true;
-      press = node.onDom(target, kind, value);
+      press = node.onDom(part, kind, value);
     });
     if (!found) return;
     if (press) bind::press(fRoot, *fModel, path);
@@ -1596,10 +1891,9 @@ private:
     State &state = node.fState;
     state.fHandle = dom::create(node.tag());
     dom::append(parent, state.fHandle);
-    // A named view is named in the document too: the page reads as the source does.
-    if constexpr (requires { std::string_view(std::remove_cvref_t<N>::viewName()); })
-      dom::attr(state.fHandle, "data-view", std::string_view(std::remove_cvref_t<N>::viewName()));
-    node.mounted();
+    state.fShown = {};
+    state.fInner.clear();
+    state.fDirty = true;
     detail::eachChild(node, [&](auto &child) {
       if constexpr (requires { node.fLook.fHorizontal; }) child.fState.fInRow = node.fLook.fHorizontal;
       mountNode(child, state.fHandle);
@@ -1615,8 +1909,12 @@ private:
     state.fHandle = found;
     std::size_t under = 0;
     detail::eachChild(node, [&](auto &) { ++under; });
+    // What the node made in itself is written after the tree's children: it
+    // is made again, as the node says it now.
+    while (dom::children(found) > under) dom::destroy(dom::child(found, under));
     if (under == 0) dom::clear(found);
-    node.mounted();
+    state.fShown = {};
+    state.fInner.clear();
     std::size_t at = 0;
     detail::eachChild(node, [&](auto &child) {
       if constexpr (requires { node.fLook.fHorizontal; }) child.fState.fInRow = node.fLook.fHorizontal;
@@ -1654,22 +1952,31 @@ private:
         for (auto &row : node.fRows) node.fShownRows.push_back(row.fState.fHandle);
       }
     }
-    if (state.fDirty) {
-      applyCss(state.fHandle, cssOf(state));
-      if (state.fDisabled) dom::attr(state.fHandle, "disabled", "");
-      else dom::dropAttr(state.fHandle, "disabled");
-      node.sync();
+    if (state.fDirty || node.wantsSync()) {
+      writeElement(state, markupOf(node));
       state.fDirty = false;
-    } else if (node.wantsSync()) {
-      node.sync();
     }
     detail::eachChild(node, [&](auto &child) { syncNode(child); });
   }
+  template <class N> static void writeNode(N &node, std::string &out) {
+    const Markup m = markupOf(node);
+    node.fState.fDirty = false;
+    writeStart(out, node.tag(), m);
+    writeRest(out, node.tag(), m, [&](std::string &into) {
+      detail::eachChild(node, [&](auto &child) {
+        if constexpr (requires { node.fLook.fHorizontal; }) child.fState.fInRow = node.fLook.fHorizontal;
+        writeNode(child, into);
+      });
+    });
+  }
   template <class N, class F> static bool findNode(N &node, dom::Handle target, scene::Path &path, F &&f) {
-    bool mine = false;
-    node.handles([&](dom::Handle h) { mine = mine || h == target; });
-    if (mine) {
-      f(node);
+    if (node.fState.fHandle == target) {
+      f(node, kOwn);
+      return true;
+    }
+    const auto inner = std::ranges::find(node.fState.fInner, target, &std::pair<Part, dom::Handle>::second);
+    if (inner != node.fState.fInner.end()) {
+      f(node, inner->first);
       return true;
     }
     std::uint32_t place = 0;

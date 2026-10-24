@@ -22,8 +22,8 @@ struct Clicked {};
 struct Clicker : Node {
   using Out = model::Types<Clicked>;
   [[nodiscard]] static constexpr std::string_view tag() { return "button"; }
-  void mounted() { dom::listen(fState.fHandle, "click"); }
-  bool onDom(dom::Handle, std::string_view event, std::string_view) { return event == "click"; }
+  void markup(Markup &to) { to.listen("click"); }
+  bool onDom(Part, std::string_view event, std::string_view) { return event == "click"; }
   Clicked onPress() { return {}; }
 };
 struct Count {
@@ -545,3 +545,60 @@ TEST(Web, AModelIsThePartsItsTreesViewsSayTheyKeep) {
 }
 
 } // namespace
+
+// A page written out as HTML from its tree alone -- no document made, not an
+// element -- as the model says: what a server writes for a browser.
+TEST(Web, APageIsWrittenAsHtmlFromItsTreeWithNoDocument) {
+  dom::reset();
+  Model m;
+  (void)m.apply(model::over<Count>([](Count c) {
+    c.n = 3;
+    return c;
+  }));
+  Page page(counterPage(), m);
+  const std::string html = page.write();
+  EXPECT_EQ(dom::children(dom::root()), 0u);
+  EXPECT_NE(html.find("<span class=\"skiff-text\">Clicks</span><span class=\"skiff-text\">3</span>"), std::string::npos) << html;
+  EXPECT_NE(html.find("<button></button>"), std::string::npos) << html;
+  EXPECT_NE(html.find("<div class=\"skiff-stack\" style=\"display:flex;flex-direction:column;gap:8px;"), std::string::npos) << html;
+}
+
+// What a node makes in itself -- runs of a text, here -- is written with it,
+// and an event on one of them comes back to the node by its Part.
+namespace {
+struct Picked {
+  int part = -1;
+};
+struct TwoButtons : Node {
+  int fPicked = -1;
+  void markup(Markup &to) {
+    to.attr("class", "two");
+    for (std::uint32_t i = 1; i <= 2; ++i)
+      to.inner("button", Part{i}, [&](Markup &b) {
+        b.text(i == 1 ? "one" : "two");
+        b.listen("click");
+      });
+  }
+  bool onDom(Part where, std::string_view event, std::string_view) {
+    if (event != "click") return false;
+    fPicked = static_cast<int>(where.index);
+    return false;
+  }
+};
+} // namespace
+TEST(Web, AnEventOnAnElementANodeMadeInItselfComesBackByItsPart) {
+  dom::reset();
+  Model m;
+  Page page(TwoButtons(), m);
+  const std::string written = page.write();
+  EXPECT_NE(written.find("<div class=\"two\"><button>one</button><button>two</button></div>"), std::string::npos) << written;
+  page.mount();
+  const dom::Handle second = dom::child(page.root().element(), 1);
+  ASSERT_NE(second, dom::kNone);
+  fire(page, second, "click", "");
+  EXPECT_EQ(page.root().fPicked, 2);
+  // Written again where nothing changed: the same elements.
+  page.root().markDirty();
+  page.sync();
+  EXPECT_EQ(dom::child(page.root().element(), 1), second);
+}
