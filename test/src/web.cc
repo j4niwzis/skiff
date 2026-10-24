@@ -781,7 +781,8 @@ auto hybridPage() { return column(vbox(), state<Shown>(Text("server")), client(c
 
 TEST(Client, APartWithAModelOfItsOwnIsNotTheTreesAndAPressInItIsItsOwn) {
   using Tree = decltype(hybridPage());
-  static_assert(std::same_as<bind::PartsOf<Tree>, model::Types<model::Tracked<Shown>>>);
+  // Its parts said in the tree's model too: one model for every backend.
+  static_assert(std::same_as<bind::PartsOf<Tree>, model::Types<model::Tracked<Shown>, model::Tracked<Count>>>);
   dom::reset();
   bind::ModelOf<Tree> m;
   Page page(hybridPage(), m);
@@ -791,6 +792,7 @@ TEST(Client, APartWithAModelOfItsOwnIsNotTheTreesAndAPressInItIsItsOwn) {
   auto &button = std::get<1>(clicked.fParts);
   fire(page, button.element(), "click", "");
   EXPECT_EQ(part.model().look<Count>()->n, 1);
+  EXPECT_EQ(m.look<Count>()->n, 0);  // the client's own, not the tree's
   EXPECT_EQ(std::get<0>(clicked.fParts).text(), "1");
   const std::string html = dom::dump(dom::root());
   EXPECT_NE(html.find("<skiff-client data-skiff-client=\"0\""), std::string::npos) << html;

@@ -195,7 +195,10 @@ Handle create(std::string_view tag) {
   skiffDomInit();
   return static_cast<Handle>(skiffDomCreate(tag.data(), static_cast<int>(tag.size())));
 }
-void destroy(Handle h) { skiffDomDestroy(static_cast<int>(h)); }
+void destroy(Handle h) {
+  skiffDomInit();
+  skiffDomDestroy(static_cast<int>(h));
+}
 Handle child(Handle parent, std::size_t index) {
   skiffDomInit();
   return static_cast<Handle>(skiffDomChild(static_cast<int>(parent), static_cast<int>(index)));
@@ -208,48 +211,111 @@ std::size_t children(Handle parent) {
   skiffDomInit();
   return static_cast<std::size_t>(skiffDomChildren(static_cast<int>(parent)));
 }
-void clear(Handle h) { skiffDomClear(static_cast<int>(h)); }
-void append(Handle parent, Handle child) { skiffDomAppend(static_cast<int>(parent), static_cast<int>(child)); }
-void text(Handle h, std::string_view t) { skiffDomText(static_cast<int>(h), t.data(), static_cast<int>(t.size())); }
+void clear(Handle h) {
+  skiffDomInit();
+  skiffDomClear(static_cast<int>(h));
+}
+void append(Handle parent, Handle child) {
+  skiffDomInit();
+  skiffDomAppend(static_cast<int>(parent), static_cast<int>(child));
+}
+void text(Handle h, std::string_view t) {
+  skiffDomInit();
+  skiffDomText(static_cast<int>(h), t.data(), static_cast<int>(t.size()));
+}
 void attr(Handle h, std::string_view n, std::string_view v) {
+  skiffDomInit();
   skiffDomAttr(static_cast<int>(h), n.data(), static_cast<int>(n.size()), v.data(), static_cast<int>(v.size()));
 }
-void dropAttr(Handle h, std::string_view n) { skiffDomDropAttr(static_cast<int>(h), n.data(), static_cast<int>(n.size())); }
+void dropAttr(Handle h, std::string_view n) {
+  skiffDomInit();
+  skiffDomDropAttr(static_cast<int>(h), n.data(), static_cast<int>(n.size()));
+}
 void style(Handle h, std::string_view p, std::string_view v) {
+  skiffDomInit();
   skiffDomStyle(static_cast<int>(h), p.data(), static_cast<int>(p.size()), v.data(), static_cast<int>(v.size()));
 }
-void value(Handle h, std::string_view v) { skiffDomValue(static_cast<int>(h), v.data(), static_cast<int>(v.size())); }
-void checked(Handle h, bool on) { skiffDomChecked(static_cast<int>(h), on ? 1 : 0); }
-void listen(Handle h, std::string_view e) { skiffDomListen(static_cast<int>(h), e.data(), static_cast<int>(e.size())); }
-void canvasSize(Handle h, int width, int height) { skiffDomCanvasSize(static_cast<int>(h), width, height); }
-void canvasClear(Handle h, Colour c) { skiffDomCanvasClear(static_cast<int>(h), c); }
-void canvasBegin(Handle h) { skiffDomCanvasBegin(static_cast<int>(h)); }
-void canvasMoveTo(Handle h, float x, float y) { skiffDomCanvasMoveTo(static_cast<int>(h), x, y); }
-void canvasLineTo(Handle h, float x, float y) { skiffDomCanvasLineTo(static_cast<int>(h), x, y); }
-void canvasClose(Handle h) { skiffDomCanvasClose(static_cast<int>(h)); }
-void canvasFill(Handle h, Colour c) { skiffDomCanvasFill(static_cast<int>(h), c); }
-void canvasStroke(Handle h, float width, Colour c) { skiffDomCanvasStroke(static_cast<int>(h), width, c); }
-void canvasCircle(Handle h, float cx, float cy, float r, Colour c) { skiffDomCanvasCircle(static_cast<int>(h), cx, cy, r, c); }
+void value(Handle h, std::string_view v) {
+  skiffDomInit();
+  skiffDomValue(static_cast<int>(h), v.data(), static_cast<int>(v.size()));
+}
+void checked(Handle h, bool on) {
+  skiffDomInit();
+  skiffDomChecked(static_cast<int>(h), on ? 1 : 0);
+}
+void listen(Handle h, std::string_view e) {
+  skiffDomInit();
+  skiffDomListen(static_cast<int>(h), e.data(), static_cast<int>(e.size()));
+}
+void canvasSize(Handle h, int width, int height) {
+  skiffDomInit();
+  skiffDomCanvasSize(static_cast<int>(h), width, height);
+}
+void canvasClear(Handle h, Colour c) {
+  skiffDomInit();
+  skiffDomCanvasClear(static_cast<int>(h), c);
+}
+void canvasBegin(Handle h) {
+  skiffDomInit();
+  skiffDomCanvasBegin(static_cast<int>(h));
+}
+void canvasMoveTo(Handle h, float x, float y) {
+  skiffDomInit();
+  skiffDomCanvasMoveTo(static_cast<int>(h), x, y);
+}
+void canvasLineTo(Handle h, float x, float y) {
+  skiffDomInit();
+  skiffDomCanvasLineTo(static_cast<int>(h), x, y);
+}
+void canvasClose(Handle h) {
+  skiffDomInit();
+  skiffDomCanvasClose(static_cast<int>(h));
+}
+void canvasFill(Handle h, Colour c) {
+  skiffDomInit();
+  skiffDomCanvasFill(static_cast<int>(h), c);
+}
+void canvasStroke(Handle h, float width, Colour c) {
+  skiffDomInit();
+  skiffDomCanvasStroke(static_cast<int>(h), width, c);
+}
+void canvasCircle(Handle h, float cx, float cy, float r, Colour c) {
+  skiffDomInit();
+  skiffDomCanvasCircle(static_cast<int>(h), cx, cy, r, c);
+}
 void canvasText(Handle h, float x, float y, float size, Colour c, std::string_view text) {
+  skiffDomInit();
   skiffDomCanvasText(static_cast<int>(h), x, y, size, c, text.data(), static_cast<int>(text.size()));
 }
-std::string drawn(Handle) { return {}; }
+std::string drawn(Handle) {
+  skiffDomInit();
+  return {};
+}
 std::string objectUrl(std::span<const unsigned char> bytes, std::string_view mime) {
+  skiffDomInit();
   char *p = skiffDomObjectUrl(bytes.data(), static_cast<int>(bytes.size()), mime.data(), static_cast<int>(mime.size()));
   std::string out(p);
   std::free(p);
   return out;
 }
-void scrollTo(Handle h, float offset) { skiffDomScrollTo(static_cast<int>(h), offset); }
+void scrollTo(Handle h, float offset) {
+  skiffDomInit();
+  skiffDomScrollTo(static_cast<int>(h), offset);
+}
 std::string dump(Handle h) {
+  skiffDomInit();
   char *p = skiffDomDump(static_cast<int>(h));
   std::string out(p);
   std::free(p);
   return out;
 }
 void fire(Handle h, std::string_view e, std::string_view v) {
+  skiffDomInit();
   skiffDomFire(static_cast<int>(h), e.data(), static_cast<int>(e.size()), v.data(), static_cast<int>(v.size()));
 }
-void reset() { skiffDomReset(); }
+void reset() {
+  skiffDomInit();
+  skiffDomReset();
+}
 
 } // namespace skiff::web::dom

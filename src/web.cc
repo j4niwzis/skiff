@@ -2068,8 +2068,10 @@ void fire(Page<Root, Model> &page, dom::Handle target, std::string_view event, s
 // ---- a part that is the browser's own: Client -----------------------------
 //
 // A subtree with a model of its own (bind::ModelOf of it), which the tree
-// holding it does not bind: its parts are not the tree's, and a press in it
-// is its own page's. On a page made in the browser it is simply that page's,
+// holding it does not bind -- it shows the tree no children -- and a press in
+// it is its own page's. Its parts are said in the tree's model too (one
+// model for every backend: where there is no browser to run it, the scene,
+// it is the tree's), but the client reads and edits its own. On a page made in the browser it is simply that page's,
 // mounted and synced with it; on a page kept on the server (Live) it is
 // written once, as the server's copy of its model says, and then left to the
 // browser: the program, built for the browser, takes over each one where the
@@ -2077,8 +2079,6 @@ void fire(Page<Root, Model> &page, dom::Handle target, std::string_view event, s
 template <class C> class Client : public Node {
 public:
   using Model = bind::ModelOf<C>;
-  // Its parts its own, not the tree's (skiff.bind's PartsOf).
-  using OwnModel = Model;
   explicit Client(C content) : fHeld(std::make_unique<Held>(std::move(content))) {}
   [[nodiscard]] static constexpr std::string_view tag() { return "skiff-client"; }
   void markup(Markup &to) { to.attr("data-skiff-client", std::to_string(fIndex)); }
@@ -2199,14 +2199,32 @@ inline constexpr std::string_view kScript = R"js((() => {
   document.addEventListener('change', typed, true);
   // A part the browser took over (a client, hydrated by the program) sent
   // again by the server: what the browser made of it moved into the new one.
+  // And what the stream hides -- a version sent again, a row gone, a
+  // generation before this one -- taken out of the page: with script, the
+  // page does not grow with every change. A client taken over kept aside
+  // while its generation goes, for its island to come again.
+  const aside = new Map();
+  const hidden = /^#([A-Za-z0-9_-]+)\{display:none!important\}$/;
   new MutationObserver((changes) => {
     for (const change of changes) for (const added of change.addedNodes) {
+      if (added instanceof HTMLStyleElement) {
+        const said = hidden.exec(added.textContent);
+        const gone = said && document.getElementById(said[1]);
+        if (gone) {
+          for (const kept of gone.querySelectorAll('skiff-client[data-skiff-hydrated]')) aside.set(kept.getAttribute('data-skiff-client'), kept);
+          gone.remove();
+          added.remove();
+        }
+        continue;
+      }
       if (!(added instanceof Element) || added.localName !== 'skiff-client' || added.hasAttribute('data-skiff-hydrated')) continue;
       // The program, where it runs here, woken to take it over: it does not
       // look for it at intervals.
       if (window.Module && Module._skiff_app_wake) queueMicrotask(() => Module._skiff_app_wake());
       const index = added.getAttribute('data-skiff-client');
-      const taken = [...document.querySelectorAll('skiff-client[data-skiff-hydrated]')].find((c) => c.getAttribute('data-skiff-client') === index);
+      const taken = aside.get(index) ||
+        [...document.querySelectorAll('skiff-client[data-skiff-hydrated]')].find((c) => c.getAttribute('data-skiff-client') === index);
+      aside.delete(index);
       if (!taken) continue;
       added.replaceChildren(...taken.childNodes);
       added.setAttribute('data-skiff-hydrated', '');
