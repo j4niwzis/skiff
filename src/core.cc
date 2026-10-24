@@ -998,11 +998,15 @@ struct ClipboardAtom {
   std::size_t first = 0, last = 0;
   std::string target, plain;
   bool picture = false;
+  friend bool operator==(const ClipboardAtom&, const ClipboardAtom&) = default;
 };
+// Compared as values: a program's facts that hold one (a menu's over the
+// text copied) are compared to know whether what they show changed.
 struct ClipboardFragment {
   std::string text;
   std::string display;
   std::vector<ClipboardAtom> atoms;
+  friend bool operator==(const ClipboardFragment&, const ClipboardFragment&) = default;
 };
 inline ClipboardFragment clipboardFragment(std::string display, std::vector<ClipboardAtom> atoms = {}) {
   ClipboardFragment made{display, std::move(display), std::move(atoms)};
