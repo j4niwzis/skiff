@@ -37,7 +37,12 @@ if(TEST_INSTALLED_VERSION)
 else()
   # The widgets' members called on what their combinators made: kept
   # concrete (Held's own behaviour is tested apart).
-  set(SKIFF_CONCRETE_COMBINATORS ON CACHE BOOL "" FORCE)
+  # (SKIFF_TEST_ERASED: as a program's Debug build has them, erased.)
+  if(SKIFF_TEST_ERASED)
+    set(SKIFF_CONCRETE_COMBINATORS OFF CACHE BOOL "" FORCE)
+  else()
+    set(SKIFF_CONCRETE_COMBINATORS ON CACHE BOOL "" FORCE)
+  endif()
   CPMAddPackage(NAME skiff SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/..)
 endif()
 

@@ -1765,18 +1765,44 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
       fTabs = shown.tabs;
     }
     if constexpr (kVirtual) {
-      // As high as before, reckoned alike: what was laid out of them stands.
-      const auto heights = [&](const std::vector<Element> &all) {
-        return all | std::views::transform([&](const Element &one) { return this->reckoned(one, fReckonedAt); }) | std::ranges::to<std::vector>();
-      };
-      kept = fReckonedAt >= 0.0f && shown.parts.size() == fElements.size() && heights(shown.parts) == heights(fElements);
-      fElements = shown.parts;
-      if (!kept) {
+      // Read again while browsing -- not a search's results, not the first
+      // time: what the program holds changed under the reader (an emoji
+      // used, a pack come by the sync), and the view stays where the reader
+      // has it. Glided back to the top at every such read, a wheel turned
+      // down was pulled up as fast as it went, the view creeping upward;
+      // a drag held it. The sections that are as they were keep the height
+      // they were laid out at; a change above the view moves the view with
+      // it, a glide under way going on.
+      kept = fReckonedAt >= 0.0f && shown.lit && fLit;
+      if (kept) {
+        const float at = fList.current();
+        const auto indexAt = [&](float y) {
+          const auto next = std::ranges::upper_bound(fTops, std::max(0.0f, y));
+          return std::min(fElements.size(), static_cast<std::size_t>(next - fTops.begin()) - 1);
+        };
+        const std::size_t first = indexAt(at);
+        const float into = at - fTops[std::min(first, fTops.size() - 1)];
+        std::vector<std::optional<float>> measured(shown.parts.size());
+        if constexpr (std::equality_comparable<Element>) {
+          for (std::size_t i = 0; i < std::min(shown.parts.size(), fElements.size()); ++i)
+            if (shown.parts[i] == fElements[i] && i < fMeasured.size())
+              measured[i] = fMeasured[i];
+        }
+        fElements = shown.parts;
+        fMeasured = std::move(measured);
+        this->reckon();
+        // The section that was at the top of the view, at its new place.
+        if (first < fElements.size())
+          fList.shiftBy(fTops[first] + into - at);
+      } else {
+        fElements = shown.parts;
         fReckonedAt = -1.0f;
         fList.scrollTo(0.0f);
       }
       this->showNear(true);
     } else {
+      // Read again while browsing: the view kept here too.
+      kept = !parts().empty() && shown.lit && fLit;
       parts() = shown.parts | std::views::transform(std::ref(fMakePart)) | std::ranges::to<std::vector>();
     }
     fStrip.put(shown.tabs, shown.tabs | std::views::enumerate | std::views::transform([&](const auto &one) {

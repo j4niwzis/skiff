@@ -70,6 +70,15 @@ public:
     this->invalidateLayout();
   }
   [[nodiscard]] bool moving() const noexcept { return fScroll.moving(); }
+  // What is above the view grown or shrunk by `delta`, as its owner knows:
+  // the view, where it is going and where a drag began moved with it, so
+  // that what is in view stays and a glide or a drag under way goes on.
+  void shiftBy(float delta) {
+    if (delta == 0.0f)
+      return;
+    fScroll.shift(delta);
+    this->invalidateLayout();
+  }
   // Whether a scroll step copies what is in view, where the host copies:
   // not over what does not scroll with it -- a gradient behind it, which a
   // copy moved along, a little further off at every step.
