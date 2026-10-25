@@ -398,4 +398,19 @@ TEST(EmojiCard, AViewOnlyEverLaidOutProvisionallyStillScrolls) {
   // at its end.
   EXPECT_NEAR(view->current(), 600.0f, 60.0f);
 }
+
+// A window laid out before it has its size -- a phone at its start, 0 wide:
+// nothing laid out, and nothing told as sticking out; laid out at its size,
+// a row that fits tells nothing either.
+TEST(EmojiCard, AWindowWithNoRoomYetIsNotLaidOutNorToldAsOverflowing) {
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
+      c::row(c::hbox(16.0f, {.fillX = true, .height = 46.0f, .padding = {0.0f, 20.0f, 0.0f, 20.0f}}),
+             c::styled({.width = 28.0f, .height = 36.0f}, nodes::Box<>(0xff808080u)),
+             c::styled({.grow = scene::axes::kX, .shrink = scene::axes::kX}, nodes::Text("Start new chat", 15.0f, 0xffffffffu)))));
+  scene::overflows().clear();
+  EXPECT_FALSE(tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 51.8f, 0.0f, 838.0f)));
+  EXPECT_TRUE(scene::overflows().empty());
+  EXPECT_TRUE(tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 51.8f, 411.0f, 838.0f)));
+  EXPECT_TRUE(scene::overflows().empty());
+}
 }  // namespace

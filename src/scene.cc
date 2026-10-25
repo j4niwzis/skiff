@@ -6944,6 +6944,13 @@ public:
   // The window's box, as it was last laid out in.
   [[nodiscard]] const skia::SkRect &viewport() const noexcept { return fViewport; }
   bool layoutIfNeeded(const skia::SkRect &viewport) {
+    // A window with no room yet -- a phone at its start, its surface not
+    // sized: nothing of it is shown, and nothing is laid out in it. Laid
+    // out at a width of nothing, every row of a drawer was squeezed past
+    // its icon and its text, and each was told as sticking out -- no
+    // overflow anyone could see. Laid out when the window has its size.
+    if (viewport.isEmpty())
+      return false;
     scrollMoves().clear();
     this->beginWalks();
     // The keys, where a node asked for them as it read the model.
