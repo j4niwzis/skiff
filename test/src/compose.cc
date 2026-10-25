@@ -319,10 +319,10 @@ TEST(Compose, APipeGivesWhatItsEndTakesAndPassesTheRestUp) {
   auto &pipe = made_as<Pipe<SearchField, Filtered>>(page);
   // The pipe, then its field.
   pipe.fPipe.from.type("bo");
-  EXPECT_TRUE(bind::press(page, m, pressPathTo(page, pipe.fState)));
+  EXPECT_TRUE(bind::press(page, m, pressPathTo(page, pipe.fPipe.from.fState)));
   deliverAnswers(page, m);
   pipe.fPipe.from.clear();
-  EXPECT_TRUE(bind::press(page, m, pressPathTo(page, pipe.fState)));
+  EXPECT_TRUE(bind::press(page, m, pressPathTo(page, pipe.fPipe.from.fState)));
   deliverAnswers(page, m);
   EXPECT_EQ(pipe.fPipe.to.fQuery, "bo");
   EXPECT_EQ(m.look<Count>()->n, -1);

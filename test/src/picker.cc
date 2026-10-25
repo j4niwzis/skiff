@@ -158,7 +158,7 @@ Model twoPeople() {
 Dialog &dialogOf(Page &page) { return made_as<Dialog>(page); }
 Wiring &wiringOf(Page &page) { return made_as<Wiring>(page); }
 // Its people's names, as the list shows them.
-std::vector<bind::Bound<Name, part_t<Label>> *> namesOf(Page &page) { return all_made_as<bind::Bound<Name, part_t<Label>>>(page); }
+
 auto &fieldOf(Page &page) { return wiringOf(page).fPipe.from.fPipe.from; }
 auto &quietOf(Page &page) { return wiringOf(page).fPipe.from.fPipe.to; }
 auto &listOf(Page &page) { return wiringOf(page).fPipe.to; }
@@ -170,7 +170,14 @@ scene::Path fieldPath(Page &page) { return pressPathTo(page, fieldOf(page).fStat
 scene::Path quietPath(Page &page) { return pressPathTo(page, quietOf(page).fState); }
 scene::Path donePath(Page &page) { return pressPathTo(page, made_as<OnClick<Done, part_t<Pad>>>(page).fState); }
 using RowClick = OnClick<Picked, part_t<decltype(bound<Name>(Label{}))>>;
-scene::Path rowAt(Page &page, std::uint32_t row) { return pressPathTo(page, all_made_as<RowClick>(page).at(row)->fState); }
+// Its people names, as the list shows them: each row found by its click
+// -- a node of its own type in every build -- and its label under it, or
+// itself where the click is made over it.
+std::vector<bind::Bound<Name, part_t<Label>> *> namesOf(Page &page) {
+  return all_made_as<RowClick>(wiringOf(page).fPipe.to) |
+         std::views::transform([](RowClick *row) { return &made_as<bind::Bound<Name, part_t<Label>>>(*row); }) | std::ranges::to<std::vector>();
+}
+scene::Path rowAt(Page &page, std::uint32_t row) { return pressPathTo(page, all_made_as<RowClick>(wiringOf(page).fPipe.to).at(row)->fState); }
 
 TEST(Picker, ThePeopleAreShown) {
   Model m = twoPeople();

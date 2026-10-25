@@ -10,7 +10,7 @@ namespace {
 namespace c = skiff::compose;
 // A row's transform, capturing what it adds, and how it is shown.
 struct Offset {
-  int offset = 0;
+  const int offset = 0;  // captured: a row holding it is not assigned over
   int operator()(int value) const { return value + offset; }
 };
 struct Widen {
