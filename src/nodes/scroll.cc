@@ -217,7 +217,10 @@ public:
     // what was in view -- and then to the real one, each frame: a wheel's
     // glide was let go and the view went back to the top, and a drag let
     // go went back too.
-    if (scene::work::provisionalDepth() > 0) {
+    // Laid out again in the real box, even the same: skipped as laid out,
+    // it never fitted itself to it, and showed nothing to scroll.
+    fState.fLaidProvisionally = scene::work::provisionalDepth() > 0;
+    if (fState.fLaidProvisionally) {
       scene::eachChild(*this, [&](auto &child) { scene::layout(child, box); });
       return;
     }

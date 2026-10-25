@@ -3191,6 +3191,10 @@ public:
   double fPendingStartMs = 0.0;
   double fDelayMs = 0.0;
   bool fLayoutValid = false;
+  // Laid out only to be measured, in a provisional box (a view that scrolls
+  // keeps its own for the real one): laid out again in the real box, even
+  // where that box is the same.
+  bool fLaidProvisionally = false;
   // Somewhere below has to be laid out again: found by the walk from the
   // root each frame, since nothing below can tell its ancestors.
   bool fSubtreeDirty = true;
@@ -4112,7 +4116,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
           ? state.fFollow->fBounds.makeOffset(work::drawnOffset(state.fFollow->fId).x,
                                               work::drawnOffset(state.fFollow->fId).y)
           : parentBox;
-  if (state.fLayoutValid && !state.fSubtreeDirty &&
+  if (state.fLayoutValid && !state.fSubtreeDirty && !(state.fLaidProvisionally && work::provisionalDepth() == 0) &&
       parent == state.fLastConstraint) {
     if (state.fPlacementDirty) {
       work::reach(state.fId);
