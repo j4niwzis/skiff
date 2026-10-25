@@ -1706,6 +1706,7 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
   std::vector<std::optional<float>> fMeasured;
   float fReckonedAt = -1.0f;
   std::size_t fFrom = 0, fTo = 0;
+  bool fRead = false;  // read once at least
 
   Sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip &makeStrip, OnTab onTab, Height height = {})
       : fMakeTab(std::move(makeTab)), fMakePart(std::move(makePart)), fOnTab(std::move(onTab)),
@@ -1757,8 +1758,14 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
     // The same as before, where that can be told: nothing made again --
     // read again at every hover of the panel it is in, it made every
     // section near the view and every tab each time.
+    // Read before at all: the first read makes everything, whatever it is.
+    // (Told by the reckoning's width before, a Sections made whole -- which
+    // reckons nothing -- never knew it had been read: every section and tab
+    // made again at each read.)
+    bool tabsSame = false;
     if constexpr (std::equality_comparable<Element>) {
-      if (fReckonedAt >= 0.0f && shown.parts == fElements && shown.tabs == fTabs) {
+      tabsSame = fRead && shown.tabs == fTabs;
+      if (tabsSame && shown.parts == fElements) {
         fLit = shown.lit;
         return;
       }
@@ -1773,7 +1780,7 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
       // a drag held it. The sections that are as they were keep the height
       // they were laid out at; a change above the view moves the view with
       // it, a glide under way going on.
-      kept = fReckonedAt >= 0.0f && shown.lit && fLit;
+      kept = fRead && fReckonedAt >= 0.0f && shown.lit && fLit;
       if (kept) {
         const float at = fList.current();
         const auto indexAt = [&](float y) {
@@ -1802,14 +1809,20 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
       this->showNear(true);
     } else {
       // Read again while browsing: the view kept here too.
-      kept = !parts().empty() && shown.lit && fLit;
+      kept = fRead && shown.lit && fLit;
+      fElements = shown.parts;
       parts() = shown.parts | std::views::transform(std::ref(fMakePart)) | std::ranges::to<std::vector>();
     }
-    fStrip.put(shown.tabs, shown.tabs | std::views::enumerate | std::views::transform([&](const auto &one) {
-                             const auto &[at, element] = one;
-                             return TabButton(Bring{this, static_cast<std::size_t>(at)}, fMakeTab(element), {});
-                           }) | std::ranges::to<std::vector>());
+    // The tabs made again only where they are others: put again, the strip
+    // went back to its start at every read -- its row of packs scrolled to
+    // the first as the sections changed under it.
+    if (!tabsSame)
+      fStrip.put(shown.tabs, shown.tabs | std::views::enumerate | std::views::transform([&](const auto &one) {
+                               const auto &[at, element] = one;
+                               return TabButton(Bring{this, static_cast<std::size_t>(at)}, fMakeTab(element), {});
+                             }) | std::ranges::to<std::vector>());
     fLit = shown.lit;
+    fRead = true;
     fList.invalidateLayout();
     if (!kept)
       fList.scrollTo(0.0f);

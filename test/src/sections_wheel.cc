@@ -307,4 +307,25 @@ TEST(SectionsWheel, ReadAgainWithAGroupChangedWhileBrowsingKeepsTheViewGoingDown
   EXPECT_GE(lowest, -0.5f) << "the view went back up while the wheel went down";
   EXPECT_GT(last, 3000.0f);
 }
+
+// Read again with what it already shows: nothing made again, virtual or
+// made whole -- a Sections made whole made every section and every tab at
+// each read -- and read with a section changed while browsing, the tabs, the
+// same, not made again (put again, their strip went back to its start).
+TEST(SectionsWheel, ReadAgainTheSameMakesNothingAndTheTabsStay) {
+  int parts = 0, tabs = 0;
+  auto whole = sections<int>(vbox(4.0f, {.fill = true}), vbox(0.0f), [&tabs](int n) { ++tabs; return nodes::Text(std::to_string(n), 13.0f, 0); },
+                             [&parts](int n) { ++parts; return Block(n); }, wrapped<int>(vbox(0.0f), hbox(4.0f)));
+  const std::vector<int> groups{1, 2, 3, 4};
+  whole.read(SectionsShown<int>{groups, groups, true});
+  EXPECT_EQ(parts, 4);
+  EXPECT_EQ(tabs, 4);
+  whole.read(SectionsShown<int>{groups, groups, true});
+  EXPECT_EQ(parts, 4) << "a Sections made whole made its sections again for the same";
+  EXPECT_EQ(tabs, 4);
+  // A section other, the tabs the same: the sections made again, the tabs not.
+  whole.read(SectionsShown<int>{{1, 2, 3, 5}, groups, true});
+  EXPECT_EQ(parts, 8);
+  EXPECT_EQ(tabs, 4) << "the tabs were made again, their strip back at its start";
+}
 }  // namespace
