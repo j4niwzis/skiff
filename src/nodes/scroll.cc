@@ -234,6 +234,11 @@ public:
     fJumpTo = jumpTo;
     fToEnd = toEnd;
     fGlidingToEnd = glidingToEnd;
+    // Its bounds the ones just measured, not those put back: where the real
+    // box is the same, this layout is the one kept, and the bounds put back
+    // -- none, a view only ever laid out so (the rooms' list, a menu's
+    // picker) -- held it at its top: nothing scrolled.
+    fScroll.setBounds(0.0f, fExtent);
   }
   void layoutInBox() {
     namespace scene = skiff::scene;
