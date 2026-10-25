@@ -743,7 +743,12 @@ class MemoRows : public Container {
 public:
   using Kept = KeptRow<Key, View, Row>;
   using BindingChildren = std::tuple<Kept>;
-  MemoRows() = default;
+  // Made with no way to make rows only where that way is made with nothing:
+  // a capturing lambda is not, and its default member initializer was
+  // instantiated anyway where a trait asked whether {} makes one.
+  MemoRows()
+    requires std::default_initializable<Make>
+  = default;
   // A vertical list fills across by default. Horizontal items and wrapped
   // tabs can instead keep their natural size through their wrapper.
   explicit MemoRows(Make make, Container container = {},
