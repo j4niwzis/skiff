@@ -76,6 +76,7 @@ module;
 #include <skia/gpu/GpuTypes.h>
 #if defined(SK_GANESH)
 #include <skia/gpu/ganesh/GrBackendSurface.h>
+#include <skia/gpu/ganesh/GrContextOptions.h>
 #include <skia/gpu/ganesh/GrDirectContext.h>
 #include <skia/gpu/ganesh/SkSurfaceGanesh.h>
 #include <skia/gpu/ganesh/gl/GrGLAssembleInterface.h>
@@ -496,6 +497,10 @@ using ::SkImages::RasterFromBitmap;
 #if defined(SK_GANESH)
 using ::GrBackendRenderTarget;
 using ::GrBackendTexture;
+// How a context is made: among the rest, the cache its compiled GPU
+// programs are kept in between runs (PersistentCache, the program
+// subclassing it: Skia asks it through that class of its own).
+using ::GrContextOptions;
 using ::GrDirectContext;
 using ::GrGLenum;
 using ::GrGLFramebufferInfo;
