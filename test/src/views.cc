@@ -9,6 +9,7 @@ import skiff.bind;
 import gtest;
 
 #include "gtest/gtest-macros.h"
+#include "made.h"
 
 namespace {
 namespace c = skiff::compose;
@@ -110,7 +111,8 @@ TEST(Views, CaptureObserverLeavesTheTargetsNormalClickAvailable) {
   tree.dispatchPointer(scene::pointer::up{20.0f, 20.0f, 1});
   EXPECT_EQ(observed, 1);
   EXPECT_FALSE(work.pressed.empty());
-  EXPECT_EQ(std::get<0>(tree.root().fParts).onPress(), 9);
+  using Item = c::OnClick<int, c::part_t<decltype(c::column(c::vbox(0.0f, {.fillX = true, .height = 50.0f})))>>;
+  EXPECT_EQ(made_as<Item>(tree.root()).onPress(), 9);
   work.answers.clear();
   work.pressed.clear();
   tree.dispatchPointer(scene::pointer::down{180.0f, 80.0f, 1});
@@ -123,41 +125,53 @@ TEST(Views, CaptureObserverLeavesTheTargetsNormalClickAvailable) {
 TEST(Views, AFieldsFrameTracksFocusWithoutChangingItsGeometry) {
   auto field = c::onClick(1, c::column(c::vbox(0.0f, {.fillX = true, .height = 28.0f,
       .margin = {2.0f, 14.0f, 0.0f, 14.0f}})), "Search");
+  using Frame = c::FocusFrame<decltype(field)>;
   auto node = c::focus_frame(c::vbox(0.0f, {.fillX = true, .height = 36.0f}), std::move(field));
   scene::Scene tree(std::move(node));
   tree.layoutIfNeeded(viewport);
-  const auto frame_box = tree.root().bounds();
-  const auto field_box = std::get<0>(tree.root().fParts).bounds();
-  tree.focus(std::get<0>(tree.root().fParts).id());
-  EXPECT_TRUE(tree.root().wantsTick());
+  auto &frame = made_as<Frame>(tree.root());
+  const auto frame_box = frame.bounds();
+  const auto field_box = std::get<0>(frame.fParts).bounds();
+  tree.focus(std::get<0>(frame.fParts).id());
+  EXPECT_TRUE(frame.wantsTick());
   tree.update(1000.0);
-  EXPECT_TRUE(tree.root().selected());
-  EXPECT_FALSE(tree.root().wantsTick());
-  EXPECT_EQ(tree.root().bounds(), frame_box);
-  EXPECT_EQ(std::get<0>(tree.root().fParts).bounds(), field_box);
+  EXPECT_TRUE(frame.selected());
+  EXPECT_FALSE(frame.wantsTick());
+  EXPECT_EQ(frame.bounds(), frame_box);
+  EXPECT_EQ(std::get<0>(frame.fParts).bounds(), field_box);
   tree.clearFocus();
   tree.update(1100.0);
-  EXPECT_FALSE(tree.root().selected());
+  EXPECT_FALSE(frame.selected());
 }
 
 TEST(Views, ArrangementParametersReadFromTheModelChangeTheRealLayout) {
   using model_type = skiff::model::Model<arrangement_model, skiff::bind::NoReactions>;
   model_type model(arrangement_model{});
   skiff::bind::Binding<model_type> binding;
-  auto node = c::bound<arrangement_gap>(c::arranged<gap_policy>({}, c::column(
-      c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
-      c::column(c::vbox(0.0f, {.width = 40.0f, .height = 30.0f})),
-      c::column(c::vbox(0.0f, {.width = 40.0f, .height = 30.0f})))));
+  const auto arrangement = [] {
+    // Made as the box it is, in either build: the policy sets the gap of
+    // the column it arranges, which a Held -- what column() makes where
+    // combinators are erased -- does not lay out by.
+    return c::arranged<gap_policy>({}, c::Box<c::Box<>, c::Box<>>(
+        c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+        c::Box<>(c::vbox(0.0f, {.width = 40.0f, .height = 30.0f})),
+        c::Box<>(c::vbox(0.0f, {.width = 40.0f, .height = 30.0f}))));
+  };
+  using Bound = skiff::bind::Bound<arrangement_gap, c::part_t<decltype(arrangement())>>;
+  auto node = c::bound<arrangement_gap>(arrangement());
+  // The second of the two columns arranged, found as it is.
+  const auto second = [&] { return all_made_as<c::Box<>>(node).at(1)->bounds(); };
   binding.refresh(node, model);
   scene::layout(node, viewport);
-  EXPECT_FLOAT_EQ(std::get<1>(node.fParts).bounds().fTop, 32.0f);
+  EXPECT_FLOAT_EQ(second().fTop, 32.0f);
   model.apply(skiff::model::over<arrangement_gap>(skiff::model::setTo(arrangement_gap{8.0f})));
   binding.refresh(node, model);
   scene::layout(node, viewport);
-  EXPECT_FLOAT_EQ(std::get<1>(node.fParts).bounds().fTop, 38.0f);
-  EXPECT_TRUE(node.fState.fLayoutValid);
-  node.read(arrangement_gap{8.0f});
-  EXPECT_TRUE(node.fState.fLayoutValid);
+  EXPECT_FLOAT_EQ(second().fTop, 38.0f);
+  auto &bound = made_as<Bound>(node);
+  EXPECT_TRUE(bound.fState.fLayoutValid);
+  bound.read(arrangement_gap{8.0f});
+  EXPECT_TRUE(bound.fState.fLayoutValid);
 }
 
 TEST(Views, ModelAndViewFactsCanArriveInEitherOrderAndBothRefreshTheProjection) {
@@ -168,32 +182,36 @@ TEST(Views, ModelAndViewFactsCanArriveInEitherOrderAndBothRefreshTheProjection) 
   skiff::bind::Binding<source_type> source_binding;
   skiff::bind::Binding<facts_type> facts_binding;
   int computed = 0;
-  const auto make = [&] {
-    return c::bound<projection_hint>(c::with_model<source_type, projection_hint>(
-        [&](const source_type& now, const projection_hint& hint) {
-          ++computed;
-          return now.look<projection_amount>()->value + hint.value;
-        }, projection_probe{}));
+  struct Summed {
+    int *computed;
+    int operator()(const source_type& now, const projection_hint& hint) const {
+      ++*computed;
+      return now.look<projection_amount>()->value + hint.value;
+    }
   };
-  auto source_first = make();
-  source_binding.refresh(source_first, source);
+  using Probe = skiff::bind::Bound<projection_hint, c::part_t<c::WithModel<source_type, projection_hint, Summed, projection_probe>>>;
+  const auto make = [&] { return c::bound<projection_hint>(c::with_model<source_type, projection_hint>(Summed{&computed}, projection_probe{})); };
+  auto source_made = make();
+  auto &source_first = made_as<Probe>(source_made);
+  source_binding.refresh(source_made, source);
   EXPECT_EQ(source_first.value, 0);
-  facts_binding.refresh(source_first, facts);
+  facts_binding.refresh(source_made, facts);
   EXPECT_EQ(source_first.value, 5);
   const int before = computed;
-  source_binding.refresh(source_first, source);
+  source_binding.refresh(source_made, source);
   EXPECT_EQ(computed, before);
   source.apply(skiff::model::over<projection_amount>(skiff::model::setTo(projection_amount{4})));
-  source_binding.refresh(source_first, source);
+  source_binding.refresh(source_made, source);
   EXPECT_EQ(source_first.value, 7);
   facts.apply(skiff::model::over<projection_hint>(skiff::model::setTo(projection_hint{7})));
-  facts_binding.refresh(source_first, facts);
+  facts_binding.refresh(source_made, facts);
   EXPECT_EQ(source_first.value, 11);
 
-  auto facts_first = make();
-  skiff::bind::refresh(facts_first, facts);
+  auto facts_made = make();
+  auto &facts_first = made_as<Probe>(facts_made);
+  skiff::bind::refresh(facts_made, facts);
   EXPECT_EQ(facts_first.value, 0);
-  skiff::bind::refresh(facts_first, source);
+  skiff::bind::refresh(facts_made, source);
   EXPECT_EQ(facts_first.value, 11);
 }
 
@@ -292,29 +310,42 @@ TEST(Views, RememberedViewportKeepsItsIdentityAndContentsInDistinctBindingNodes)
   using facts_type = skiff::model::Model<projection_facts, skiff::bind::NoReactions>;
   source_type source(projection_source{});
   facts_type facts(projection_facts{});
-  auto expression = c::projected<projection_hint>([](const projection_hint& hint) { return hint.value; },
-      c::remembered_scroll<int>(c::projected<projection_amount>([](const projection_amount& amount) {
-        return virtual_items(amount.value * 100);
-      }, virtual_view())));
+  struct Items {
+    std::vector<virtual_item> operator()(const projection_amount& amount) const { return virtual_items(amount.value * 100); }
+  };
+  // The view that scrolls named: what it is made over is a projection,
+  // erased (a Held) where combinators are.
+  // As the walks find it: under the projection that reads its items, which
+  // derives from it -- a node of its own type where combinators are erased.
+  using View = projected_t<projection_amount, Items, decltype(virtual_view())>;
+  using Remembered = decltype(c::remembered_scroll<int, View>(c::projected<projection_amount>(Items{}, virtual_view())));
+  struct HintValue {
+    int operator()(const projection_hint& hint) const { return hint.value; }
+  };
+  auto expression = c::projected<projection_hint>(HintValue{},
+      c::remembered_scroll<int, View>(c::projected<projection_amount>(Items{}, virtual_view())));
   scene::Scene tree(std::move(expression));
-  auto& node = tree.root();
-  skiff::bind::refresh(node, facts);
-  skiff::bind::refresh(node, source);
+  auto& root = tree.root();
+  // The remembered view as the walks find it: under the projection read
+  // over it, which derives from it.
+  auto& node = made_as<projected_t<projection_hint, HintValue, Remembered>>(root);
+  skiff::bind::refresh(root, facts);
+  skiff::bind::refresh(root, source);
   tree.layoutIfNeeded(viewport);
   EXPECT_EQ(node.view().fItems.size(), 200u);
   EXPECT_FLOAT_EQ(node.extent(), 14300.0f);
   node.setCurrent(5000.0f);
   tree.layoutIfNeeded(viewport);
   facts.apply(skiff::model::over<projection_hint>(skiff::model::setTo(projection_hint{7})));
-  skiff::bind::refresh(node, facts);
+  skiff::bind::refresh(root, facts);
   tree.layoutIfNeeded(viewport);
   EXPECT_FLOAT_EQ(node.current(), 0.0f);
   source.apply(skiff::model::over<projection_amount>(skiff::model::setTo(projection_amount{3})));
-  skiff::bind::refresh(node, source);
+  skiff::bind::refresh(root, source);
   tree.layoutIfNeeded(viewport);
   EXPECT_EQ(node.view().fItems.size(), 300u);
   facts.apply(skiff::model::over<projection_hint>(skiff::model::setTo(projection_hint{3})));
-  skiff::bind::refresh(node, facts);
+  skiff::bind::refresh(root, facts);
   tree.layoutIfNeeded(viewport);
   EXPECT_FLOAT_EQ(node.current(), 5000.0f);
 }

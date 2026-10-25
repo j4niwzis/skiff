@@ -7,6 +7,7 @@ import skiff.bind;
 import skiff.compose;
 
 #include "gtest/gtest-macros.h"
+#include "made.h"
 
 // A people picker, written with the combinators and run: a field's query
 // goes through a debounce -- of what the field sends, found from it -- into
@@ -121,20 +122,22 @@ struct PeopleList : Box<Rows> {
   void on(const QueryChanged &q) { fQuery = q.text; }
 };
 
-auto inviteDialog() {
-  return local<Selected>(
-      handlers(handle<Picked>([](const Picked &p, const auto &) {
-                 return model::over<Selected>(model::setTo(Selected{p.id}));
-               }),
-               handle<Done>([](const Done &, const Selected &now) {
-                 return model::Up<std::optional<Picked>>{
-                     now.value ? std::optional(Picked{*now.value}) : std::nullopt};
-               })),
-      // (Parenthesised: + binds tighter than >>, and the button is beside
-      // the pipe, not fed by it.)
-      place(vbox(8), (Field{} >> debounce(250) >> PeopleList{}) +
-                         onClick(Done{}, Pad{})));
+auto inviteHandlers() {
+  return handlers(handle<Picked>([](const Picked &p, const auto &) {
+                    return model::over<Selected>(model::setTo(Selected{p.id}));
+                  }),
+                  handle<Done>([](const Done &, const Selected &now) {
+                    return model::Up<std::optional<Picked>>{
+                        now.value ? std::optional(Picked{*now.value}) : std::nullopt};
+                  }));
 }
+// (Parenthesised: + binds tighter than >>, and the button is beside the
+// pipe, not fed by it.)
+auto inviteWiring() { return Field{} >> debounce(250) >> PeopleList{}; }
+auto invitePlaced() { return place(vbox(8), inviteWiring() + onClick(Done{}, Pad{})); }
+auto inviteDialog() { return local<Selected>(inviteHandlers(), invitePlaced()); }
+using Dialog = bind::Local<Selected, decltype(inviteHandlers()), part_t<decltype(invitePlaced())>>;
+using Wiring = decltype(inviteWiring());
 auto peoplePage() {
   return scoped<Root>(handlers(handle<Picked>([](const Picked &p, const auto &) {
                         return model::over<Invited>(model::setTo(Invited{true}), p.id);
@@ -151,28 +154,33 @@ Model twoPeople() {
 }
 
 // Where the parts are, by the expression's shape.
-auto &dialogOf(Page &page) { return std::get<0>(page.fParts); }
-auto &wiringOf(Page &page) { return std::get<0>(dialogOf(page).fParts); }
+// Where the parts are: found as they were made.
+Dialog &dialogOf(Page &page) { return made_as<Dialog>(page); }
+Wiring &wiringOf(Page &page) { return made_as<Wiring>(page); }
+// Its people's names, as the list shows them.
+std::vector<bind::Bound<Name, part_t<Label>> *> namesOf(Page &page) { return all_made_as<bind::Bound<Name, part_t<Label>>>(page); }
 auto &fieldOf(Page &page) { return wiringOf(page).fPipe.from.fPipe.from; }
 auto &quietOf(Page &page) { return wiringOf(page).fPipe.from.fPipe.to; }
 auto &listOf(Page &page) { return wiringOf(page).fPipe.to; }
 // Where they are, to press: the dialog, its pipe (or the button beside it),
 // the field's pipe (or the list), then the field or the debounce -- or the
 // list's rows, then a row.
-const scene::Path kField{0, 0, 0, 0};
-const scene::Path kQuiet{0, 0, 0, 1};
-const scene::Path kDone{0, 1};
-scene::Path rowAt(std::uint32_t row) { return {0, 0, 1, 0, row}; }
+// The paths found to each, through whatever holds it.
+scene::Path fieldPath(Page &page) { return pressPathTo(page, fieldOf(page).fState); }
+scene::Path quietPath(Page &page) { return pressPathTo(page, quietOf(page).fState); }
+scene::Path donePath(Page &page) { return pressPathTo(page, made_as<OnClick<Done, part_t<Pad>>>(page).fState); }
+using RowClick = OnClick<Picked, part_t<decltype(bound<Name>(Label{}))>>;
+scene::Path rowAt(Page &page, std::uint32_t row) { return pressPathTo(page, all_made_as<RowClick>(page).at(row)->fState); }
 
 TEST(Picker, ThePeopleAreShown) {
   Model m = twoPeople();
   Page page = peoplePage();
   bind::Binding<Model> binding;
   binding.refresh(page, m);
-  auto &rows = std::get<0>(listOf(page).fParts).fRows;
+  const auto rows = namesOf(page);
   ASSERT_EQ(rows.size(), 2u);
-  EXPECT_EQ(rows[0].fText, "Ann");
-  EXPECT_EQ(rows[1].fText, "Bob");
+  EXPECT_EQ(rows[0]->fText, "Ann");
+  EXPECT_EQ(rows[1]->fText, "Bob");
 }
 
 TEST(Picker, AQueryGoesThroughTheDebounceIntoTheList) {
@@ -181,11 +189,11 @@ TEST(Picker, AQueryGoesThroughTheDebounceIntoTheList) {
   bind::Binding<Model> binding;
   binding.refresh(page, m);
   fieldOf(page).type("b");
-  EXPECT_TRUE(bind::press(page, m, kField));
+  EXPECT_TRUE(bind::press(page, m, fieldPath(page)));
   EXPECT_EQ(listOf(page).fQuery, "");  // still quiet: not yet
   quietOf(page).update(0.0);
   quietOf(page).update(300.0);
-  EXPECT_TRUE(bind::press(page, m, kQuiet));
+  EXPECT_TRUE(bind::press(page, m, quietPath(page)));
   EXPECT_EQ(listOf(page).fQuery, "b");
 }
 
@@ -194,18 +202,17 @@ TEST(Picker, APickIsTheDialogsOwnAndItsResultBecomesAnInvite) {
   Page page = peoplePage();
   bind::Binding<Model> binding;
   binding.refresh(page, m);
-  auto &rows = std::get<0>(listOf(page).fParts).fRows;
-  EXPECT_TRUE(bind::press(page, m, rowAt(1)));  // Bob
-  EXPECT_EQ(dialogOf(page).fModel.template look<Selected>()->value, std::optional<std::string>("b"));
+  EXPECT_TRUE(bind::press(page, m, rowAt(page, 1)));  // Bob
+  EXPECT_EQ(dialogOf(page).fModel.look<Selected>()->value, std::optional<std::string>("b"));
   EXPECT_FALSE(m.look(model::placeOf<Invited, Root>(std::string("b")))->value);
   EXPECT_EQ(m.reactions().log.size(), 0u);
-  EXPECT_TRUE(bind::press(page, m, kDone));
+  EXPECT_TRUE(bind::press(page, m, donePath(page)));
   EXPECT_TRUE(m.look(model::placeOf<Invited, Root>(std::string("b")))->value);
   const auto effects = m.reactions().log.drain();
   ASSERT_EQ(effects.size(), 1u);
   EXPECT_EQ(std::get<Invite>(effects[0]).id, "b");
   binding.refresh(page, m);
-  EXPECT_EQ(rows[1].fText, "Bob");
+  EXPECT_EQ(namesOf(page).at(1)->fText, "Bob");
 }
 
 } // namespace

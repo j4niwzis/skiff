@@ -11,6 +11,7 @@ import skiff.nodes;
 import skiff.paint;
 
 #include "gtest/gtest-macros.h"
+#include "made.h"
 
 // Screens as combinator expressions, bound to a model; local and hidden
 // state; components wired by what they send (>>, +); a processor; time; a
@@ -21,6 +22,7 @@ namespace {
 
 using namespace skiff;
 using namespace skiff::compose;
+
 
 struct ReadReceipts {
   bool on = true;
@@ -160,28 +162,38 @@ auto accountsPage() {
 }
 using Page = decltype(accountsPage());
 
-// The parts of a row, by where they are in the expression: the scope, the
-// local and the column are one node, the column's.
-auto &rowColumn(auto &row) { return row; }
-auto &nameOf(auto &row) {
-  return std::get<0>(std::get<0>(rowColumn(row).fParts).fParts);
-}
-auto &chevronOf(auto &row) {
-  return std::get<1>(std::get<0>(rowColumn(row).fParts).fParts);
-}
-auto &switchOf(auto &row) { return std::get<1>(rowColumn(row).fParts); }
-auto &removeOf(auto &row) { return std::get<2>(rowColumn(row).fParts); }
-auto &rowsOf(Page &page) { return std::get<0>(page.fParts).fRows; }
+// The parts of a row, found as they are -- bound to what they read -- each
+// time they are asked for: the n-th of each kind is the n-th row's.
+using NameNode = bind::Bound<DisplayName, part_t<Label>>;
+using ChevronNode = bind::Bound<Expanded, part_t<Chevron>>;
+using SwitchNode = bind::Bound<ReadReceipts, part_t<Switch>>;
+struct RowParts {
+  NameNode *name;
+  ChevronNode *chevron;
+  SwitchNode *toggle;
+};
+struct Rows {
+  Page *page;
+  [[nodiscard]] std::size_t size() const { return all_made_as<NameNode>(*page).size(); }
+  RowParts operator[](std::size_t at) const {
+    return {all_made_as<NameNode>(*page).at(at), all_made_as<ChevronNode>(*page).at(at), all_made_as<SwitchNode>(*page).at(at)};
+  }
+};
+Rows rowsOf(Page &page) { return {&page}; }
+NameNode &nameOf(const RowParts &row) { return *row.name; }
+ChevronNode &chevronOf(const RowParts &row) { return *row.chevron; }
+SwitchNode &switchOf(const RowParts &row) { return *row.toggle; }
 // Where they are, to press: the list, the row, then down its column.
-scene::Path chevronAt(std::uint32_t row) { return {0, row, 0, 1}; }
-scene::Path switchAt(std::uint32_t row) { return {0, row, 1}; }
-scene::Path removeAt(std::uint32_t row) { return {0, row, 2}; }
+using RemoveNode = OnClick<Removed, part_t<Pad>>;
+scene::Path chevronAt(Page &page, std::uint32_t row) { return pressPathTo(page, chevronOf(rowsOf(page)[row]).fState); }
+scene::Path switchAt(Page &page, std::uint32_t row) { return pressPathTo(page, switchOf(rowsOf(page)[row]).fState); }
+scene::Path removeAt(Page &page, std::uint32_t row) { return pressPathTo(page, all_made_as<RemoveNode>(page).at(row)->fState); }
 
 TEST(Compose, APageWrittenAsAnExpressionShowsTheModel) {
   Model m = twoAccounts();
   Page page = accountsPage();
   bind::refresh(page, m);
-  auto &rows = rowsOf(page);
+  auto rows = rowsOf(page);
   ASSERT_EQ(rows.size(), 2u);
   EXPECT_EQ(nameOf(rows[0]).fText, "A");
   EXPECT_EQ(nameOf(rows[1]).fText, "B");
@@ -193,9 +205,9 @@ TEST(Compose, LocalStateIsEachRowsOwnAndTellsNoOne) {
   Model m = twoAccounts();
   Page page = accountsPage();
   bind::refresh(page, m);
-  auto &rows = rowsOf(page);
+  auto rows = rowsOf(page);
   const auto before = m.revision();
-  EXPECT_TRUE(bind::press(page, m, chevronAt(1)));
+  EXPECT_TRUE(bind::press(page, m, chevronAt(page, 1)));
   bind::refresh(page, m);
   EXPECT_FALSE(chevronOf(rows[0]).fOpen);
   EXPECT_TRUE(chevronOf(rows[1]).fOpen);
@@ -207,7 +219,7 @@ TEST(Compose, ARowsEventIsTakenByItsScopeAndItsLocalStateGoesWithIt) {
   Model m = twoAccounts();
   Page page = accountsPage();
   bind::refresh(page, m);
-  EXPECT_TRUE(bind::press(page, m, removeAt(0)));
+  EXPECT_TRUE(bind::press(page, m, removeAt(page, 0)));
   bind::refresh(page, m);
   ASSERT_EQ(rowsOf(page).size(), 1u);
   EXPECT_EQ(nameOf(rowsOf(page)[0]).fText, "B");
@@ -246,26 +258,30 @@ auto counterPage() {
   return scoped<SettingsT>(CountEvents{}, column(process<Stepper>()));
 }
 using CounterPage = decltype(counterPage());
-auto &viewOf(CounterPage &page) {
-  return std::get<0>(std::get<0>(page.fParts).fParts);
-}
+auto &numberOf(CounterPage &page) { return made_as<bind::Bound<Stepper::State, part_t<Number>>>(page); }
 
 TEST(Compose, AProcessorStepsItsHiddenStateAndSendsWhatChanged) {
   Model m = twoAccounts();
   CounterPage page = counterPage();
   bind::refresh(page, m);
-  auto &view = viewOf(page);
   // The process, its view, then the button in it.
-  const auto button = [](std::uint32_t at) { return scene::Path{0, 0, at}; };
+  // The view's buttons, by where they are in it: -, the count, +, reset.
+  const auto button = [&](std::uint32_t at) -> scene::Path {
+    switch (at) {
+      case 0: return pressPathTo(page, made_as<OnClick<Dec, part_t<Pad>>>(page).fState);
+      case 2: return pressPathTo(page, made_as<OnClick<Inc, part_t<Pad>>>(page).fState);
+      default: return pressPathTo(page, made_as<OnClick<Reset, part_t<Pad>>>(page).fState);
+    }
+  };
   EXPECT_TRUE(bind::press(page, m, button(2)));  // +
   EXPECT_TRUE(bind::press(page, m, button(2)));  // +
   EXPECT_TRUE(bind::press(page, m, button(0)));  // -
   bind::refresh(page, m);
-  EXPECT_EQ(std::get<1>(view.fParts).fValue, 1);
+  EXPECT_EQ(numberOf(page).fValue, 1);
   EXPECT_EQ(m.look<Count>()->n, 1);  // Changed, taken by the scope around it
   EXPECT_TRUE(bind::press(page, m, button(3)));  // reset, in place: nothing sent
   bind::refresh(page, m);
-  EXPECT_EQ(std::get<1>(view.fParts).fValue, 0);
+  EXPECT_EQ(numberOf(page).fValue, 0);
   EXPECT_EQ(m.look<Count>()->n, 1);
 }
 
@@ -300,12 +316,14 @@ TEST(Compose, APipeGivesWhatItsEndTakesAndPassesTheRestUp) {
                              model::Types<Cleared>>);
   Model m = twoAccounts();
   auto page = scoped<SettingsT>(ClearedEvents{}, column(SearchField{} >> Filtered{}));
-  auto &pipe = std::get<0>(page.fParts);
+  auto &pipe = made_as<Pipe<SearchField, Filtered>>(page);
   // The pipe, then its field.
   pipe.fPipe.from.type("bo");
-  EXPECT_TRUE(bind::press(page, m, scene::Path{0, 0}));
+  EXPECT_TRUE(bind::press(page, m, pressPathTo(page, pipe.fState)));
+  deliverAnswers(page, m);
   pipe.fPipe.from.clear();
-  EXPECT_TRUE(bind::press(page, m, scene::Path{0, 0}));
+  EXPECT_TRUE(bind::press(page, m, pressPathTo(page, pipe.fState)));
+  deliverAnswers(page, m);
   EXPECT_EQ(pipe.fPipe.to.fQuery, "bo");
   EXPECT_EQ(m.look<Count>()->n, -1);
   // And told from outside, as Fudgets' input: send<>.
@@ -324,9 +342,12 @@ TEST(Compose, APipeReadsEitherWayRound) {
 
 TEST(Compose, SideBySideIsPlacedApartFromHowItIsWired) {
   auto both = onClick(Inc{}, Pad{}) + onClick(Dec{}, Pad{});
-  static_assert(std::same_as<OutOf<decltype(both)>, model::Types<Inc, Dec>>);
+  // Typed where the combinators are concrete: a Held does not say what the
+  // click under it gives.
+  static_assert(scene::kErasedCombinators || std::same_as<OutOf<decltype(both)>, model::Types<Inc, Dec>>);
+  using Placed = typename BoxOfPar<decltype(both)>::type;
   auto placed = place(hbox(4.0f), std::move(both));
-  static_assert(std::tuple_size_v<decltype(placed.fParts)> == 2);
+  static_assert(std::tuple_size_v<decltype(made_as<Placed>(placed).fParts)> == 2);
 }
 
 TEST(Compose, TimeIsEvents) {
@@ -354,11 +375,11 @@ TEST(Compose, ABindingDoesOnlyWhatCanHaveHappened) {
   Page page = accountsPage();
   bind::Binding<Model> binding;
   binding.refresh(page, m);
-  auto &rows = rowsOf(page);
+  auto rows = rowsOf(page);
   EXPECT_EQ(switchOf(rows[0]).fReads, 1);
   binding.refresh(page, m);
   EXPECT_EQ(switchOf(rows[0]).fReads, 1);
-  EXPECT_TRUE(bind::press(page, m, switchAt(0)));
+  EXPECT_TRUE(bind::press(page, m, switchAt(page, 0)));
   binding.refresh(page, m);
   EXPECT_EQ(switchOf(rows[0]).fReads, 2);
   EXPECT_EQ(switchOf(rows[1]).fReads, 1);  // its scope's part did not move
@@ -371,7 +392,7 @@ TEST(Compose, ARefreshGoesOnlyWhereTheChangeIs) {
   Page page = accountsPage();
   bind::Binding<Model> binding;
   binding.refresh(page, m);
-  auto &rows = rowsOf(page);
+  auto rows = rowsOf(page);
   const auto name = model::placeOf<DisplayName, Root>(std::string("@b:x.org"));
   using P = decltype(name)::PathType;
   m.apply(model::Edit<Root, P, model::SetTo<DisplayName>>{name, model::setTo(DisplayName{"Bee"})});
@@ -392,9 +413,9 @@ TEST(Compose, ALocalChangeGoesOnlyToItsLocal) {
   Page page = accountsPage();
   bind::Binding<Model> binding;
   binding.refresh(page, m);
-  auto &rows = rowsOf(page);
+  auto rows = rowsOf(page);
   const int before0 = switchOf(rows[0]).fReads;
-  EXPECT_TRUE(bind::press(page, m, chevronAt(1)));
+  EXPECT_TRUE(bind::press(page, m, chevronAt(page, 1)));
   binding.refresh(page, m);
   EXPECT_TRUE(chevronOf(rows[1]).fOpen);
   EXPECT_FALSE(chevronOf(rows[0]).fOpen);
@@ -415,7 +436,7 @@ TEST(Compose, WhatANodeSendsIsWhatItsPressAnswers) {
   static_assert(std::same_as<OutOf<Pinger>, model::Types<Ping>>);
   Model m = twoAccounts();
   auto page = scoped<SettingsT>(PingEvents{}, column(Pinger{}));
-  EXPECT_TRUE(bind::press(page, m, scene::Path{0}));
+  EXPECT_TRUE(bind::press(page, m, pressPathTo(page, made_as<Pinger>(page).fState)));
   EXPECT_EQ(m.look<Count>()->n, 42);
 }
 
@@ -450,15 +471,16 @@ struct SumOf {
 };
 TEST(Compose, ADerivedValueIsComputedAgainOnlyWhereWhatItReadsMoved) {
   SumModel m{SumRoot{}};
-  auto total = derived<Alpha, Beta>(SumOf{}, Total{});
+  auto made = derived<Alpha, Beta>(SumOf{}, Total{});
+  auto &total = made_as<bind::Derived<SumOf, part_t<Total>, Alpha, Beta>>(made);
   bind::Binding<SumModel> binding;
-  binding.refresh(total, m);
+  binding.refresh(made, m);
   EXPECT_EQ(total.fTotal, 3);
   m.apply(model::over<Gamma>(model::setTo(Gamma{5})));
-  binding.refresh(total, m);
+  binding.refresh(made, m);
   EXPECT_EQ(total.fComputed, 1);
   m.apply(model::over<Alpha>(model::setTo(Alpha{10})));
-  binding.refresh(total, m);
+  binding.refresh(made, m);
   EXPECT_EQ(total.fTotal, 12);
   EXPECT_EQ(total.fComputed, 2);
 }
@@ -618,25 +640,24 @@ TEST(Compose, MountedConstructsInPlaceAndKeepsEqualFacts) {
 
 TEST(Compose, ProjectionsReadFieldsAndRefreshFromModelEdits) {
   auto model = twoAccounts();
-  auto label = text_for<model::Field<&Count::n>>(
-      [](int n) { return std::format("{} items", n); },
-      nodes::Text("", 12.0f, 0u));
+  const auto items = [](int n) { return std::format("{} items", n); };
+  auto made = text_for<model::Field<&Count::n>>(items, nodes::Text("", 12.0f, 0u));
+  auto &label = made_as<projected_t<model::Field<&Count::n>, decltype(items), TextOf>>(made);
   bind::Binding<Model> binding;
-  binding.refresh(label, model);
+  binding.refresh(made, model);
   EXPECT_EQ(label.text(), "0 items");
   (void)model.apply(
       model::edit(model::placeOf<Count, Root>(), model::setTo(Count{8})));
-  binding.refresh(label, model);
+  binding.refresh(made, model);
   EXPECT_EQ(label.text(), "8 items");
 }
 
 TEST(Compose, StyleProjectionPreservesItsChildren) {
   auto model = twoAccounts();
+  const auto digits = [](int n) { return std::to_string(n); };
   auto node = spec_for<Count>(
       [](const Count &now) -> scene::Spec { return {.visible = now.n > 0}; },
-      row(text_for<model::Field<&Count::n>>(
-          [](int n) { return std::to_string(n); },
-          nodes::Text("", 12.0f, 0u))));
+      row(text_for<model::Field<&Count::n>>(digits, nodes::Text("", 12.0f, 0u))));
   bind::Binding<Model> binding;
   binding.refresh(node, model);
   EXPECT_FALSE(node.visible());
@@ -644,20 +665,23 @@ TEST(Compose, StyleProjectionPreservesItsChildren) {
       model::edit(model::placeOf<Count, Root>(), model::setTo(Count{4})));
   binding.refresh(node, model);
   EXPECT_TRUE(node.visible());
-  EXPECT_EQ(std::get<0>(node.fParts).text(), "4");
+  EXPECT_EQ((made_as<projected_t<model::Field<&Count::n>, decltype(digits), TextOf>>(node).text()), "4");
 }
 
 TEST(Compose, PollingKeepsAnExternalDeadlineAndTheNodesOwnTimer) {
+  using Column = Ticking<part_t<decltype(column(nodes::Text("", 14.0f, 0u)))>>;
+  using Timer = Ticking<part_t<decltype(every<model::Nothing>(1000.0))>>;
   auto quiet = keep_ticking(false, column(nodes::Text("Quiet", 14.0f, 0u)));
-  EXPECT_FALSE(quiet.wantsTick());
+  EXPECT_FALSE(made_as<Column>(quiet).wantsTick());
   auto deadline = keep_ticking(true, column(nodes::Text("Pending", 14.0f, 0u)));
-  EXPECT_TRUE(deadline.wantsTick());
+  EXPECT_TRUE(made_as<Column>(deadline).wantsTick());
   auto timer = keep_ticking(false, every<model::Nothing>(1000.0));
-  EXPECT_TRUE(timer.wantsTick());
+  EXPECT_TRUE(made_as<Timer>(timer).wantsTick());
 }
 
 TEST(Compose, NamedPressKeepsItsAccessibleLabelAndActions) {
-  auto button = onClick(model::Nothing{}, nodes::Text("Save", 14.0f, 0u), "Save settings");
+  auto made = onClick(model::Nothing{}, nodes::Text("Save", 14.0f, 0u), "Save settings");
+  auto &button = made_as<OnClick<model::Nothing, part_t<nodes::Text>>>(made);
   const auto info = button.semantics();
   EXPECT_EQ(info.fLabel, "Save settings");
   EXPECT_EQ(info.fActions.size(), 2u);
@@ -666,7 +690,8 @@ TEST(Compose, NamedPressKeepsItsAccessibleLabelAndActions) {
 }
 
 TEST(Compose, LocalModelDoesNotHideTheNodesSceneState) {
-  auto node = local<int>(nodes::Text("Local", 14.0f, 0u), 3);
+  auto made = local<int>(nodes::Text("Local", 14.0f, 0u), 3);
+  auto &node = made_as<bind::Local<int, bind::NoHandlers, part_t<nodes::Text>>>(made);
   EXPECT_EQ(&scene::stateOf(node), &static_cast<scene::Node&>(node).fState);
   EXPECT_EQ(node.fModel.root(), 3);
   node.apply({.width = 80.0f});
@@ -681,8 +706,8 @@ TEST(Compose, NamedClickKeepsTheWrappedToggleRoleAndValue) {
       return result;
     }
   };
-  auto node = onClick(model::Nothing{}, Toggle{}, "Encrypt local data");
-  const auto info = node.semantics();
+  auto made = onClick(model::Nothing{}, Toggle{}, "Encrypt local data");
+  const auto info = made_as<OnClick<model::Nothing, part_t<Toggle>>>(made).semantics();
   EXPECT_EQ(info.fRole.index(), scene::SemanticRole(scene::semantic_role::toggle{}).index());
   EXPECT_EQ(info.fValue, "on");
   EXPECT_EQ(info.fLabel, "Encrypt local data");
@@ -715,12 +740,13 @@ TEST(Compose, PressFactoryReadsCurrentDataWithoutRebuildingTheNode) {
 TEST(Compose, VisibilityProjectionReadsLocalModelFields) {
   struct Flag { bool on = false; };
   model::Model<int, bind::NoReactions> model(0);
-  auto node = local<Flag>(shown_for<model::Field<&Flag::on>>(
-      [](bool on) { return on; }, Pad{}), Flag{});
+  const auto on = [](bool on) { return on; };
+  using Shown = decltype(shown_for<model::Field<&Flag::on>>(on, Pad{}));
+  auto node = local<Flag>(shown_for<model::Field<&Flag::on>>(on, Pad{}), Flag{});
   bind::Binding<decltype(model)> binding;
   binding.refresh(node, model);
   EXPECT_FALSE(node.visible());
-  node.fModel.apply(model::over<model::Field<&Flag::on>>(model::setTo(true)));
+  made_as<bind::Local<Flag, bind::NoHandlers, part_t<Shown>>>(node).fModel.apply(model::over<model::Field<&Flag::on>>(model::setTo(true)));
   binding.invalidate();
   binding.refresh(node, model);
   EXPECT_TRUE(node.visible());
@@ -736,16 +762,21 @@ TEST(Compose, AProjectionOverAProjectedNodeTellsItTheSamePart) {
   };
   model::Model<Root, bind::NoReactions> model;
   // Shown as one projection says, its width as the one under it does.
-  auto node = shown_for<Flag>([](const Flag& now) { return now.on; },
-                              spec_for<Flag>([](const Flag& now) { return scene::Spec{.width = static_cast<float>(now.width)}; }, Pad{}));
+  struct WidthOf {
+    scene::Spec operator()(const Flag& now) const { return scene::Spec{.width = static_cast<float>(now.width)}; }
+  };
+  auto node = shown_for<Flag>([](const Flag& now) { return now.on; }, spec_for<Flag>(WidthOf{}, Pad{}));
+  // Its width, on the node the spec is read into: the same node where
+  // combinators are concrete, the one held under it where they are erased.
+  const auto width = [&] { return made_as<projected_t<Flag, WidthOf, SpecOf<part_t<Pad>>>>(node).fState.width(); };
   bind::Binding<decltype(model)> binding;
   binding.refresh(node, model);
-  EXPECT_FALSE(node.visible());
-  EXPECT_EQ(node.fState.width(), 10.0f);
+  EXPECT_FALSE(scene::stateOf(node).fVisible);
+  EXPECT_EQ(width(), 10.0f);
   model.apply(model::edit(model::placeOf<Flag, Root>(), model::setTo(Flag{true, 30})));
   binding.refresh(node, model);
-  EXPECT_TRUE(node.visible());
-  EXPECT_EQ(node.fState.width(), 30.0f);
+  EXPECT_TRUE(scene::stateOf(node).fVisible);
+  EXPECT_EQ(width(), 30.0f);
 }
 
 TEST(Compose, ARefreshCombinesChangedPathsAndLeavesOtherBindingsAlone) {
@@ -769,26 +800,36 @@ TEST(Compose, ARefreshCombinesChangedPathsAndLeavesOtherBindingsAlone) {
   binding.refresh(page, model);
   model.applyBatch(model::over<First>(model::setTo(First{1})), model::over<Second>(model::setTo(Second{2})));
   binding.refresh(page, model);
-  EXPECT_EQ(std::get<0>(page.fParts).reads, 2);
-  EXPECT_EQ(std::get<0>(page.fParts).value, 1);
-  EXPECT_EQ(std::get<1>(page.fParts).reads, 2);
-  EXPECT_EQ(std::get<1>(page.fParts).value, 2);
-  EXPECT_EQ(std::get<2>(page.fParts).reads, 1);
+  auto &first = made_as<bind::Bound<First, part_t<Probe>>>(page);
+  auto &second = made_as<bind::Bound<Second, part_t<Probe>>>(page);
+  auto &third = made_as<bind::Bound<Third, part_t<Probe>>>(page);
+  EXPECT_EQ(first.reads, 2);
+  EXPECT_EQ(first.value, 1);
+  EXPECT_EQ(second.reads, 2);
+  EXPECT_EQ(second.value, 2);
+  EXPECT_EQ(third.reads, 1);
   binding.refresh(page, model);
-  EXPECT_EQ(std::get<0>(page.fParts).reads, 2);
+  EXPECT_EQ(first.reads, 2);
 }
 
 TEST(Compose, PointerHandlerRetainsClickOutputsAndReadsItsNode) {
-  auto node = onPointer<std::string>([](auto& base, const scene::pointer::down& event, scene::PointerReply& reply) -> std::optional<std::string> {
+  const auto said = [](auto& base, const scene::pointer::down& event, scene::PointerReply& reply) -> std::optional<std::string> {
     if (event.button != 3) return std::nullopt;
     reply.handle();
-    return std::get<0>(base.fParts).text();
-  }, onClick(42, column(vbox(), nodes::Text("event", 13.0f, 0))));
-  static_assert(std::same_as<OutOf<decltype(node)>, model::Types<int, std::string>>);
-  EXPECT_EQ(node.onPress(), 42);
+    return made_as<nodes::Text>(base).text();
+  };
+  using Inner = decltype(column(vbox(), nodes::Text("event", 13.0f, 0)));
+  using Clicked = OnClick<int, part_t<Inner>>;
+  using Pointed = OnPointer<std::string, std::remove_cvref_t<decltype(said)>, part_t<decltype(onClick(42, std::declval<Inner>()))>>;
+  auto node = onPointer<std::string>(said, onClick(42, column(vbox(), nodes::Text("event", 13.0f, 0))));
+  // What a press gives, typed where the combinators are concrete: through a
+  // Held, what the click under it gives is not seen.
+  static_assert(scene::kErasedCombinators || std::same_as<OutOf<decltype(node)>, model::Types<int, std::string>>);
+  EXPECT_EQ(made_as<Clicked>(node).onPress(), 42);
   scene::PointerReply reply;
-  EXPECT_EQ(node.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 3}, reply), "event");
-  EXPECT_FALSE(node.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 1}, reply).has_value());
+  auto &pointed = made_as<Pointed>(node);
+  EXPECT_EQ(pointed.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 3}, reply), "event");
+  EXPECT_FALSE(pointed.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 1}, reply).has_value());
 }
 
 TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
@@ -842,13 +883,15 @@ TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
     bind::Binding<PlainModel> binding;
     binding.refresh(holder, model);
     local_t &target = findLocal(holder);
-    EXPECT_FALSE(target.fOpen);
-    ASSERT_TRUE(bind::press(target, model, scene::Path{}));
+    EXPECT_FALSE((made_as<bind::Bound<Expanded, part_t<Chevron>>>(target).fOpen));
+    // The click in it, wherever it is under what holds it.
+    ASSERT_TRUE(bind::press(target, model,
+        pressPathTo(target, made_as<OnClick<FlipLocal, part_t<decltype(bound<Expanded>(Chevron{}))>>>(target).fState)));
     // Also exercise detail::LocalPass<PlainModel> directly (the Release path).
     bind::detail::LocalPass<PlainModel> pass{model};
     bind::detail::visitNode(pass, holder, model::Place<int, model::Path<>>{});
     binding.refresh(holder, model);
-    EXPECT_TRUE(target.fOpen);
+    EXPECT_TRUE((made_as<bind::Bound<Expanded, part_t<Chevron>>>(target).fOpen));
   };
 
   memo_rows_t rows(makeItem);
@@ -976,7 +1019,9 @@ TEST(Compose, PlacedAtIsShownWhereThereIsAPoint) {
 
 TEST(Compose, RestingSaysWhenThePointerHasRestedAndWhenItLeaves) {
   std::vector<bool> said;
-  auto node = resting(300.0, [&](bool on) { said.push_back(on); }, nodes::Text("x", 13.0f, 0));
+  const auto rest = [&](bool on) { said.push_back(on); };
+  auto made = resting(300.0, rest, nodes::Text("x", 13.0f, 0));
+  auto &node = made_as<Resting<std::remove_cvref_t<decltype(rest)>, part_t<nodes::Text>>>(made);
   node.fState.fHovered = true;
   node.update(1000.0);
   node.update(1200.0);
@@ -1001,13 +1046,13 @@ TEST(Compose, AShownIfHidesWhereItsReadSaysSo) {
   struct Count { int n = 0; };
   struct Root { model::Tracked<Count> count; };
   model::Model<Root, bind::NoReactions> model{Root{}};
+  const auto digits = [](const Count &now) { return std::to_string(now.n); };
   auto node = shown_if<Count>([](const Count &now) { return now.n > 0; },
-                              row(text_of<Count>([](const Count &now) { return std::to_string(now.n); },
-                                                 nodes::Text("", 12.0f, 0u))));
+                              row(text_of<Count>(digits, nodes::Text("", 12.0f, 0u))));
   bind::Binding<decltype(model)> binding;
   binding.refresh(node, model);
   EXPECT_FALSE(node.visible());
-  EXPECT_EQ(std::get<0>(node.fParts).text(), "0");
+  EXPECT_EQ((made_as<bind::Derived<std::remove_cvref_t<decltype(digits)>, TextOf, Count>>(node).text()), "0");
 }
 
 // A node that reads the model itself, from more than one model: refreshed
@@ -1081,7 +1126,7 @@ TEST(Compose, AnOverloadedReaderIsRefreshedAsRootAndAsAPart) {
   bind::Binding<OtherModel> fourth;
   third.refresh(moved, its);
   fourth.refresh(moved, other);
-  const auto &part = std::get<0>(std::get<0>(moved.fParts).fParts);
+  const auto &part = made_as<OverloadedReading>(moved);
   EXPECT_EQ(part.fByModel, 1);
   EXPECT_EQ(part.fByRoot, 1);
   WrappedReading wrapped;
@@ -3474,8 +3519,10 @@ TEST(Compose, ACallButtonInAChatHeadIsShownAndPressed) {
   float left = -1.0f, top = -1.0f, width = 0.0f;
   // Found as it is in the tree: the named view, which is the click itself
   // (shown_if over visible over styled over onClick, each the node it is
-  // made over) -- the walks, erased, find a type as it is.
-  scene::forEachNode<decltype(button())>(tree.root(), [&](auto &one) {
+  // made over) -- the walks, erased, find a type as it is: there the click,
+  // held under what is made over it.
+  using Button = std::conditional_t<scene::kErasedCombinators, c::OnClick<Pressed, c::part_t<Probe>>, decltype(button())>;
+  scene::forEachNode<Button>(tree.root(), [&](auto &one) {
     left = one.bounds().fLeft;
     top = one.bounds().fTop;
     width = one.bounds().width();
@@ -4072,7 +4119,9 @@ TEST(Compose, AScopeIsOfTheModelItsKeysLeadInNotOneHoldingItsPartAnotherWay) {
   showing.refresh(node, shown);
   // The scope is itself the bound node it is made over (Scoped derives from
   // its content): found as it is, its own type.
-  const auto *reads = scene::findNode<decltype(node)>(node);
+  // Erased, the bound node is held under it.
+  using Reads = std::conditional_t<scene::kErasedCombinators, bind::Bound<model::Field<&LeadAccount::n>, part_t<LeadReads>>, decltype(node)>;
+  const auto *reads = scene::findNode<Reads>(node);
   ASSERT_NE(reads, nullptr);
   EXPECT_EQ(reads->n, 7);
 }
@@ -4292,7 +4341,7 @@ TEST(Compose, APressAnsweringAnEditMakesItWhereItsPartIs) {
   }
   // Found as it is in the tree: bound, a node of its own type -- the
   // walks, erased, find a type as it is, not what it is made over.
-  using BoundReads = decltype(c::bound<model::Field<&PickDraft::choice>>(PickReads{}));
+  using BoundReads = bind::Bound<model::Field<&PickDraft::choice>, c::part_t<PickReads>>;
   const BoundReads *picked = scene::findNode<BoundReads>(tree.root());
   ASSERT_NE(picked, nullptr);
   EXPECT_EQ(picked->n, 5);

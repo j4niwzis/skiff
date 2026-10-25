@@ -126,6 +126,24 @@ jobs:
           cmake --build build/test
           ctest --test-dir build/test --output-on-failure
 
+      # The same tests as a program's Debug build has the combinators:
+      # erased, each a Held the walks see through (SKIFF_TEST_ERASED). What
+      # passes concrete and fails erased -- a scroll view laid out twice in a
+      # frame, a press through a Held -- is caught here, not in an app.
+      - name: the tests, erased
+        run: |
+          cmake -S test -B build/test-erased -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DSKIFF_TEST_ERASED=ON \
+            -DCMAKE_C_COMPILER=clang-22 \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_CXX_FLAGS="-stdlib=libstdc++" \
+            -DCMAKE_CXX_STDLIB_MODULES_JSON=/tmp/libstdc++.modules.json \
+            -DCME_STORE_ENABLED=ON \
+            -DCME_SOURCES_ENABLED=ON
+          cmake --build build/test-erased
+          ctest --test-dir build/test-erased --output-on-failure
+
       # skiff.model alone, as a build with no window takes it: no Skia, no
       # splice, nothing that draws -- and still installed as a package.
       - name: the model alone
