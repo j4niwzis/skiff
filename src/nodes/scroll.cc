@@ -237,8 +237,7 @@ public:
     }
     return anchors;
   }
-  // What a view was before a provisional pass laid it out, in the frame's
-  // layout pass it was.
+  // What a view was as the frame's layout pass found it.
   struct Provisional {
     std::uint64_t pass = 0;
     skiff::scene::ScrollGesture scroll;
@@ -253,51 +252,40 @@ public:
   };
   void layoutChildren() {
     namespace scene = skiff::scene;
-    if (scene::work::provisionalDepth() > 0) {
-      // In a box it may not keep -- a parent sized by what it holds lays it
-      // out first in the room it might have: laid out there, as it is when
-      // that box is the one it is given (the real pass then finds it laid
-      // out, and leaves it); and what it was before kept, for the real pass
-      // to start from where it is given another. Fitted to the provisional
-      // box and left so, its offset crept with every frame a menu's picker
-      // was laid out, and a drag let go went back to its top.
-      // Kept from the first of the frame's provisional passes: one nested in
-      // another -- a menu's card in a column sized by what it holds -- laid
-      // it out in a box of no height first, and what that left was put back.
-      if (fBeforeProvisional && fBeforeProvisional->pass == scene::work::layoutPass()) {
-        this->layoutInBox(nullptr);
-        return;
-      }
-      fBeforeProvisional = Provisional{
+    // Laid out more than once in a frame -- in a parent sized by what it
+    // holds, first in the room that parent might have; a popover laid out
+    // where it opens, then moved where it goes: each time from where the
+    // frame found it, the last standing. Only the first undone, the others
+    // went on from what it left: a box of no height, then the real one,
+    // each moved the view by the height it changed by -- down a screen,
+    // then back to the top -- and the wheel's way was lost at every frame;
+    // the box laid out in last kept nothing to scroll in, or the view went
+    // to its end.
+    if (fFrameStart && fFrameStart->pass == scene::work::layoutPass()) {
+      const Provisional &before = *fFrameStart;
+      fScroll = before.scroll;
+      fExtent = before.extent;
+      fJumpTo = before.jumpTo;
+      fLastBox = before.lastBox;
+      fLastOffset = before.lastOffset;
+      fLaidOut = before.laidOut;
+      fToEnd = before.toEnd;
+      fGlidingToEnd = before.glidingToEnd;
+      fEndTarget = before.endTarget;
+      // The copies the earlier ones asked for, taken back.
+      auto &moves = scene::scrollMoves();
+      const auto from = moves.begin() + static_cast<std::ptrdiff_t>(std::min(before.moves, moves.size()));
+      moves.erase(std::remove_if(from, moves.end(), [&](const scene::ScrollMove &move) { return move.node == fState.fId; }),
+                  moves.end());
+    } else {
+      fFrameStart = Provisional{
           .pass = scene::work::layoutPass(), .scroll = fScroll, .extent = fExtent, .jumpTo = fJumpTo,
           .lastBox = fLastBox, .lastOffset = fLastOffset, .laidOut = fLaidOut, .toEnd = fToEnd,
           .glidingToEnd = fGlidingToEnd, .endTarget = fEndTarget,
           .anchors = this->anchorsIn(fLastBox, scene::snapToPixel(fScroll.offset())),
           .moves = scene::scrollMoves().size()};
-      this->layoutInBox(nullptr);
-      return;
     }
-    auto before = std::exchange(fBeforeProvisional, std::nullopt);
-    if (!before || before->pass != scene::work::layoutPass()) {
-      this->layoutInBox(nullptr);
-      return;
-    }
-    // Given another box than the provisional one: from where it was, as if
-    // that pass had not been -- the copy it asked for taken back.
-    fScroll = before->scroll;
-    fExtent = before->extent;
-    fJumpTo = before->jumpTo;
-    fLastBox = before->lastBox;
-    fLastOffset = before->lastOffset;
-    fLaidOut = before->laidOut;
-    fToEnd = before->toEnd;
-    fGlidingToEnd = before->glidingToEnd;
-    fEndTarget = before->endTarget;
-    auto &moves = scene::scrollMoves();
-    const auto from = moves.begin() + static_cast<std::ptrdiff_t>(std::min(before->moves, moves.size()));
-    moves.erase(std::remove_if(from, moves.end(), [&](const scene::ScrollMove &move) { return move.node == fState.fId; }),
-                moves.end());
-    this->layoutInBox(&before->anchors);
+    this->layoutInBox(&fFrameStart->anchors);
   }
   void layoutInBox(const std::vector<Anchor> *given) {
     namespace scene = skiff::scene;
@@ -893,7 +881,7 @@ private:
   bool fLaidOut = false;
   skia::SkRect fLastBox = skia::SkRect::MakeEmpty();
   float fLastOffset = 0.0f;
-  std::optional<Provisional> fBeforeProvisional;
+  std::optional<Provisional> fFrameStart;  // as the frame found it
 };
 
 } // namespace skiff::nodes

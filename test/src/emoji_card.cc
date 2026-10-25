@@ -253,13 +253,30 @@ inline auto menu_card() {
 inline auto placed_menu() {
   return c::styled({.place = scene::anchor::kTopLeft, .x = 300.0f, .y = 100.0f}, menu_card());
 }
-struct MenuWindow {
-  scene::Scene<decltype(c::column(c::vbox(0.0f, {.fill = true}), placed_menu()))> tree;
+// As mux opens it: popped at the press, in the menu's own local state --
+// low in the window, so it opens up and to the left of the press.
+struct MenuSt {
+  int unrolled = 0;
+  friend bool operator==(const MenuSt &, const MenuSt &) = default;
+};
+inline auto popped_menu() {
+  const c::PopAt at{.from = skia::SkRect::MakeXYWH(820.0f, 640.0f, 0.0f, 0.0f)};
+  return c::local<MenuSt>(c::column(c::vbox(0.0f, {.fill = true}),
+      c::popped_at<MenuSt>([at](const MenuSt &) { return std::optional(at); }, 8.0f, c::styled({}, menu_card()))));
+}
+struct Placed {
+  auto operator()() const { return placed_menu(); }
+};
+struct PoppedAtPress {
+  auto operator()() const { return popped_menu(); }
+};
+template <class Make> struct MenuWindowOf {
+  scene::Scene<decltype(c::column(c::vbox(0.0f, {.fill = true}), Make{}()))> tree;
   Model m{Root{}};
   bind::Binding<Model> binding;
   double at = 0.0;
   Scroll *list = nullptr;
-  MenuWindow() : tree(c::column(c::vbox(0.0f, {.fill = true}), placed_menu())) {
+  MenuWindowOf() : tree(c::column(c::vbox(0.0f, {.fill = true}), Make{}())) {
     for (int i = 0; i < 5; ++i)
       frame();
     scene::forEachNode<Scroll>(tree.root(), [&](Scroll &one) { list = &one; });
@@ -276,6 +293,7 @@ struct MenuWindow {
     at += 16.0;
   }
 };
+using MenuWindow = MenuWindowOf<Placed>;
 TEST(EmojiCard, TheMenusPickerGoesDownUnderTheWheel) {
   MenuWindow window;
   ASSERT_NE(window.list, nullptr);
@@ -318,6 +336,30 @@ TEST(EmojiCard, TheMenusPickerStaysWhereADragLetsItGo) {
                window.list->extent(), -worst);
   EXPECT_GE(worst, -0.5f);
   EXPECT_GT(window.list->current(), 1000.0f);
+}
+TEST(EmojiCard, ThePoppedMenusPickerGoesDownUnderTheWheel) {
+  MenuWindowOf<PoppedAtPress> window;
+  ASSERT_NE(window.list, nullptr);
+  for (int i = 0; i < 40; ++i)
+    window.frame();
+  const skia::SkRect seen = window.list->bounds();
+  const float x = seen.centerX(), y = seen.centerY();
+  (void)window.tree.dispatchPointer(scene::pointer::move{x, y});
+  for (int i = 0; i < 10; ++i)
+    window.frame();
+  float last = window.list->current(), lowest = 0.0f;
+  for (int notch = 0; notch < 200; ++notch) {
+    (void)window.tree.dispatchPointer(scene::pointer::scroll{x, y, 0.0f, -1.0f});
+    for (int i = 0; i < 6; ++i) {
+      window.frame();
+      lowest = std::min(lowest, window.list->current() - last);
+      last = window.list->current();
+    }
+  }
+  std::println("popped menu picker wheeled 200 notches: at {} (extent {}, view {} at {},{}), back up {} at most in a frame", last,
+               window.list->extent(), window.list->bounds().height(), seen.fLeft, seen.fTop, -lowest);
+  EXPECT_GE(lowest, -0.5f);
+  EXPECT_GT(last, 3000.0f);
 }
 
 // A view that scrolls, of a size of its own, in a parent sized by what it
