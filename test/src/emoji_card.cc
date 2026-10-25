@@ -319,4 +319,41 @@ TEST(EmojiCard, TheMenusPickerStaysWhereADragLetsItGo) {
   EXPECT_GE(worst, -0.5f);
   EXPECT_GT(window.list->current(), 1000.0f);
 }
+
+// A view that scrolls, of a size of its own, in a parent sized by what it
+// holds: its box the same in the provisional layout and the real one, the
+// real one is skipped -- it is only ever laid out provisionally (the rooms'
+// list, a menu's picker). The wheel still takes it down.
+struct Tall : scene::Node {
+  Tall() { this->apply({.fillX = true, .height = 3000.0f}); }
+};
+inline auto sized_list() {
+  return c::column(c::vbox(0.0f, {.place = scene::anchor::kTopLeft, .x = 100.0f, .y = 100.0f, .autoSize = scene::axes::kBoth}),
+                   c::styled({.width = 300.0f, .height = 300.0f}, nodes::ScrollContainer(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), Tall{}))));
+}
+TEST(EmojiCard, AViewOnlyEverLaidOutProvisionallyStillScrolls) {
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), sized_list()));
+  using View = decltype(nodes::ScrollContainer(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), Tall{})));
+  double at = 0.0;
+  const auto frame = [&] {
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 1000.0f, 700.0f));
+    (void)tree.finishFrame();
+    at += 16.0;
+  };
+  for (int i = 0; i < 5; ++i)
+    frame();
+  View *view = nullptr;
+  scene::forEachNode<View>(tree.root(), [&](View &one) { view = &one; });
+  ASSERT_NE(view, nullptr);
+  for (int notch = 0; notch < 10; ++notch) {
+    (void)tree.dispatchPointer(scene::pointer::scroll{250.0f, 250.0f, 0.0f, -1.0f});
+    for (int i = 0; i < 6; ++i)
+      frame();
+  }
+  std::println("a view laid out only provisionally: at {} after 10 notches (extent {})", view->current(), view->extent());
+  // Ten notches of 60: 600, where the wheel sent it -- not short of it, nor
+  // at its end.
+  EXPECT_NEAR(view->current(), 600.0f, 60.0f);
+}
 }  // namespace
