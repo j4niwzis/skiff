@@ -68,3 +68,10 @@ if(ENABLE_TEST_COVERAGE)
   target_compile_options(skiff PRIVATE -O0 -g -fprofile-arcs -ftest-coverage)
   target_link_options(skiff PRIVATE -fprofile-arcs -ftest-coverage)
 endif()
+
+# A virtual Sections wheeled down: built and run on its own, on skia-lite
+# where Skia is not.
+add_executable(skiffSectionsWheel ${CMAKE_CURRENT_SOURCE_DIR}/src/sections_wheel.cc)
+target_link_libraries(skiffSectionsWheel PRIVATE gtest gtest_main skiff::skiff)
+set_target_properties(skiffSectionsWheel PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
+add_test(NAME skiffSectionsWheel COMMAND skiffSectionsWheel)

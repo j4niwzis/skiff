@@ -59,6 +59,11 @@ endif()
 # build that keeps that state with no window to show it in (a program's
 # headless parts, its tests, a command-line copy of it).
 option(SKIFF_UI "Build the scene, the nodes and their binding, on Skia; off, skiff.model alone" ON)
+# The scene's types from Skia, or from skiff's own stand-in for them
+# (src/skia_lite.cc, as skiff's main has it): the geometry for real, a
+# canvas that draws nothing. Off, the scene is laid out, bound, hit-tested
+# and animated with no Skia on the machine -- its tests, where Skia is not.
+option(SKIFF_SKIA "With SKIFF_UI: the scene on Skia; off, on skiff's own stand-in for its types, drawing nothing" ON)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   set(SKIFF_EMSCRIPTEN TRUE)
@@ -132,10 +137,10 @@ endif()
 set(skiff_skia_components freetype ${skiff_asked})
 list(REMOVE_ITEM skiff_skia_components text-shaping)
 set(SKIFF_TEXT_SHAPING OFF)
-if("text-shaping" IN_LIST skiff_asked)
+if("text-shaping" IN_LIST skiff_asked AND SKIFF_SKIA)
   set(SKIFF_TEXT_SHAPING ON)
 endif()
-if(SKIFF_UI)
+if(SKIFF_UI AND SKIFF_SKIA)
 find_package(Skia REQUIRED
              COMPONENTS ${skiff_skia_components} ${SKIFF_SKIA_COMPONENTS})
 
@@ -241,8 +246,13 @@ if(skiff_cxx_standard LESS 26)
 endif()
 
 if(SKIFF_UI)
+if(SKIFF_SKIA)
+  set(skiff_skia_module ${CMAKE_CURRENT_SOURCE_DIR}/src/skia.cc)
+else()
+  set(skiff_skia_module ${CMAKE_CURRENT_SOURCE_DIR}/src/skia_lite.cc)
+endif()
 set(skiff_sources
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/skia.cc
+  ${skiff_skia_module}
   ${CMAKE_CURRENT_SOURCE_DIR}/src/paint.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/scene.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/nodes.cc
@@ -332,8 +342,15 @@ endif()
 # -- rightly, since what would be installed is a library whose dependency
 # exists nowhere else. So an installed copy names Skia the way a machine can
 # answer for it, which is what the config file below writes.
-target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:Skia::skia>)
-if(ANDROID AND SKIFF_EGL_LIBRARY AND SKIFF_GLES_LIBRARY)
+if(SKIFF_SKIA)
+  target_link_libraries(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:Skia::skia>)
+else()
+  # The stand-in's own definitions, outside its module.
+  target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/skia_lite_none.cc)
+endif()
+if(NOT SKIFF_SKIA)
+  # Nothing of Skia's, and nothing that draws with GL.
+elseif(ANDROID AND SKIFF_EGL_LIBRARY AND SKIFF_GLES_LIBRARY)
   target_link_libraries(${PROJECT_NAME} PUBLIC
     ${SKIFF_EGL_LIBRARY} ${SKIFF_GLES_LIBRARY})
 elseif(NOT SKIFF_EMSCRIPTEN AND TARGET OpenGL::GL)
