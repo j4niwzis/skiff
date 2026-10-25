@@ -95,11 +95,11 @@ inline auto cell(int n) {
 }
 using Cell = decltype(cell(0));
 inline auto section(const Group &one) {
-  return c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+  return SKIFF_NAMED(cell_section, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
       c::styled({.fillX = true, .height = 32.0f}, nodes::Text(one.name, 13.0f, 0xff000000u)),
       c::styled({.fillX = true, .autoSize = scene::axes::kY},
           nodes::Flow<std::vector<Cell>>({.direction = nodes::direction::horizontal{}, .spacingX = 0.0f, .spacingY = 0.0f, .wrap = true},
-                                         std::views::iota(0, one.count) | std::views::transform(cell) | std::ranges::to<std::vector>())));
+                                         std::views::iota(0, one.count) | std::views::transform(cell) | std::ranges::to<std::vector>()))));
 }
 inline auto tab(const Group &one) {
   auto made = SKIFF_NAMED(emoji_tab, c::row(c::justified(c::hbox(0.0f, {.width = 30.0f, .height = 30.0f, .minWidth = 24.0f,
@@ -137,13 +137,16 @@ inline auto read_groups() {
   }, groups());
 }
 using Groups = decltype(read_groups());
+// The list that scrolls: the Sections' own child, found as it is in every
+// build (the projection over the Sections is held, erased, outside one).
+using Scroll = typename decltype(groups())::List;
 inline auto page() {
-  return c::local<PreviewShown>(PreviewEvents{}, c::column(c::vbox(0.0f, {.fill = true}),
+  return SKIFF_NAMED(with_preview, c::local<PreviewShown>(PreviewEvents{}, c::column(c::vbox(0.0f, {.fill = true}),
       c::styled({.fill = true}, c::local<Query>(c::column(c::vbox(4.0f, {.fill = true, .padding = {7.0f, 0.0f, 4.0f, 7.0f}}),
           c::styled({.fillX = true, .height = 32.0f, .margin = {0.0f, 7.0f, 0.0f, 0.0f}}, nodes::Text("Search emoji", 13.0f, 0xff000000u)),
           c::styled({.fillX = true, .grow = scene::axes::kY}, read_groups())))),
       c::bound<model::Field<&PreviewShown::now>>(c::mount<PreviewOf, Previewed>(
-          [](const Previewed &one) { return std::tuple{preview_of(one)}; }, {.place = scene::anchor::kTopLeft, .fill = true}))));
+          [](const Previewed &one) { return std::tuple{preview_of(one)}; }, {.place = scene::anchor::kTopLeft, .fill = true})))));
 }
 inline auto inside() {
   return c::column(c::vbox(0.0f, {}),
@@ -171,11 +174,11 @@ struct Window {
   bind::Binding<Model> binding;
   double at = 0.0;
   int ticks = 0;
-  Groups *list = nullptr;
+  Scroll *list = nullptr;
   Window() : tree(c::column(c::vbox(0.0f, {.fill = true}), floating_card())) {
     for (int i = 0; i < 5; ++i)
       frame();
-    scene::forEachNode<Groups>(tree.root(), [&](Groups &one) { list = &one; });
+    scene::forEachNode<Scroll>(tree.root(), [&](Scroll &one) { list = &one; });
   }
   void frame() {
     (void)m.apply(model::over<Told>(model::setTo(Told{.of = 1 + (++ticks % 7)})));
@@ -199,16 +202,16 @@ TEST(EmojiCard, ItsVirtualSectionsGoDownUnderTheWheel) {
   (void)window.tree.dispatchPointer(scene::pointer::move{520.0f, 300.0f});
   for (int i = 0; i < 40; ++i)
     window.frame();
-  float last = window.list->fList.current(), lowest = 0.0f;
+  float last = window.list->current(), lowest = 0.0f;
   for (int notch = 0; notch < 200; ++notch) {
     (void)window.tree.dispatchPointer(scene::pointer::scroll{520.0f, 300.0f, 0.0f, -1.0f});
     for (int i = 0; i < 6; ++i) {
       window.frame();
-      lowest = std::min(lowest, window.list->fList.current() - last);
-      last = window.list->fList.current();
+      lowest = std::min(lowest, window.list->current() - last);
+      last = window.list->current();
     }
   }
-  std::println("wheeled 200 notches: at {} (extent {}), back up {} at most in a frame", last, window.list->fList.extent(), -lowest);
+  std::println("wheeled 200 notches: at {} (extent {}), back up {} at most in a frame", last, window.list->extent(), -lowest);
   EXPECT_GE(lowest, -0.5f);
   EXPECT_GT(last, 3000.0f);
 }
@@ -225,15 +228,95 @@ TEST(EmojiCard, ItsVirtualSectionsStayWhereADragLetsThemGo) {
       (void)window.tree.dispatchPointer(scene::pointer::move{520.0f, 420.0f - 15.0f * static_cast<float>(step)});
       window.frame();
     }
-    const float letGo = window.list->fList.current();
+    const float letGo = window.list->current();
     (void)window.tree.dispatchPointer(scene::pointer::up{520.0f, 195.0f, 1});
     for (int i = 0; i < 60; ++i)
       window.frame();
-    worst = std::min(worst, window.list->fList.current() - letGo);
+    worst = std::min(worst, window.list->current() - letGo);
   }
-  std::println("dragged 12 times: at {} (extent {}), back {} at most after a release", window.list->fList.current(),
-               window.list->fList.extent(), -worst);
+  std::println("dragged 12 times: at {} (extent {}), back {} at most after a release", window.list->current(),
+               window.list->extent(), -worst);
   EXPECT_GE(worst, -0.5f) << "the view went back when the drag let it go";
-  EXPECT_GT(window.list->fList.current(), 2000.0f);
+  EXPECT_GT(window.list->current(), 2000.0f);
+}
+
+// As the reaction picker unrolls in a message's right-click menu (mux's
+// context_menu): the menu's card sized by what it holds, its items in a
+// column as high as they are, and the panel over them -- placed, filling
+// that column, its own height none.
+inline auto menu_card() {
+  return c::column(c::vbox(0.0f, {.autoSize = scene::axes::kBoth, .minWidth = 220.0f, .padding = {6.0f, 0.0f, 6.0f, 0.0f}}),
+      c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY, .minHeight = 220.0f}),
+                c::styled({.width = 260.0f, .height = 380.0f}, nodes::Text("items", 13.0f, 0xff000000u)),
+                c::styled({.place = scene::anchor::kTopLeft, .fill = true, .masking = true}, page())));
+}
+inline auto placed_menu() {
+  return c::styled({.place = scene::anchor::kTopLeft, .x = 300.0f, .y = 100.0f}, menu_card());
+}
+struct MenuWindow {
+  scene::Scene<decltype(c::column(c::vbox(0.0f, {.fill = true}), placed_menu()))> tree;
+  Model m{Root{}};
+  bind::Binding<Model> binding;
+  double at = 0.0;
+  Scroll *list = nullptr;
+  MenuWindow() : tree(c::column(c::vbox(0.0f, {.fill = true}), placed_menu())) {
+    for (int i = 0; i < 5; ++i)
+      frame();
+    scene::forEachNode<Scroll>(tree.root(), [&](Scroll &one) { list = &one; });
+  }
+  void frame() {
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way);
+    for (const auto &one : std::exchange(scene::hostWork().answers, {}))
+      (void)bind::answer(tree.root(), m, one);
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 1000.0f, 700.0f));
+    (void)tree.finishFrame();
+    at += 16.0;
+  }
+};
+TEST(EmojiCard, TheMenusPickerGoesDownUnderTheWheel) {
+  MenuWindow window;
+  ASSERT_NE(window.list, nullptr);
+  (void)window.tree.dispatchPointer(scene::pointer::move{420.0f, 300.0f});
+  for (int i = 0; i < 40; ++i)
+    window.frame();
+  float last = window.list->current(), lowest = 0.0f;
+  for (int notch = 0; notch < 200; ++notch) {
+    (void)window.tree.dispatchPointer(scene::pointer::scroll{420.0f, 300.0f, 0.0f, -1.0f});
+    for (int i = 0; i < 6; ++i) {
+      window.frame();
+      lowest = std::min(lowest, window.list->current() - last);
+      last = window.list->current();
+    }
+  }
+  std::println("menu picker wheeled 200 notches: at {} (extent {}, view {}), back up {} at most in a frame", last, window.list->extent(),
+               window.list->bounds().height(), -lowest);
+  EXPECT_GE(lowest, -0.5f);
+  EXPECT_GT(last, 3000.0f);
+}
+TEST(EmojiCard, TheMenusPickerStaysWhereADragLetsItGo) {
+  MenuWindow window;
+  ASSERT_NE(window.list, nullptr);
+  float worst = 0.0f;
+  for (int drag = 0; drag < 12; ++drag) {
+    (void)window.tree.dispatchPointer(scene::pointer::move{420.0f, 400.0f});
+    (void)window.tree.dispatchPointer(scene::pointer::down{420.0f, 400.0f, 1});
+    window.frame();
+    for (int step = 1; step <= 15; ++step) {
+      (void)window.tree.dispatchPointer(scene::pointer::move{420.0f, 400.0f - 15.0f * static_cast<float>(step)});
+      window.frame();
+    }
+    const float letGo = window.list->current();
+    (void)window.tree.dispatchPointer(scene::pointer::up{420.0f, 175.0f, 1});
+    for (int i = 0; i < 60; ++i)
+      window.frame();
+    worst = std::min(worst, window.list->current() - letGo);
+  }
+  std::println("menu picker dragged 12 times: at {} (extent {}), back {} at most after a release", window.list->current(),
+               window.list->extent(), -worst);
+  EXPECT_GE(worst, -0.5f);
+  EXPECT_GT(window.list->current(), 1000.0f);
 }
 }  // namespace

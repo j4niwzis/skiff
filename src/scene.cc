@@ -2142,6 +2142,14 @@ inline std::uint64_t &layoutPass() {
   static std::uint64_t at = 1;
   return at;
 }
+// How deep the layout now under way is in provisional boxes: a parent sized
+// by what it holds lays its children out first in the room it might have,
+// then in what it has. What lays out under one only measures: a view that
+// scrolls keeps its offset for the real box.
+inline int &provisionalDepth() {
+  static int depth = 0;
+  return depth;
+}
 // Whether the tick now under way goes everywhere.
 inline bool &tickingFull() {
   static bool on = true;
@@ -4162,7 +4170,9 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
     state.fBounds = skia::SkRect::MakeXYWH(room.fLeft, room.fTop,
                                            autoX ? provisionalW : width,
                                            autoY ? provisionalH : height);
+    ++work::provisionalDepth();
     node.layoutChildren();
+    --work::provisionalDepth();
     if (autoX) {
       width = flowBounds<axis::x>(node).width() + state.fPadding.totalX();
     }

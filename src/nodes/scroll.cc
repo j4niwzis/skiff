@@ -209,6 +209,18 @@ public:
   void layoutChildren() {
     namespace scene = skiff::scene;
     const skia::SkRect box = fState.contentBox();
+    // In a provisional box -- a parent that sizes itself by what it holds
+    // measuring first in the room it might have (a message's menu with the
+    // reaction picker unrolled in it): what it holds laid out to be
+    // measured, and nothing of its own moved. Kept there, its offset was
+    // fitted to that box -- clamped to its extent, kept at its end, held to
+    // what was in view -- and then to the real one, each frame: a wheel's
+    // glide was let go and the view went back to the top, and a drag let
+    // go went back too.
+    if (scene::work::provisionalDepth() > 0) {
+      scene::eachChild(*this, [&](auto &child) { scene::layout(child, box); });
+      return;
+    }
     // Placed on whole device pixels: the glide goes on smoothly, and what
     // is drawn follows it a whole pixel at a time -- every row, its text
     // and its fills together.
