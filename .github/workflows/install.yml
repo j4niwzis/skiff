@@ -10,7 +10,7 @@ name: install
 
 on:
   push:
-    branches: [main]
+    branches: [main, mux-pin]
   pull_request:
   workflow_dispatch:
 
