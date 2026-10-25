@@ -1888,8 +1888,10 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
       return;
     this->reckon();
     this->padNear();
-    if (above != 0.0f)
-      fList.setCurrent(at + above);
+    // Moved with what changed above it -- not set there: set, a drag under
+    // way went on from where it was pressed, before the change, and the
+    // view went back by as much; a wheel's glide was let go.
+    fList.shiftBy(above);
   }
   // A section brought to the top of the view.
   void bring(std::size_t at) {

@@ -86,3 +86,10 @@ add_executable(skiffSectionsWheel ${CMAKE_CURRENT_SOURCE_DIR}/src/sections_wheel
 target_link_libraries(skiffSectionsWheel PRIVATE gtest gtest_main skiff::skiff)
 set_target_properties(skiffSectionsWheel PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
 add_test(NAME skiffSectionsWheel COMMAND skiffSectionsWheel)
+
+# mux's emoji card, wheeled and dragged: on its own, compose.cc being as
+# much as a small machine compiles.
+add_executable(skiffEmojiCard ${CMAKE_CURRENT_SOURCE_DIR}/src/emoji_card.cc)
+target_link_libraries(skiffEmojiCard PRIVATE gtest gtest_main skiff::skiff)
+set_target_properties(skiffEmojiCard PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
+add_test(NAME skiffEmojiCard COMMAND skiffEmojiCard)
