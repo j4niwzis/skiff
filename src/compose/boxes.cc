@@ -1696,6 +1696,7 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
   // where the last ends, at the width they were reckoned at; the sections
   // made, from and to.
   std::vector<Element> fElements;
+  std::vector<Element> fTabs;  // the tabs last made, where they can be compared
   std::vector<float> fTops{0.0f};
   float fReckonedAt = -1.0f;
   std::size_t fFrom = 0, fTo = 0;
@@ -1727,10 +1728,35 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
   // The parts made again, the view at its start; the tabs too, where they
   // are others.
   void read(const SectionsShown<Element> &shown) {
+    // Read again with sections as high as before -- the same, as far as
+    // the view goes: kept where it is, not glided back to the top. Read
+    // again as it scrolled (what its pictures in view asked changed), a
+    // virtual list was pulled up at every step of a wheel's glide, upward
+    // whichever way the wheel went; a drag held it where the finger was.
+    bool kept = false;
+    // The same as before, where that can be told: nothing made again --
+    // read again at every hover of the panel it is in, it made every
+    // section near the view and every tab each time.
+    if constexpr (std::equality_comparable<Element>) {
+      if (fReckonedAt >= 0.0f && shown.parts == fElements && shown.tabs == fTabs) {
+        fLit = shown.lit;
+        return;
+      }
+      fTabs = shown.tabs;
+    }
     if constexpr (kVirtual) {
+      if (fReckonedAt >= 0.0f) {
+        const float width = fReckonedAt > 0.0f ? fReckonedAt : 320.0f;
+        std::vector<float> tops{0.0f};
+        for (const Element &one : shown.parts)
+          tops.push_back(tops.back() + std::max(0.0f, static_cast<float>(std::invoke(fHeight, one, width))));
+        kept = tops == fTops;
+      }
       fElements = shown.parts;
-      fReckonedAt = -1.0f;
-      fList.scrollTo(0.0f);
+      if (!kept) {
+        fReckonedAt = -1.0f;
+        fList.scrollTo(0.0f);
+      }
       this->showNear(true);
     } else {
       parts() = shown.parts | std::views::transform(std::ref(fMakePart)) | std::ranges::to<std::vector>();
@@ -1741,7 +1767,8 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
                            }) | std::ranges::to<std::vector>());
     fLit = shown.lit;
     fList.invalidateLayout();
-    fList.scrollTo(0.0f);
+    if (!kept)
+      fList.scrollTo(0.0f);
   }
   // The sections near the view made, where the heights are known: from a
   // screen above it to two below; again only where that moved, or the
