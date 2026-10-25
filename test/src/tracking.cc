@@ -299,8 +299,8 @@ TEST(Tracking, SharedDebugEventRowsKeepPhaseAndAlternative) {
   const TextEvent composing = text::compose{"beta", 3, 2};
   Reply reply;
   auto deliver = [&](auto when) {
-    entries.deliver(&node, when, committed, reply);
-    entries.deliver(&node, when, composing, reply);
+    entries.deliver(&node, nullptr, when, committed, reply);  // ops: none, the node not erased
+    entries.deliver(&node, nullptr, when, composing, reply);
   };
   deliver(phase::capture{});
   deliver(phase::target{});

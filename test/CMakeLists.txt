@@ -46,10 +46,16 @@ else()
   CPMAddPackage(NAME skiff SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/..)
 endif()
 
-add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/style.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/tracking.cc
+# The tests' sources; without Skia (SKIFF_SKIA off, skia-lite), not those of
+# pixels and of image files, which are Skia's (as main has it).
+set(skiff_test_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/style.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/tracking.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/model.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/bind.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/compose.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reconcile.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/rekey.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/reorder.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/views.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/row_layout.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/picker.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/images.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/schema.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/takes.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/hook.cc)
+if(DEFINED SKIFF_SKIA AND NOT SKIFF_SKIA)
+  list(REMOVE_ITEM skiff_test_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/images.cc)
+endif()
+add_executable(${PROJECT_NAME} ${skiff_test_sources})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   gtest

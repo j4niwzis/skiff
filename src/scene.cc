@@ -1641,11 +1641,23 @@ bool answerPress(N &, const C &) {
 // answerWith, found by the carried type), else -- nothing carried, as
 // outside a release build -- kept for its path to be added as the routing
 // leaves it.
+// Kept as the node's Answer where it is one (an alternative of it made
+// the whole); else as itself -- a node that answers for more than one of
+// what it wraps (a named view over keys_for and onKeys) said an Answer of
+// one of them, and the other's answer could not be made one.
 template <class N, class A, class C>
+  requires std::constructible_from<typename N::Answer, const A &>
 void answerWith(N &, const A &answer, const C &) {
   if constexpr (kErasedWalks) {
     hostWork().answerNow = std::make_shared<const typename N::Answer>(answer);
     hostWork().answerType = &kTypeKey<typename N::Answer>;
+  }
+}
+template <class N, class A, class C>
+void answerWith(N &, const A &answer, const C &) {
+  if constexpr (kErasedWalks) {
+    hostWork().answerNow = std::make_shared<const A>(answer);
+    hostWork().answerType = &kTypeKey<A>;
   }
 }
 template <class N, class A, class C> void answered(N &node, const A &answer, const C &carried) {

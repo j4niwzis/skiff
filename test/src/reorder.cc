@@ -49,11 +49,13 @@ auto fixture() {
   std::ranges::for_each(std::views::iota(0, 2), [&](int i) {
     vertical.fRows[i].fRow.fState.fBounds = skia::SkRect::MakeXYWH(200.0f, 100.0f + i * 48.0f, 40.0f, 40.0f);
   });
-  return c::reorder_bars<int, int>(std::move(surface), make_icon, [](auto& surface) {
-    auto& top = std::get<0>(surface.fParts);
-    auto& side = std::get<1>(surface.fParts);
-    return std::tuple{c::ReorderLane{top, top.line(), top.bounds(), 4.0f},
-                      c::ReorderLane{side, std::get<0>(side.fChildren), side.bounds(), 8.0f}};
+  // The lanes as reorder_bars finds them now: given the surface found, each
+  // lane where it is shown (as main's test has it).
+  return c::reorder_bars<int, int>(std::move(surface), make_icon, [](auto found) {
+    auto& top = std::get<0>(found.surface->fParts);
+    auto& side = std::get<1>(found.surface->fParts);
+    return std::tuple{std::optional{c::ReorderLane{top, top.line(), top.bounds(), 4.0f}},
+                      std::optional{c::ReorderLane{side, std::get<0>(side.fChildren), side.bounds(), 8.0f}}};
   }, 0xff123456u);
 }
 }

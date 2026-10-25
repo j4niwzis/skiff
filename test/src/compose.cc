@@ -1568,6 +1568,26 @@ TEST(Compose, ANodeAskingOnItsOwnBehalfIsHeard) {
 
 // A window over a list (mux's timeline), scrolled to its top with nothing
 // above it held: it asks for what is older, and the program hears it.
+// A face that measures, for tests of words' widths: DejaVu Sans, where the
+// machine has it -- skia-lite's default face, and a SkFont made without one,
+// measure nothing (as skiff main's tests have it).
+namespace test_font {
+struct TestFont {
+  skia::SkFont font;
+  bool ok = false;
+  TestFont() {
+    auto manager = skia::SkFontMgr_New_Custom_Directory("/usr/share/fonts");
+    auto face = manager ? manager->matchFamilyStyle("DejaVu Sans", skia::SkFontStyle()) : nullptr;
+    if (!face)
+      return;
+    skiff::paint::fonts().setPrimary(face);
+    font = skia::SkFont(face);
+    skiff::paint::defaultFont() = &font;
+    ok = true;
+  }
+  ~TestFont() { skiff::paint::defaultFont() = nullptr; }
+};
+}  // namespace test_font
 namespace window_edge {
 namespace c = skiff::compose;
 struct FeedTold {
@@ -3452,7 +3472,10 @@ TEST(Compose, ACallButtonInAChatHeadIsShownAndPressed) {
   frame();
   std::print("{}", scene::laidOutText(tree.root()));
   float left = -1.0f, top = -1.0f, width = 0.0f;
-  scene::forEachNode<c::OnClick<Pressed, c::part_t<Probe>>>(tree.root(), [&](auto &one) {
+  // Found as it is in the tree: the named view, which is the click itself
+  // (shown_if over visible over styled over onClick, each the node it is
+  // made over) -- the walks, erased, find a type as it is.
+  scene::forEachNode<decltype(button())>(tree.root(), [&](auto &one) {
     left = one.bounds().fLeft;
     top = one.bounds().fTop;
     width = one.bounds().width();
@@ -3693,11 +3716,9 @@ inline auto tile() {
 }  // namespace said_text
 TEST(Compose, AButtonWhoseTextIsReadIsPressedWhereItIsDrawn) {
   using namespace said_text;
-  skia::SkFont font;
-  paint::defaultFont() = &font;
-  struct cleanup {
-    ~cleanup() { paint::defaultFont() = nullptr; }
-  } clear;
+  test_font::TestFont font;
+  if (!font.ok)
+    GTEST_SKIP() << "Needs DejaVu Sans to measure the words";
   scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), tile()));
   FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
   bind::Binding<FeedModel> binding;
@@ -3750,11 +3771,9 @@ inline auto card() {
 }  // namespace said_card
 TEST(Compose, AButtonWhoseTextIsReadInACardIsPressedWhereItIsDrawn) {
   using namespace said_card;
-  skia::SkFont font;
-  paint::defaultFont() = &font;
-  struct cleanup {
-    ~cleanup() { paint::defaultFont() = nullptr; }
-  } clear;
+  test_font::TestFont font;
+  if (!font.ok)
+    GTEST_SKIP() << "Needs DejaVu Sans to measure the words";
   scene::Scene tree(c::column(c::vbox(32.0f, {.fill = true, .padding = {16.0f, 16.0f, 16.0f, 16.0f}}), said_card::card()));
   FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
   bind::Binding<FeedModel> binding;
@@ -4051,7 +4070,9 @@ TEST(Compose, AScopeIsOfTheModelItsKeysLeadInNotOneHoldingItsPartAnotherWay) {
   showing.refresh(node, shown);
   setting.refresh(node, settings);
   showing.refresh(node, shown);
-  const LeadReads *reads = scene::findNode<LeadReads>(node);
+  // The scope is itself the bound node it is made over (Scoped derives from
+  // its content): found as it is, its own type.
+  const auto *reads = scene::findNode<decltype(node)>(node);
   ASSERT_NE(reads, nullptr);
   EXPECT_EQ(reads->n, 7);
 }
@@ -4269,7 +4290,10 @@ TEST(Compose, APressAnsweringAnEditMakesItWhereItsPartIs) {
     for (double at = 100.0; at < 200.0; at += 16.0)
       frame(at);
   }
-  const PickReads *picked = scene::findNode<PickReads>(tree.root());
+  // Found as it is in the tree: bound, a node of its own type -- the
+  // walks, erased, find a type as it is, not what it is made over.
+  using BoundReads = decltype(c::bound<model::Field<&PickDraft::choice>>(PickReads{}));
+  const BoundReads *picked = scene::findNode<BoundReads>(tree.root());
   ASSERT_NE(picked, nullptr);
   EXPECT_EQ(picked->n, 5);
   EXPECT_EQ(settings.look(model::placeOf<LeadAccount, scope_leads::LeadSettings>(std::string("a")))->n, 9);
@@ -4358,6 +4382,7 @@ template <class Card> void run(const char *what, Card card) {
   (void)frame();
   {
     int shown = 0, all = 0;
+    const auto all_nodes = scene::laidOutTree(tree.root());
     for (const scene::LaidOutNode &one : all_nodes)
       if (one.view == "emoji_tab" && one.names) {
         ++all;
@@ -4408,11 +4433,9 @@ TEST(Compose, AWrapperOverATextIsItsSizeAtTheNextLayout) {
   using namespace wrapped_text;
   using namespace window_edge;
   // Measured with a font (the stand-in's): as wide as it is long.
-  skia::SkFont font;
-  paint::defaultFont() = &font;
-  struct cleanup {
-    ~cleanup() { paint::defaultFont() = nullptr; }
-  } restore;
+  test_font::TestFont font;
+  if (!font.ok)
+    GTEST_SKIP() << "Needs DejaVu Sans to measure the words";
   scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
       c::column(c::vbox(0.0f, {.autoSize = scene::axes::kBoth}),
           c::onPress(Pressed{}, c::text_of<Feed>([](const Feed &now) { return std::string(static_cast<std::size_t>(now.count), 'x'); },
@@ -4798,7 +4821,7 @@ TEST(Compose, AFieldGrowingWithItsLinesPushesTheListUp) {
 // Still at its top, the list asks again a while later; not at every frame.
 TEST(Bind, AWindowAtItsTopAsksAgainWhereAnAskBroughtNothing) {
   using namespace window_edge;
-  FeedWindow window(MakeRow{});
+  FeedWindow window(MakeFeedRow{});
   window.apply({.fill = true});
   scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, FeedWindow>(std::move(window))));
   FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 3}}}};
