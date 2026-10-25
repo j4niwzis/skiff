@@ -261,7 +261,10 @@ public:
     // then back to the top -- and the wheel's way was lost at every frame;
     // the box laid out in last kept nothing to scroll in, or the view went
     // to its end.
-    if (fFrameStart && fFrameStart->pass == scene::work::layoutPass()) {
+    // Not where the view was moved since the last of them -- a jump asked
+    // for, the offset set between two layouts of one pass: that move kept,
+    // and laid out from.
+    if (fFrameStart && fFrameStart->pass == scene::work::layoutPass() && this->asLeft()) {
       const Provisional &before = *fFrameStart;
       fScroll = before.scroll;
       fExtent = before.extent;
@@ -286,6 +289,18 @@ public:
           .moves = scene::scrollMoves().size()};
     }
     this->layoutInBox(&fFrameStart->anchors);
+    fLeft = Left{fScroll.offset(), fScroll.target(), fScroll.dragging(), fJumpTo, fToEnd, fGlidingToEnd};
+  }
+  // How a layout left the view: as it still is, nothing moved it since.
+  struct Left {
+    float offset = 0.0f, target = 0.0f;
+    bool dragging = false;
+    std::optional<float> jumpTo;
+    bool toEnd = false, glidingToEnd = false;
+    friend bool operator==(const Left &, const Left &) = default;
+  };
+  [[nodiscard]] bool asLeft() const {
+    return fLeft == Left{fScroll.offset(), fScroll.target(), fScroll.dragging(), fJumpTo, fToEnd, fGlidingToEnd};
   }
   void layoutInBox(const std::vector<Anchor> *given) {
     namespace scene = skiff::scene;
@@ -882,6 +897,7 @@ private:
   skia::SkRect fLastBox = skia::SkRect::MakeEmpty();
   float fLastOffset = 0.0f;
   std::optional<Provisional> fFrameStart;  // as the frame found it
+  Left fLeft;                              // as its last layout left it
 };
 
 } // namespace skiff::nodes
