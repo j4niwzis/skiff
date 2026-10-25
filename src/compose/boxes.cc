@@ -1698,6 +1698,12 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
   std::vector<Element> fElements;
   std::vector<Element> fTabs;  // the tabs last made, where they can be compared
   std::vector<float> fTops{0.0f};
+  // Each section's height as it was laid out, once it has been: where it
+  // is known, it stands in the tops for the height reckoned before it was
+  // made. Reckoned only, the list's extent was the reckoning's, not what was
+  // laid out: shorter than the sections were, and a wheel's glide, or a
+  // fling, clamped to it every frame was pulled back up the list.
+  std::vector<std::optional<float>> fMeasured;
   float fReckonedAt = -1.0f;
   std::size_t fFrom = 0, fTo = 0;
 
@@ -1711,11 +1717,9 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
     this->fStack.justify = look.fJustify;
     fList.apply({.fillX = true, .grow = scene::axes::kY});
     std::get<0>(fList.fChildren).apply({.fillX = true, .autoSize = scene::axes::kY});
-    // Made near the view, its sections are all made again as it scrolls:
-    // the list keeps its offset, not the first row in view -- that row was
-    // gone, another took its place (its id given again), and the view was
-    // moved by the difference at every step of a wheel's glide, upward
-    // whichever way the wheel went. A drag set the offset over it.
+    // Made near the view, its sections come and go as it scrolls, and
+    // where they stand is its own to say (the tops): the list keeps its
+    // offset, rather than following a row in view that may be gone.
     if constexpr (kVirtual)
       fList.setHoldsInView(false);
   }
@@ -1724,6 +1728,22 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
     f(self.fStrip);
   }
   [[nodiscard]] std::vector<Part> &parts() { return std::get<0>(fList.fChildren).fParts; }
+  // A section's height reckoned before it is made, at a width.
+  [[nodiscard]] float reckoned(const Element &one, float width) const {
+    return std::max(0.0f, static_cast<float>(std::invoke(fHeight, one, width > 0.0f ? width : 320.0f)));
+  }
+  // The tops: each section's height as laid out where it has been, else
+  // as reckoned.
+  void reckon() {
+    fTops.assign(1, 0.0f);
+    for (const auto &[one, measured] : std::views::zip(fElements, fMeasured))
+      fTops.push_back(fTops.back() + measured.value_or(this->reckoned(one, fReckonedAt)));
+  }
+  // The space the sections not made stand in: above those made, and below.
+  void padNear() {
+    std::get<0>(fList.fChildren).apply({.padding = {fTops[fFrom], 0.0f, fTops.back() - fTops[fTo], 0.0f}});
+    fList.invalidateLayout();
+  }
 
   // The parts made again, the view at its start; the tabs too, where they
   // are others.
@@ -1745,13 +1765,11 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
       fTabs = shown.tabs;
     }
     if constexpr (kVirtual) {
-      if (fReckonedAt >= 0.0f) {
-        const float width = fReckonedAt > 0.0f ? fReckonedAt : 320.0f;
-        std::vector<float> tops{0.0f};
-        for (const Element &one : shown.parts)
-          tops.push_back(tops.back() + std::max(0.0f, static_cast<float>(std::invoke(fHeight, one, width))));
-        kept = tops == fTops;
-      }
+      // As high as before, reckoned alike: what was laid out of them stands.
+      const auto heights = [&](const std::vector<Element> &all) {
+        return all | std::views::transform([&](const Element &one) { return this->reckoned(one, fReckonedAt); }) | std::ranges::to<std::vector>();
+      };
+      kept = fReckonedAt >= 0.0f && shown.parts.size() == fElements.size() && heights(shown.parts) == heights(fElements);
       fElements = shown.parts;
       if (!kept) {
         fReckonedAt = -1.0f;
@@ -1775,11 +1793,11 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
   // width they were reckoned at.
   bool showNear(bool changed) {
     const float width = fList.bounds().width();
-    if (width != fReckonedAt) {
+    if (width != fReckonedAt || fMeasured.size() != fElements.size()) {
+      // Another width: what was laid out at the last one no longer holds.
       fReckonedAt = width;
-      fTops.assign(1, 0.0f);
-      for (const Element &one : fElements)
-        fTops.push_back(fTops.back() + std::max(0.0f, static_cast<float>(std::invoke(fHeight, one, width > 0.0f ? width : 320.0f))));
+      fMeasured.assign(fElements.size(), std::nullopt);
+      this->reckon();
       changed = true;
     }
     const float view = std::max(fList.bounds().height(), 400.0f);
@@ -1802,9 +1820,37 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
               }) | std::ranges::to<std::vector>();
     fFrom = from;
     fTo = to;
-    std::get<0>(fList.fChildren).apply({.padding = {fTops[from], 0.0f, fTops.back() - fTops[to], 0.0f}});
-    fList.invalidateLayout();
+    this->padNear();
     return true;
+  }
+  // The sections made, measured as they were laid out: those come out
+  // otherwise than reckoned put in the tops, the space around them with
+  // them. One above the view that changed moves the view by as much, so
+  // that what is in view stays.
+  void measureNear() {
+    if (fMeasured.size() != fElements.size() || fTo > fElements.size() || parts().size() != fTo - fFrom)
+      return;  // not reckoned yet at this width
+    const float at = fList.current();
+    bool changed = false;
+    float above = 0.0f;
+    for (const auto &[index, part] : std::views::zip(std::views::iota(fFrom, fTo), parts())) {
+      const skia::SkRect laid = part.bounds();
+      if (laid.isEmpty())
+        continue;  // not laid out yet
+      const float was = fTops[index + 1] - fTops[index];
+      if (std::abs(laid.height() - was) < 0.5f)
+        continue;
+      fMeasured[index] = laid.height();
+      if (fTops[index + 1] <= at)
+        above += laid.height() - was;
+      changed = true;
+    }
+    if (!changed)
+      return;
+    this->reckon();
+    this->padNear();
+    if (above != 0.0f)
+      fList.setCurrent(at + above);
   }
   // A section brought to the top of the view.
   void bring(std::size_t at) {
@@ -1824,6 +1870,7 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
   [[nodiscard]] bool settling() const { return fBringing.has_value(); }
   void update(double) {
     if constexpr (kVirtual) {
+      this->measureNear();
       if (fBringing)
         bring(*std::exchange(fBringing, std::nullopt));
       this->showNear(false);
