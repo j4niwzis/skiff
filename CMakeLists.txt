@@ -453,6 +453,22 @@ if(SKIFF_WEB)
   list(PREPEND skiff_built skiff_web)
 endif()
 
+# skiff.mirror: a scene's tree as the elements of skiff.web's document, laid
+# out and painted by whatever is behind it -- a browser, an engine embedded
+# and called directly, or the in-memory document of the tests.
+if(SKIFF_WEB AND SKIFF_UI)
+  add_library(skiff_mirror STATIC)
+  add_library(skiff::mirror ALIAS skiff_mirror)
+  set_target_properties(skiff_mirror PROPERTIES
+    EXPORT_NAME mirror CXX_STANDARD ${skiff_cxx_standard})
+  target_compile_features(skiff_mirror PUBLIC cxx_std_${skiff_cxx_standard})
+  target_sources(skiff_mirror PUBLIC
+    FILE_SET CXX_MODULES FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/mirror.cc)
+  target_link_libraries(skiff_mirror PUBLIC ${PROJECT_NAME} skiff_web)
+  list(PREPEND skiff_targets skiff::mirror)
+  list(PREPEND skiff_built skiff_mirror)
+endif()
+
 # ---- What this library is, said by the library ----
 #
 # A consumer writes find_package(skiff) and this says the rest: where it

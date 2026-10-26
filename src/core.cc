@@ -523,6 +523,25 @@ struct FlowOptions {
   Align crossAlign = align::kStart;
   Justify justify = justify::start{};
 };
+// What a node is to an engine that lays out and paints a tree itself (a
+// browser's, skiff.mirror's): a box holding its children where their
+// anchors put them, a flow of them, words, or a view that scrolls what it
+// holds. Said by the node (look()), and through the walks' table where the
+// node is erased; the words are the node's, read while it is there.
+namespace look {
+struct box {};
+struct flow {
+  FlowOptions options;
+};
+struct words {
+  std::string_view text;
+  float size = 0.0f;
+  Colour colour = 0;
+  bool bold = false;
+};
+struct scrolled {};
+} // namespace look
+using Look = spl::variant<look::box, look::flow, look::words, look::scrolled>;
 // An icon's marks -- lines, circles, arcs, rounded boxes, paths -- about the
 // middle of its box, stroked or filled, in the icon's colour or their own.
 namespace path_step {

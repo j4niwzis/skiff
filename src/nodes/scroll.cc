@@ -204,6 +204,7 @@ public:
     scene::work::mark(fState.fId);
   }
   [[nodiscard]] float current() const noexcept { return fScroll.offset(); }
+  [[nodiscard]] skiff::scene::Look look() const { return skiff::scene::look::scrolled{}; }
   [[nodiscard]] float extent() const noexcept { return fExtent; }
 
   // In a provisional box -- a parent sized by what it holds measuring

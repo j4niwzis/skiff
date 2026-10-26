@@ -107,6 +107,14 @@ if(TARGET skiff::web)
   add_test(NAME skiffWebTests COMMAND skiffWebTests)
 endif()
 
+# A scene's tree mirrored into the in-memory document.
+if(TARGET skiff::mirror)
+  add_executable(skiffMirrorTests ${CMAKE_CURRENT_SOURCE_DIR}/src/mirror.cc)
+  target_link_libraries(skiffMirrorTests PRIVATE gtest gtest_main skiff::mirror)
+  set_target_properties(skiffMirrorTests PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
+  add_test(NAME skiffMirrorTests COMMAND skiffMirrorTests)
+endif()
+
 
 if(ENABLE_TEST_COVERAGE)
   target_compile_options(skiff PRIVATE -O0 -g -fprofile-arcs -ftest-coverage)

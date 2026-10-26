@@ -558,6 +558,7 @@ public:
   [[nodiscard]] const FlowOptions &options() const noexcept {
     return fOptions;
   }
+  [[nodiscard]] skiff::scene::Look look() const { return skiff::scene::look::flow{fOptions}; }
   void setOptions(FlowOptions options) {
     fOptions = options;
     this->invalidateLayout();
@@ -613,6 +614,7 @@ private:
 class Stack : public skiff::scene::Node {
 public:
   FlowOptions fStack{.direction = direction::vertical{}, .wrap = false};
+  [[nodiscard]] skiff::scene::Look look() const { return skiff::scene::look::flow{fStack}; }
 
   void setGap(float gap) {
     fStack.spacingX = gap;

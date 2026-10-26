@@ -2322,6 +2322,8 @@ struct Node : NodeBase {
   }
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
   [[nodiscard]] Semantics semantics() const { return {}; }
+  // A box, unless the node says it is something else (see Look).
+  [[nodiscard]] Look look() const { return look::box{}; }
 #else
   [[nodiscard]] Semantics semantics(this const auto &) { return {}; }
 #endif
@@ -4582,6 +4584,7 @@ struct NodeOps {
   void (*fOnFocusChanged)(void *, bool);
   bool (*fOnClick)(void *, float, float);
   double (*fOwnWakeAt)(void *);
+  Look (*fLook)(void *);
   EventEntries<PointerHandler, PointerEvent, PointerReply> fPointer;
   EventEntries<KeyHandler, KeyEvent, Reply> fKey;
   EventEntries<TextHandler, TextEvent, Reply> fText;
@@ -4767,6 +4770,7 @@ inline constexpr NodeOps kNodeOps{
     +[](void *n, bool focused) { nodeAs<T>(n).onFocusChanged(focused); },
     +[](void *n, float x, float y) -> bool { return walk::clicked(nodeAs<T>(n), x, y, NoCarry{}); },
     +[](void *n) -> double { return walk::ownWakeAt(nodeAs<T>(n)); },
+    +[](void *n) -> Look { return nodeAs<T>(n).look(); },
     EventEntries<PointerHandler, PointerEvent, PointerReply>::of<T>(),
     EventEntries<KeyHandler, KeyEvent, Reply>::of<T>(),
     EventEntries<TextHandler, TextEvent, Reply>::of<T>(),
@@ -4891,6 +4895,7 @@ public:
   [[nodiscard]] bool takesFocusOnPress() const { return fOps->fTakesFocusOnPress(fNode); }
   [[nodiscard]] bool focusChangesAppearance() const { return fOps->fFocusChangesAppearance(fNode); }
   [[nodiscard]] Semantics semantics() const { return fOps->fSemantics(fNode); }
+  [[nodiscard]] Look look() const { return fOps->fLook(fNode); }
   void onFocusChanged(bool focused) { fOps->fOnFocusChanged(fNode, focused); }
   [[nodiscard]] bool onClick(float x, float y) { return fOps->fOnClick(fNode, x, y); }
   // Node's: only a node without one of its own has its defaults run seen so.
