@@ -529,7 +529,10 @@ struct FlowOptions {
 // holds. Said by the node (look()), and through the walks' table where the
 // node is erased; the words are the node's, read while it is there.
 namespace look {
-struct box {};
+// A box: its own colour where it paints one (a plate behind what it holds).
+struct box {
+  std::optional<Colour> colour;
+};
 struct flow {
   FlowOptions options;
 };
@@ -538,6 +541,10 @@ struct words {
   float size = 0.0f;
   Colour colour = 0;
   bool bold = false;
+  // Broken across lines always or never, where it is told (else where it
+  // does not fit, as CSS's text); cut with an ellipsis where it runs out.
+  std::optional<bool> wrapped;
+  bool elided = false;
 };
 struct scrolled {};
 } // namespace look

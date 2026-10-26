@@ -556,7 +556,9 @@ public:
   [[nodiscard]] float fontSize() const noexcept { return fSize; }
   [[nodiscard]] skia::SkColor colour() const noexcept { return fColour; }
   [[nodiscard]] bool bold() const noexcept { return fBold; }
-  [[nodiscard]] skiff::scene::Look look() const { return skiff::scene::look::words{fText, fSize, fColour, fBold}; }
+  [[nodiscard]] skiff::scene::Look look() const {
+    return skiff::scene::look::words{fText, fSize, fColour, fBold, fWrapChoice, fElided};
+  }
 
   // Cut to this width instead of sizing to the text.
   void setMaxWidth(float width) {

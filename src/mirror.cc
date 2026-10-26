@@ -88,9 +88,20 @@ inline void sizeOf(Markup &m, std::string_view property, float size, bool relati
 // A part in a block's flow, across: as wide as what it holds where it says
 // no width of its own (a table: what an engine without fit-content shrinks
 // to its content), and where its alignment puts it.
+// Words are not shrunk: a table is laid out at its narrowest by litehtml,
+// and a text in one was a word a line; they keep the block's width, their
+// lines aligned as the part would be. Nor is a part that paints nothing
+// round itself: as wide as the block or as what it holds, it looks the same.
 inline void acrossInBlock(Markup &m, const scene::State &s, bool relX, float at) {
   const bool sized = relX || (s.fWidth > 0.0f && !s.fAutoSizeAxes.has<scene::axis::x>());
-  if (!sized && displayIs(m, "block")) m.style("display", "table");
+  if (m.fText) {
+    if (!relX && at >= 0.75f) m.style("text-align", "right");
+    else if (!relX && at > 0.25f) m.style("text-align", "center");
+    return;
+  }
+  const bool painted = s.fBackground || s.fBorder || s.fGradient || s.fShadow ||
+                       std::ranges::any_of(m.fStyles, [](const auto &style) { return style.first == "background-color"; });
+  if (!sized && painted && displayIs(m, "block")) m.style("display", "table");
   if (relX) return;
   if (at >= 0.75f) {
     m.style("margin-left", "auto");
@@ -214,9 +225,10 @@ inline void flexOf(Markup &m, const scene::FlowOptions &o) {
                                         o.justify));
 }
 [[nodiscard]] inline Holder kindOf(Markup &m, const scene::Look &look, const std::vector<const scene::State *> &parts) {
-  return spl::visit(spl::overloaded{[&](const scene::look::box &) -> Holder {
+  return spl::visit(spl::overloaded{[&](const scene::look::box &box) -> Holder {
                                       m.style("display", "block");
                                       m.style("position", "relative");
+                                      if (box.colour) m.style("background-color", rgba(*box.colour));
                                       return in_cell{};
                                     },
                                     [&](const scene::look::flow &flow) -> Holder {
@@ -236,6 +248,13 @@ inline void flexOf(Markup &m, const scene::FlowOptions &o) {
                                       m.style("line-height", number(1.25f));
                                       m.style("color", rgba(words.colour));
                                       if (words.bold) m.style("font-weight", "bold");
+                                      if (words.elided) {
+                                        m.style("white-space", "nowrap");
+                                        m.style("overflow", "hidden");
+                                        m.style("text-overflow", "ellipsis");
+                                      } else if (words.wrapped == std::optional<bool>(false)) {
+                                        m.style("white-space", "pre");
+                                      }
                                       m.text(words.text);
                                       return in_cell{};
                                     },

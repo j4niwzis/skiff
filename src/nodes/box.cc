@@ -22,6 +22,10 @@ public:
     this->markDamaged();
   }
   [[nodiscard]] skia::SkColor colour() const noexcept { return fColour; }
+  // A box painting its colour behind what it holds.
+  [[nodiscard]] skiff::scene::Look look() const {
+    return skiff::scene::look::box{(fColour >> 24) != 0 ? std::optional<skiff::scene::Colour>(fColour) : std::nullopt};
+  }
 
   void forEachChild(auto &&f) {
     std::apply([&](auto &...each) { (f(each), ...); }, fChildren);
