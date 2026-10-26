@@ -77,7 +77,7 @@ inline auto preview_of(const Previewed &one) {
 }
 using PreviewOf = decltype(preview_of(Previewed{}));
 struct Flick {
-  std::optional<int> operator()(bool) const { return std::nullopt; }
+  std::optional<scene::Taken> operator()(bool) const { return std::nullopt; }
 };
 struct Query {
   std::string text;
