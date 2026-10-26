@@ -25,6 +25,7 @@ export module skiff.mirror;
 import std;
 import splice;
 import skia;
+import skiff.paint;
 import skiff.scene;
 import skiff.bind;
 import skiff.web;
@@ -288,6 +289,198 @@ inline void flexOf(Markup &m, const scene::FlowOptions &o) {
                     first);
 }
 
+// What a node that paints itself paints (drawSelf through the painter), as
+// elements of its own element: plates, rounded or round, their edges, lines
+// across or down, and text, each placed where it is painted. A painter
+// still: drawn into a canvas whose drawing goes nowhere, so that whatever it
+// is asked that is not shadowed here is done there and lost -- and said lost
+// (a path, an arc, a picture), for the node to be painted by skiff instead.
+class HtmlPainter : public skiff::paint::Painter {
+public:
+  HtmlPainter(skia::SkCanvas *discarded, skia::SkFont &font, Markup &into, const skia::SkRect &box)
+      : Painter(discarded, font), fFont(font), fInto(&into), fLeft(box.fLeft), fTop(box.fTop) {}
+
+  [[nodiscard]] bool lost() const noexcept { return fLost; }
+  [[nodiscard]] std::size_t parts() const noexcept { return fPart; }
+
+  void save() const { fSaved.push_back({fX, fY}); }
+  void restore() const {
+    if (fSaved.empty()) return;
+    std::tie(fX, fY) = fSaved.back();
+    fSaved.pop_back();
+  }
+  void translate(float dx, float dy) const {
+    fX += dx;
+    fY += dy;
+  }
+  void rotate(float) const { fLost = true; }
+  // Clips: what is drawn is drawn whole (the element's own masking cuts it).
+  void clipRect(const skia::SkRect &) const {}
+  void clipRounded(const skia::SkRect &, float) const {}
+  void clipOval(const skia::SkRect &) const {}
+  void clip(const skia::SkRRect &) const {}
+
+  void fillRect(const skia::SkRect &rect, skia::SkColor color, float alpha = 1.0f) const { this->plate(rect, 0.0f, color, alpha); }
+  void fillRounded(const skia::SkRect &rect, float radius, skia::SkColor color, float alpha = 1.0f) const {
+    this->plate(rect, radius, color, alpha);
+  }
+  void fill(const skia::SkRRect &shape, skia::SkColor color, float alpha = 1.0f) const {
+    this->plate(shape.rect(), shape.radii(skia::SkRRect::kUpperLeft_Corner).fX, color, alpha);
+  }
+  void circle(float cx, float cy, float r, skia::SkColor color, float alpha = 1.0f) const {
+    this->plate(skia::SkRect::MakeLTRB(cx - r, cy - r, cx + r, cy + r), r, color, alpha);
+  }
+  void strokeRounded(const skia::SkRect &rect, float radius, skia::SkColor color, float width, float alpha = 1.0f) const {
+    this->edge(rect, radius, width, color, alpha);
+  }
+  void stroke(const skia::SkRRect &shape, float width, skia::SkColor color, float alpha = 1.0f) const {
+    this->edge(shape.rect(), shape.radii(skia::SkRRect::kUpperLeft_Corner).fX, width, color, alpha);
+  }
+  void strokeCircle(float cx, float cy, float r, float width, skia::SkColor color, float alpha) const {
+    this->edge(skia::SkRect::MakeLTRB(cx - r, cy - r, cx + r, cy + r), r, width, color, alpha);
+  }
+  // A line across or down: a plate as thick as the line. Slanted: lost.
+  void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, bool = true) const {
+    if (y1 == y2)
+      this->plate(skia::SkRect::MakeLTRB(std::min(x1, x2), y1 - width * 0.5f, std::max(x1, x2), y1 + width * 0.5f), 0.0f, color, alpha);
+    else if (x1 == x2)
+      this->plate(skia::SkRect::MakeLTRB(x1 - width * 0.5f, std::min(y1, y2), x1 + width * 0.5f, std::max(y1, y2)), 0.0f, color, alpha);
+    else
+      fLost = true;
+  }
+  void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, Cap) const {
+    this->line(x1, y1, x2, y2, width, color, alpha, true);
+  }
+  void verticalGradient(const skia::SkRect &rect, skia::SkColor top, skia::SkColor, float alpha = 1.0f) const {
+    this->plate(rect, 0.0f, top, alpha);
+  }
+  // What has no element of its own here: lost, the node painted by skiff.
+  void arc(const skia::SkRect &, float, float, float, skia::SkColor, float) const { fLost = true; }
+  void fillArc(const skia::SkRect &, float, float, skia::SkColor, float) const { fLost = true; }
+  void fill(const Path &, skia::SkColor, float) const { fLost = true; }
+  void fill(const skia::SkPath &, skia::SkColor, float = 1.0f) const { fLost = true; }
+  void stroke(const Path &, float, skia::SkColor, float, Cap, bool) const { fLost = true; }
+  void stroke(const Path &, float, skia::SkColor, float, bool = true) const { fLost = true; }
+  void imageFilled(const skia::SkImage *image, const skia::SkRect &, float = 1.0f) const { fLost = fLost || image != nullptr; }
+  void image(const skia::SkImage *image, const skia::SkRect &, float = 1.0f, Sampling = Sampling::linear) const { fLost = fLost || image != nullptr; }
+  void imagePart(const skia::SkImage *image, const skia::SkRect &, const skia::SkRect &, float = 1.0f, Sampling = Sampling::linear) const {
+    fLost = fLost || image != nullptr;
+  }
+  template <class Shape>
+  void imageThrough(const Shape &, const skia::SkImage *image, const skia::SkRect &, float, Sampling = Sampling::linear) const {
+    fLost = fLost || image != nullptr;
+  }
+
+  // Text, from its baseline: its line put where the face's ascent says.
+  void text(const std::string &str, float x, float y, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false) const {
+    this->words(str, x, y, size, color, alpha, bold, std::nullopt);
+  }
+  void text(const std::string &str, float x, float y, float size, skia::SkColor color, float alpha, skiff::paint::TextFace face) const {
+    this->words(str, x, y, size, color, alpha, face.bold, std::nullopt);
+  }
+  void textClipped(const std::string &str, float x, float y, float maxW, float size, skia::SkColor color, float alpha = 1.0f,
+                   bool bold = false) const {
+    this->words(str, x, y, size, color, alpha, bold, maxW);
+  }
+  void textCentered(const std::string &str, float cx, float y, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false) const {
+    const float w = this->measure(str, size, bold);
+    this->words(str, cx - w * 0.5f, y, size, color, alpha, bold, std::nullopt);
+  }
+  void textCenteredClipped(const std::string &str, float cx, float y, float maxW, float size, skia::SkColor color, float alpha = 1.0f,
+                           bool bold = false) const {
+    const float w = std::min(maxW, this->measure(str, size, bold));
+    this->words(str, cx - w * 0.5f, y, size, color, alpha, bold, maxW);
+  }
+  void textElided(const std::string &str, float x, float y, float maxW, float size, skia::SkColor color, float alpha = 1.0f,
+                  bool bold = false) const {
+    this->words(this->elide(str, maxW, size, bold), x, y, size, color, alpha, bold, maxW);
+  }
+  void textElidedIn(const skia::SkRect &box, const std::string &str, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false,
+                    float inset = 0.0f) const {
+    this->textElided(str, box.fLeft + inset, this->middleBaseline(box, size), box.width() - inset * 2.0f, size, color, alpha, bold);
+  }
+  void textIn(const skia::SkRect &box, const std::string &str, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false,
+              float inset = 0.0f) const {
+    this->textClipped(str, box.fLeft + inset, this->middleBaseline(box, size), box.width() - inset * 2.0f, size, color, alpha, bold);
+  }
+  void textCentredIn(const skia::SkRect &box, const std::string &str, float size, skia::SkColor color, float alpha = 1.0f,
+                     bool bold = false, float inset = 0.0f) const {
+    this->textCenteredClipped(str, box.centerX(), this->middleBaseline(box, size), box.width() - inset * 2.0f, size, color, alpha, bold);
+  }
+  void textShadowed(const std::string &str, float cx, float y, float size, skia::SkColor color, float alpha = 1.0f) const {
+    this->textCentered(str, cx, y, size, color, alpha);
+  }
+
+private:
+  // Where a box of the painting is in the element: moved as it was
+  // translated, from the node's own box.
+  [[nodiscard]] skia::SkRect placed(const skia::SkRect &r) const { return r.makeOffset(fX - fLeft, fY - fTop); }
+  [[nodiscard]] static std::string colourOf(skia::SkColor c, float alpha) {
+    const float a = static_cast<float>((c >> 24) & 0xffu) / 255.0f * std::clamp(alpha, 0.0f, 1.0f);
+    const auto byte = static_cast<scene::Colour>(std::lround(a * 255.0f));
+    return rgba((byte << 24) | (c & 0x00ffffffu));
+  }
+  void element(auto &&write) const {
+    fInto->inner("div", skiff::web::Part{static_cast<std::uint32_t>(++fPart)}, [&](Markup &e) {
+      e.style("position", "absolute");
+      write(e);
+    });
+  }
+  void at(Markup &e, const skia::SkRect &r) const {
+    e.style("left", px(r.fLeft));
+    e.style("top", px(r.fTop));
+    e.style("width", px(r.width()));
+    e.style("height", px(r.height()));
+  }
+  void plate(const skia::SkRect &rect, float radius, skia::SkColor color, float alpha) const {
+    if (((color >> 24) & 0xffu) == 0 || alpha <= 0.0f || rect.isEmpty()) return;
+    this->element([&](Markup &e) {
+      this->at(e, this->placed(rect));
+      e.style("background-color", colourOf(color, alpha));
+      if (radius > 0.0f) e.style("border-radius", px(radius));
+    });
+  }
+  void edge(const skia::SkRect &rect, float radius, float width, skia::SkColor color, float alpha) const {
+    if (((color >> 24) & 0xffu) == 0 || alpha <= 0.0f || width <= 0.0f) return;
+    // The stroke centred on the box's edge, as Skia strokes it.
+    const skia::SkRect outer = this->placed(rect).makeOutset(width * 0.5f, width * 0.5f);
+    this->element([&](Markup &e) {
+      this->at(e, outer);
+      e.style("box-sizing", "border-box");
+      e.style("border", px(width) + " solid " + colourOf(color, alpha));
+      if (radius > 0.0f) e.style("border-radius", px(radius + width * 0.5f));
+    });
+  }
+  void words(const std::string &str, float x, float baseline, float size, skia::SkColor color, float alpha, bool bold,
+             std::optional<float> width) const {
+    if (str.empty() || ((color >> 24) & 0xffu) == 0 || alpha <= 0.0f) return;
+    fFont.setSize(size);
+    skia::SkFontMetrics metrics;
+    (void)fFont.getMetrics(&metrics);
+    this->element([&](Markup &e) {
+      e.style("left", px(x + fX - fLeft));
+      e.style("top", px(baseline + metrics.fAscent + fY - fTop));
+      if (width) {
+        e.style("width", px(*width));
+        e.style("overflow", "hidden");
+      }
+      e.style("white-space", "pre");
+      e.style("font-size", px(size));
+      e.style("color", colourOf(color, alpha));
+      if (bold) e.style("font-weight", "bold");
+      e.text(str);
+    });
+  }
+
+  skia::SkFont &fFont;
+  Markup *fInto;
+  float fLeft, fTop;
+  mutable float fX = 0.0f, fY = 0.0f;
+  mutable std::vector<std::pair<float, float>> fSaved;
+  mutable std::size_t fPart = 0;
+  mutable bool fLost = false;
+};
+
 // A child's State: its own, or as the walks' table says, where it is erased.
 template <class N> [[nodiscard]] const scene::State &stateOfPart(N &node) { return node.fState; }
 [[nodiscard]] inline const scene::State &stateOfPart(scene::AnyNodeRef &ref) { return scene::ErasedNode(ref).fState; }
@@ -308,6 +501,7 @@ public:
     std::erase_if(fShown, [&](auto &kept) {
       if (kept.second.seen == fPass) return false;
       fNodeOf.erase(kept.second.handle);
+      for (const auto &[part, h] : kept.second.inner) dom::destroy(h);
       dom::destroy(kept.second.handle);
       return true;
     });
@@ -362,12 +556,15 @@ public:
     return found == fShown.end() ? dom::kNone : found->second.handle;
   }
   [[nodiscard]] std::size_t size() const noexcept { return fShown.size(); }
+  // How many nodes painting themselves were written as elements, all told.
+  [[nodiscard]] std::size_t recorded() const noexcept { return fRecorded; }
 
 private:
   struct Shown {
     dom::Handle handle = dom::kNone;
     Markup markup;
     std::vector<dom::Handle> children;
+    std::vector<std::pair<skiff::web::Part, dom::Handle>> inner;
     std::uint64_t seen = 0;
   };
 
@@ -375,20 +572,45 @@ private:
   // walks' table says; either way its state, its look, whether it takes a
   // press, and its children in their order.
   template <class N> dom::Handle visit(N &node, const detail::Holder &holder) {
-    return this->write(node.fState, node.look(), node.acceptsInput(), holder,
-                       [&](auto &&each) { scene::eachChild(node, each); });
+    return this->write(node.fState, node.look(), node.acceptsInput(), holder, [&](auto &&each) { scene::eachChild(node, each); },
+                       [&](Markup &into) { return this->record(node, into); });
   }
   dom::Handle visit(scene::AnyNodeRef &ref, const detail::Holder &holder) {
     scene::ErasedNode node(ref);
-    return this->write(node.fState, node.look(), node.acceptsInput(), holder,
-                       [&](auto &&each) { node.forEachChild(each); });
+    return this->write(node.fState, node.look(), node.acceptsInput(), holder, [&](auto &&each) { node.forEachChild(each); },
+                       [](Markup &) { return false; });
   }
-  template <class Children>
+  // A node that paints itself, recorded as elements where all it paints has
+  // one (HtmlPainter); whether it was. Else -- a path, a picture; an erased
+  // node -- skiff paints it.
+  template <class N> bool record(N &node, Markup &into) {
+    if constexpr (requires(N &n, detail::HtmlPainter &p) { n.drawSelf(p, 1.0f); }) {
+      // The program's face, for where text sits on its line; a default one
+      // where none was loaded (a test).
+      const skia::SkFont *font = skiff::paint::defaultFont();
+      skia::SkFont face = font != nullptr ? *font : skia::SkFont();
+      skia::SkPictureRecorder discarded;
+      skia::SkCanvas *canvas = discarded.beginRecording(node.fState.fBounds);
+      Markup drawn;
+      detail::HtmlPainter p(canvas, face, drawn, node.fState.fBounds);
+      node.drawSelf(p, 1.0f);
+      if (p.lost()) return false;
+      into.fInner.append_range(std::move(drawn.fInner));
+      ++fRecorded;
+      return true;
+    } else {
+      return false;
+    }
+  }
+  template <class Children, class Records>
   dom::Handle write(const scene::State &state, const scene::Look &look, bool pressable, const detail::Holder &holder,
-                    Children &&children) {
-    // Drawn by skiff: a leaf here, of the size skiff laid it out at where it
-    // says none -- what is in it, skiff's to paint (paintDrawn).
-    const bool drawn = spl::visit(spl::overloaded{[](const scene::look::drawn &) { return true; }, [](const auto &) { return false; }}, look);
+                    Children &&children, Records &&records) {
+    // A node that paints itself: as elements, where what it paints has them
+    // (recorded below); else a leaf here, of the size skiff laid it out at
+    // where it says none -- what is in it, skiff's to paint (paintDrawn).
+    const bool paints = spl::visit(spl::overloaded{[](const scene::look::drawn &) { return true; }, [](const auto &) { return false; }}, look);
+    Markup recorded;
+    const bool drawn = paints && !records(recorded);
     // Its parts' States first: whether it needs a flex box depends on them.
     std::vector<const scene::State *> parts;
     if (!drawn)
@@ -396,12 +618,17 @@ private:
     Markup now;
     const detail::Holder theirs = detail::kindOf(now, look, parts);
     detail::stateOf(now, state, holder);
-    if (drawn) {
+    if (paints) {
       const auto unsized = [&](std::string_view property) {
         return std::ranges::none_of(now.fStyles, [&](const auto &style) { return style.first == property; });
       };
       if (unsized("width") && state.fBounds.width() > 0.0f) now.style("width", skiff::web::px(state.fBounds.width()));
       if (unsized("height") && state.fBounds.height() > 0.0f) now.style("height", skiff::web::px(state.fBounds.height()));
+    }
+    if (paints && !drawn) {
+      // Painted as elements: not skiff's to paint.
+      std::erase_if(now.fAttrs, [](const auto &one) { return one.first == "data-skiff-draw"; });
+      now.fInner = std::move(recorded.fInner);
     }
     if (pressable) {
       now.listen("click");
@@ -418,6 +645,14 @@ private:
     now.attr("data-skiff-h", std::to_string(shown.handle));
     shown.seen = fPass;
     skiff::web::detail::writeOwn(shown.handle, now, shown.markup);
+    // The elements it makes in itself (what it paints, as elements): kept by
+    // their part, written where they changed, made where new, dropped where
+    // gone -- as skiff.web writes a node's.
+    std::vector<std::pair<skiff::web::Part, dom::Handle>> kept;
+    skiff::web::detail::writeInner(shown.handle, now.fInner, shown.markup.fInner, shown.inner, kept);
+    for (const auto &[part, h] : shown.inner)
+      if (!std::ranges::contains(kept, h, &std::pair<skiff::web::Part, dom::Handle>::second)) dom::destroy(h);
+    shown.inner = std::move(kept);
     shown.markup = std::move(now);
     const dom::Handle handle = shown.handle;
     // Children: each visited, then put in their order where it moved. The
@@ -474,6 +709,7 @@ private:
   std::unordered_map<scene::NodeId, Shown> fShown;
   std::unordered_map<dom::Handle, scene::NodeId> fNodeOf;
   std::vector<dom::Handle> fTop;
+  std::size_t fRecorded = 0;
 };
 
 } // namespace skiff::mirror

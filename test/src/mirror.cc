@@ -11,6 +11,7 @@ import skiff.compose;
 import skiff.nodes;
 import skiff.web;
 import skiff.mirror;
+import skia;
 
 #include "gtest/gtest-macros.h"
 
@@ -123,6 +124,56 @@ TEST(Mirror, AClickOnAnElementIsTheScenesClickOnItsNode) {
   EXPECT_TRUE(pressed);
   EXPECT_EQ(m.look<Count>()->n, 1);
   scene::hostWork().laidOutElsewhere = false;
+}
+
+// A widget painting itself as Button does: a rounded plate, its edge, its
+// label centred.
+struct Plate : scene::Node {
+  Plate() { fState.apply({.width = 120.0f, .height = 32.0f}); }
+  template <class P> void drawSelf(P &p, float alpha) {
+    p.fillRounded(fState.fBounds, 6.0f, 0xff3366ccu, alpha);
+    p.strokeRounded(fState.fBounds, 6.0f, 0xff112233u, 2.0f, alpha);
+    p.textCentredIn(fState.fBounds, "Send", 13.0f, 0xffffffffu, alpha, true);
+  }
+};
+// And one painting a path: not to be had as elements -- skiff paints it.
+struct Mark : scene::Node {
+  Mark() { fState.apply({.width = 16.0f, .height = 16.0f}); }
+  template <class P> void drawSelf(P &p, float alpha) {
+    typename P::Path path;
+    path.moveTo(0.0f, 0.0f).lineTo(16.0f, 8.0f).lineTo(0.0f, 16.0f).close();
+    p.fill(path, 0xff000000u, alpha);
+  }
+};
+
+TEST(Mirror, AWidgetPaintingItselfIsWrittenAsElements) {
+  // As its scene's root: seen by its type in every build (a column's parts
+  // are seen through the walks' table outside a release build, and are
+  // painted by skiff there).
+  dom::reset();
+  scene::Scene tree(Plate{});
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  const std::string html = dom::dump(dom::root());
+  // The plate and its edge: elements of its own, rounded; its label, text.
+  EXPECT_TRUE(html.contains("background-color:rgba(51,102,204,1);border-radius:6px;")) << html;
+  EXPECT_TRUE(html.contains("border:2px solid rgba(17,34,51,1);")) << html;
+  EXPECT_TRUE(html.contains(">Send<")) << html;
+  EXPECT_FALSE(html.contains("data-skiff-draw")) << html;
+  EXPECT_EQ(shown.recorded(), 1u);
+}
+
+TEST(Mirror, AWidgetPaintingAPathIsPaintedBySkiff) {
+  dom::reset();
+  scene::Scene tree(Mark{});
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  const std::string html = dom::dump(dom::root());
+  EXPECT_TRUE(html.contains("data-skiff-draw")) << html;
+  EXPECT_TRUE(html.contains("width:16px;")) << html;
+  EXPECT_EQ(shown.recorded(), 0u);
 }
 
 } // namespace
