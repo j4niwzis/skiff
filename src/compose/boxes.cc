@@ -317,8 +317,10 @@ struct Held : Stacked {
     // button over a held tab (a combinator's wrapper no one erased) was no
     // grower yet at the first layout -- a category tab 0 wide until a later
     // one laid the row out again.
-    if (parts.held)
+    if (parts.held) {
       this->adopt();
+      this->followAgain(scene::stateOf(parts.held));
+    }
     this->fState.fVisible = fHeldShown && (!parts.held || scene::stateOf(parts.held).fVisible);
     return this->fState;
   }
@@ -395,6 +397,8 @@ private:
   void (*fSpecTo)(void *, const scene::Spec &) = nullptr;
   // Not a part: nothing walks it.
   own_t fOwn;
+  // The content's size as following it left it (followSize).
+  own_t fFollowed;
   // Shown, as the wrapper itself says.
   // Whether the wrapper is shown, as said to it: named so that nothing
   // derived from a wrapper hides it -- Bound's own fShown (whether it was
@@ -436,6 +440,28 @@ private:
     spec.visible.reset();
     return spec;
   }
+  // The content told a size of its own since the wrapper last followed it
+  // -- a spec_for's spec, read once the model was, after the wrapper was
+  // adopted: what changed taken as the content's own now, and followed.
+  // Followed only as it was adopted, the wrapper kept the size it had then:
+  // mux's accounts list, made narrow (as wide as its parent) after the
+  // wrapper had taken its width from it, was 0 wide -- the wrapper as wide
+  // as its content, the content as wide as the wrapper.
+  void followAgain(scene::State &node) {
+    if (node.fWidth == fFollowed.width && node.fHeight == fFollowed.height &&
+        node.fRelativeSizeAxes == fFollowed.relative && node.fAutoSizeAxes == fFollowed.autoSize)
+      return;
+    if (node.fWidth != fFollowed.width)
+      fOwn.width = node.fWidth;
+    if (node.fHeight != fFollowed.height)
+      fOwn.height = node.fHeight;
+    if (!(node.fRelativeSizeAxes == fFollowed.relative))
+      fOwn.relative = node.fRelativeSizeAxes;
+    if (!(node.fAutoSizeAxes == fFollowed.autoSize))
+      fOwn.autoSize = node.fAutoSizeAxes;
+    restore(node);
+    followSize(node);
+  }
   void restore(scene::State &node) const {
     node.fWidth = fOwn.width;
     node.fHeight = fOwn.height;
@@ -448,6 +474,9 @@ private:
                  .autoSize = node.fAutoSizeAxes};
     this->followAxis<scene::axis::x>(node, node.fWidth, this->fState.fWidth);
     this->followAxis<scene::axis::y>(node, node.fHeight, this->fState.fHeight);
+    // What the content was left as: a change from it is the content's own.
+    fFollowed = {.width = node.fWidth, .height = node.fHeight, .relative = node.fRelativeSizeAxes,
+                 .autoSize = node.fAutoSizeAxes};
   }
   template <class Axis> void followAxis(scene::State &node, float &nodeSize, float &mySize) {
     scene::State &mine = this->fState;
