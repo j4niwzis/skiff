@@ -553,6 +553,12 @@ public:
   [[nodiscard]] bool scaled() const {
     return std::ranges::any_of(fStyles, [](const Styled& one) { return one.scale != 1.0f; });
   }
+  // A link's picture -- a custom emoji's, in place of its range -- as the
+  // text's Pictures have it; none where they have none yet.
+  [[nodiscard]] const skia::SkImage *pictureOf(const Link &link) const {
+    const skia::Sp<skia::SkImage> *picture = fPictures.picture(link.target);
+    return picture != nullptr && *picture ? picture->get() : nullptr;
+  }
   [[nodiscard]] float fontSize() const noexcept { return fSize; }
   [[nodiscard]] skia::SkColor colour() const noexcept { return fColour; }
   [[nodiscard]] bool bold() const noexcept { return fBold; }

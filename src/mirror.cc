@@ -175,7 +175,8 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
 // on a faint plate; a quote in the quote's colour; a stretch pointed at on
 // a plate of it; a spoiler hidden under a plate; its own colour and plate;
 // a heading's size; a link in the links' colour, a mention on a plate.
-inline void runsOf(Markup &m, const scene::look::words &words) {
+template <class PictureOf>
+void runsOf(Markup &m, const scene::look::words &words, PictureOf &&pictureOf, std::vector<std::pair<std::uint32_t, const skia::SkImage *>> &pictures) {
   std::vector<std::size_t> cuts{0, words.text.size()};
   for (const scene::TextStyled &one : words.styles) cuts.insert(cuts.end(), {one.first, one.last});
   for (const scene::TextLink &one : words.links) cuts.insert(cuts.end(), {one.first, one.last});
@@ -202,7 +203,23 @@ inline void runsOf(Markup &m, const scene::look::words &words) {
       if (one.background) style.background = one.background;
       if (one.scale != 1.0f) style.scale = one.scale;
     }
-    m.inner(link ? "a" : "span", skiff::web::Part{static_cast<std::uint32_t>(index + 1)}, [&](Markup &run) {
+    const auto part = static_cast<std::uint32_t>(index + 1);
+    // A custom emoji: its picture, in place of the placeholder its range is,
+    // as tall as the text draws it.
+    if (link && link->picture) {
+      if (const skia::SkImage *picture = pictureOf(*link)) {
+        m.inner("img", skiff::web::Part{part}, [&](Markup &img) {
+          img.style("width", px(words.size * 1.2f));
+          img.style("height", px(words.size * 1.2f));
+          img.style("vertical-align", "middle");
+          img.attr("alt", link->plain);
+          img.attr("data-skiff-picture", std::to_string(picture->uniqueID()));
+        });
+        pictures.emplace_back(part, picture);
+        continue;
+      }
+    }
+    m.inner(link ? "a" : "span", skiff::web::Part{part}, [&](Markup &run) {
       run.text(words.text.substr(from, to - from));
       const scene::Colour colour = link ? words.linkColour : style.colour.value_or(style.quote ? words.quoteColour : words.colour);
       run.style("color", rgba(colour));
@@ -252,7 +269,9 @@ inline void flexOf(Markup &m, const scene::FlowOptions &o) {
                                                         [](scene::justify::space_around) { return "space-around"; }},
                                         o.justify));
 }
-[[nodiscard]] inline Holder kindOf(Markup &m, const scene::Look &look) {
+template <class PictureOf>
+[[nodiscard]] Holder kindOf(Markup &m, const scene::Look &look, PictureOf &&pictureOf,
+                            std::vector<std::pair<std::uint32_t, const skia::SkImage *>> &pictures) {
   return spl::visit(spl::overloaded{[&](const scene::look::box &box) -> Holder {
                                       m.style("display", "grid");
                                       m.style("position", "relative");
@@ -281,7 +300,7 @@ inline void flexOf(Markup &m, const scene::FlowOptions &o) {
                                       if (words.styles.empty() && words.links.empty())
                                         m.text(words.text);
                                       else
-                                        runsOf(m, words);
+                                        runsOf(m, words, pictureOf, pictures);
                                       return in_cell{};
                                     },
                                     [&](const scene::look::scrolled &) -> Holder {
@@ -755,7 +774,15 @@ private:
   // press, and its children in their order.
   template <class N> dom::Handle visit(N &node, const detail::Holder &holder) {
     return this->write(node.fState, node.look(), node.acceptsInput(), holder, [&](auto &&each) { scene::eachChild(node, each); },
-                       [&](Markup &into, Pictures &pictures) { return this->record(node, into, pictures); }, [&] { return scrolledOf(node); });
+                       [&](Markup &into, Pictures &pictures) { return this->record(node, into, pictures); }, [&] { return scrolledOf(node); },
+                       [&](const scene::TextLink &link) { return pictureOf(node, link); });
+  }
+  // A text's link's picture (a custom emoji), where the node is a text.
+  template <class N> [[nodiscard]] static const skia::SkImage *pictureOf(N &node, const scene::TextLink &link) {
+    if constexpr (requires(const N &n) { { n.pictureOf(link) } -> std::convertible_to<const skia::SkImage *>; })
+      return node.pictureOf(link);
+    else
+      return nullptr;
   }
   // How far a view that scrolls is scrolled, as skiff has it: none for what
   // does not scroll.
@@ -772,7 +799,7 @@ private:
                          this->notNative("a node seen through the walks' table", "not a release build: what it paints not written");
                          return false;
                        },
-                       [] { return std::optional<float>(); });
+                       [] { return std::optional<float>(); }, [](const scene::TextLink &) -> const skia::SkImage * { return nullptr; });
   }
   // A node that paints itself, recorded as elements where all it paints has
   // one (HtmlPainter); whether it was. Else -- a path, a picture; an erased
@@ -807,17 +834,17 @@ private:
     }
   }
 
-  template <class Children, class Records, class Scrolled>
+  template <class Children, class Records, class Scrolled, class PictureOf>
   dom::Handle write(const scene::State &state, const scene::Look &look, bool pressable, const detail::Holder &holder,
-                    Children &&children, Records &&records, Scrolled &&scrolled) {
+                    Children &&children, Records &&records, Scrolled &&scrolled, PictureOf &&pictureOf) {
     Markup now;
-    const detail::Holder theirs = detail::kindOf(now, look);
+    Pictures pictures;
+    const detail::Holder theirs = detail::kindOf(now, look, pictureOf, pictures);
     detail::stateOf(now, state, holder);
     // A node that paints itself: what it paints, as elements of its own --
     // its size skiff's where it says none. Where something of it has no
     // element (a picture), it is said not native, and that is not shown.
     const bool paints = spl::visit(spl::overloaded{[](const scene::look::drawn &) { return true; }, [](const auto &) { return false; }}, look);
-    Pictures pictures;
     if (paints) {
       const auto unsized = [&](std::string_view property) {
         return std::ranges::none_of(now.fStyles, [&](const auto &style) { return style.first == property; });
@@ -825,7 +852,11 @@ private:
       if (unsized("width") && state.fBounds.width() > 0.0f) now.style("width", skiff::web::px(state.fBounds.width()));
       if (unsized("height") && state.fBounds.height() > 0.0f) now.style("height", skiff::web::px(state.fBounds.height()));
       Markup recorded;
-      if (records(recorded, pictures)) now.fInner = std::move(recorded.fInner);
+      Pictures painted;
+      if (records(recorded, painted)) {
+        now.fInner = std::move(recorded.fInner);
+        pictures.append_range(std::move(painted));
+      }
     }
     if (pressable) {
       now.listen("click");
