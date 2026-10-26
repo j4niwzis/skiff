@@ -10,8 +10,9 @@ import :dom;
 
 export namespace skiff::web::blitz {
 
-// The viewport, in physical pixels, and how many of them a CSS pixel is.
-void viewport(std::uint32_t width, std::uint32_t height, float scale);
+// The viewport, in physical pixels, how many of them a CSS pixel is, and
+// how far the page is zoomed (the interface's scale).
+void viewport(std::uint32_t width, std::uint32_t height, float scale, float zoom);
 // The page's own rules, beside each element's style.
 void addCss(std::string_view css);
 // Styles and layout brought up to date with what was changed since.
@@ -46,6 +47,15 @@ struct box {
 [[nodiscard]] std::optional<box> boxOf(dom::Handle element);
 // The element with the engine's focus (a field typed into), or none.
 [[nodiscard]] dom::Handle focused();
+// What the engine asks of its host: text it copied (to be put on the
+// clipboard), a paste (answered with the clipboard's text), where an input
+// method's window goes, the pointer's shape.
+[[nodiscard]] std::optional<std::string> takeCopied();
+[[nodiscard]] bool takePasteRequest();
+void paste(std::string_view text);
+[[nodiscard]] std::optional<box> takeImeArea();
+enum class cursor { arrow, hand, text, resize_across, resize_down, not_allowed, wait };
+[[nodiscard]] cursor cursorShape();
 // The fields the engine edited since, oldest first: each element and its
 // value now.
 [[nodiscard]] std::vector<std::pair<dom::Handle, std::string>> takeEdits();

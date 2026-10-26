@@ -22,6 +22,7 @@ anyrender_vello_cpu = { version = "0.18.0", features = ["multithreading"] }
 peniko = "0.6.0"
 keyboard-types = "0.8"
 atomic_refcell = "0.1.13"
+cursor-icon = "1"
 
 [profile.release]
 debug = false

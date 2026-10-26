@@ -451,21 +451,27 @@ if(SKIFF_WEB)
   if(SKIFF_EMSCRIPTEN)
     target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_em.cc)
   elseif(SKIFF_WEB_DOM STREQUAL "blitz")
-    find_program(SKIFF_CARGO cargo REQUIRED)
-    set(skiff_blitz_target ${CMAKE_CURRENT_BINARY_DIR}/skiff-blitz)
-    set(skiff_blitz_lib ${skiff_blitz_target}/release/${CMAKE_STATIC_LIBRARY_PREFIX}skiff_blitz${CMAKE_STATIC_LIBRARY_SUFFIX})
-    add_custom_command(OUTPUT ${skiff_blitz_lib}
-      COMMAND ${SKIFF_CARGO} build --release --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/web/blitz/Cargo.toml
-              --target-dir ${skiff_blitz_target}
-      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/web/blitz/Cargo.toml ${CMAKE_CURRENT_SOURCE_DIR}/src/web/blitz/src/lib.rs
-      COMMENT "skiff-blitz: Blitz, built by cargo"
-      USES_TERMINAL)
-    add_custom_target(skiff_blitz_build DEPENDS ${skiff_blitz_lib})
-    add_dependencies(skiff_web skiff_blitz_build)
-    find_package(Threads REQUIRED)
+    # skiff-blitz, the Rust crate here (src/web/blitz), built through
+    # cmake-everywhere's cargo import as a port of a source in this tree:
+    # its rustc invocations in this build's graph, its C and C++ compiled by
+    # this build's compilers, and what it needs to link asked of rustc. Its
+    # Cargo.lock pins what is built.
+    if(NOT COMMAND cme_declare_port)
+      message(FATAL_ERROR "skiff: SKIFF_WEB_DOM=blitz builds skiff-blitz through cmake-everywhere's cargo import")
+    endif()
+    cme_declare_port(
+      NAME skiff-blitz
+      PROVIDES skiff-blitz skiff_blitz
+      VERSION 0.1.0
+      IMPORT cargo
+      SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/web/blitz"
+      LICENSE AGPL-3.0-only
+      TARGETS skiff::blitz-engine
+    )
+    find_package(skiff-blitz REQUIRED)
     target_sources(skiff_web PUBLIC FILE_SET CXX_MODULES FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/web/blitz.cc)
     target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_blitz.cc)
-    target_link_libraries(skiff_web PUBLIC $<BUILD_INTERFACE:${skiff_blitz_lib}> Threads::Threads ${CMAKE_DL_LIBS} m)
+    target_link_libraries(skiff_web PUBLIC $<BUILD_INTERFACE:skiff::blitz-engine>)
   else()
     target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_fake.cc)
   endif()

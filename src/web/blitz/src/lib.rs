@@ -17,6 +17,38 @@ use blitz_traits::events::{
     MouseEventButtons, PointerCoords, PointerDetails, UiEvent,
 };
 use keyboard_types::{Code, Key, Location, Modifiers, NamedKey};
+use blitz_traits::shell::{ClipboardError, ShellProvider};
+use cursor_icon::CursorIcon;
+use std::sync::Mutex;
+
+// What the document asks of its host -- text put on the clipboard, text
+// asked of it, the pointer's shape, where an input method's window goes --
+// kept for the host to take.
+#[derive(Default)]
+struct Asked {
+    copied: Option<String>,
+    paste: bool,
+    cursor: Option<CursorIcon>,
+    ime: Option<(f32, f32, f32, f32)>,
+}
+#[derive(Default)]
+struct Shell(Mutex<Asked>);
+impl ShellProvider for Shell {
+    fn set_cursor(&self, icon: Option<CursorIcon>) {
+        self.0.lock().unwrap().cursor = icon;
+    }
+    fn set_ime_cursor_area(&self, x: f32, y: f32, width: f32, height: f32) {
+        self.0.lock().unwrap().ime = Some((x, y, width, height));
+    }
+    fn request_clipboard_text(&self) -> Result<(), ClipboardError> {
+        self.0.lock().unwrap().paste = true;
+        Ok(())
+    }
+    fn set_clipboard_text(&self, text: String) -> Result<(), ClipboardError> {
+        self.0.lock().unwrap().copied = Some(text);
+        Ok(())
+    }
+}
 use blitz_html::HtmlDocument;
 use blitz_paint::paint_scene;
 use blitz_traits::shell::{ColorScheme, Viewport};
@@ -33,6 +65,7 @@ pub struct Page {
     inputs: std::collections::VecDeque<(NodeId, String)>,
     taken: String,
     buttons: MouseEventButtons,
+    shell: Arc<Shell>,
 }
 
 // What the document's events leave for the host: each field's value as an
@@ -78,10 +111,12 @@ fn page<'a>(page: *mut Page) -> &'a mut Page {
 /// physical pixels at `scale`.
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_new(width: u32, height: u32, scale: f32) -> *mut Page {
+    let shell = Arc::new(Shell::default());
     let doc = HtmlDocument::from_html(
         "<!DOCTYPE html><html><head></head><body></body></html>",
         DocumentConfig {
             viewport: Some(Viewport::new(width, height, scale, ColorScheme::Light)),
+            shell_provider: Some(Arc::clone(&shell) as _),
             ..Default::default()
         },
     );
@@ -93,6 +128,7 @@ pub extern "C" fn skiff_blitz_new(width: u32, height: u32, scale: f32) -> *mut P
         inputs: Default::default(),
         taken: String::new(),
         buttons: MouseEventButtons::None,
+        shell,
     }))
 }
 #[unsafe(no_mangle)]
@@ -167,12 +203,14 @@ pub extern "C" fn skiff_blitz_parent(p: *mut Page, node: u64) -> u64 {
 }
 /// The viewport: its physical size and scale.
 #[unsafe(no_mangle)]
-pub extern "C" fn skiff_blitz_set_viewport(p: *mut Page, width: u32, height: u32, scale: f32) {
+pub extern "C" fn skiff_blitz_set_viewport(p: *mut Page, width: u32, height: u32, scale: f32, zoom: f32) {
     let p = page(p);
     p.width = width;
     p.height = height;
     p.scale = scale;
-    p.doc.set_viewport(Viewport::new(width, height, scale, ColorScheme::Light));
+    let mut viewport = Viewport::new(width, height, scale, ColorScheme::Light);
+    viewport.zoom = zoom;
+    p.doc.set_viewport(viewport);
 }
 /// Styles and layout brought up to date with what changed.
 #[unsafe(no_mangle)]
@@ -376,6 +414,65 @@ pub extern "C" fn skiff_blitz_rect(p: *mut Page, node: u64, x: *mut f32, y: *mut
         *y = rect.y as f32;
         *width = rect.width as f32;
         *height = rect.height as f32;
+    }
+    true
+}
+/// Text the document put on the clipboard (copied or cut in a field), since
+/// last asked: whether there was some. It stays the page's until the next call.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_take_copied(p: *mut Page, value: *mut *const u8, len: *mut usize) -> bool {
+    let p = page(p);
+    let Some(text) = p.shell.0.lock().unwrap().copied.take() else {
+        return false;
+    };
+    p.taken = text;
+    // SAFETY: the C side passes two places to write to, alive for the call.
+    unsafe {
+        *value = p.taken.as_ptr();
+        *len = p.taken.len();
+    }
+    true
+}
+/// Whether the document asked for the clipboard's text (a paste), since
+/// last asked: the host answers with skiff_blitz_paste.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_take_paste_request(p: *mut Page) -> bool {
+    std::mem::take(&mut page(p).shell.0.lock().unwrap().paste)
+}
+/// The clipboard's text, pasted where the document asked for it.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_paste(p: *mut Page, value: *const u8, len: usize) {
+    let p = page(p);
+    let value = text(value, len).into_owned();
+    handle(p, UiEvent::Paste(value));
+}
+/// The pointer's shape the document asks for: 0 the arrow, 1 a hand, 2 text,
+/// 3 resizing across, 4 resizing down, 5 not allowed, 6 a wait.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_cursor(p: *mut Page) -> u32 {
+    match page(p).shell.0.lock().unwrap().cursor {
+        Some(CursorIcon::Pointer) => 1,
+        Some(CursorIcon::Text | CursorIcon::VerticalText) => 2,
+        Some(CursorIcon::EwResize | CursorIcon::ColResize) => 3,
+        Some(CursorIcon::NsResize | CursorIcon::RowResize) => 4,
+        Some(CursorIcon::NotAllowed) => 5,
+        Some(CursorIcon::Wait | CursorIcon::Progress) => 6,
+        _ => 0,
+    }
+}
+/// Where the document's caret is for an input method's window, in CSS
+/// pixels, since last asked: whether it moved.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_take_ime_area(p: *mut Page, x: *mut f32, y: *mut f32, width: *mut f32, height: *mut f32) -> bool {
+    let Some((ax, ay, aw, ah)) = page(p).shell.0.lock().unwrap().ime.take() else {
+        return false;
+    };
+    // SAFETY: the C side passes four places to write to, alive for the call.
+    unsafe {
+        *x = ax;
+        *y = ay;
+        *width = aw;
+        *height = ah;
     }
     true
 }

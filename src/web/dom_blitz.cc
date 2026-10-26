@@ -22,7 +22,7 @@ void skiff_blitz_clear_attribute(skiff_blitz_page *page, std::uint64_t node, con
 void skiff_blitz_set_style(skiff_blitz_page *page, std::uint64_t node, const char *name, std::size_t name_len, const char *value,
                            std::size_t value_len);
 std::uint64_t skiff_blitz_parent(skiff_blitz_page *page, std::uint64_t node);
-void skiff_blitz_set_viewport(skiff_blitz_page *page, std::uint32_t width, std::uint32_t height, float scale);
+void skiff_blitz_set_viewport(skiff_blitz_page *page, std::uint32_t width, std::uint32_t height, float scale, float zoom);
 void skiff_blitz_resolve(skiff_blitz_page *page, double now_ms);
 void skiff_blitz_paint(skiff_blitz_page *page, std::uint8_t *out, std::size_t stride);
 std::uint64_t skiff_blitz_hit(skiff_blitz_page *page, float x, float y);
@@ -37,6 +37,11 @@ void skiff_blitz_key(skiff_blitz_page *page, std::uint32_t which, std::uint32_t 
 bool skiff_blitz_next_input(skiff_blitz_page *page, std::uint64_t *node, const char **value, std::size_t *len);
 std::uint64_t skiff_blitz_focused(skiff_blitz_page *page);
 bool skiff_blitz_rect(skiff_blitz_page *page, std::uint64_t node, float *x, float *y, float *width, float *height);
+bool skiff_blitz_take_copied(skiff_blitz_page *page, const char **value, std::size_t *len);
+bool skiff_blitz_take_paste_request(skiff_blitz_page *page);
+void skiff_blitz_paste(skiff_blitz_page *page, const char *text, std::size_t len);
+std::uint32_t skiff_blitz_cursor(skiff_blitz_page *page);
+bool skiff_blitz_take_ime_area(skiff_blitz_page *page, float *x, float *y, float *width, float *height);
 }
 module skiff.web;
 
@@ -172,7 +177,32 @@ void reset() { memory::reset(); }
 } // namespace dom
 
 namespace blitz {
-void viewport(std::uint32_t width, std::uint32_t height, float scale) { skiff_blitz_set_viewport(page(), width, height, scale); }
+void viewport(std::uint32_t width, std::uint32_t height, float scale, float zoom) { skiff_blitz_set_viewport(page(), width, height, scale, zoom); }
+std::optional<std::string> takeCopied() {
+  const char *value = nullptr;
+  std::size_t len = 0;
+  if (!skiff_blitz_take_copied(page(), &value, &len)) return std::nullopt;
+  return std::string(value, len);
+}
+bool takePasteRequest() { return skiff_blitz_take_paste_request(page()); }
+void paste(std::string_view text) { skiff_blitz_paste(page(), text.data(), text.size()); }
+std::optional<box> takeImeArea() {
+  box out;
+  if (!skiff_blitz_take_ime_area(page(), &out.x, &out.y, &out.width, &out.height)) return std::nullopt;
+  return out;
+}
+cursor cursorShape() {
+  using enum cursor;
+  switch (skiff_blitz_cursor(page())) {
+    case 1: return hand;
+    case 2: return text;
+    case 3: return resize_across;
+    case 4: return resize_down;
+    case 5: return not_allowed;
+    case 6: return wait;
+    default: return arrow;
+  }
+}
 void addCss(std::string_view css) { skiff_blitz_add_css(page(), css.data(), css.size()); }
 void resolve(double nowMs) { skiff_blitz_resolve(page(), nowMs); }
 void paint(std::uint8_t *out, std::size_t stride) { skiff_blitz_paint(page(), out, stride); }
