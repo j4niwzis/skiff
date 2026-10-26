@@ -290,6 +290,9 @@ private:
       shown.handle = dom::create("div");
       fNodeOf.emplace(shown.handle, state.fId);
     }
+    // Its handle, on it: what an engine that tells only which element was
+    // pressed (litehtml's) is read back by.
+    now.attr("data-skiff-h", std::to_string(shown.handle));
     shown.seen = fPass;
     skiff::web::detail::writeOwn(shown.handle, now, shown.markup);
     shown.markup = std::move(now);
