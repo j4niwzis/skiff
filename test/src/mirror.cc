@@ -60,10 +60,13 @@ TEST(Mirror, AStackIsAFlexBoxAndATextItsWords) {
   mirror::Mirror shown;
   shown.sync(tree.root());
   const std::string html = dom::dump(dom::root());
+  // The column grows nothing: blocks, its gap a margin above the second
+  // part. The row: a flex box, as rows are.
+  EXPECT_TRUE(html.contains("display:block;")) << html;
+  EXPECT_TRUE(html.contains("margin-top:8px;")) << html;
   EXPECT_TRUE(html.contains("display:flex;")) << html;
-  EXPECT_TRUE(html.contains("flex-direction:column;")) << html;
   EXPECT_TRUE(html.contains("flex-direction:row;")) << html;
-  EXPECT_TRUE(html.contains("gap:8px 8px;")) << html;
+  EXPECT_FALSE(html.contains("flex-direction:column;")) << html;
   EXPECT_TRUE(html.contains("padding:4px 4px 4px 4px;")) << html;
   EXPECT_TRUE(html.contains("background-color:rgba(238,238,238,1);")) << html;
   EXPECT_TRUE(html.contains(">0<")) << html;

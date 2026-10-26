@@ -6,7 +6,10 @@
 //
 // Nothing of the scene's layout runs: each node says what it is as CSS, from
 // what its State keeps and what kind of node it is --
-//   a stack or a flow        a flex box along its way, its gaps and justification;
+//   a stack or a flow        a flex box along its way, its gaps and
+//                            justification, where it needs one (a row; a
+//                            column some part of which takes a share of what
+//                            is left); else blocks, one under another;
 //   a text                   its words, in its size, weight and colour;
 //   a view that scrolls      a box that scrolls (overflow: auto);
 //   any other node           a box: its first child in its flow, the rest
@@ -36,20 +39,33 @@ using skiff::web::px;
 using skiff::web::number;
 using skiff::web::rgba;
 
-// Where across a box an anchor puts its first part.
-[[nodiscard]] inline std::string_view placeAlong(float at) {
-  return at <= 0.25f ? "flex-start" : at >= 0.75f ? "flex-end" : "center";
-}
-
 // Whether a flow runs across: its direction, visited.
 [[nodiscard]] inline bool isRow(const scene::Direction &d) {
   return spl::visit(spl::overloaded{[](scene::direction::vertical) { return false; }, [](scene::direction::horizontal) { return true; }}, d);
 }
+[[nodiscard]] inline bool justifiesFromStart(const scene::Justify &j) {
+  return spl::visit(spl::overloaded{[](scene::justify::start) { return true; }, [](const auto &) { return false; }}, j);
+}
 
 // What holds a node: how a node lays its children out decides how each child
 // is placed in it.
-struct in_flow {
+//
+// Flex only where skiff's layout needs it -- a row, or a column some part of
+// which takes a share of what is left -- and blocks everywhere else: an
+// engine lays a flex item out two to four times over (to measure it, at its
+// share, stretched), each time all of what is in it, so flex boxes nested
+// as deep as a program's tree is (mux's, twenty and more) were laid out
+// some three times more for each level -- litehtml never finished the first
+// layout. Blocks are laid out once.
+struct in_flex {
   bool row = false;
+};
+// In a column laid out as blocks: after the first, the column's gap above;
+// across, as the column aligns its parts (or the part itself says).
+struct in_column {
+  float gap = 0.0f;
+  bool first = true;
+  scene::Align cross{};
 };
 // In a box: the first part in its flow, sizing the box; the rest over it,
 // each where its anchor puts it.
@@ -57,7 +73,7 @@ struct in_cell {
   bool first = true;
 };
 struct in_scroll {};
-using Holder = spl::variant<in_flow, in_cell, in_scroll>;
+using Holder = spl::variant<in_flex, in_column, in_cell, in_scroll>;
 
 // The size along one axis, as the State says it.
 inline void sizeOf(Markup &m, std::string_view property, float size, bool relative, bool automatic) {
@@ -65,6 +81,23 @@ inline void sizeOf(Markup &m, std::string_view property, float size, bool relati
     m.style(property, number(size * 100.0f) + "%");
   else if (!automatic && size > 0.0f)
     m.style(property, px(size));
+}
+[[nodiscard]] inline bool displayIs(const Markup &m, std::string_view value) {
+  return std::ranges::contains(m.fStyles, std::pair<std::string, std::string>("display", std::string(value)));
+}
+// A part in a block's flow, across: as wide as what it holds where it says
+// no width of its own (a table: what an engine without fit-content shrinks
+// to its content), and where its alignment puts it.
+inline void acrossInBlock(Markup &m, const scene::State &s, bool relX, float at) {
+  const bool sized = relX || (s.fWidth > 0.0f && !s.fAutoSizeAxes.has<scene::axis::x>());
+  if (!sized && displayIs(m, "block")) m.style("display", "table");
+  if (relX) return;
+  if (at >= 0.75f) {
+    m.style("margin-left", "auto");
+  } else if (at > 0.25f) {
+    m.style("margin-left", "auto");
+    m.style("margin-right", "auto");
+  }
 }
 
 // What every node's element is, from its State: shown or not, its sizes,
@@ -97,10 +130,18 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   if (s.fAlpha < 1.0f) m.style("opacity", number(s.fAlpha));
   if (s.fMasking) m.style("overflow", "hidden");
   if (s.fDepth != 0.0f) m.style("z-index", std::to_string(static_cast<int>(std::lround(s.fDepth))));
-  // Moved: placed over a box, its origin on its anchor; then its own shift and scale.
+  // Placed by its anchor, out of what holds it: over it, its origin on the
+  // anchor.
   std::string transform;
+  const auto placed = [&] {
+    m.style("position", "absolute");
+    m.style("left", number(s.fAnchor.x * 100.0f) + "%");
+    m.style("top", number(s.fAnchor.y * 100.0f) + "%");
+    if (s.fOrigin.x != 0.0f || s.fOrigin.y != 0.0f)
+      transform += "translate(" + number(-s.fOrigin.x * 100.0f) + "%," + number(-s.fOrigin.y * 100.0f) + "%) ";
+  };
   spl::visit(spl::overloaded{
-                 [&](const in_flow &flow) {
+                 [&](const in_flex &flow) {
                    // Along the flow: its own size, or an equal share of what is
                    // left where it grows. Across: where its alignment says.
                    const bool along = flow.row ? s.fGrowAxes.has<scene::axis::x>() || relX
@@ -110,27 +151,28 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
                    const bool across = flow.row ? s.fGrowAxes.has<scene::axis::y>() : s.fGrowAxes.has<scene::axis::x>();
                    if (s.fAlignSelf) m.style("align-self", std::string(skiff::web::alignment(*s.fAlignSelf)));
                    else if (across) m.style("align-self", "stretch");
+                   if (s.fOutOfFlow) placed();
+                 },
+                 [&](const in_column &column) {
                    if (s.fOutOfFlow) {
-                     m.style("position", "absolute");
-                     m.style("left", number(s.fAnchor.x * 100.0f) + "%");
-                     m.style("top", number(s.fAnchor.y * 100.0f) + "%");
+                     placed();
+                     return;
                    }
+                   if (!column.first && column.gap > 0.0f) m.style("margin-top", px(s.fMargin.fTop + column.gap));
+                   // A part growing down a column of one: all of its height.
+                   if (s.fGrowAxes.has<scene::axis::y>() && !relY) m.style("height", "100%");
+                   acrossInBlock(m, s, relX || s.fGrowAxes.has<scene::axis::x>(), (s.fAlignSelf ? *s.fAlignSelf : column.cross).at);
                  },
                  [&](const in_cell &cell) {
                    if (cell.first) {
                      // In the box's flow: across, where its anchor is; down, its
                      // own height or all of the box's.
-                     m.style("align-self", relX ? "stretch" : placeAlong(s.fAnchor.x));
-                     m.style("flex", relY ? "1 1 0%" : "0 0 auto");
+                     acrossInBlock(m, s, relX, s.fAnchor.x);
                      return;
                    }
-                   m.style("position", "absolute");
-                   m.style("left", number(s.fAnchor.x * 100.0f) + "%");
-                   m.style("top", number(s.fAnchor.y * 100.0f) + "%");
-                   if (s.fOrigin.x != 0.0f || s.fOrigin.y != 0.0f)
-                     transform += "translate(" + number(-s.fOrigin.x * 100.0f) + "%," + number(-s.fOrigin.y * 100.0f) + "%) ";
+                   placed();
                  },
-                 [&](const in_scroll &) { m.style("flex", "0 0 auto"); }},
+                 [](const in_scroll &) {}},
              holder);
   const float dx = s.fX + s.fShiftX, dy = s.fY + s.fShiftY;
   if (dx != 0.0f || dy != 0.0f) transform += "translate(" + px(dx) + "," + px(dy) + ") ";
@@ -141,8 +183,23 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   }
 }
 
-// What kind of node it is, as an element: what its look says.
-inline void kindOfFlow(Markup &m, const scene::FlowOptions &o) {
+// Whether a flow needs a flex box: a row; a column that wraps, is justified
+// otherwise than from its start, or holds more than one part with one taking
+// a share of what is left. A column of one part that fills it is a block
+// whose part is all of its height.
+[[nodiscard]] inline bool needsFlex(const scene::FlowOptions &o, const std::vector<const scene::State *> &parts) {
+  if (isRow(o.direction) || o.wrap || !justifiesFromStart(o.justify)) return true;
+  const auto grows = [](const scene::State *s) {
+    return s->fVisible && !s->fOutOfFlow && (s->fGrowAxes.has<scene::axis::y>() || s->fRelativeSizeAxes.has<scene::axis::y>());
+  };
+  const auto shown = std::ranges::count_if(parts, [](const scene::State *s) { return s->fVisible && !s->fOutOfFlow; });
+  return shown > 1 && std::ranges::any_of(parts, grows);
+}
+
+// What kind of node it is, as an element, and how it holds its parts: what
+// its look says -- a flow as a flex box where it needs one (needsFlex), else
+// as blocks.
+inline void flexOf(Markup &m, const scene::FlowOptions &o) {
   m.style("display", "flex");
   m.style("position", "relative");
   m.style("flex-direction", isRow(o.direction) ? "row" : "column");
@@ -156,43 +213,53 @@ inline void kindOfFlow(Markup &m, const scene::FlowOptions &o) {
                                                         [](scene::justify::space_around) { return "space-around"; }},
                                         o.justify));
 }
-inline void kindOf(Markup &m, const scene::Look &look) {
-  spl::visit(spl::overloaded{[&](const scene::look::box &) {
-                               m.style("display", "flex");
-                               m.style("flex-direction", "column");
-                               m.style("position", "relative");
-                             },
-                             [&](const scene::look::flow &flow) { kindOfFlow(m, flow.options); },
-                             [&](const scene::look::words &words) {
-                               m.style("display", "block");
-                               m.style("white-space", "pre-wrap");
-                               m.style("font-size", px(words.size));
-                               m.style("line-height", number(1.25f));
-                               m.style("color", rgba(words.colour));
-                               if (words.bold) m.style("font-weight", "bold");
-                               m.text(words.text);
-                             },
-                             [&](const scene::look::scrolled &) {
-                               m.style("display", "flex");
-                               m.style("flex-direction", "column");
-                               m.style("overflow-y", "auto");
-                               m.style("position", "relative");
-                             }},
-             look);
-}
-
-// How a part after a box's first is held: over it; anywhere else, as the first.
-[[nodiscard]] inline Holder after(const Holder &first) {
-  return spl::visit(spl::overloaded{[](const in_cell &) -> Holder { return in_cell{false}; }, [](const auto &same) -> Holder { return same; }}, first);
-}
-
-// How a node holds its children: as its look says.
-[[nodiscard]] inline Holder holderOf(const scene::Look &look) {
-  return spl::visit(spl::overloaded{[](const scene::look::flow &flow) -> Holder { return in_flow{isRow(flow.options.direction)}; },
-                                    [](const scene::look::scrolled &) -> Holder { return in_scroll{}; },
-                                    [](const auto &) -> Holder { return in_cell{}; }},
+[[nodiscard]] inline Holder kindOf(Markup &m, const scene::Look &look, const std::vector<const scene::State *> &parts) {
+  return spl::visit(spl::overloaded{[&](const scene::look::box &) -> Holder {
+                                      m.style("display", "block");
+                                      m.style("position", "relative");
+                                      return in_cell{};
+                                    },
+                                    [&](const scene::look::flow &flow) -> Holder {
+                                      const scene::FlowOptions &o = flow.options;
+                                      if (needsFlex(o, parts)) {
+                                        flexOf(m, o);
+                                        return in_flex{isRow(o.direction)};
+                                      }
+                                      m.style("display", "block");
+                                      m.style("position", "relative");
+                                      return in_column{o.spacingY, true, o.crossAlign};
+                                    },
+                                    [&](const scene::look::words &words) -> Holder {
+                                      m.style("display", "block");
+                                      m.style("white-space", "pre-wrap");
+                                      m.style("font-size", px(words.size));
+                                      m.style("line-height", number(1.25f));
+                                      m.style("color", rgba(words.colour));
+                                      if (words.bold) m.style("font-weight", "bold");
+                                      m.text(words.text);
+                                      return in_cell{};
+                                    },
+                                    [&](const scene::look::scrolled &) -> Holder {
+                                      m.style("display", "block");
+                                      m.style("overflow-y", "auto");
+                                      m.style("position", "relative");
+                                      return in_scroll{};
+                                    }},
                     look);
 }
+
+// How a part after the first is held: in a box, over the first; in a
+// column, below the one before; elsewhere, as the first.
+[[nodiscard]] inline Holder after(const Holder &first) {
+  return spl::visit(spl::overloaded{[](const in_cell &) -> Holder { return in_cell{false}; },
+                                    [](const in_column &column) -> Holder { return in_column{column.gap, false, column.cross}; },
+                                    [](const auto &same) -> Holder { return same; }},
+                    first);
+}
+
+// A child's State: its own, or as the walks' table says, where it is erased.
+template <class N> [[nodiscard]] const scene::State &stateOfPart(N &node) { return node.fState; }
+[[nodiscard]] inline const scene::State &stateOfPart(scene::AnyNodeRef &ref) { return scene::ErasedNode(ref).fState; }
 
 } // namespace detail
 
@@ -277,8 +344,11 @@ private:
   template <class Children>
   dom::Handle write(const scene::State &state, const scene::Look &look, bool pressable, const detail::Holder &holder,
                     Children &&children) {
+    // Its parts' States first: whether it needs a flex box depends on them.
+    std::vector<const scene::State *> parts;
+    children([&](auto &child) { parts.push_back(&detail::stateOfPart(child)); });
     Markup now;
-    detail::kindOf(now, look);
+    const detail::Holder theirs = detail::kindOf(now, look, parts);
     detail::stateOf(now, state, holder);
     if (pressable) {
       now.listen("click");
@@ -299,10 +369,8 @@ private:
     const dom::Handle handle = shown.handle;
     // Children: each visited, then put in their order where it moved. The
     // map may grow as they are visited: nothing of it held across.
-    const detail::Holder theirs = detail::holderOf(look);
     std::vector<dom::Handle> handles;
     children([&](auto &child) {
-      // In a box, the parts after the first are placed over it.
       const detail::Holder mine = handles.empty() ? theirs : detail::after(theirs);
       handles.push_back(this->visit(child, mine));
     });
