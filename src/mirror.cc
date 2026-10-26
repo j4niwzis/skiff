@@ -312,6 +312,9 @@ struct Recording {
   std::size_t parts = 0;
   bool lost = false;
   std::string_view lostWhat;
+  // The pictures painted, by the part of the <img> each is shown in: their
+  // pixels given to the document once it has the element.
+  std::vector<std::pair<std::uint32_t, const skia::SkImage *>> pictures;
 };
 class HtmlPainter : public skiff::paint::Painter {
 public:
@@ -381,14 +384,22 @@ public:
   void verticalGradient(const skia::SkRect &rect, skia::SkColor top, skia::SkColor, float alpha = 1.0f) const {
     this->plate(rect, 0.0f, top, alpha);
   }
-  void imageFilled(const skia::SkImage *image, const skia::SkRect &, float = 1.0f) const { this->picture(image); }
-  void image(const skia::SkImage *image, const skia::SkRect &, float = 1.0f, Sampling = Sampling::linear) const { this->picture(image); }
-  void imagePart(const skia::SkImage *image, const skia::SkRect &, const skia::SkRect &, float = 1.0f, Sampling = Sampling::linear) const {
-    this->picture(image);
+  // Pictures: an <img> where each is painted -- filling its box as a cover
+  // where it fills it, cut to a rounded box where it is seen through one.
+  void imageFilled(const skia::SkImage *image, const skia::SkRect &at, float alpha = 1.0f) const {
+    this->picture(image, at, alpha, "cover", 0.0f);
   }
-  template <class Shape>
-  void imageThrough(const Shape &, const skia::SkImage *image, const skia::SkRect &, float, Sampling = Sampling::linear) const {
-    this->picture(image);
+  void image(const skia::SkImage *image, const skia::SkRect &at, float alpha = 1.0f, Sampling = Sampling::linear) const {
+    this->picture(image, at, alpha, "fill", 0.0f);
+  }
+  void imagePart(const skia::SkImage *image, const skia::SkRect &, const skia::SkRect &to, float alpha = 1.0f, Sampling = Sampling::linear) const {
+    this->picture(image, to, alpha, "cover", 0.0f);
+  }
+  void imageThrough(const skia::SkRRect &shape, const skia::SkImage *image, const skia::SkRect &at, float alpha, Sampling = Sampling::linear) const {
+    this->picture(image, at, alpha, "cover", shape.radii(skia::SkRRect::kUpperLeft_Corner).fX);
+  }
+  void imageThrough(const skia::SkPath &, const skia::SkImage *image, const skia::SkRect &, float, Sampling = Sampling::linear) const {
+    if (image != nullptr) this->lose("a picture through a path");
   }
 
   // Text, from its baseline: its line put where the face's ascent says.
@@ -436,8 +447,16 @@ protected:
     if (!fRecording->lost) fRecording->lostWhat = what;
     fRecording->lost = true;
   }
-  void picture(const skia::SkImage *image) const {
-    if (image != nullptr) this->lose("a picture");
+  void picture(const skia::SkImage *image, const skia::SkRect &at, float alpha, std::string_view fit, float radius) const {
+    if (image == nullptr || alpha <= 0.0f) return;
+    this->element("img", [&](Markup &e) {
+      this->at(e, this->placed(at));
+      e.style("object-fit", fit);
+      if (radius > 0.0f) e.style("border-radius", px(radius));
+      if (alpha < 1.0f) e.style("opacity", number(alpha));
+      e.attr("data-skiff-picture", std::to_string(image->uniqueID()));
+    });
+    fRecording->pictures.emplace_back(static_cast<std::uint32_t>(fRecording->parts), image);
   }
   // A line across or down, as a plate: whether it was one.
   bool straight(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha) const {
@@ -726,6 +745,8 @@ private:
     std::vector<std::pair<skiff::web::Part, dom::Handle>> inner;
     // Where it was scrolled, as last said either way.
     float scrolled = 0.0f;
+    // The pictures given, by part: the key of each.
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> pictures;
     std::uint64_t seen = 0;
   };
 
@@ -734,7 +755,7 @@ private:
   // press, and its children in their order.
   template <class N> dom::Handle visit(N &node, const detail::Holder &holder) {
     return this->write(node.fState, node.look(), node.acceptsInput(), holder, [&](auto &&each) { scene::eachChild(node, each); },
-                       [&](Markup &into) { return this->record(node, into); }, [&] { return scrolledOf(node); });
+                       [&](Markup &into, Pictures &pictures) { return this->record(node, into, pictures); }, [&] { return scrolledOf(node); });
   }
   // How far a view that scrolls is scrolled, as skiff has it: none for what
   // does not scroll.
@@ -747,7 +768,7 @@ private:
   dom::Handle visit(scene::AnyNodeRef &ref, const detail::Holder &holder) {
     scene::ErasedNode node(ref);
     return this->write(node.fState, node.look(), node.acceptsInput(), holder, [&](auto &&each) { node.forEachChild(each); },
-                       [this](Markup &) {
+                       [this](Markup &, Pictures &) {
                          this->notNative("a node seen through the walks' table", "not a release build: what it paints not written");
                          return false;
                        },
@@ -756,10 +777,11 @@ private:
   // A node that paints itself, recorded as elements where all it paints has
   // one (HtmlPainter); whether it was. Else -- a path, a picture; an erased
   // node -- skiff paints it.
-  template <class N> bool record(N &node, Markup &into) {
-    return this->recordWith<detail::SvgPainter>(node, into);
+  using Pictures = std::vector<std::pair<std::uint32_t, const skia::SkImage *>>;
+  template <class N> bool record(N &node, Markup &into, Pictures &pictures) {
+    return this->recordWith<detail::SvgPainter>(node, into, pictures);
   }
-  template <class Painter, class N> bool recordWith(N &node, Markup &into) {
+  template <class Painter, class N> bool recordWith(N &node, Markup &into, Pictures &pictures) {
     if constexpr (requires(N &n, Painter &p) { n.drawSelf(p, 1.0f); }) {
       // The program's face, for where text sits on its line; a default one
       // where none was loaded (a test).
@@ -776,6 +798,7 @@ private:
         return false;
       }
       into.fInner.append_range(std::move(drawn.fInner));
+      pictures = std::move(recording.pictures);
       ++fRecorded;
       return true;
     } else {
@@ -794,6 +817,7 @@ private:
     // its size skiff's where it says none. Where something of it has no
     // element (a picture), it is said not native, and that is not shown.
     const bool paints = spl::visit(spl::overloaded{[](const scene::look::drawn &) { return true; }, [](const auto &) { return false; }}, look);
+    Pictures pictures;
     if (paints) {
       const auto unsized = [&](std::string_view property) {
         return std::ranges::none_of(now.fStyles, [&](const auto &style) { return style.first == property; });
@@ -801,7 +825,7 @@ private:
       if (unsized("width") && state.fBounds.width() > 0.0f) now.style("width", skiff::web::px(state.fBounds.width()));
       if (unsized("height") && state.fBounds.height() > 0.0f) now.style("height", skiff::web::px(state.fBounds.height()));
       Markup recorded;
-      if (records(recorded)) now.fInner = std::move(recorded.fInner);
+      if (records(recorded, pictures)) now.fInner = std::move(recorded.fInner);
     }
     if (pressable) {
       now.listen("click");
@@ -832,6 +856,18 @@ private:
     for (const auto &[part, h] : shown.inner)
       if (!std::ranges::contains(kept, h, &std::pair<skiff::web::Part, dom::Handle>::second)) dom::destroy(h);
     shown.inner = std::move(kept);
+    // Its pictures' pixels, given to the elements they are shown in -- again
+    // only where the picture there is another.
+    for (const auto &[part, image] : pictures) {
+      const auto element = std::ranges::find(shown.inner, skiff::web::Part{part}, &std::pair<skiff::web::Part, dom::Handle>::first);
+      if (element == shown.inner.end()) continue;
+      const std::uint32_t key = image->uniqueID();
+      const auto given = std::ranges::find(shown.pictures, part, &std::pair<std::uint32_t, std::uint32_t>::first);
+      if (given != shown.pictures.end() && given->second == key) continue;
+      dom::picture(element->second, skia::rgbaPixels(*image), image->width(), image->height(), std::to_string(key));
+      if (given != shown.pictures.end()) given->second = key;
+      else shown.pictures.emplace_back(part, key);
+    }
     shown.markup = std::move(now);
     const dom::Handle handle = shown.handle;
     // Children: each visited, then put in their order where it moved. The

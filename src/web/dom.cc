@@ -67,6 +67,10 @@ void canvasText(Handle canvas, float x, float y, float size, Colour colour, std:
 // A picture's bytes as a URL the page can show: an object URL (a fake one
 // without a browser).
 [[nodiscard]] std::string objectUrl(std::span<const unsigned char> bytes, std::string_view mime);
+// An <img>'s picture, as pixels (RGBA, not premultiplied, row after row),
+// and the key it is known by: given where the document takes pixels (an
+// engine's, Blitz's); kept as the key alone elsewhere.
+void picture(Handle element, const std::vector<std::uint8_t> &rgba, int width, int height, std::string_view key);
 // Scrolled to an offset along its way, or -- below zero -- to its end.
 void scrollTo(Handle element, float offset);
 

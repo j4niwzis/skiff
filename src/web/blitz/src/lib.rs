@@ -7,7 +7,9 @@
 
 use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
+use blitz_dom::node::{ImageData, RasterImageData, SpecialElementData};
 use blitz_dom::{DocumentConfig, LocalName, NodeId, QualName, ScrollBehavior, ns, util::Color};
+use std::sync::Arc;
 use blitz_html::HtmlDocument;
 use blitz_paint::paint_scene;
 use blitz_traits::shell::{ColorScheme, Viewport};
@@ -190,4 +192,26 @@ pub extern "C" fn skiff_blitz_scroll_offset(p: *mut Page, node: u64) -> f64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_scroll_to(p: *mut Page, node: u64, y: f64) {
     page(p).doc.scroll_to(id(node), 0.0, y, ScrollBehavior::Instant);
+}
+/// An <img>'s picture: `width` by `height` pixels, RGBA, not premultiplied,
+/// row after row -- the element laid out and painted again with it. `key`,
+/// what it is known by, is put on the element (data-skiff-picture).
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_set_picture(p: *mut Page, node: u64, rgba: *const u8, width: u32, height: u32, key: *const u8, key_len: usize) {
+    let p = page(p);
+    let len = width as usize * height as usize * 4;
+    let pixels = if rgba.is_null() || len == 0 {
+        Vec::new()
+    } else {
+        // SAFETY: the C side passes `len` bytes, kept alive for the call.
+        unsafe { std::slice::from_raw_parts(rgba, len) }.to_vec()
+    };
+    if let Some(n) = p.doc.get_node_mut(id(node)) {
+        if let Some(element) = n.element_data_mut() {
+            element.special_data = SpecialElementData::Image(Box::new(ImageData::Raster(RasterImageData::new(width, height, Arc::new(pixels)))));
+        }
+        n.clear_layout_cache();
+    }
+    // Said on it, which restyles and lays it out again with its picture.
+    p.doc.mutate().set_attribute(id(node), html_name("data-skiff-picture"), &text(key, key_len));
 }

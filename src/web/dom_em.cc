@@ -301,6 +301,9 @@ std::string objectUrl(std::span<const unsigned char> bytes, std::string_view mim
   std::free(p);
   return out;
 }
+// In a browser, pictures come by their URLs (objectUrl): an element given
+// pixels here keeps their key.
+void picture(Handle h, const std::vector<std::uint8_t> &, int, int, std::string_view key) { attr(h, "data-skiff-picture", key); }
 void scrollTo(Handle h, float offset) {
   skiffDomInit();
   skiffDomScrollTo(static_cast<int>(h), offset);

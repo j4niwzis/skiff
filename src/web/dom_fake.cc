@@ -35,6 +35,9 @@ void canvasText(Handle h, float x, float y, float size, Colour c, std::string_vi
 std::string drawn(Handle h) { return memory::drawn(h); }
 std::string objectUrl(std::span<const unsigned char> bytes, std::string_view mime) { return memory::objectUrl(bytes, mime); }
 void scrollTo(Handle h, float offset) { memory::scrollTo(h, offset); }
+void picture(Handle h, const std::vector<std::uint8_t> &rgba, int width, int height, std::string_view key) {
+  memory::picture(h, rgba, width, height, key);
+}
 std::string dump(Handle h) { return memory::dump(h); }
 void fire(Handle target, std::string_view event, std::string_view v) { memory::fire(target, event, v); }
 void reset() { memory::reset(); }

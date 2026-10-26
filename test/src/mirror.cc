@@ -188,4 +188,30 @@ TEST(Mirror, RichTextIsRuns) {
   EXPECT_TRUE(html.contains(">, <") || html.contains("> world, <")) << html;
 }
 
+// An avatar, as one paints itself: its picture through a rounded box.
+struct Face : scene::Node {
+  skia::Sp<skia::SkImage> fPicture;
+  Face() {
+    fState.apply({.width = 40.0f, .height = 40.0f});
+    const std::vector<std::uint8_t> red(4 * 4 * 4, 0xff);
+    fPicture = skia::imageFromRGBA(4, 4, red.data());
+  }
+  template <class P> void drawSelf(P &p, float alpha) {
+    p.imageThrough(skia::SkRRect::MakeRectXY(fState.fBounds, 20.0f, 20.0f), fPicture.get(), fState.fBounds, alpha);
+  }
+};
+
+TEST(Mirror, APictureIsAnImg) {
+  dom::reset();
+  scene::Scene tree(Face{});
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  const std::string html = dom::dump(dom::root());
+  EXPECT_TRUE(html.contains("<img")) << html;
+  EXPECT_TRUE(html.contains("object-fit:cover;border-radius:20px;")) << html;
+  EXPECT_TRUE(html.contains("data-skiff-picture=")) << html;
+  EXPECT_TRUE(shown.takeNotNative().empty());
+}
+
 } // namespace

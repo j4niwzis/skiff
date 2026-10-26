@@ -29,6 +29,8 @@ std::uint64_t skiff_blitz_hit(skiff_blitz_page *page, float x, float y);
 bool skiff_blitz_scroll_at(skiff_blitz_page *page, float x, float y, double dx, double dy);
 double skiff_blitz_scroll_offset(skiff_blitz_page *page, std::uint64_t node);
 void skiff_blitz_scroll_to(skiff_blitz_page *page, std::uint64_t node, double y);
+void skiff_blitz_set_picture(skiff_blitz_page *page, std::uint64_t node, const std::uint8_t *rgba, std::uint32_t width, std::uint32_t height,
+                             const char *key, std::size_t key_len);
 }
 module skiff.web;
 
@@ -151,6 +153,12 @@ std::string objectUrl(std::span<const unsigned char> bytes, std::string_view mim
 void scrollTo(Handle h, float offset) {
   memory::scrollTo(h, offset);
   if (nodeOf(h) != 0) skiff_blitz_scroll_to(page(), nodeOf(h), offset < 0.0f ? 1.0e9 : static_cast<double>(offset));
+}
+void picture(Handle h, const std::vector<std::uint8_t> &rgba, int width, int height, std::string_view key) {
+  memory::picture(h, rgba, width, height, key);
+  if (nodeOf(h) != 0 && rgba.size() >= static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u)
+    skiff_blitz_set_picture(page(), nodeOf(h), rgba.data(), static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), key.data(),
+                            key.size());
 }
 std::string dump(Handle h) { return memory::dump(h); }
 void fire(Handle target, std::string_view event, std::string_view v) { memory::fire(target, event, v); }

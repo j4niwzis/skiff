@@ -139,6 +139,7 @@ std::string objectUrl(std::span<const unsigned char> bytes, std::string_view mim
 }
 void scrollTo(Handle h, float offset) { set(at(h).attrs, "data-skiff-scroll", offset < 0.0f ? "end" : std::to_string(static_cast<int>(offset))); }
 
+void picture(Handle h, const std::vector<std::uint8_t> &, int, int, std::string_view key) { set(at(h).attrs, "data-skiff-picture", key); }
 std::string dump(Handle h) {
   std::string out;
   dumpInto(out, h);

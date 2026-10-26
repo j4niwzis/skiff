@@ -394,6 +394,16 @@ inline ::sk_sp<::SkImage> imageFromRGBA(int width, int height, const std::uint8_
   return ::SkImages::RasterFromPixmapCopy(::SkPixmap(info, rgba, static_cast<std::size_t>(width) * 4u));
 }
 
+// An image's pixels, row after row, each red, green, blue and alpha, not
+// premultiplied: what an engine given pixels (Blitz) takes. Empty where they
+// cannot be read.
+inline std::vector<std::uint8_t> rgbaPixels(const ::SkImage &image) {
+  const ::SkImageInfo info = ::SkImageInfo::Make(image.width(), image.height(), ::kRGBA_8888_SkColorType, ::kUnpremul_SkAlphaType);
+  std::vector<std::uint8_t> out(info.computeMinByteSize());
+  if (out.empty() || !image.readPixels(nullptr, info, out.data(), info.minRowBytes(), 0, 0)) return {};
+  return out;
+}
+
 // The bytes of a file of an image, written anew -- PNG, or JPEG at a good
 // quality -- from its pixels alone: nothing of the file it came from, its
 // metadata among it, goes with them. Empty where the build cannot write

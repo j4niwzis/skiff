@@ -759,6 +759,16 @@ private:
   std::size_t fRowBytes = 0;
 };
 
+// An image's pixels, row after row, each red, green, blue and alpha: as
+// skia's says them (rgbaPixels), from the colours kept here.
+inline std::vector<std::uint8_t> rgbaPixels(const SkImage &image) {
+  return image.pixels().colours | std::views::transform([](SkColor c) {
+           return std::array<std::uint8_t, 4>{static_cast<std::uint8_t>(c >> 16), static_cast<std::uint8_t>(c >> 8), static_cast<std::uint8_t>(c),
+                                              static_cast<std::uint8_t>(c >> 24)};
+         }) |
+         std::views::join | std::ranges::to<std::vector>();
+}
+
 class SkBitmap {
 public:
   // What is written into it: taken as written -- nothing reads it back.
