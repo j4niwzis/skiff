@@ -24,5 +24,7 @@ void paint(std::uint8_t *out, std::size_t stride);
 [[nodiscard]] dom::Handle at(float x, float y);
 // A wheel at a point: whether anything scrolled.
 bool scroll(float x, float y, double dx, double dy);
+// How far an element is scrolled down by the engine, in CSS pixels.
+[[nodiscard]] float scrolled(dom::Handle element);
 
 } // namespace skiff::web::blitz

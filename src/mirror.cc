@@ -697,6 +697,14 @@ public:
     return scene.clickAlong(way);
   }
 
+  // The engine's scrolling, read back into skiff's views that scroll before
+  // a frame: `scrolledOf(element)` how far the engine has an element
+  // scrolled. What skiff makes of where its views are -- a list's rows near
+  // its edge asked for, what is read -- goes by the engine's scrolling.
+  template <class Root, class ScrolledOf> void readScrolled(Root &root, ScrolledOf &&scrolledOf) {
+    this->readIn(root, scrolledOf);
+  }
+
   // The element a node is, where it is shown.
   [[nodiscard]] dom::Handle elementOf(const scene::State &state) const {
     const auto found = fShown.find(state.fId);
@@ -716,6 +724,8 @@ private:
     Markup markup;
     std::vector<dom::Handle> children;
     std::vector<std::pair<skiff::web::Part, dom::Handle>> inner;
+    // Where it was scrolled, as last said either way.
+    float scrolled = 0.0f;
     std::uint64_t seen = 0;
   };
 
@@ -724,15 +734,24 @@ private:
   // press, and its children in their order.
   template <class N> dom::Handle visit(N &node, const detail::Holder &holder) {
     return this->write(node.fState, node.look(), node.acceptsInput(), holder, [&](auto &&each) { scene::eachChild(node, each); },
-                       [&](Markup &into) { return this->record(node, into); });
+                       [&](Markup &into) { return this->record(node, into); }, [&] { return scrolledOf(node); });
+  }
+  // How far a view that scrolls is scrolled, as skiff has it: none for what
+  // does not scroll.
+  template <class N> [[nodiscard]] static std::optional<float> scrolledOf(N &node) {
+    if constexpr (requires(const N &n) { { n.current() } -> std::convertible_to<float>; n.extent(); })
+      return node.current();
+    else
+      return std::nullopt;
   }
   dom::Handle visit(scene::AnyNodeRef &ref, const detail::Holder &holder) {
     scene::ErasedNode node(ref);
     return this->write(node.fState, node.look(), node.acceptsInput(), holder, [&](auto &&each) { node.forEachChild(each); },
                        [this](Markup &) {
-                         this->notNative("a node seen through the walks' table", "not a release build: painted by skiff");
+                         this->notNative("a node seen through the walks' table", "not a release build: what it paints not written");
                          return false;
-                       });
+                       },
+                       [] { return std::optional<float>(); });
   }
   // A node that paints itself, recorded as elements where all it paints has
   // one (HtmlPainter); whether it was. Else -- a path, a picture; an erased
@@ -765,9 +784,9 @@ private:
     }
   }
 
-  template <class Children, class Records>
+  template <class Children, class Records, class Scrolled>
   dom::Handle write(const scene::State &state, const scene::Look &look, bool pressable, const detail::Holder &holder,
-                    Children &&children, Records &&records) {
+                    Children &&children, Records &&records, Scrolled &&scrolled) {
     Markup now;
     const detail::Holder theirs = detail::kindOf(now, look);
     detail::stateOf(now, state, holder);
@@ -796,6 +815,13 @@ private:
     }
     // Its handle, on it: which node an element is, in what is written out.
     now.attr("data-skiff-h", std::to_string(shown.handle));
+    // A view that scrolls: scrolled by the engine, its offset read back into
+    // skiff before the frame (readScrolled); moved by skiff itself (a jump,
+    // following its end), written to the engine.
+    if (const std::optional<float> offset = scrolled(); offset && std::abs(*offset - shown.scrolled) > 0.5f) {
+      now.scroll(*offset);
+      shown.scrolled = *offset;
+    }
     shown.seen = fPass;
     skiff::web::detail::writeOwn(shown.handle, now, shown.markup);
     // The elements it makes in itself (what it paints, as elements): kept by
@@ -814,6 +840,23 @@ private:
     children([&](auto &child) { handles.push_back(this->visit(child, theirs)); });
     this->order(handle, std::move(handles));
     return handle;
+  }
+
+  template <class N, class ScrolledOf> void readIn(N &node, ScrolledOf &scrolledOf) {
+    if constexpr (requires(N &n) { n.setCurrent(0.0f); { n.current() } -> std::convertible_to<float>; n.extent(); }) {
+      if (const auto found = fShown.find(node.fState.fId); found != fShown.end()) {
+        const float engine = scrolledOf(found->second.handle);
+        if (std::abs(engine - found->second.scrolled) > 0.5f) {
+          found->second.scrolled = engine;
+          if (std::abs(engine - node.current()) > 0.5f) node.setCurrent(engine);
+        }
+      }
+    }
+    scene::eachChild(node, [&](auto &child) { this->readIn(child, scrolledOf); });
+  }
+  template <class ScrolledOf> void readIn(scene::AnyNodeRef &ref, ScrolledOf &scrolledOf) {
+    scene::ErasedNode node(ref);
+    node.forEachChild([&](scene::AnyNodeRef &child) { this->readIn(child, scrolledOf); });
   }
 
   void order(dom::Handle parent, std::vector<dom::Handle> children) {

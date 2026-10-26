@@ -7,7 +7,7 @@
 
 use anyrender::{PaintScene as _, render_to_buffer};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
-use blitz_dom::{DocumentConfig, LocalName, NodeId, QualName, ns, util::Color};
+use blitz_dom::{DocumentConfig, LocalName, NodeId, QualName, ScrollBehavior, ns, util::Color};
 use blitz_html::HtmlDocument;
 use blitz_paint::paint_scene;
 use blitz_traits::shell::{ColorScheme, Viewport};
@@ -180,4 +180,14 @@ pub extern "C" fn skiff_blitz_scroll_at(p: *mut Page, x: f32, y: f32, dx: f64, d
         Some(hit) => p.doc.scroll_node_by_has_changed(hit.node_id, dx, dy, |_| {}),
         None => p.doc.scroll_viewport_by_has_changed(dx, dy),
     }
+}
+/// How far a box is scrolled down, in CSS pixels: the engine's own scroll.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_scroll_offset(p: *mut Page, node: u64) -> f64 {
+    page(p).doc.get_node(id(node)).map_or(0.0, |n| n.scroll_offset().y)
+}
+/// A box scrolled down to an offset, in CSS pixels, at once.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_scroll_to(p: *mut Page, node: u64, y: f64) {
+    page(p).doc.scroll_to(id(node), 0.0, y, ScrollBehavior::Instant);
 }

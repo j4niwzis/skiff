@@ -27,6 +27,8 @@ void skiff_blitz_resolve(skiff_blitz_page *page, double now_ms);
 void skiff_blitz_paint(skiff_blitz_page *page, std::uint8_t *out, std::size_t stride);
 std::uint64_t skiff_blitz_hit(skiff_blitz_page *page, float x, float y);
 bool skiff_blitz_scroll_at(skiff_blitz_page *page, float x, float y, double dx, double dy);
+double skiff_blitz_scroll_offset(skiff_blitz_page *page, std::uint64_t node);
+void skiff_blitz_scroll_to(skiff_blitz_page *page, std::uint64_t node, double y);
 }
 module skiff.web;
 
@@ -144,7 +146,12 @@ void canvasCircle(Handle h, float cx, float cy, float r, Colour c) { memory::can
 void canvasText(Handle h, float x, float y, float size, Colour c, std::string_view t) { memory::canvasText(h, x, y, size, c, t); }
 std::string drawn(Handle h) { return memory::drawn(h); }
 std::string objectUrl(std::span<const unsigned char> bytes, std::string_view mime) { return memory::objectUrl(bytes, mime); }
-void scrollTo(Handle h, float offset) { memory::scrollTo(h, offset); }
+// Scrolled as the program says (a jump, its end): the engine's own scroll set,
+// past its end where `offset` is below zero (the engine stops it there).
+void scrollTo(Handle h, float offset) {
+  memory::scrollTo(h, offset);
+  if (nodeOf(h) != 0) skiff_blitz_scroll_to(page(), nodeOf(h), offset < 0.0f ? 1.0e9 : static_cast<double>(offset));
+}
 std::string dump(Handle h) { return memory::dump(h); }
 void fire(Handle target, std::string_view event, std::string_view v) { memory::fire(target, event, v); }
 void reset() { memory::reset(); }
@@ -161,6 +168,9 @@ dom::Handle at(float x, float y) {
   return dom::kNone;
 }
 bool scroll(float x, float y, double dx, double dy) { return skiff_blitz_scroll_at(page(), x, y, dx, dy); }
+float scrolled(dom::Handle element) {
+  return nodeOf(element) == 0 ? 0.0f : static_cast<float>(skiff_blitz_scroll_offset(page(), nodeOf(element)));
+}
 } // namespace blitz
 
 } // namespace skiff::web
