@@ -191,6 +191,18 @@ TEST(Mirror, WhatAnErasedNodePaintsIsWrittenToo) {
   EXPECT_TRUE(shown.takeNotNative().empty());
 }
 
+// Laid out by skiff first, as the page does every frame: a flow's parts
+// carry the places it gave them, which the flex box gives them already.
+TEST(Mirror, APartInAFlowIsNotMovedAgain) {
+  dom::reset();
+  scene::Scene tree(c::column(c::vbox(4.0f, {.fill = true}), Plate{}, Plate{}));
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  const std::string html = dom::dump(dom::root());
+  EXPECT_FALSE(html.contains("translate(0px,36px)")) << html;
+}
+
 TEST(Mirror, RichTextIsRuns) {
   dom::reset();
   nodes::Text said("Hello world, see this", 14.0f, 0xff000000u);

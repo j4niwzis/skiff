@@ -160,7 +160,13 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
                  },
                  [](const in_scroll &) {}},
              holder);
-  const float dx = s.fX + s.fShiftX, dy = s.fY + s.fShiftY;
+  // Its offset, where it is its own: in a flow, a part in the flow is where
+  // the flow put it -- skiff's layout writes that place into its offset
+  // (State::arrange), and the engine's flex box puts it there already.
+  // Written again, every part was moved down a second time: rows twice as
+  // far apart, icons above their words.
+  const bool flowed = spl::visit(spl::overloaded{[&](const in_flex &) { return !s.fOutOfFlow; }, [](const auto &) { return false; }}, holder);
+  const float dx = (flowed ? 0.0f : s.fX) + s.fShiftX, dy = (flowed ? 0.0f : s.fY) + s.fShiftY;
   if (dx != 0.0f || dy != 0.0f) transform += "translate(" + px(dx) + "," + px(dy) + ") ";
   if (s.fScale != 1.0f) transform += "scale(" + number(s.fScale) + ") ";
   if (!transform.empty()) {
