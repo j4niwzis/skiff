@@ -176,4 +176,18 @@ TEST(Mirror, AWidgetPaintingAPathIsPaintedBySkiff) {
   EXPECT_EQ(shown.recorded(), 0u);
 }
 
+TEST(Mirror, OnAnEngineWithSvgAPathIsSvg) {
+  dom::reset();
+  scene::Scene tree(Mark{});
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  mirror::Mirror shown(mirror::kFull);
+  shown.sync(tree.root());
+  const std::string html = dom::dump(dom::root());
+  EXPECT_TRUE(html.contains("<svg")) << html;
+  EXPECT_TRUE(html.contains("d=\"M0 0 L16 8 L0 16 Z\"")) << html;
+  EXPECT_TRUE(html.contains("fill=\"rgba(0,0,0,1)\"")) << html;
+  EXPECT_FALSE(html.contains("data-skiff-draw")) << html;
+  EXPECT_EQ(shown.recorded(), 1u);
+}
+
 } // namespace

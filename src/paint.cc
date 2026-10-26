@@ -1090,32 +1090,50 @@ public:
     fCanvas->drawCircle(cx, cy, r, paint);
   }
   // A path of lines and curves, filled or stroked.
+  // Said as SVG's path data too, as it is made (`d`): for a painter that
+  // writes what is painted as SVG rather than drawing it.
   class Path {
   public:
     Path &moveTo(float x, float y) {
       fBuilder.moveTo(x, y);
+      this->said('M', {x, y});
       return *this;
     }
     Path &lineTo(float x, float y) {
       fBuilder.lineTo(x, y);
+      this->said('L', {x, y});
       return *this;
     }
     Path &quadTo(float x1, float y1, float x, float y) {
       fBuilder.quadTo(x1, y1, x, y);
+      this->said('Q', {x1, y1, x, y});
       return *this;
     }
     Path &cubicTo(float x1, float y1, float x2, float y2, float x, float y) {
       fBuilder.cubicTo(x1, y1, x2, y2, x, y);
+      this->said('C', {x1, y1, x2, y2, x, y});
       return *this;
     }
     Path &close() {
       fBuilder.close();
+      fSvg += 'Z';
       return *this;
     }
     [[nodiscard]] skia::SkPath snapshot() const { return fBuilder.snapshot(); }
+    [[nodiscard]] const std::string &svg() const noexcept { return fSvg; }
 
   private:
+    void said(char command, std::initializer_list<float> numbers) {
+      fSvg += command;
+      for (const float n : numbers) {
+        char buf[24];
+        const auto [end, ec] = std::to_chars(buf, buf + sizeof buf, n, std::chars_format::general, 6);
+        fSvg.append(buf, end);
+        fSvg += ' ';
+      }
+    }
     skia::SkPathBuilder fBuilder;
+    std::string fSvg;
   };
   void fill(const Path &path, skia::SkColor color, float alpha) const {
     if (!fCanvas) return;

@@ -32,6 +32,19 @@ import skiff.web;
 
 export namespace skiff::mirror {
 
+// What the engine behind the document can do, where engines differ: inline
+// SVG (a widget's paths and arcs written as SVG), transforms and opacity (a
+// shift and a fade written as they are), and flex boxes nested as deep as a
+// tree is (every flow a flex box). litehtml has none of them -- the mirror
+// writes around them: offsets, hidden, blocks; Blitz has all three.
+struct Engine {
+  bool svg = false;
+  bool transforms = false;
+  bool deepFlex = false;
+};
+inline constexpr Engine kLitehtml{};
+inline constexpr Engine kFull{.svg = true, .transforms = true, .deepFlex = true};
+
 namespace dom = skiff::web::dom;
 using skiff::web::Markup;
 
@@ -116,7 +129,7 @@ inline void acrossInBlock(Markup &m, const scene::State &s, bool relX, float at)
 // What every node's element is, from its State: shown or not, its sizes,
 // margins and padding, its paint (background, border, corners, shadow), its
 // opacity, its shift and scale, and where it is in what holds it.
-inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
+inline void stateOf(Markup &m, const scene::State &s, const Holder &holder, const Engine &engine) {
   if (!s.fVisible)
     m.style("display", "none");
   const bool relX = s.fRelativeSizeAxes.has<scene::axis::x>(), relY = s.fRelativeSizeAxes.has<scene::axis::y>();
@@ -140,9 +153,10 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   if (s.fGradient) m.style("background-image", "linear-gradient(" + rgba(s.fGradient->top) + "," + rgba(s.fGradient->bottom) + ")");
   if (s.fBorder) m.style("border", px(s.fBorder->width) + " solid " + rgba(s.fBorder->colour));
   if (s.fShadow) m.style("box-shadow", "0 " + px(s.fShadow->offsetY) + " " + px(s.fShadow->offsetY * 2.0f) + " " + rgba(s.fShadow->colour));
-  // Faded out whole: not seen. (No opacity in litehtml: what is half faded
-  // is shown whole.)
-  if (s.fAlpha <= 0.0f) m.style("visibility", "hidden");
+  // Faded: as it is, where the engine has opacity; else, faded out whole,
+  // not seen, and what is half faded shown whole.
+  if (engine.transforms && s.fAlpha < 1.0f) m.style("opacity", number(s.fAlpha));
+  else if (s.fAlpha <= 0.0f) m.style("visibility", "hidden");
   if (s.fMasking) m.style("overflow", "hidden");
   if (s.fDepth != 0.0f) m.style("z-index", std::to_string(static_cast<int>(std::lround(s.fDepth))));
   // Moved without a transform -- litehtml has none: its own shift (a drawer
@@ -156,6 +170,7 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
     m.style("position", "absolute");
     m.style("left", number(s.fAnchor.x * 100.0f) + "%");
     m.style("top", number(s.fAnchor.y * 100.0f) + "%");
+    if (engine.transforms) return;  // its origin and shift: one transform, below
     const float ox = dx - s.fOrigin.x * s.fBounds.width(), oy = dy - s.fOrigin.y * s.fBounds.height();
     if (ox != 0.0f) m.style("margin-left", px(s.fMargin.fLeft + ox));
     if (oy != 0.0f) m.style("margin-top", px(s.fMargin.fTop + oy));
@@ -194,6 +209,20 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
                  },
                  [](const in_scroll &) {}},
              holder);
+  if (engine.transforms) {
+    // Moved by a transform: its origin on its anchor where placed, then its
+    // shift and its scale.
+    std::string transform;
+    if (absolute && (s.fOrigin.x != 0.0f || s.fOrigin.y != 0.0f))
+      transform += "translate(" + number(-s.fOrigin.x * 100.0f) + "%," + number(-s.fOrigin.y * 100.0f) + "%) ";
+    if (dx != 0.0f || dy != 0.0f) transform += "translate(" + px(dx) + "," + px(dy) + ") ";
+    if (s.fScale != 1.0f) transform += "scale(" + number(s.fScale) + ") ";
+    if (!transform.empty()) {
+      transform.pop_back();
+      m.style("transform", transform);
+    }
+    return;
+  }
   if (!absolute && (dx != 0.0f || dy != 0.0f)) {
     if (!std::ranges::contains(m.fStyles, std::pair<std::string, std::string>("position", "relative"))) m.style("position", "relative");
     if (dx != 0.0f) m.style("left", px(dx));
@@ -231,7 +260,7 @@ inline void flexOf(Markup &m, const scene::FlowOptions &o) {
                                                         [](scene::justify::space_around) { return "space-around"; }},
                                         o.justify));
 }
-[[nodiscard]] inline Holder kindOf(Markup &m, const scene::Look &look, const std::vector<const scene::State *> &parts) {
+[[nodiscard]] inline Holder kindOf(Markup &m, const scene::Look &look, const std::vector<const scene::State *> &parts, const Engine &engine) {
   return spl::visit(spl::overloaded{[&](const scene::look::box &box) -> Holder {
                                       m.style("display", "block");
                                       m.style("position", "relative");
@@ -240,7 +269,7 @@ inline void flexOf(Markup &m, const scene::FlowOptions &o) {
                                     },
                                     [&](const scene::look::flow &flow) -> Holder {
                                       const scene::FlowOptions &o = flow.options;
-                                      if (needsFlex(o, parts)) {
+                                      if (engine.deepFlex || needsFlex(o, parts)) {
                                         flexOf(m, o);
                                         return in_flex{isRow(o.direction)};
                                       }
@@ -297,8 +326,8 @@ inline void flexOf(Markup &m, const scene::FlowOptions &o) {
 // (a path, an arc, a picture), for the node to be painted by skiff instead.
 class HtmlPainter : public skiff::paint::Painter {
 public:
-  HtmlPainter(skia::SkCanvas *discarded, skia::SkFont &font, Markup &into, const skia::SkRect &box)
-      : Painter(discarded, font), fFont(font), fInto(&into), fLeft(box.fLeft), fTop(box.fTop) {}
+  HtmlPainter(skia::SkCanvas *discarded, skia::SkFont &font, Markup &into, const skia::SkRect &box, bool svg)
+      : Painter(discarded, font), fFont(font), fInto(&into), fLeft(box.fLeft), fTop(box.fTop), fBox(box), fSvg(svg) {}
 
   [[nodiscard]] bool lost() const noexcept { return fLost; }
   [[nodiscard]] std::size_t parts() const noexcept { return fPart; }
@@ -339,28 +368,40 @@ public:
   void strokeCircle(float cx, float cy, float r, float width, skia::SkColor color, float alpha) const {
     this->edge(skia::SkRect::MakeLTRB(cx - r, cy - r, cx + r, cy + r), r, width, color, alpha);
   }
-  // A line across or down: a plate as thick as the line. Slanted: lost.
-  void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, bool = true) const {
-    if (y1 == y2)
+  // A line across or down: a plate as thick as the line. Slanted: SVG's
+  // line, where the engine has SVG; else lost.
+  void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, bool round = true) const {
+    // Across or down: a plate where SVG is not to be had, or the caps are
+    // cut (a round cap's half circles past the ends lost there).
+    if (y1 == y2 && (!round || !fSvg))
       this->plate(skia::SkRect::MakeLTRB(std::min(x1, x2), y1 - width * 0.5f, std::max(x1, x2), y1 + width * 0.5f), 0.0f, color, alpha);
-    else if (x1 == x2)
+    else if (x1 == x2 && (!round || !fSvg))
       this->plate(skia::SkRect::MakeLTRB(x1 - width * 0.5f, std::min(y1, y2), x1 + width * 0.5f, std::max(y1, y2)), 0.0f, color, alpha);
     else
-      fLost = true;
+      this->stroked("M" + number(x1) + " " + number(y1) + "L" + number(x2) + " " + number(y2), width, color, alpha, round ? "round" : "butt");
   }
-  void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, Cap) const {
-    this->line(x1, y1, x2, y2, width, color, alpha, true);
+  void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, Cap cap) const {
+    this->line(x1, y1, x2, y2, width, color, alpha, cap != Cap::butt);
   }
   void verticalGradient(const skia::SkRect &rect, skia::SkColor top, skia::SkColor, float alpha = 1.0f) const {
     this->plate(rect, 0.0f, top, alpha);
   }
-  // What has no element of its own here: lost, the node painted by skiff.
-  void arc(const skia::SkRect &, float, float, float, skia::SkColor, float) const { fLost = true; }
-  void fillArc(const skia::SkRect &, float, float, skia::SkColor, float) const { fLost = true; }
-  void fill(const Path &, skia::SkColor, float) const { fLost = true; }
+  // Arcs and paths: SVG's, where the engine has SVG; else lost, the node
+  // painted by skiff. An SkPath made elsewhere has no path data here: lost.
+  void arc(const skia::SkRect &oval, float startDegrees, float sweepDegrees, float width, skia::SkColor color, float alpha) const {
+    this->stroked(arcData(oval, startDegrees, sweepDegrees), width, color, alpha, "round");
+  }
+  void fillArc(const skia::SkRect &oval, float startDegrees, float sweepDegrees, skia::SkColor color, float alpha) const {
+    this->filled(arcData(oval, startDegrees, sweepDegrees) + "Z", color, alpha);
+  }
+  void fill(const Path &path, skia::SkColor color, float alpha) const { this->filled(path.svg(), color, alpha); }
   void fill(const skia::SkPath &, skia::SkColor, float = 1.0f) const { fLost = true; }
-  void stroke(const Path &, float, skia::SkColor, float, Cap, bool) const { fLost = true; }
-  void stroke(const Path &, float, skia::SkColor, float, bool = true) const { fLost = true; }
+  void stroke(const Path &path, float width, skia::SkColor color, float alpha, Cap cap, bool) const {
+    this->stroked(path.svg(), width, color, alpha, cap == Cap::butt ? "butt" : cap == Cap::square ? "square" : "round");
+  }
+  void stroke(const Path &path, float width, skia::SkColor color, float alpha, bool round = true) const {
+    this->stroked(path.svg(), width, color, alpha, round ? "round" : "butt");
+  }
   void imageFilled(const skia::SkImage *image, const skia::SkRect &, float = 1.0f) const { fLost = fLost || image != nullptr; }
   void image(const skia::SkImage *image, const skia::SkRect &, float = 1.0f, Sampling = Sampling::linear) const { fLost = fLost || image != nullptr; }
   void imagePart(const skia::SkImage *image, const skia::SkRect &, const skia::SkRect &, float = 1.0f, Sampling = Sampling::linear) const {
@@ -451,6 +492,63 @@ private:
       if (radius > 0.0f) e.style("border-radius", px(radius + width * 0.5f));
     });
   }
+  // An arc of the oval in its box, from a start angle through a sweep
+  // (degrees, clockwise from three o'clock), as SVG's path data.
+  [[nodiscard]] static std::string arcData(const skia::SkRect &oval, float startDegrees, float sweepDegrees) {
+    const float rx = oval.width() * 0.5f, ry = oval.height() * 0.5f, cx = oval.centerX(), cy = oval.centerY();
+    const auto at = [&](float degrees) {
+      const float r = degrees * std::numbers::pi_v<float> / 180.0f;
+      return std::pair{cx + rx * std::cos(r), cy + ry * std::sin(r)};
+    };
+    const auto [sx, sy] = at(startDegrees);
+    // A whole turn: two halves, SVG drawing nothing of an arc that ends
+    // where it starts.
+    if (std::abs(sweepDegrees) >= 359.99f) {
+      const auto [mx, my] = at(startDegrees + 180.0f);
+      const std::string half = "A" + number(rx) + " " + number(ry) + " 0 1 1 ";
+      return "M" + number(sx) + " " + number(sy) + half + number(mx) + " " + number(my) + half + number(sx) + " " + number(sy);
+    }
+    const auto [ex, ey] = at(startDegrees + sweepDegrees);
+    return "M" + number(sx) + " " + number(sy) + "A" + number(rx) + " " + number(ry) + " 0 " + (std::abs(sweepDegrees) > 180.0f ? "1" : "0") +
+           " " + (sweepDegrees > 0.0f ? "1" : "0") + " " + number(ex) + " " + number(ey);
+  }
+  // A shape in SVG, over the node's box in the scene's own units (its
+  // viewBox), moved as the painting was translated.
+  void shape(auto &&write) const {
+    if (!fSvg) {
+      fLost = true;
+      return;
+    }
+    fInto->inner("svg", skiff::web::Part{static_cast<std::uint32_t>(++fPart)}, [&](Markup &svg) {
+      svg.style("position", "absolute");
+      svg.style("left", "0");
+      svg.style("top", "0");
+      svg.style("overflow", "visible");
+      svg.attr("width", number(fBox.width()));
+      svg.attr("height", number(fBox.height()));
+      svg.attr("viewBox", number(fBox.fLeft - fX) + " " + number(fBox.fTop - fY) + " " + number(fBox.width()) + " " + number(fBox.height()));
+      svg.attr("xmlns", "http://www.w3.org/2000/svg");
+      svg.inner("path", skiff::web::Part{static_cast<std::uint32_t>(++fPart)}, write);
+    });
+  }
+  void filled(const std::string &data, skia::SkColor color, float alpha) const {
+    if (((color >> 24) & 0xffu) == 0 || alpha <= 0.0f || data.empty()) return;
+    this->shape([&](Markup &path) {
+      path.attr("d", data);
+      path.attr("fill", colourOf(color, alpha));
+    });
+  }
+  void stroked(const std::string &data, float width, skia::SkColor color, float alpha, std::string_view cap) const {
+    if (((color >> 24) & 0xffu) == 0 || alpha <= 0.0f || data.empty()) return;
+    this->shape([&](Markup &path) {
+      path.attr("d", data);
+      path.attr("fill", "none");
+      path.attr("stroke", colourOf(color, alpha));
+      path.attr("stroke-width", number(width));
+      path.attr("stroke-linecap", cap);
+      path.attr("stroke-linejoin", "round");
+    });
+  }
   void words(const std::string &str, float x, float baseline, float size, skia::SkColor color, float alpha, bool bold,
              std::optional<float> width) const {
     if (str.empty() || ((color >> 24) & 0xffu) == 0 || alpha <= 0.0f) return;
@@ -475,6 +573,8 @@ private:
   skia::SkFont &fFont;
   Markup *fInto;
   float fLeft, fTop;
+  skia::SkRect fBox;
+  bool fSvg;
   mutable float fX = 0.0f, fY = 0.0f;
   mutable std::vector<std::pair<float, float>> fSaved;
   mutable std::size_t fPart = 0;
@@ -492,7 +592,7 @@ template <class N> [[nodiscard]] const scene::State &stateOfPart(N &node) { retu
 // gone. Whatever drives the program refreshes its bindings, then sync()s.
 class Mirror {
 public:
-  explicit Mirror(dom::Handle into = dom::root()) : fInto(into) {}
+  explicit Mirror(Engine engine = kLitehtml, dom::Handle into = dom::root()) : fEngine(engine), fInto(into) {}
 
   template <class Root> void sync(Root &root) {
     ++fPass;
@@ -592,7 +692,7 @@ private:
       skia::SkPictureRecorder discarded;
       skia::SkCanvas *canvas = discarded.beginRecording(node.fState.fBounds);
       Markup drawn;
-      detail::HtmlPainter p(canvas, face, drawn, node.fState.fBounds);
+      detail::HtmlPainter p(canvas, face, drawn, node.fState.fBounds, fEngine.svg);
       node.drawSelf(p, 1.0f);
       if (p.lost()) return false;
       into.fInner.append_range(std::move(drawn.fInner));
@@ -616,8 +716,8 @@ private:
     if (!drawn)
       children([&](auto &child) { parts.push_back(&detail::stateOfPart(child)); });
     Markup now;
-    const detail::Holder theirs = detail::kindOf(now, look, parts);
-    detail::stateOf(now, state, holder);
+    const detail::Holder theirs = detail::kindOf(now, look, parts, fEngine);
+    detail::stateOf(now, state, holder, fEngine);
     if (paints) {
       const auto unsized = [&](std::string_view property) {
         return std::ranges::none_of(now.fStyles, [&](const auto &style) { return style.first == property; });
@@ -704,6 +804,7 @@ private:
     was = std::move(children);
   }
 
+  Engine fEngine;
   dom::Handle fInto;
   std::uint64_t fPass = 0;
   std::unordered_map<scene::NodeId, Shown> fShown;
