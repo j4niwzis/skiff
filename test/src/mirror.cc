@@ -174,4 +174,18 @@ TEST(Mirror, APathIsSvg) {
   EXPECT_TRUE(shown.takeNotNative().empty());
 }
 
+TEST(Mirror, RichTextIsRuns) {
+  dom::reset();
+  nodes::Text said("Hello world, see this", 14.0f, 0xff000000u);
+  said.setStyles({scene::TextStyled{.first = 0, .last = 5, .strong = true}}, 0xff888888u);
+  said.setLinks({scene::TextLink{.first = 13, .last = 21, .target = "https://example.org"}}, 0xff2266ccu);
+  scene::Scene tree(std::move(said));
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  const std::string html = dom::dump(dom::root());
+  EXPECT_TRUE(html.contains("<span style=\"color:rgba(0,0,0,1);font-weight:bold;\">Hello</span>")) << html;
+  EXPECT_TRUE(html.contains("<a href=\"https://example.org\" style=\"color:rgba(34,102,204,1);\">see this</a>")) << html;
+  EXPECT_TRUE(html.contains(">, <") || html.contains("> world, <")) << html;
+}
+
 } // namespace

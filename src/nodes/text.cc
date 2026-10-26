@@ -557,7 +557,16 @@ public:
   [[nodiscard]] skia::SkColor colour() const noexcept { return fColour; }
   [[nodiscard]] bool bold() const noexcept { return fBold; }
   [[nodiscard]] skiff::scene::Look look() const {
-    return skiff::scene::look::words{fText, fSize, fColour, fBold, fWrapChoice, fElided};
+    return skiff::scene::look::words{.text = fText,
+                                     .size = fSize,
+                                     .colour = fColour,
+                                     .bold = fBold,
+                                     .styles = fStyles,
+                                     .links = fLinks,
+                                     .linkColour = fLinkColour,
+                                     .quoteColour = fQuoteColour,
+                                     .wrapped = fWrapChoice,
+                                     .elided = fElided};
   }
 
   // Cut to this width instead of sizing to the text.

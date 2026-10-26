@@ -93,7 +93,37 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   } else if (s.fCornerRadius > 0.0f) {
     m.style("border-radius", px(s.fCornerRadius));
   }
-  if (s.fBackground) m.style("background-color", rgba(*s.fBackground));
+  const auto background = s.selected() && s.fSelectedBackground ? s.fSelectedBackground : s.fBackground;
+  if (background) m.style("background-color", rgba(*background));
+  // What the engine does itself, under the pointer and with the focus: a
+  // background, a part shown -- variables on the element, and attributes
+  // skiff.web's sheet (pageCss) selects on with :hover and :focus-within.
+  if (s.fHoverBackground) {
+    m.style("--skiff-hover-bg", rgba(*s.fHoverBackground));
+    m.attr("data-skiff-hover", "");
+  }
+  if (s.fFocusBackground) {
+    m.style("--skiff-focus-bg", rgba(*s.fFocusBackground));
+    m.attr("data-skiff-focus", "");
+  }
+  if (s.fRevealOnHover) m.attr("data-skiff-reveal", "");
+  // A bubble's tail: the sheet's triangle, at its side, in its colour.
+  if (s.fTail && s.fTail->shown) {
+    m.attr("data-skiff-tail", spl::visit(spl::overloaded{[](scene::tail_side::left) { return "left"; }, [](scene::tail_side::right) { return "right"; }},
+                                         s.fTail->side));
+    m.style("--skiff-tail-w", px(s.fTail->width));
+    m.style("--skiff-tail-h", px(s.fTail->height));
+    if (background) m.style("--skiff-bg", rgba(*background));
+  }
+  // The pointer's shape over it.
+  if (const std::string_view cursor = spl::visit(spl::overloaded{[](scene::cursor::arrow) { return std::string_view(); },
+                                                                  [](scene::cursor::text) { return std::string_view("text"); },
+                                                                  [](scene::cursor::hand) { return std::string_view("pointer"); },
+                                                                  [](scene::cursor::resize_horizontal) { return std::string_view("ew-resize"); },
+                                                                  [](scene::cursor::resize_vertical) { return std::string_view("ns-resize"); }},
+                                                  s.cursorShape());
+      !cursor.empty())
+    m.style("cursor", cursor);
   if (s.fGradient) m.style("background-image", "linear-gradient(" + rgba(s.fGradient->top) + "," + rgba(s.fGradient->bottom) + ")");
   if (s.fBorder) m.style("border", px(s.fBorder->width) + " solid " + rgba(s.fBorder->colour));
   if (s.fShadow) m.style("box-shadow", "0 " + px(s.fShadow->offsetY) + " " + px(s.fShadow->offsetY * 2.0f) + " " + rgba(s.fShadow->colour));
@@ -139,6 +169,73 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   }
 }
 
+// A text's runs, as elements in its own: cut where a style or a link begins
+// or ends, each run a <span> -- or an <a>, a link -- drawn as the text
+// draws it: strong, slanted, struck, underlined; code in the monospace face
+// on a faint plate; a quote in the quote's colour; a stretch pointed at on
+// a plate of it; a spoiler hidden under a plate; its own colour and plate;
+// a heading's size; a link in the links' colour, a mention on a plate.
+inline void runsOf(Markup &m, const scene::look::words &words) {
+  std::vector<std::size_t> cuts{0, words.text.size()};
+  for (const scene::TextStyled &one : words.styles) cuts.insert(cuts.end(), {one.first, one.last});
+  for (const scene::TextLink &one : words.links) cuts.insert(cuts.end(), {one.first, one.last});
+  std::erase_if(cuts, [&](std::size_t at) { return at > words.text.size(); });
+  std::ranges::sort(cuts);
+  cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
+  const auto covers = [](std::size_t at) { return [at](const auto &one) { return at >= one.first && at < one.last; }; };
+  for (const auto [index, pair] : cuts | std::views::adjacent<2> | std::views::enumerate) {
+    const auto [from, to] = pair;
+    const scene::TextLink *link = nullptr;
+    if (const auto found = std::ranges::find_if(words.links, covers(from)); found != words.links.end()) link = &*found;
+    // The styles over it, summed as the text sums them (styleAt).
+    scene::TextStyled style;
+    for (const scene::TextStyled &one : words.styles | std::views::filter(covers(from))) {
+      style.strong = style.strong || one.strong;
+      style.emphasis = style.emphasis || one.emphasis;
+      style.struck = style.struck || one.struck;
+      style.underline = style.underline || one.underline;
+      style.code = style.code || one.code;
+      style.quote = style.quote || one.quote;
+      style.marked = style.marked || one.marked;
+      style.spoiler = style.spoiler || one.spoiler;
+      if (one.colour) style.colour = one.colour;
+      if (one.background) style.background = one.background;
+      if (one.scale != 1.0f) style.scale = one.scale;
+    }
+    m.inner(link ? "a" : "span", skiff::web::Part{static_cast<std::uint32_t>(index + 1)}, [&](Markup &run) {
+      run.text(words.text.substr(from, to - from));
+      const scene::Colour colour = link ? words.linkColour : style.colour.value_or(style.quote ? words.quoteColour : words.colour);
+      run.style("color", rgba(colour));
+      if (style.strong) run.style("font-weight", "bold");
+      if (style.emphasis) run.style("font-style", "italic");
+      if (style.struck || style.underline)
+        run.style("text-decoration", std::string(style.struck ? "line-through" : "") + (style.struck && style.underline ? " " : "") +
+                                         (style.underline ? "underline" : ""));
+      if (style.code) {
+        run.style("font-family", "monospace");
+        run.style("background-color", rgba((colour & 0x00ffffffu) | 0x1a000000u));
+        run.style("border-radius", "3px");
+      }
+      if (style.marked) run.style("background-color", rgba((words.quoteColour & 0x00ffffffu) | 0x47000000u));
+      if (style.background) run.style("background-color", rgba(*style.background));
+      if (style.spoiler) {
+        run.style("background-color", rgba(colour));
+        run.style("color", "transparent");
+        run.style("border-radius", "3px");
+      }
+      if (style.scale != 1.0f) run.style("font-size", px(words.size * style.scale));
+      if (link) {
+        run.attr("href", link->target);
+        if (link->pill) {
+          run.style("background-color", rgba((words.linkColour & 0x00ffffffu) | 0x29000000u));
+          run.style("border-radius", "999px");
+          run.style("padding", "0 6px");
+        }
+      }
+    });
+  }
+}
+
 // What kind of node it is, as an element, and how it holds its parts: what
 // its look says.
 inline void flexOf(Markup &m, const scene::FlowOptions &o) {
@@ -180,7 +277,11 @@ inline void flexOf(Markup &m, const scene::FlowOptions &o) {
                                       } else if (words.wrapped == std::optional<bool>(false)) {
                                         m.style("white-space", "pre");
                                       }
-                                      m.text(words.text);
+                                      // Plain: its words. Styled or linked: its runs.
+                                      if (words.styles.empty() && words.links.empty())
+                                        m.text(words.text);
+                                      else
+                                        runsOf(m, words);
                                       return in_cell{};
                                     },
                                     [&](const scene::look::scrolled &) -> Holder {
@@ -205,14 +306,28 @@ inline void flexOf(Markup &m, const scene::FlowOptions &o) {
 // whatever it is asked that is not shadowed here is done there and lost --
 // and said lost (a path, an arc, a picture), for the node to be painted by
 // skiff instead. SvgPainter, below, has paths and arcs too, as SVG.
+// What a recording keeps whatever copy of the painter writes to it: the
+// parts numbered so far, and what was lost first.
+struct Recording {
+  std::size_t parts = 0;
+  bool lost = false;
+  std::string_view lostWhat;
+};
 class HtmlPainter : public skiff::paint::Painter {
 public:
-  HtmlPainter(skia::SkCanvas *discarded, skia::SkFont &font, Markup &into, const skia::SkRect &box)
-      : Painter(discarded, font), fFont(font), fInto(&into), fLeft(box.fLeft), fTop(box.fTop), fBox(box) {}
+  HtmlPainter(skia::SkCanvas *discarded, skia::SkFont &font, Markup &into, const skia::SkRect &box, Recording &recording)
+      : Painter(discarded, font), fFont(&font), fInto(&into), fLeft(box.fLeft), fTop(box.fTop), fBox(box), fRecording(&recording) {}
 
-  [[nodiscard]] bool lost() const noexcept { return fLost; }
+  [[nodiscard]] bool lost() const noexcept { return fRecording->lost; }
   // What was lost first, for the mirror to tell: what of the painter it was.
-  [[nodiscard]] std::string_view lostWhat() const noexcept { return fLostWhat; }
+  [[nodiscard]] std::string_view lostWhat() const noexcept { return fRecording->lostWhat; }
+  // This painter in the monospace face where `on` (code), else the text's
+  // own: a copy writing to the same recording.
+  [[nodiscard]] HtmlPainter monospaced(bool on) const {
+    HtmlPainter other = *this;
+    other.fMonospace = on;
+    return other;
+  }
 
   void save() const { fSaved.push_back({fX, fY}); }
   void restore() const {
@@ -318,8 +433,8 @@ public:
 
 protected:
   void lose(std::string_view what) const {
-    if (!fLost) fLostWhat = what;
-    fLost = true;
+    if (!fRecording->lost) fRecording->lostWhat = what;
+    fRecording->lost = true;
   }
   void picture(const skia::SkImage *image) const {
     if (image != nullptr) this->lose("a picture");
@@ -344,13 +459,13 @@ protected:
   }
   [[nodiscard]] static bool unseen(skia::SkColor color, float alpha) { return ((color >> 24) & 0xffu) == 0 || alpha <= 0.0f; }
   void element(std::string_view tag, auto &&write) const {
-    fInto->inner(tag, skiff::web::Part{static_cast<std::uint32_t>(++fPart)}, [&](Markup &e) {
+    fInto->inner(tag, skiff::web::Part{static_cast<std::uint32_t>(++fRecording->parts)}, [&](Markup &e) {
       e.style("position", "absolute");
       write(e);
     });
   }
   // A part of an element made here: numbered on from those before.
-  [[nodiscard]] skiff::web::Part nextPart() const { return skiff::web::Part{static_cast<std::uint32_t>(++fPart)}; }
+  [[nodiscard]] skiff::web::Part nextPart() const { return skiff::web::Part{static_cast<std::uint32_t>(++fRecording->parts)}; }
   void at(Markup &e, const skia::SkRect &r) const {
     e.style("left", px(r.fLeft));
     e.style("top", px(r.fTop));
@@ -379,9 +494,9 @@ protected:
   void words(const std::string &str, float x, float baseline, float size, skia::SkColor color, float alpha, bool bold,
              std::optional<float> width) const {
     if (str.empty() || unseen(color, alpha)) return;
-    fFont.setSize(size);
+    fFont->setSize(size);
     skia::SkFontMetrics metrics;
-    (void)fFont.getMetrics(&metrics);
+    (void)fFont->getMetrics(&metrics);
     this->element("div", [&](Markup &e) {
       e.style("left", px(x + fX - fLeft));
       e.style("top", px(baseline + metrics.fAscent + fY - fTop));
@@ -390,6 +505,7 @@ protected:
         e.style("overflow", "hidden");
       }
       e.style("white-space", "pre");
+      if (fMonospace) e.style("font-family", "monospace");
       e.style("font-size", px(size));
       e.style("color", colourOf(color, alpha));
       if (bold) e.style("font-weight", "bold");
@@ -397,15 +513,14 @@ protected:
     });
   }
 
-  skia::SkFont &fFont;
+  skia::SkFont *fFont;
   Markup *fInto;
   float fLeft, fTop;
   skia::SkRect fBox;
+  Recording *fRecording;
+  bool fMonospace = false;
   mutable float fX = 0.0f, fY = 0.0f;
   mutable std::vector<std::pair<float, float>> fSaved;
-  mutable std::size_t fPart = 0;
-  mutable bool fLost = false;
-  mutable std::string_view fLostWhat;
 };
 
 // A path as SVG's path data, as it is made: what SvgPainter's painting asks
@@ -442,7 +557,9 @@ private:
 class SvgPainter : public HtmlPainter {
 public:
   using HtmlPainter::HtmlPainter;
+  explicit SvgPainter(const HtmlPainter &other) : HtmlPainter(other) {}
   using Path = SvgPath;
+  [[nodiscard]] SvgPainter monospaced(bool on) const { return SvgPainter(HtmlPainter::monospaced(on)); }
   using HtmlPainter::fill;
   using HtmlPainter::line;
   using HtmlPainter::stroke;
@@ -632,7 +749,8 @@ private:
       skia::SkPictureRecorder discarded;
       skia::SkCanvas *canvas = discarded.beginRecording(node.fState.fBounds);
       Markup drawn;
-      Painter p(canvas, face, drawn, node.fState.fBounds);
+      detail::Recording recording;
+      Painter p(canvas, face, drawn, node.fState.fBounds, recording);
       node.drawSelf(p, 1.0f);
       if (p.lost()) {
         this->notNative(scene::nameOf<N>(), p.lostWhat());

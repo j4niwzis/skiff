@@ -523,35 +523,6 @@ struct FlowOptions {
   Align crossAlign = align::kStart;
   Justify justify = justify::start{};
 };
-// What a node is to an engine that lays out and paints a tree itself (a
-// browser's, skiff.mirror's): a box holding its children where their
-// anchors put them, a flow of them, words, or a view that scrolls what it
-// holds. Said by the node (look()), and through the walks' table where the
-// node is erased; the words are the node's, read while it is there.
-namespace look {
-// A box: its own colour where it paints one (a plate behind what it holds).
-struct box {
-  std::optional<Colour> colour;
-};
-struct flow {
-  FlowOptions options;
-};
-struct words {
-  std::string_view text;
-  float size = 0.0f;
-  Colour colour = 0;
-  bool bold = false;
-  // Broken across lines always or never, where it is told (else where it
-  // does not fit, as CSS's text); cut with an ellipsis where it runs out.
-  std::optional<bool> wrapped;
-  bool elided = false;
-};
-struct scrolled {};
-// Painted by the node itself (a widget, an icon, a picture): to an engine,
-// a box of the node's size that skiff paints, all of what is in it.
-struct drawn {};
-} // namespace look
-using Look = spl::variant<look::box, look::flow, look::words, look::scrolled, look::drawn>;
 // An icon's marks -- lines, circles, arcs, rounded boxes, paths -- about the
 // middle of its box, stroked or filled, in the icon's colour or their own.
 namespace path_step {
@@ -648,6 +619,42 @@ struct TextStyled {
   // lines of its own, each as tall as its size.
   float scale = 1.0f;
 };
+// What a node is to an engine that lays out and paints a tree itself (a
+// browser's, skiff.mirror's): a box holding its children where their
+// anchors put them, a flow of them, words, or a view that scrolls what it
+// holds. Said by the node (look()), and through the walks' table where the
+// node is erased; the words are the node's, read while it is there.
+namespace look {
+// A box: its own colour where it paints one (a plate behind what it holds).
+struct box {
+  std::optional<Colour> colour;
+};
+struct flow {
+  FlowOptions options;
+};
+struct words {
+  std::string_view text;
+  float size = 0.0f;
+  Colour colour = 0;
+  bool bold = false;
+  // Its runs drawn otherwise (strong, a quote, code, a colour of its own,
+  // ...) and its links, as the text keeps them -- read while it is there --
+  // and the colours links and quotes are drawn in.
+  std::span<const TextStyled> styles;
+  std::span<const TextLink> links;
+  Colour linkColour = 0;
+  Colour quoteColour = 0;
+  // Broken across lines always or never, where it is told (else where it
+  // does not fit, as CSS's text); cut with an ellipsis where it runs out.
+  std::optional<bool> wrapped;
+  bool elided = false;
+};
+struct scrolled {};
+// Painted by the node itself (a widget, an icon, a picture): to an engine,
+// a box of the node's size that skiff paints, all of what is in it.
+struct drawn {};
+} // namespace look
+using Look = spl::variant<look::box, look::flow, look::words, look::scrolled, look::drawn>;
 
 struct Spec {
   std::optional<Anchor> place{};
