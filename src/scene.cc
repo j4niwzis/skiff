@@ -2322,11 +2322,12 @@ struct Node : NodeBase {
   }
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
   [[nodiscard]] Semantics semantics() const { return {}; }
-  // A box, unless the node says it is something else (see Look).
-  [[nodiscard]] Look look() const { return look::box{}; }
 #else
   [[nodiscard]] Semantics semantics(this const auto &) { return {}; }
 #endif
+  // A box, unless the node says it is something else (see Look): in every
+  // build.
+  [[nodiscard]] Look look() const { return look::box{}; }
 
   // -- styling: the node's own declarations, colour and fonts
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
