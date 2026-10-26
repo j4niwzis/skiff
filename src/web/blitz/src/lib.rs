@@ -175,6 +175,12 @@ pub extern "C" fn skiff_blitz_append(p: *mut Page, parent: u64, child: u64) {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_remove(p: *mut Page, node: u64) {
+    // Gone already, with an element it was in: what holds an element drops
+    // everything in it, and the mirror lets go of each it no longer shows,
+    // in no order -- removed twice, Blitz panicked (an invalid key).
+    if page(p).doc.get_node(id(node)).is_none() {
+        return;
+    }
     let _ = page(p).doc.mutate().remove_and_drop_node(id(node));
 }
 #[unsafe(no_mangle)]
