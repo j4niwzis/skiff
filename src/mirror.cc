@@ -24,6 +24,7 @@ export module skiff.mirror;
 
 import std;
 import splice;
+import skia;
 import skiff.scene;
 import skiff.bind;
 import skiff.web;
@@ -138,18 +139,25 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   if (s.fGradient) m.style("background-image", "linear-gradient(" + rgba(s.fGradient->top) + "," + rgba(s.fGradient->bottom) + ")");
   if (s.fBorder) m.style("border", px(s.fBorder->width) + " solid " + rgba(s.fBorder->colour));
   if (s.fShadow) m.style("box-shadow", "0 " + px(s.fShadow->offsetY) + " " + px(s.fShadow->offsetY * 2.0f) + " " + rgba(s.fShadow->colour));
-  if (s.fAlpha < 1.0f) m.style("opacity", number(s.fAlpha));
+  // Faded out whole: not seen. (No opacity in litehtml: what is half faded
+  // is shown whole.)
+  if (s.fAlpha <= 0.0f) m.style("visibility", "hidden");
   if (s.fMasking) m.style("overflow", "hidden");
   if (s.fDepth != 0.0f) m.style("z-index", std::to_string(static_cast<int>(std::lround(s.fDepth))));
-  // Placed by its anchor, out of what holds it: over it, its origin on the
-  // anchor.
-  std::string transform;
+  // Moved without a transform -- litehtml has none: its own shift (a drawer
+  // slid away, a row swiped), and where it is placed, its origin on its
+  // anchor -- by its size as skiff laid it out -- as margins; in a flow, by
+  // left and top.
+  const float dx = s.fX + s.fShiftX, dy = s.fY + s.fShiftY;
+  bool absolute = false;
   const auto placed = [&] {
+    absolute = true;
     m.style("position", "absolute");
     m.style("left", number(s.fAnchor.x * 100.0f) + "%");
     m.style("top", number(s.fAnchor.y * 100.0f) + "%");
-    if (s.fOrigin.x != 0.0f || s.fOrigin.y != 0.0f)
-      transform += "translate(" + number(-s.fOrigin.x * 100.0f) + "%," + number(-s.fOrigin.y * 100.0f) + "%) ";
+    const float ox = dx - s.fOrigin.x * s.fBounds.width(), oy = dy - s.fOrigin.y * s.fBounds.height();
+    if (ox != 0.0f) m.style("margin-left", px(s.fMargin.fLeft + ox));
+    if (oy != 0.0f) m.style("margin-top", px(s.fMargin.fTop + oy));
   };
   spl::visit(spl::overloaded{
                  [&](const in_flex &flow) {
@@ -185,12 +193,10 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
                  },
                  [](const in_scroll &) {}},
              holder);
-  const float dx = s.fX + s.fShiftX, dy = s.fY + s.fShiftY;
-  if (dx != 0.0f || dy != 0.0f) transform += "translate(" + px(dx) + "," + px(dy) + ") ";
-  if (s.fScale != 1.0f) transform += "scale(" + number(s.fScale) + ") ";
-  if (!transform.empty()) {
-    transform.pop_back();
-    m.style("transform", transform);
+  if (!absolute && (dx != 0.0f || dy != 0.0f)) {
+    if (!std::ranges::contains(m.fStyles, std::pair<std::string, std::string>("position", "relative"))) m.style("position", "relative");
+    if (dx != 0.0f) m.style("left", px(dx));
+    if (dy != 0.0f) m.style("top", px(dy));
   }
 }
 
@@ -263,6 +269,12 @@ inline void flexOf(Markup &m, const scene::FlowOptions &o) {
                                       m.style("overflow-y", "auto");
                                       m.style("position", "relative");
                                       return in_scroll{};
+                                    },
+                                    [&](const scene::look::drawn &) -> Holder {
+                                      m.style("display", "block");
+                                      m.style("position", "relative");
+                                      m.attr("data-skiff-draw", "1");
+                                      return in_cell{};
                                     }},
                     look);
 }
@@ -333,6 +345,17 @@ public:
     return scene.clickAlong(way);
   }
 
+  // The nodes skiff paints (look::drawn), each where the engine put its
+  // element -- `at`, by its handle, in the canvas's space: its whole subtree
+  // painted by skiff, moved from where skiff laid it out to there. One walk
+  // of the tree, typed where it is; how many were painted.
+  template <class Root, class Places>
+  std::size_t paintDrawn(Root &root, scene::Painting &painting, skia::SkCanvas *canvas, const Places &at) {
+    std::size_t painted = 0;
+    this->paintIn(root, painting, canvas, at, painted);
+    return painted;
+  }
+
   // The element a node is, where it is shown.
   [[nodiscard]] dom::Handle elementOf(const scene::State &state) const {
     const auto found = fShown.find(state.fId);
@@ -363,12 +386,23 @@ private:
   template <class Children>
   dom::Handle write(const scene::State &state, const scene::Look &look, bool pressable, const detail::Holder &holder,
                     Children &&children) {
+    // Drawn by skiff: a leaf here, of the size skiff laid it out at where it
+    // says none -- what is in it, skiff's to paint (paintDrawn).
+    const bool drawn = spl::visit(spl::overloaded{[](const scene::look::drawn &) { return true; }, [](const auto &) { return false; }}, look);
     // Its parts' States first: whether it needs a flex box depends on them.
     std::vector<const scene::State *> parts;
-    children([&](auto &child) { parts.push_back(&detail::stateOfPart(child)); });
+    if (!drawn)
+      children([&](auto &child) { parts.push_back(&detail::stateOfPart(child)); });
     Markup now;
     const detail::Holder theirs = detail::kindOf(now, look, parts);
     detail::stateOf(now, state, holder);
+    if (drawn) {
+      const auto unsized = [&](std::string_view property) {
+        return std::ranges::none_of(now.fStyles, [&](const auto &style) { return style.first == property; });
+      };
+      if (unsized("width") && state.fBounds.width() > 0.0f) now.style("width", skiff::web::px(state.fBounds.width()));
+      if (unsized("height") && state.fBounds.height() > 0.0f) now.style("height", skiff::web::px(state.fBounds.height()));
+    }
     if (pressable) {
       now.listen("click");
       now.style("cursor", "pointer");
@@ -389,12 +423,43 @@ private:
     // Children: each visited, then put in their order where it moved. The
     // map may grow as they are visited: nothing of it held across.
     std::vector<dom::Handle> handles;
-    children([&](auto &child) {
-      const detail::Holder mine = handles.empty() ? theirs : detail::after(theirs);
-      handles.push_back(this->visit(child, mine));
-    });
+    if (!drawn)
+      children([&](auto &child) {
+        const detail::Holder mine = handles.empty() ? theirs : detail::after(theirs);
+        handles.push_back(this->visit(child, mine));
+      });
     this->order(handle, std::move(handles));
     return handle;
+  }
+
+  template <class Places>
+  bool paintAt(const scene::State &state, skia::SkCanvas *canvas, const Places &at, auto &&draw) {
+    const auto shown = fShown.find(state.fId);
+    if (shown == fShown.end()) return false;
+    const auto placed = at.find(shown->second.handle);
+    if (placed == at.end()) return false;
+    const int saved = canvas->save();
+    canvas->translate(placed->second.fLeft - state.fBounds.fLeft, placed->second.fTop - state.fBounds.fTop);
+    draw();
+    canvas->restoreToCount(saved);
+    return true;
+  }
+  template <class N, class Places>
+  void paintIn(N &node, scene::Painting &painting, skia::SkCanvas *canvas, const Places &at, std::size_t &painted) {
+    if (this->paintAt(node.fState, canvas, at, [&] { scene::draw(node, painting, canvas, 1.0f); })) {
+      ++painted;
+      return;
+    }
+    scene::eachChild(node, [&](auto &child) { this->paintIn(child, painting, canvas, at, painted); });
+  }
+  template <class Places>
+  void paintIn(scene::AnyNodeRef &ref, scene::Painting &painting, skia::SkCanvas *canvas, const Places &at, std::size_t &painted) {
+    scene::ErasedNode node(ref);
+    if (this->paintAt(node.fState, canvas, at, [&] { scene::draw(ref, painting, canvas, 1.0f); })) {
+      ++painted;
+      return;
+    }
+    node.forEachChild([&](scene::AnyNodeRef &child) { this->paintIn(child, painting, canvas, at, painted); });
   }
 
   void order(dom::Handle parent, std::vector<dom::Handle> children) {

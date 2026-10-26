@@ -547,8 +547,11 @@ struct words {
   bool elided = false;
 };
 struct scrolled {};
+// Painted by the node itself (a widget, an icon, a picture): to an engine,
+// a box of the node's size that skiff paints, all of what is in it.
+struct drawn {};
 } // namespace look
-using Look = spl::variant<look::box, look::flow, look::words, look::scrolled>;
+using Look = spl::variant<look::box, look::flow, look::words, look::scrolled, look::drawn>;
 // An icon's marks -- lines, circles, arcs, rounded boxes, paths -- about the
 // middle of its box, stroked or filled, in the icon's colour or their own.
 namespace path_step {

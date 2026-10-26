@@ -2325,9 +2325,15 @@ struct Node : NodeBase {
 #else
   [[nodiscard]] Semantics semantics(this const auto &) { return {}; }
 #endif
-  // A box, unless the node says it is something else (see Look): in every
-  // build.
-  [[nodiscard]] Look look() const { return look::box{}; }
+  // A box -- or drawn, where the node paints itself through the painter (a
+  // widget, an icon, a picture) -- unless it says it is something else (see
+  // Look): in every build.
+  template <class Self> [[nodiscard]] Look look(this const Self &) {
+    if constexpr (requires(Self &node, skiff::paint::Painter &p) { node.drawSelf(p, 1.0f); })
+      return look::drawn{};
+    else
+      return look::box{};
+  }
 
   // -- styling: the node's own declarations, colour and fonts
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
