@@ -36,6 +36,7 @@ void skiff_blitz_commit_text(skiff_blitz_page *page, const char *text, std::size
 void skiff_blitz_key(skiff_blitz_page *page, std::uint32_t which, std::uint32_t mods);
 bool skiff_blitz_next_input(skiff_blitz_page *page, std::uint64_t *node, const char **value, std::size_t *len);
 std::uint64_t skiff_blitz_focused(skiff_blitz_page *page);
+bool skiff_blitz_rect(skiff_blitz_page *page, std::uint64_t node, float *x, float *y, float *width, float *height);
 }
 module skiff.web;
 
@@ -197,6 +198,11 @@ std::vector<std::pair<dom::Handle, std::string>> takeEdits() {
   std::size_t len = 0;
   while (skiff_blitz_next_input(page(), &node, &value, &len))
     if (const auto found = kept().handles.find(node); found != kept().handles.end()) out.emplace_back(found->second, std::string(value, len));
+  return out;
+}
+std::optional<box> boxOf(dom::Handle element) {
+  box out;
+  if (nodeOf(element) == 0 || !skiff_blitz_rect(page(), nodeOf(element), &out.x, &out.y, &out.width, &out.height)) return std::nullopt;
   return out;
 }
 dom::Handle focused() {

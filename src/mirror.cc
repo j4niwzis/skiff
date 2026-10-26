@@ -803,6 +803,19 @@ public:
     this->readIn(root, scrolledOf);
   }
 
+  // A point in an element, from its box's corner, where skiff has it: in
+  // the node's box as skiff laid it out, moved as skiff draws it (a list's
+  // scroll) -- the window's point skiff's own input finds the node at, for
+  // what the program does with the pointer (a menu, a drag, a swipe).
+  [[nodiscard]] std::optional<skia::SkPoint> toScene(dom::Handle element, float x, float y) const {
+    const auto found = fNodeOf.find(element);
+    if (found == fNodeOf.end()) return std::nullopt;
+    const auto shown = fShown.find(found->second);
+    if (shown == fShown.end()) return std::nullopt;
+    const scene::work::Offset moved = scene::work::drawnOffset(found->second);
+    return skia::SkPoint::Make(shown->second.bounds.fLeft + moved.x + x, shown->second.bounds.fTop + moved.y + y);
+  }
+
   // The element a node is, where it is shown.
   [[nodiscard]] dom::Handle elementOf(const scene::State &state) const {
     const auto found = fShown.find(state.fId);
@@ -824,6 +837,8 @@ private:
     std::vector<std::pair<skiff::web::Part, dom::Handle>> inner;
     // Where it was scrolled, as last said either way.
     float scrolled = 0.0f;
+    // Where skiff laid the node out, as last written.
+    skia::SkRect bounds = skia::SkRect::MakeEmpty();
     // The pictures given, by part: the key of each.
     std::vector<std::pair<std::uint32_t, std::uint32_t>> pictures;
     std::uint64_t seen = 0;
@@ -938,6 +953,7 @@ private:
       shown.scrolled = *offset;
     }
     shown.seen = fPass;
+    shown.bounds = state.fBounds;
     skiff::web::detail::writeOwn(shown.handle, now, shown.markup);
     // The elements it makes in itself (what it paints, as elements): kept by
     // their part, written where they changed, made where new, dropped where

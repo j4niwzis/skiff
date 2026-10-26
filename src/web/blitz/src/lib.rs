@@ -364,3 +364,18 @@ pub extern "C" fn skiff_blitz_next_input(p: *mut Page, node: *mut u64, value: *m
 pub extern "C" fn skiff_blitz_focused(p: *mut Page) -> u64 {
     page(p).doc.get_focussed_node_id().map_or(0, NodeId::as_u64)
 }
+/// A node's box in the viewport, in CSS pixels: whether it has one.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_rect(p: *mut Page, node: u64, x: *mut f32, y: *mut f32, width: *mut f32, height: *mut f32) -> bool {
+    let Some(rect) = page(p).doc.get_client_bounding_rect(id(node)) else {
+        return false;
+    };
+    // SAFETY: the C side passes four places to write to, alive for the call.
+    unsafe {
+        *x = rect.x as f32;
+        *y = rect.y as f32;
+        *width = rect.width as f32;
+        *height = rect.height as f32;
+    }
+    true
+}

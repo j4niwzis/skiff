@@ -39,6 +39,11 @@ struct key_modifiers {
   bool shift = false, control = false, alt = false, meta = false;
 };
 void key(editing_key which, key_modifiers held);
+// Where the engine put an element, in the viewport's CSS pixels.
+struct box {
+  float x = 0.0f, y = 0.0f, width = 0.0f, height = 0.0f;
+};
+[[nodiscard]] std::optional<box> boxOf(dom::Handle element);
 // The element with the engine's focus (a field typed into), or none.
 [[nodiscard]] dom::Handle focused();
 // The fields the engine edited since, oldest first: each element and its
