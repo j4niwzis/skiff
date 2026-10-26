@@ -1436,6 +1436,12 @@ struct HostWork {
   // the host to tell the system, whose keyboard on a screen -- and whose
   // suggestions -- go beside it, not over it.
   std::optional<Rect> typingAt;
+  // How much of the window's height an on-screen keyboard took, in points,
+  // as the host last saw it: the window shrank by it with its width the
+  // same while typing by touch. For a program whose layout follows the
+  // window's shape -- a phone's portrait one, which the keyboard up would
+  // otherwise turn into a landscape one.
+  float keyboardTaken = 0.0f;
   std::optional<std::string> copied;
   std::vector<std::string> links;
   // The node a press is being answered by, while its event is dispatched --
