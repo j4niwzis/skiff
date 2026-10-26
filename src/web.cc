@@ -30,6 +30,8 @@
 export module skiff.web;
 
 export import :dom;
+// The page in Blitz, for a host that shows it there (SKIFF_WEB_DOM=blitz).
+export import :blitz;
 
 import std;
 import splice;

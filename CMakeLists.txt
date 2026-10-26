@@ -443,7 +443,13 @@ if(SKIFF_WEB)
   target_sources(skiff_web PUBLIC
     FILE_SET CXX_MODULES FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/web.cc
                                ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom.cc
-                               ${CMAKE_CURRENT_SOURCE_DIR}/src/web/memory.cc)
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src/web/memory.cc
+                               # Declarations only, in every build, so that
+                               # skiff.web can export it: what defines them
+                               # (dom_blitz.cc, the engine) comes with
+                               # SKIFF_WEB_DOM=blitz, and only a host that
+                               # shows the page there calls them.
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src/web/blitz.cc)
   # The document the dom writes to: the browser's (Emscripten); Blitz's, an
   # engine embedded and called directly (SKIFF_WEB_DOM=blitz: skiff-blitz,
   # Rust, built here with cargo); else the tree kept in memory.
@@ -469,7 +475,6 @@ if(SKIFF_WEB)
       TARGETS skiff::blitz-engine
     )
     find_package(skiff-blitz REQUIRED)
-    target_sources(skiff_web PUBLIC FILE_SET CXX_MODULES FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/web/blitz.cc)
     target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_blitz.cc)
     target_link_libraries(skiff_web PUBLIC $<BUILD_INTERFACE:skiff::blitz-engine>)
   else()
