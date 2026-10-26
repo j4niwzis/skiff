@@ -442,9 +442,30 @@ if(SKIFF_WEB)
   target_compile_features(skiff_web PUBLIC cxx_std_${skiff_cxx_standard})
   target_sources(skiff_web PUBLIC
     FILE_SET CXX_MODULES FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/web.cc
-                               ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom.cc)
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom.cc
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src/web/memory.cc)
+  # The document the dom writes to: the browser's (Emscripten); Blitz's, an
+  # engine embedded and called directly (SKIFF_WEB_DOM=blitz: skiff-blitz,
+  # Rust, built here with cargo); else the tree kept in memory.
+  set(SKIFF_WEB_DOM "memory" CACHE STRING "skiff.web's document outside a browser: memory, or blitz")
   if(SKIFF_EMSCRIPTEN)
     target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_em.cc)
+  elseif(SKIFF_WEB_DOM STREQUAL "blitz")
+    find_program(SKIFF_CARGO cargo REQUIRED)
+    set(skiff_blitz_target ${CMAKE_CURRENT_BINARY_DIR}/skiff-blitz)
+    set(skiff_blitz_lib ${skiff_blitz_target}/release/${CMAKE_STATIC_LIBRARY_PREFIX}skiff_blitz${CMAKE_STATIC_LIBRARY_SUFFIX})
+    add_custom_command(OUTPUT ${skiff_blitz_lib}
+      COMMAND ${SKIFF_CARGO} build --release --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/web/blitz/Cargo.toml
+              --target-dir ${skiff_blitz_target}
+      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/web/blitz/Cargo.toml ${CMAKE_CURRENT_SOURCE_DIR}/src/web/blitz/src/lib.rs
+      COMMENT "skiff-blitz: Blitz, built by cargo"
+      USES_TERMINAL)
+    add_custom_target(skiff_blitz_build DEPENDS ${skiff_blitz_lib})
+    add_dependencies(skiff_web skiff_blitz_build)
+    find_package(Threads REQUIRED)
+    target_sources(skiff_web PUBLIC FILE_SET CXX_MODULES FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/web/blitz.cc)
+    target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_blitz.cc)
+    target_link_libraries(skiff_web PUBLIC $<BUILD_INTERFACE:${skiff_blitz_lib}> Threads::Threads ${CMAKE_DL_LIBS} m)
   else()
     target_sources(skiff_web PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom_fake.cc)
   endif()

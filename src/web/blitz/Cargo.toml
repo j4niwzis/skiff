@@ -1,0 +1,27 @@
+# skiff-blitz: Blitz (DioxusLabs' HTML/CSS engine: Stylo, Taffy, Vello),
+# as a C API for skiff.web's dom -- a document changed a call at a time,
+# laid out and painted into pixels, hit-tested. No JavaScript anywhere.
+[package]
+name = "skiff-blitz"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "cee6b87310e57fe370832034fc6a61d58309d6d0" }
+blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "cee6b87310e57fe370832034fc6a61d58309d6d0" }
+blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "cee6b87310e57fe370832034fc6a61d58309d6d0" }
+blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "cee6b87310e57fe370832034fc6a61d58309d6d0" }
+anyrender = "0.14.0"
+anyrender_vello_cpu = { version = "0.18.0", features = ["multithreading"] }
+peniko = "0.6.0"
+
+[profile.release]
+debug = false
+lto = "thin"
+codegen-units = 4
