@@ -359,3 +359,8 @@ pub extern "C" fn skiff_blitz_next_input(p: *mut Page, node: *mut u64, value: *m
     }
     true
 }
+/// The node with the focus, 0 where none: a field being typed into.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_focused(p: *mut Page) -> u64 {
+    page(p).doc.get_focussed_node_id().map_or(0, NodeId::as_u64)
+}

@@ -243,4 +243,28 @@ TEST(Mirror, AFieldIsTheEnginesAndItsEditsComeBack) {
   EXPECT_EQ(tree.root().fLastEdit, (std::tuple<std::size_t, std::size_t, std::string>{6, 12, ""}));
 }
 
+// A field that sends on Enter, as mux's composer does.
+struct Sends : Field {
+  int fSent = 0;
+  [[nodiscard]] bool focusable() const { return true; }
+  using Field::onKey;
+  void onKey(scene::phase::target, const scene::key::down &press, scene::Reply &reply) {
+    if (press.key == scene::keys::kEnter) {
+      ++fSent;
+      reply.handle();
+    }
+  }
+};
+
+TEST(Mirror, EnterIsTheProgramsFirst) {
+  dom::reset();
+  scene::Scene tree(Sends{});
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  const dom::Handle field = shown.elementOf(tree.root().fState);
+  EXPECT_TRUE(shown.keyed(tree, field, scene::key::down{scene::keys::kEnter, {}}));
+  EXPECT_EQ(tree.root().fSent, 1);
+  EXPECT_FALSE(shown.keyed(tree, field, scene::key::down{scene::keys::kA, {}}));
+}
+
 } // namespace

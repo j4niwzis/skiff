@@ -39,6 +39,8 @@ struct key_modifiers {
   bool shift = false, control = false, alt = false, meta = false;
 };
 void key(editing_key which, key_modifiers held);
+// The element with the engine's focus (a field typed into), or none.
+[[nodiscard]] dom::Handle focused();
 // The fields the engine edited since, oldest first: each element and its
 // value now.
 [[nodiscard]] std::vector<std::pair<dom::Handle, std::string>> takeEdits();

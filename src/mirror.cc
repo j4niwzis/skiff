@@ -783,6 +783,18 @@ public:
     return true;
   }
 
+  // A key for the program rather than the engine's field -- Enter, which
+  // sends or breaks a line as the program says; Escape; a shortcut: given
+  // to skiff as the window gives keys, its focus put on the node of
+  // `element` first where there is one (the field the engine has focused).
+  // Whether it was taken.
+  template <class S> bool keyed(S &scene, dom::Handle element, const scene::key::down &press) {
+    if (const auto found = fNodeOf.find(element); found != fNodeOf.end()) scene.focus(found->second);
+    const bool taken = scene.dispatchKey(press);
+    (void)scene.dispatchKey(scene::key::up{press.key, press.modifiers});
+    return taken;
+  }
+
   // The engine's scrolling, read back into skiff's views that scroll before
   // a frame: `scrolledOf(element)` how far the engine has an element
   // scrolled. What skiff makes of where its views are -- a list's rows near
