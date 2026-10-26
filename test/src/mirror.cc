@@ -203,6 +203,20 @@ TEST(Mirror, APartInAFlowIsNotMovedAgain) {
   EXPECT_FALSE(html.contains("translate(0px,36px)")) << html;
 }
 
+// The root the whole page, whatever it is: a column, or a wrapper over held
+// content (a debug build's root), whose element is the wrapper's.
+TEST(Mirror, TheRootIsTheWholePage) {
+  dom::reset();
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), Plate{}));
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  const std::string html = dom::dump(dom::root());
+  const auto first = html.find("data-skiff-h");
+  ASSERT_NE(first, std::string::npos) << html;
+  const std::string root = html.substr(first, html.find('>', first) - first);
+  EXPECT_TRUE(root.contains("width:100%;") && root.contains("height:100%;")) << root;
+}
+
 TEST(Mirror, RichTextIsRuns) {
   dom::reset();
   nodes::Text said("Hello world, see this", 14.0f, 0xff000000u);

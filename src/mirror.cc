@@ -722,7 +722,7 @@ public:
 
   template <class Root> void sync(Root &root) {
     ++fPass;
-    fRoot = scene::stateOf(root).fId;
+    fAtRoot = true;
     const dom::Handle top = this->visit(root, detail::in_cell{});
     this->order(fInto, std::vector<dom::Handle>{top});
     std::erase_if(fShown, [&](auto &kept) {
@@ -950,7 +950,11 @@ private:
     // it the window's box by hand, not by a size of its own, and written as
     // its State has it, it was as big as its content, and everything sized
     // as a share of it nothing.
-    if (state.fId == fRoot) {
+    // Known as the first element a pass writes -- a node is written before
+    // its children -- not by its node's id: in a debug build the root is a
+    // wrapper over held content, whose id (stateOf) is its content's, not the
+    // wrapper's written here, and the root was never found.
+    if (std::exchange(fAtRoot, false)) {
       now.style("width", "100%");
       now.style("height", "100%");
     }
@@ -1072,8 +1076,8 @@ private:
 
   dom::Handle fInto;
   std::uint64_t fPass = 0;
-  // The root's node, as sync() was given it: its element the whole page.
-  scene::NodeId fRoot{};
+  // The next element written is the root's (sync): the whole page.
+  bool fAtRoot = false;
   std::unordered_map<scene::NodeId, Shown> fShown;
   std::unordered_map<dom::Handle, scene::NodeId> fNodeOf;
   std::vector<dom::Handle> fTop;
