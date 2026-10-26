@@ -61,13 +61,10 @@ TEST(Mirror, AStackIsAFlexBoxAndATextItsWords) {
   mirror::Mirror shown;
   shown.sync(tree.root());
   const std::string html = dom::dump(dom::root());
-  // The column grows nothing: blocks, its gap a margin above the second
-  // part. The row: a flex box, as rows are.
-  EXPECT_TRUE(html.contains("display:block;")) << html;
-  EXPECT_TRUE(html.contains("margin-top:8px;")) << html;
   EXPECT_TRUE(html.contains("display:flex;")) << html;
+  EXPECT_TRUE(html.contains("flex-direction:column;")) << html;
   EXPECT_TRUE(html.contains("flex-direction:row;")) << html;
-  EXPECT_FALSE(html.contains("flex-direction:column;")) << html;
+  EXPECT_TRUE(html.contains("gap:8px 8px;")) << html;
   EXPECT_TRUE(html.contains("padding:4px 4px 4px 4px;")) << html;
   EXPECT_TRUE(html.contains("background-color:rgba(238,238,238,1);")) << html;
   EXPECT_TRUE(html.contains(">0<")) << html;
@@ -136,7 +133,7 @@ struct Plate : scene::Node {
     p.textCentredIn(fState.fBounds, "Send", 13.0f, 0xffffffffu, alpha, true);
   }
 };
-// And one painting a path: not to be had as elements -- skiff paints it.
+// And one painting a path: SVG.
 struct Mark : scene::Node {
   Mark() { fState.apply({.width = 16.0f, .height = 16.0f}); }
   template <class P> void drawSelf(P &p, float alpha) {
@@ -160,34 +157,21 @@ TEST(Mirror, AWidgetPaintingItselfIsWrittenAsElements) {
   EXPECT_TRUE(html.contains("background-color:rgba(51,102,204,1);border-radius:6px;")) << html;
   EXPECT_TRUE(html.contains("border:2px solid rgba(17,34,51,1);")) << html;
   EXPECT_TRUE(html.contains(">Send<")) << html;
-  EXPECT_FALSE(html.contains("data-skiff-draw")) << html;
   EXPECT_EQ(shown.recorded(), 1u);
 }
 
-TEST(Mirror, AWidgetPaintingAPathIsPaintedBySkiff) {
+TEST(Mirror, APathIsSvg) {
   dom::reset();
   scene::Scene tree(Mark{});
   (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
   mirror::Mirror shown;
   shown.sync(tree.root());
   const std::string html = dom::dump(dom::root());
-  EXPECT_TRUE(html.contains("data-skiff-draw")) << html;
-  EXPECT_TRUE(html.contains("width:16px;")) << html;
-  EXPECT_EQ(shown.recorded(), 0u);
-}
-
-TEST(Mirror, OnAnEngineWithSvgAPathIsSvg) {
-  dom::reset();
-  scene::Scene tree(Mark{});
-  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
-  mirror::Mirror shown(mirror::kFull);
-  shown.sync(tree.root());
-  const std::string html = dom::dump(dom::root());
   EXPECT_TRUE(html.contains("<svg")) << html;
   EXPECT_TRUE(html.contains("d=\"M0 0 L16 8 L0 16 Z\"")) << html;
   EXPECT_TRUE(html.contains("fill=\"rgba(0,0,0,1)\"")) << html;
-  EXPECT_FALSE(html.contains("data-skiff-draw")) << html;
   EXPECT_EQ(shown.recorded(), 1u);
+  EXPECT_TRUE(shown.takeNotNative().empty());
 }
 
 } // namespace
