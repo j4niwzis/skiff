@@ -1632,4 +1632,209 @@ private:
   }
 };
 
+// A painter painting through another, whatever that one's type -- what a
+// node seen through the walks' table (outside a release build) is drawn by,
+// where the table cannot name the painter: skiff.mirror's, which writes what
+// is painted as the engine's elements. Each drawing call goes to the other
+// painter through a table made for its type; measuring, eliding and wrapping
+// stay this Painter's own, in the other's face. Its paths keep their steps
+// and are made the other painter's own kind as they are drawn.
+class ErasedPainter : public Painter {
+public:
+  class Path {
+  public:
+    Path &moveTo(float x, float y) { return this->step(kind::move, {x, y}); }
+    Path &lineTo(float x, float y) { return this->step(kind::line, {x, y}); }
+    Path &quadTo(float x1, float y1, float x, float y) { return this->step(kind::quad, {x1, y1, x, y}); }
+    Path &cubicTo(float x1, float y1, float x2, float y2, float x, float y) { return this->step(kind::cubic, {x1, y1, x2, y2, x, y}); }
+    Path &close() { return this->step(kind::close, {}); }
+    // Made again as another path: one of the other painter's.
+    template <class Into> void into(Into &made) const {
+      for (const one_step &one : fSteps) {
+        const auto &a = one.at;
+        switch (one.what) {
+          case kind::move: made.moveTo(a[0], a[1]); break;
+          case kind::line: made.lineTo(a[0], a[1]); break;
+          case kind::quad: made.quadTo(a[0], a[1], a[2], a[3]); break;
+          case kind::cubic: made.cubicTo(a[0], a[1], a[2], a[3], a[4], a[5]); break;
+          case kind::close: made.close(); break;
+        }
+      }
+    }
+    [[nodiscard]] skia::SkPath snapshot() const {
+      Painter::Path made;
+      this->into(made);
+      return made.snapshot();
+    }
+
+  private:
+    enum class kind { move, line, quad, cubic, close };
+    struct one_step {
+      kind what;
+      std::array<float, 6> at{};
+    };
+    Path &step(kind what, std::initializer_list<float> at) {
+      one_step one{what};
+      std::ranges::copy(at, one.at.begin());
+      fSteps.push_back(one);
+      return *this;
+    }
+    std::vector<one_step> fSteps;
+  };
+
+  // Over `target`, which outlives it.
+  template <class P> [[nodiscard]] static ErasedPainter over(P &target) {
+    return ErasedPainter(static_cast<const Painter &>(target), &target, &kTable<P>, nullptr);
+  }
+  // In the other face, as the painter under it is: a copy of that one, kept.
+  [[nodiscard]] ErasedPainter monospaced(bool on) const { return fTable->fMonospaced(fTarget, on); }
+
+  void save() const { fTable->f0(fTarget); }
+  void restore() const { fTable->f1(fTarget); }
+  void translate(float dx, float dy) const { fTable->f2(fTarget, dx, dy); }
+  void rotate(float degrees) const { fTable->f3(fTarget, degrees); }
+  void clipRect(const skia::SkRect &rect) const { fTable->f4(fTarget, rect); }
+  void clipRounded(const skia::SkRect &rect, float radius) const { fTable->f5(fTarget, rect, radius); }
+  void clipOval(const skia::SkRect &oval) const { fTable->f6(fTarget, oval); }
+  void clip(const skia::SkRRect &shape) const { fTable->f7(fTarget, shape); }
+  void layer(float alpha) const { fTable->f8(fTarget, alpha); }
+  void endLayer() const { fTable->f9(fTarget); }
+  void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, Cap cap) const { fTable->f10(fTarget, x1, y1, x2, y2, width, color, alpha, cap); }
+  void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, bool round = true) const { fTable->f11(fTarget, x1, y1, x2, y2, width, color, alpha, round); }
+  void arc(const skia::SkRect &oval, float startDegrees, float sweepDegrees, float width, skia::SkColor color, float alpha) const { fTable->f12(fTarget, oval, startDegrees, sweepDegrees, width, color, alpha); }
+  void fillArc(const skia::SkRect &oval, float startDegrees, float sweepDegrees, skia::SkColor color, float alpha) const { fTable->f13(fTarget, oval, startDegrees, sweepDegrees, color, alpha); }
+  void strokeCircle(float cx, float cy, float r, float width, skia::SkColor color, float alpha) const { fTable->f14(fTarget, cx, cy, r, width, color, alpha); }
+  void fill(const Path &path, skia::SkColor color, float alpha) const { fTable->f15(fTarget, path, color, alpha); }
+  void stroke(const Path &path, float width, skia::SkColor color, float alpha, Cap cap, bool roundJoin) const { fTable->f16(fTarget, path, width, color, alpha, cap, roundJoin); }
+  void stroke(const skia::SkRRect &shape, float width, skia::SkColor color, float alpha = 1.0f) const { fTable->f17(fTarget, shape, width, color, alpha); }
+  void stroke(const Path &path, float width, skia::SkColor color, float alpha, bool round = true) const { fTable->f18(fTarget, path, width, color, alpha, round); }
+  void fillRounded(const skia::SkRect &rect, float radius, skia::SkColor color, float alpha = 1.0f) const { fTable->f19(fTarget, rect, radius, color, alpha); }
+  void strokeRounded(const skia::SkRect &rect, float radius, skia::SkColor color, float width, float alpha = 1.0f) const { fTable->f20(fTarget, rect, radius, color, width, alpha); }
+  void fillRect(const skia::SkRect &rect, skia::SkColor color, float alpha = 1.0f) const { fTable->f21(fTarget, rect, color, alpha); }
+  void circle(float cx, float cy, float r, skia::SkColor color, float alpha = 1.0f) const { fTable->f22(fTarget, cx, cy, r, color, alpha); }
+  void text(const std::string &str, float x, float y, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false) const { fTable->f23(fTarget, str, x, y, size, color, alpha, bold); }
+  void text(const std::string &str, float x, float y, float size, skia::SkColor color, float alpha, TextFace face) const { fTable->f24(fTarget, str, x, y, size, color, alpha, face); }
+  void textClipped(const std::string &str, float x, float y, float maxW, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false) const { fTable->f25(fTarget, str, x, y, maxW, size, color, alpha, bold); }
+  void textCenteredClipped(const std::string &str, float cx, float y, float maxW, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false) const { fTable->f26(fTarget, str, cx, y, maxW, size, color, alpha, bold); }
+  void textCentered(const std::string &str, float cx, float y, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false) const { fTable->f27(fTarget, str, cx, y, size, color, alpha, bold); }
+  void imageFilled(const skia::SkImage *image, const skia::SkRect &dst, float alpha = 1.0f) const { fTable->f28(fTarget, image, dst, alpha); }
+  void image(const skia::SkImage *image, const skia::SkRect &dst, float alpha = 1.0f, Sampling how = Sampling::linear) const { fTable->f29(fTarget, image, dst, alpha, how); }
+  void imagePart(const skia::SkImage *image, const skia::SkRect &from, const skia::SkRect &to, float alpha = 1.0f, Sampling how = Sampling::linear) const { fTable->f30(fTarget, image, from, to, alpha, how); }
+  void imageThrough(const skia::SkRRect &shape, const skia::SkImage *image, const skia::SkRect &at, float alpha, Sampling how = Sampling::linear) const { fTable->f31(fTarget, shape, image, at, alpha, how); }
+  void imageThrough(const skia::SkPath &shape, const skia::SkImage *image, const skia::SkRect &at, float alpha, Sampling how = Sampling::linear) const { fTable->f32(fTarget, shape, image, at, alpha, how); }
+  void fill(const skia::SkRRect &shape, skia::SkColor color, float alpha = 1.0f) const { fTable->f33(fTarget, shape, color, alpha); }
+  void fill(const skia::SkPath &shape, skia::SkColor color, float alpha = 1.0f) const { fTable->f34(fTarget, shape, color, alpha); }
+  void verticalGradient(const skia::SkRect &rect, skia::SkColor top, skia::SkColor bottom, float alpha = 1.0f) const { fTable->f35(fTarget, rect, top, bottom, alpha); }
+  void textElided(const std::string &str, float x, float y, float maxW, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false) const { fTable->f36(fTarget, str, x, y, maxW, size, color, alpha, bold); }
+  void textElidedIn(const skia::SkRect &box, const std::string &str, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false, float inset = 0.0f) const { fTable->f37(fTarget, box, str, size, color, alpha, bold, inset); }
+  void textIn(const skia::SkRect &box, const std::string &str, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false, float inset = 0.0f) const { fTable->f38(fTarget, box, str, size, color, alpha, bold, inset); }
+  void textCentredIn(const skia::SkRect &box, const std::string &str, float size, skia::SkColor color, float alpha = 1.0f, bool bold = false, float inset = 0.0f) const { fTable->f39(fTarget, box, str, size, color, alpha, bold, inset); }
+  void textShadowed(const std::string &str, float cx, float y, float size, skia::SkColor color, float alpha = 1.0f) const { fTable->f40(fTarget, str, cx, y, size, color, alpha); }
+
+private:
+  struct Table {
+    ErasedPainter (*fMonospaced)(void *, bool);
+    void (*f0)(void *);
+    void (*f1)(void *);
+    void (*f2)(void *, float, float);
+    void (*f3)(void *, float);
+    void (*f4)(void *, const skia::SkRect &);
+    void (*f5)(void *, const skia::SkRect &, float);
+    void (*f6)(void *, const skia::SkRect &);
+    void (*f7)(void *, const skia::SkRRect &);
+    void (*f8)(void *, float);
+    void (*f9)(void *);
+    void (*f10)(void *, float, float, float, float, float, skia::SkColor, float, Cap);
+    void (*f11)(void *, float, float, float, float, float, skia::SkColor, float, bool);
+    void (*f12)(void *, const skia::SkRect &, float, float, float, skia::SkColor, float);
+    void (*f13)(void *, const skia::SkRect &, float, float, skia::SkColor, float);
+    void (*f14)(void *, float, float, float, float, skia::SkColor, float);
+    void (*f15)(void *, const Path &, skia::SkColor, float);
+    void (*f16)(void *, const Path &, float, skia::SkColor, float, Cap, bool);
+    void (*f17)(void *, const skia::SkRRect &, float, skia::SkColor, float);
+    void (*f18)(void *, const Path &, float, skia::SkColor, float, bool);
+    void (*f19)(void *, const skia::SkRect &, float, skia::SkColor, float);
+    void (*f20)(void *, const skia::SkRect &, float, skia::SkColor, float, float);
+    void (*f21)(void *, const skia::SkRect &, skia::SkColor, float);
+    void (*f22)(void *, float, float, float, skia::SkColor, float);
+    void (*f23)(void *, const std::string &, float, float, float, skia::SkColor, float, bool);
+    void (*f24)(void *, const std::string &, float, float, float, skia::SkColor, float, TextFace);
+    void (*f25)(void *, const std::string &, float, float, float, float, skia::SkColor, float, bool);
+    void (*f26)(void *, const std::string &, float, float, float, float, skia::SkColor, float, bool);
+    void (*f27)(void *, const std::string &, float, float, float, skia::SkColor, float, bool);
+    void (*f28)(void *, const skia::SkImage *, const skia::SkRect &, float);
+    void (*f29)(void *, const skia::SkImage *, const skia::SkRect &, float, Sampling);
+    void (*f30)(void *, const skia::SkImage *, const skia::SkRect &, const skia::SkRect &, float, Sampling);
+    void (*f31)(void *, const skia::SkRRect &, const skia::SkImage *, const skia::SkRect &, float, Sampling);
+    void (*f32)(void *, const skia::SkPath &, const skia::SkImage *, const skia::SkRect &, float, Sampling);
+    void (*f33)(void *, const skia::SkRRect &, skia::SkColor, float);
+    void (*f34)(void *, const skia::SkPath &, skia::SkColor, float);
+    void (*f35)(void *, const skia::SkRect &, skia::SkColor, skia::SkColor, float);
+    void (*f36)(void *, const std::string &, float, float, float, float, skia::SkColor, float, bool);
+    void (*f37)(void *, const skia::SkRect &, const std::string &, float, skia::SkColor, float, bool, float);
+    void (*f38)(void *, const skia::SkRect &, const std::string &, float, skia::SkColor, float, bool, float);
+    void (*f39)(void *, const skia::SkRect &, const std::string &, float, skia::SkColor, float, bool, float);
+    void (*f40)(void *, const std::string &, float, float, float, skia::SkColor, float);
+  };
+  // What its calls go to, for a painter of type P (defined below, the
+  // class whole).
+  template <class P> static const Table kTable;
+  ErasedPainter(const Painter &as, void *target, const Table *table, std::shared_ptr<void> kept)
+      : Painter(as), fTarget(target), fTable(table), fKept(std::move(kept)) {}
+  void *fTarget;
+  const Table *fTable;
+  // The painter under it, where it is a copy made for it (monospaced).
+  std::shared_ptr<void> fKept;
+};
+template <class P>
+const ErasedPainter::Table ErasedPainter::kTable{
+        +[](void *t, bool on) -> ErasedPainter {
+          auto kept = std::make_shared<std::remove_cvref_t<decltype(static_cast<P *>(t)->monospaced(on))>>(static_cast<P *>(t)->monospaced(on));
+          using Q = typename decltype(kept)::element_type;
+          return ErasedPainter(static_cast<const Painter &>(*kept), kept.get(), &kTable<Q>, kept);
+        },
+        +[](void *t) { static_cast<P *>(t)->save(); },
+        +[](void *t) { static_cast<P *>(t)->restore(); },
+        +[](void *t, float dx, float dy) { static_cast<P *>(t)->translate(dx, dy); },
+        +[](void *t, float degrees) { static_cast<P *>(t)->rotate(degrees); },
+        +[](void *t, const skia::SkRect & rect) { static_cast<P *>(t)->clipRect(rect); },
+        +[](void *t, const skia::SkRect & rect, float radius) { static_cast<P *>(t)->clipRounded(rect, radius); },
+        +[](void *t, const skia::SkRect & oval) { static_cast<P *>(t)->clipOval(oval); },
+        +[](void *t, const skia::SkRRect & shape) { static_cast<P *>(t)->clip(shape); },
+        +[](void *t, float alpha) { static_cast<P *>(t)->layer(alpha); },
+        +[](void *t) { static_cast<P *>(t)->endLayer(); },
+        +[](void *t, float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, Cap cap) { static_cast<P *>(t)->line(x1, y1, x2, y2, width, color, alpha, cap); },
+        +[](void *t, float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, bool round) { static_cast<P *>(t)->line(x1, y1, x2, y2, width, color, alpha, round); },
+        +[](void *t, const skia::SkRect & oval, float startDegrees, float sweepDegrees, float width, skia::SkColor color, float alpha) { static_cast<P *>(t)->arc(oval, startDegrees, sweepDegrees, width, color, alpha); },
+        +[](void *t, const skia::SkRect & oval, float startDegrees, float sweepDegrees, skia::SkColor color, float alpha) { static_cast<P *>(t)->fillArc(oval, startDegrees, sweepDegrees, color, alpha); },
+        +[](void *t, float cx, float cy, float r, float width, skia::SkColor color, float alpha) { static_cast<P *>(t)->strokeCircle(cx, cy, r, width, color, alpha); },
+        +[](void *t, const Path & path, skia::SkColor color, float alpha) { typename P::Path made; path.into(made); static_cast<P *>(t)->fill(made, color, alpha); },
+        +[](void *t, const Path & path, float width, skia::SkColor color, float alpha, Cap cap, bool roundJoin) { typename P::Path made; path.into(made); static_cast<P *>(t)->stroke(made, width, color, alpha, cap, roundJoin); },
+        +[](void *t, const skia::SkRRect & shape, float width, skia::SkColor color, float alpha) { static_cast<P *>(t)->stroke(shape, width, color, alpha); },
+        +[](void *t, const Path & path, float width, skia::SkColor color, float alpha, bool round) { typename P::Path made; path.into(made); static_cast<P *>(t)->stroke(made, width, color, alpha, round); },
+        +[](void *t, const skia::SkRect & rect, float radius, skia::SkColor color, float alpha) { static_cast<P *>(t)->fillRounded(rect, radius, color, alpha); },
+        +[](void *t, const skia::SkRect & rect, float radius, skia::SkColor color, float width, float alpha) { static_cast<P *>(t)->strokeRounded(rect, radius, color, width, alpha); },
+        +[](void *t, const skia::SkRect & rect, skia::SkColor color, float alpha) { static_cast<P *>(t)->fillRect(rect, color, alpha); },
+        +[](void *t, float cx, float cy, float r, skia::SkColor color, float alpha) { static_cast<P *>(t)->circle(cx, cy, r, color, alpha); },
+        +[](void *t, const std::string & str, float x, float y, float size, skia::SkColor color, float alpha, bool bold) { static_cast<P *>(t)->text(str, x, y, size, color, alpha, bold); },
+        +[](void *t, const std::string & str, float x, float y, float size, skia::SkColor color, float alpha, TextFace face) { static_cast<P *>(t)->text(str, x, y, size, color, alpha, face); },
+        +[](void *t, const std::string & str, float x, float y, float maxW, float size, skia::SkColor color, float alpha, bool bold) { static_cast<P *>(t)->textClipped(str, x, y, maxW, size, color, alpha, bold); },
+        +[](void *t, const std::string & str, float cx, float y, float maxW, float size, skia::SkColor color, float alpha, bool bold) { static_cast<P *>(t)->textCenteredClipped(str, cx, y, maxW, size, color, alpha, bold); },
+        +[](void *t, const std::string & str, float cx, float y, float size, skia::SkColor color, float alpha, bool bold) { static_cast<P *>(t)->textCentered(str, cx, y, size, color, alpha, bold); },
+        +[](void *t, const skia::SkImage * image, const skia::SkRect & dst, float alpha) { static_cast<P *>(t)->imageFilled(image, dst, alpha); },
+        +[](void *t, const skia::SkImage * image, const skia::SkRect & dst, float alpha, Sampling how) { static_cast<P *>(t)->image(image, dst, alpha, how); },
+        +[](void *t, const skia::SkImage * image, const skia::SkRect & from, const skia::SkRect & to, float alpha, Sampling how) { static_cast<P *>(t)->imagePart(image, from, to, alpha, how); },
+        +[](void *t, const skia::SkRRect & shape, const skia::SkImage * image, const skia::SkRect & at, float alpha, Sampling how) { static_cast<P *>(t)->imageThrough(shape, image, at, alpha, how); },
+        +[](void *t, const skia::SkPath & shape, const skia::SkImage * image, const skia::SkRect & at, float alpha, Sampling how) { static_cast<P *>(t)->imageThrough(shape, image, at, alpha, how); },
+        +[](void *t, const skia::SkRRect & shape, skia::SkColor color, float alpha) { static_cast<P *>(t)->fill(shape, color, alpha); },
+        +[](void *t, const skia::SkPath & shape, skia::SkColor color, float alpha) { static_cast<P *>(t)->fill(shape, color, alpha); },
+        +[](void *t, const skia::SkRect & rect, skia::SkColor top, skia::SkColor bottom, float alpha) { static_cast<P *>(t)->verticalGradient(rect, top, bottom, alpha); },
+        +[](void *t, const std::string & str, float x, float y, float maxW, float size, skia::SkColor color, float alpha, bool bold) { static_cast<P *>(t)->textElided(str, x, y, maxW, size, color, alpha, bold); },
+        +[](void *t, const skia::SkRect & box, const std::string & str, float size, skia::SkColor color, float alpha, bool bold, float inset) { static_cast<P *>(t)->textElidedIn(box, str, size, color, alpha, bold, inset); },
+        +[](void *t, const skia::SkRect & box, const std::string & str, float size, skia::SkColor color, float alpha, bool bold, float inset) { static_cast<P *>(t)->textIn(box, str, size, color, alpha, bold, inset); },
+        +[](void *t, const skia::SkRect & box, const std::string & str, float size, skia::SkColor color, float alpha, bool bold, float inset) { static_cast<P *>(t)->textCentredIn(box, str, size, color, alpha, bold, inset); },
+        +[](void *t, const std::string & str, float cx, float y, float size, skia::SkColor color, float alpha) { static_cast<P *>(t)->textShadowed(str, cx, y, size, color, alpha); },
+  };
+
+
 } // namespace skiff::paint

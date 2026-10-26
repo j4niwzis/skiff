@@ -871,10 +871,7 @@ private:
   dom::Handle visit(scene::AnyNodeRef &ref, const detail::Holder &holder) {
     scene::ErasedNode node(ref);
     return this->write(node.fState, node.look(), node.acceptsInput(), holder, [&](auto &&each) { node.forEachChild(each); },
-                       [this](Markup &, Pictures &) {
-                         this->notNative("a node seen through the walks' table", "not a release build: what it paints not written");
-                         return false;
-                       },
+                       [&](Markup &into, Pictures &pictures) { return this->recordErased(node, into, pictures); },
                        [] { return std::optional<float>(); }, [](const scene::TextLink &) -> const skia::SkImage * { return nullptr; });
   }
   // A node that paints itself, recorded as elements where all it paints has
@@ -908,6 +905,32 @@ private:
       this->notNative(scene::nameOf<N>(), "a drawSelf of its own on a canvas");
       return false;
     }
+  }
+
+  // A node seen through the walks' table (outside a release build): what it
+  // paints recorded as a node of its type's would be, through a painter the
+  // table can name (ErasedPainter) over the mirror's own.
+  bool recordErased(scene::ErasedNode &node, Markup &into, Pictures &pictures) {
+    const skia::SkFont *font = skiff::paint::defaultFont();
+    skia::SkFont face = font != nullptr ? *font : skia::SkFont();
+    skia::SkPictureRecorder discarded;
+    skia::SkCanvas *canvas = discarded.beginRecording(node.fState.fBounds);
+    Markup drawn;
+    detail::Recording recording;
+    detail::SvgPainter p(canvas, face, drawn, node.fState.fBounds, recording);
+    skiff::paint::ErasedPainter through = skiff::paint::ErasedPainter::over(p);
+    if (!node.drawThrough(through, 1.0f)) {
+      this->notNative("a node seen through the walks' table", "a drawSelf not through a painter");
+      return false;
+    }
+    if (p.lost()) {
+      this->notNative("a node seen through the walks' table", p.lostWhat());
+      return false;
+    }
+    into.fInner.append_range(std::move(drawn.fInner));
+    pictures = std::move(recording.pictures);
+    ++fRecorded;
+    return true;
   }
 
   template <class Children, class Records, class Scrolled, class PictureOf>

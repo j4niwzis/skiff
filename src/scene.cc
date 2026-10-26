@@ -4592,6 +4592,9 @@ struct NodeOps {
   bool (*fOnClick)(void *, float, float);
   double (*fOwnWakeAt)(void *);
   Look (*fLook)(void *);
+  // Its own drawing through a painter of any type -- skiff.mirror's, which
+  // writes it as elements: whether it draws so.
+  bool (*fDrawThrough)(void *, skiff::paint::ErasedPainter &, float);
   EventEntries<PointerHandler, PointerEvent, PointerReply> fPointer;
   EventEntries<KeyHandler, KeyEvent, Reply> fKey;
   EventEntries<TextHandler, TextEvent, Reply> fText;
@@ -4778,6 +4781,14 @@ inline constexpr NodeOps kNodeOps{
     +[](void *n, float x, float y) -> bool { return walk::clicked(nodeAs<T>(n), x, y, NoCarry{}); },
     +[](void *n) -> double { return walk::ownWakeAt(nodeAs<T>(n)); },
     +[](void *n) -> Look { return nodeAs<T>(n).look(); },
+    +[](void *n, skiff::paint::ErasedPainter &p, float alpha) -> bool {
+      if constexpr (requires(T &node) { node.drawSelf(p, alpha); }) {
+        nodeAs<T>(n).drawSelf(p, alpha);
+        return true;
+      } else {
+        return false;
+      }
+    },
     EventEntries<PointerHandler, PointerEvent, PointerReply>::of<T>(),
     EventEntries<KeyHandler, KeyEvent, Reply>::of<T>(),
     EventEntries<TextHandler, TextEvent, Reply>::of<T>(),
@@ -4903,6 +4914,8 @@ public:
   [[nodiscard]] bool focusChangesAppearance() const { return fOps->fFocusChangesAppearance(fNode); }
   [[nodiscard]] Semantics semantics() const { return fOps->fSemantics(fNode); }
   [[nodiscard]] Look look() const { return fOps->fLook(fNode); }
+  // Its own drawing, through `p`: whether it draws so.
+  bool drawThrough(skiff::paint::ErasedPainter &p, float alpha) { return fOps->fDrawThrough(fNode, p, alpha); }
   void onFocusChanged(bool focused) { fOps->fOnFocusChanged(fNode, focused); }
   [[nodiscard]] bool onClick(float x, float y) { return fOps->fOnClick(fNode, x, y); }
   // Node's: only a node without one of its own has its defaults run seen so.

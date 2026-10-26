@@ -174,6 +174,23 @@ TEST(Mirror, APathIsSvg) {
   EXPECT_TRUE(shown.takeNotNative().empty());
 }
 
+// In a column -- seen through the walks' table outside a release build --
+// what a node paints is written all the same: a plate, and a path as SVG.
+TEST(Mirror, WhatAnErasedNodePaintsIsWrittenToo) {
+  dom::reset();
+  scene::Scene tree(c::column(c::vbox(4.0f, {.fill = true}), Plate{}, Mark{}));
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  const std::string html = dom::dump(dom::root());
+  EXPECT_TRUE(html.contains("background-color:rgba(51,102,204,1);border-radius:6px;")) << html;
+  EXPECT_TRUE(html.contains(">Send<")) << html;
+  EXPECT_TRUE(html.contains("<svg")) << html;
+  EXPECT_TRUE(html.contains("d=\"M0 0 L16 8 L0 16 Z\"")) << html;
+  EXPECT_EQ(shown.recorded(), 2u);
+  EXPECT_TRUE(shown.takeNotNative().empty());
+}
+
 TEST(Mirror, RichTextIsRuns) {
   dom::reset();
   nodes::Text said("Hello world, see this", 14.0f, 0xff000000u);
