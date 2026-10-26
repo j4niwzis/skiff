@@ -741,8 +741,28 @@ private:
   std::uint32_t fId;
 };
 
+// Pixels seen in place: their shape, and where they are. Nothing here
+// draws, so nothing hands out its pixels (peekPixels says so); a pixmap is
+// only read for its shape, or given to what takes it whole.
+class SkPixmap {
+public:
+  SkPixmap() = default;
+  SkPixmap(const SkImageInfo &info, const void *, std::size_t rowBytes) : fInfo(info), fRowBytes(rowBytes) {}
+  [[nodiscard]] const SkImageInfo &info() const noexcept { return fInfo; }
+  [[nodiscard]] int width() const noexcept { return fInfo.width(); }
+  [[nodiscard]] int height() const noexcept { return fInfo.height(); }
+  [[nodiscard]] std::size_t rowBytes() const noexcept { return fRowBytes; }
+  [[nodiscard]] void *writable_addr(int, int) const noexcept { return nullptr; }
+
+private:
+  SkImageInfo fInfo;
+  std::size_t fRowBytes = 0;
+};
+
 class SkBitmap {
 public:
+  // What is written into it: taken as written -- nothing reads it back.
+  bool writePixels(const SkPixmap &) { return true; }
   bool tryAllocPixels(const SkImageInfo &info) {
     if (info.isEmpty() || std::int64_t{info.width()} * info.height() > (std::int64_t{1} << 28))
       return false;
@@ -1082,6 +1102,8 @@ public:
   [[nodiscard]] int width() const noexcept { return fInfo.width(); }
   [[nodiscard]] int height() const noexcept { return fInfo.height(); }
   [[nodiscard]] const SkImageInfo &imageInfo() const noexcept { return fInfo; }
+  // Its pixels in place: none to hand out, where nothing is drawn.
+  bool peekPixels(SkPixmap *) const { return false; }
 
 private:
   SkImageInfo fInfo;
@@ -1095,6 +1117,9 @@ inline Sp<SkSurface> Raster(const SkImageInfo &info, std::size_t = 0, const SkSu
   return std::make_shared<SkSurface>(info);
 }
 inline Sp<SkSurface> SkCanvas::makeSurface(const SkImageInfo &info) const { return Raster(info); }
+// A surface over pixels the caller has (a window's): one of its own here,
+// as nothing is drawn into either.
+inline Sp<SkSurface> WrapPixels(const SkImageInfo &info, void *, std::size_t, const SkSurfaceProps * = nullptr) { return Raster(info); }
 
 // What is drawn into its canvas, kept as commands and drawn again where the
 // picture is drawn.
