@@ -1576,6 +1576,9 @@ struct HostWork {
   // controls stand for. Given, down and up, before the next frame.
   std::vector<key::down> keys;
   bool typing = false;
+  // Whether the pointer is a finger, as the host last saw it: a drag in a
+  // text field then scrolls it, as a phone's do, rather than selecting.
+  bool byTouch = false;
   // Where what is typed into is, in the window's points, as last drawn: for
   // the host to tell the system, whose keyboard on a screen -- and whose
   // suggestions -- go beside it, not over it.
