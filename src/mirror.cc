@@ -716,6 +716,7 @@ public:
 
   template <class Root> void sync(Root &root) {
     ++fPass;
+    fRoot = scene::stateOf(root).fId;
     const dom::Handle top = this->visit(root, detail::in_cell{});
     this->order(fInto, std::vector<dom::Handle>{top});
     std::erase_if(fShown, [&](auto &kept) {
@@ -916,6 +917,14 @@ private:
     Pictures pictures;
     const detail::Holder theirs = detail::kindOf(now, look, pictureOf, pictures);
     detail::stateOf(now, state, holder);
+    // The root: the whole page, whatever its own size says -- the scene gives
+    // it the window's box by hand, not by a size of its own, and written as
+    // its State has it, it was as big as its content, and everything sized
+    // as a share of it nothing.
+    if (state.fId == fRoot) {
+      now.style("width", "100%");
+      now.style("height", "100%");
+    }
     // A node that paints itself: what it paints, as elements of its own --
     // its size skiff's where it says none. Where something of it has no
     // element (a picture), it is said not native, and that is not shown.
@@ -1034,6 +1043,8 @@ private:
 
   dom::Handle fInto;
   std::uint64_t fPass = 0;
+  // The root's node, as sync() was given it: its element the whole page.
+  scene::NodeId fRoot{};
   std::unordered_map<scene::NodeId, Shown> fShown;
   std::unordered_map<dom::Handle, scene::NodeId> fNodeOf;
   std::vector<dom::Handle> fTop;
