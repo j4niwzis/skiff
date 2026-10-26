@@ -10,18 +10,44 @@ use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::node::{ImageData, RasterImageData, SpecialElementData};
 use blitz_dom::{DocumentConfig, LocalName, NodeId, QualName, ScrollBehavior, ns, util::Color};
 use std::sync::Arc;
+use atomic_refcell::AtomicRefCell;
+use blitz_dom::{Document, EventDriver, EventHandler};
+use blitz_traits::events::{
+    BlitzImeEvent, BlitzKeyEvent, BlitzPointerEvent, BlitzPointerId, DomEvent, DomEventData, EventState, KeyState, MouseEventButton,
+    MouseEventButtons, PointerCoords, PointerDetails, UiEvent,
+};
+use keyboard_types::{Code, Key, Location, Modifiers, NamedKey};
 use blitz_html::HtmlDocument;
 use blitz_paint::paint_scene;
 use blitz_traits::shell::{ColorScheme, Viewport};
 use peniko::Fill;
 use peniko::kurbo::Rect;
 
-/// The document, and the viewport it is laid out in.
+/// The document, and the viewport it is laid out in; what its fields were
+/// edited to, not yet taken; the buttons held.
 pub struct Page {
     doc: HtmlDocument,
     width: u32,
     height: u32,
     scale: f32,
+    inputs: std::collections::VecDeque<(NodeId, String)>,
+    taken: String,
+    buttons: MouseEventButtons,
+}
+
+// What the document's events leave for the host: each field's value as an
+// edit leaves it (`input`), kept to be taken.
+struct Inputs<'a>(&'a mut std::collections::VecDeque<(NodeId, String)>);
+impl EventHandler for Inputs<'_> {
+    fn handle_event(&mut self, chain: &[NodeId], event: &mut DomEvent, _doc: &mut dyn Document, _state: &mut EventState) {
+        if let (DomEventData::Input(input), Some(target)) = (&event.data, chain.first()) {
+            self.0.push_back((*target, input.value.clone()));
+        }
+    }
+}
+fn handle(p: &mut Page, event: UiEvent) {
+    let mut driver = EventDriver::new(&mut p.doc, Inputs(&mut p.inputs));
+    driver.handle_ui_event(event);
 }
 
 // Text from the C side: a pointer and a length, UTF-8 (skiff's strings).
@@ -59,7 +85,15 @@ pub extern "C" fn skiff_blitz_new(width: u32, height: u32, scale: f32) -> *mut P
             ..Default::default()
         },
     );
-    Box::into_raw(Box::new(Page { doc, width, height, scale }))
+    Box::into_raw(Box::new(Page {
+        doc,
+        width,
+        height,
+        scale,
+        inputs: Default::default(),
+        taken: String::new(),
+        buttons: MouseEventButtons::None,
+    }))
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_free(p: *mut Page) {
@@ -214,4 +248,114 @@ pub extern "C" fn skiff_blitz_set_picture(p: *mut Page, node: u64, rgba: *const 
     }
     // Said on it, which restyles and lays it out again with its picture.
     p.doc.mutate().set_attribute(id(node), html_name("data-skiff-picture"), &text(key, key_len));
+}
+/// The pointer, at a point in CSS pixels: moved (0), pressed (1) or let go
+/// (2), with a button (0 the main, 1 the middle, 2 the other) -- a field
+/// focused, its caret put, a selection dragged, as the engine does them.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_pointer(p: *mut Page, what: u32, x: f32, y: f32, button: u32) {
+    let p = page(p);
+    let button = match button {
+        1 => MouseEventButton::Auxiliary,
+        2 => MouseEventButton::Secondary,
+        _ => MouseEventButton::Main,
+    };
+    let held = match button {
+        MouseEventButton::Auxiliary => MouseEventButtons::Auxiliary,
+        MouseEventButton::Secondary => MouseEventButtons::Secondary,
+        _ => MouseEventButtons::Primary,
+    };
+    match what {
+        1 => p.buttons |= held,
+        2 => p.buttons.remove(held),
+        _ => {}
+    }
+    let event = BlitzPointerEvent {
+        id: BlitzPointerId::Mouse,
+        is_primary: true,
+        coords: PointerCoords { page_x: x, page_y: y, screen_x: x, screen_y: y, client_x: x, client_y: y },
+        button,
+        buttons: p.buttons,
+        mods: Modifiers::empty(),
+        details: PointerDetails::default(),
+        element: Default::default(),
+        active_pointers: Arc::new(AtomicRefCell::new(Vec::new())),
+    };
+    let event = match what {
+        1 => UiEvent::PointerDown(event),
+        2 => UiEvent::PointerUp(event),
+        _ => UiEvent::PointerMove(event),
+    };
+    handle(p, event);
+}
+/// Text typed (UTF-8), as the system commits it -- a key's character, or
+/// what an input method composed: put into the field with the focus.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_commit_text(p: *mut Page, value: *const u8, len: usize) {
+    let p = page(p);
+    let value = text(value, len).into_owned();
+    handle(p, UiEvent::Ime(BlitzImeEvent::Commit(value)));
+}
+/// A key that edits rather than types, pressed: 1 Backspace, 2 Delete,
+/// 3 Enter, 4 left, 5 right, 6 up, 7 down, 8 Home, 9 End, 10 Tab; `mods`
+/// 1 Shift, 2 Control, 4 Alt, 8 Meta.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_key(p: *mut Page, which: u32, mods: u32) {
+    let p = page(p);
+    let named = match which {
+        1 => NamedKey::Backspace,
+        2 => NamedKey::Delete,
+        3 => NamedKey::Enter,
+        4 => NamedKey::ArrowLeft,
+        5 => NamedKey::ArrowRight,
+        6 => NamedKey::ArrowUp,
+        7 => NamedKey::ArrowDown,
+        8 => NamedKey::Home,
+        9 => NamedKey::End,
+        10 => NamedKey::Tab,
+        _ => return,
+    };
+    let mut modifiers = Modifiers::empty();
+    if mods & 1 != 0 {
+        modifiers |= Modifiers::SHIFT;
+    }
+    if mods & 2 != 0 {
+        modifiers |= Modifiers::CONTROL;
+    }
+    if mods & 4 != 0 {
+        modifiers |= Modifiers::ALT;
+    }
+    if mods & 8 != 0 {
+        modifiers |= Modifiers::META;
+    }
+    for state in [KeyState::Pressed, KeyState::Released] {
+        let event = BlitzKeyEvent {
+            key: Key::Named(named),
+            code: Code::Unidentified,
+            modifiers,
+            location: Location::Standard,
+            is_auto_repeating: false,
+            is_composing: false,
+            state,
+            text: None,
+        };
+        handle(p, if state == KeyState::Pressed { UiEvent::KeyDown(event) } else { UiEvent::KeyUp(event) });
+    }
+}
+/// The next field edited and its value now, oldest first: whether there was
+/// one. The value stays the page's until the next call.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_next_input(p: *mut Page, node: *mut u64, value: *mut *const u8, len: *mut usize) -> bool {
+    let p = page(p);
+    let Some((id, text)) = p.inputs.pop_front() else {
+        return false;
+    };
+    p.taken = text;
+    // SAFETY: the C side passes three places to write to, alive for the call.
+    unsafe {
+        *node = id.as_u64();
+        *value = p.taken.as_ptr();
+        *len = p.taken.len();
+    }
+    true
 }

@@ -169,6 +169,13 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   }
 }
 
+// The element a node is made as: a field the engine's own, else a box.
+[[nodiscard]] inline std::string_view tagOf(const scene::Look &look) {
+  return spl::visit(spl::overloaded{[](const scene::look::field &field) { return std::string_view(field.multiline ? "textarea" : "input"); },
+                                    [](const auto &) { return std::string_view("div"); }},
+                    look);
+}
+
 // A text's runs, as elements in its own: cut where a style or a link begins
 // or ends, each run a <span> -- or an <a>, a link -- drawn as the text
 // draws it: strong, slanted, struck, underlined; code in the monospace face
@@ -313,6 +320,23 @@ template <class PictureOf>
                                     [&](const scene::look::drawn &) -> Holder {
                                       m.style("display", "grid");
                                       m.style("position", "relative");
+                                      return in_cell{};
+                                    },
+                                    [&](const scene::look::field &field) -> Holder {
+                                      // The engine's own field: its value and what
+                                      // it shows empty; its text in the field's
+                                      // size and colour, on nothing of its own --
+                                      // the node's plate is its State's.
+                                      m.attr("value", field.text);
+                                      if (!field.placeholder.empty()) m.attr("placeholder", field.placeholder);
+                                      if (field.masked) m.attr("type", "password");
+                                      m.style("display", "block");
+                                      m.style("font-size", px(field.size));
+                                      m.style("color", rgba(field.colour));
+                                      m.style("background", "transparent");
+                                      m.style("border", "none");
+                                      m.style("outline", "none");
+                                      m.style("resize", "none");
                                       return in_cell{};
                                     }},
                     look);
@@ -735,6 +759,30 @@ public:
     return scene.clickAlong(way);
   }
 
+  // A field edited by the engine: its value now, given to the node as one
+  // edit -- what changed, between what both ends kept -- through the field's
+  // own way of editing (replaceRange), so that the program is told as it is
+  // of typing; its press kept for the host (Scene::pressedAlong). Whether
+  // there was such a field.
+  template <class S> bool typed(S &scene, dom::Handle element, std::string_view value) {
+    const auto found = fNodeOf.find(element);
+    if (found == fNodeOf.end()) return false;
+    bool edited = false;
+    this->editIn(scene.root(), found->second, value, edited);
+    if (!edited) return false;
+    // What was written of it is the engine's now: not written back.
+    if (const auto shown = fShown.find(found->second); shown != fShown.end()) shown->second.markup.attr("value", value);
+    scene::Path way;
+    if constexpr (scene::kErasedWalks) {
+      auto seen = scene::AnyNodeRef::of(scene.root());
+      if (!scene::walk::findPath(seen, found->second, way)) return true;
+    } else {
+      if (!scene::walk::findPath(scene.root(), found->second, way)) return true;
+    }
+    scene.pressedAlong(way);
+    return true;
+  }
+
   // The engine's scrolling, read back into skiff's views that scroll before
   // a frame: `scrolledOf(element)` how far the engine has an element
   // scrolled. What skiff makes of where its views are -- a list's rows near
@@ -865,7 +913,7 @@ private:
     auto [at, made] = fShown.try_emplace(state.fId);
     Shown &shown = at->second;
     if (made) {
-      shown.handle = dom::create("div");
+      shown.handle = dom::create(detail::tagOf(look));
       fNodeOf.emplace(shown.handle, state.fId);
     }
     // Its handle, on it: which node an element is, in what is written out.
@@ -909,6 +957,29 @@ private:
     return handle;
   }
 
+  template <class N> void editIn(N &node, scene::NodeId id, std::string_view value, bool &edited) {
+    if (edited) return;
+    if constexpr (requires(N &n) {
+                    { n.fieldText() } -> std::convertible_to<std::string_view>;
+                    n.replaceRange(std::size_t{}, std::size_t{}, std::string_view{});
+                  }) {
+      if (node.fState.fId == id) {
+        const std::string_view was = node.fieldText();
+        // What both keep at the start and at the end; the rest replaced.
+        const auto start = static_cast<std::size_t>(std::ranges::mismatch(was, value).in1 - was.begin());
+        const auto wasRest = was.substr(start) | std::views::reverse;
+        const auto end = static_cast<std::size_t>(std::ranges::distance(wasRest.begin(), std::ranges::mismatch(wasRest, value.substr(start) | std::views::reverse).in1));
+        node.replaceRange(start, was.size() - end, value.substr(start, value.size() - end - start));
+        edited = true;
+        return;
+      }
+    }
+    scene::eachChild(node, [&](auto &child) { this->editIn(child, id, value, edited); });
+  }
+  void editIn(scene::AnyNodeRef &ref, scene::NodeId id, std::string_view value, bool &edited) {
+    scene::ErasedNode node(ref);
+    node.forEachChild([&](scene::AnyNodeRef &child) { this->editIn(child, id, value, edited); });
+  }
   template <class N, class ScrolledOf> void readIn(N &node, ScrolledOf &scrolledOf) {
     if constexpr (requires(N &n) { n.setCurrent(0.0f); { n.current() } -> std::convertible_to<float>; n.extent(); }) {
       if (const auto found = fShown.find(node.fState.fId); found != fShown.end()) {

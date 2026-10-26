@@ -651,10 +651,21 @@ struct words {
 };
 struct scrolled {};
 // Painted by the node itself (a widget, an icon, a picture): to an engine,
-// a box of the node's size that skiff paints, all of what is in it.
+// what it paints, as elements of its own.
 struct drawn {};
+// A field typed into: one line or many, its text and what it shows empty,
+// hidden where it is a password. To an engine, its own field (<input>,
+// <textarea>), edited by it; each edit given back (Mirror::typed).
+struct field {
+  std::string_view text;
+  std::string_view placeholder;
+  bool multiline = false;
+  bool masked = false;
+  float size = 0.0f;
+  Colour colour = 0;
+};
 } // namespace look
-using Look = spl::variant<look::box, look::flow, look::words, look::scrolled, look::drawn>;
+using Look = spl::variant<look::box, look::flow, look::words, look::scrolled, look::drawn, look::field>;
 
 struct Spec {
   std::optional<Anchor> place{};

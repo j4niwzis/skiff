@@ -31,6 +31,10 @@ double skiff_blitz_scroll_offset(skiff_blitz_page *page, std::uint64_t node);
 void skiff_blitz_scroll_to(skiff_blitz_page *page, std::uint64_t node, double y);
 void skiff_blitz_set_picture(skiff_blitz_page *page, std::uint64_t node, const std::uint8_t *rgba, std::uint32_t width, std::uint32_t height,
                              const char *key, std::size_t key_len);
+void skiff_blitz_pointer(skiff_blitz_page *page, std::uint32_t what, float x, float y, std::uint32_t button);
+void skiff_blitz_commit_text(skiff_blitz_page *page, const char *text, std::size_t len);
+void skiff_blitz_key(skiff_blitz_page *page, std::uint32_t which, std::uint32_t mods);
+bool skiff_blitz_next_input(skiff_blitz_page *page, std::uint64_t *node, const char **value, std::size_t *len);
 }
 module skiff.web;
 
@@ -176,6 +180,24 @@ dom::Handle at(float x, float y) {
   return dom::kNone;
 }
 bool scroll(float x, float y, double dx, double dy) { return skiff_blitz_scroll_at(page(), x, y, dx, dy); }
+void point(pointer what, float x, float y, int button) {
+  const std::uint32_t kind = what == pointer::pressed ? 1u : what == pointer::released ? 2u : 0u;
+  skiff_blitz_pointer(page(), kind, x, y, static_cast<std::uint32_t>(button));
+}
+void commitText(std::string_view text) { skiff_blitz_commit_text(page(), text.data(), text.size()); }
+void key(editing_key which, key_modifiers held) {
+  const std::uint32_t mods = (held.shift ? 1u : 0u) | (held.control ? 2u : 0u) | (held.alt ? 4u : 0u) | (held.meta ? 8u : 0u);
+  skiff_blitz_key(page(), static_cast<std::uint32_t>(which), mods);
+}
+std::vector<std::pair<dom::Handle, std::string>> takeEdits() {
+  std::vector<std::pair<dom::Handle, std::string>> out;
+  std::uint64_t node = 0;
+  const char *value = nullptr;
+  std::size_t len = 0;
+  while (skiff_blitz_next_input(page(), &node, &value, &len))
+    if (const auto found = kept().handles.find(node); found != kept().handles.end()) out.emplace_back(found->second, std::string(value, len));
+  return out;
+}
 float scrolled(dom::Handle element) {
   return nodeOf(element) == 0 ? 0.0f : static_cast<float>(skiff_blitz_scroll_offset(page(), nodeOf(element)));
 }

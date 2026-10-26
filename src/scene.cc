@@ -5531,6 +5531,10 @@ public:
     this->restyleDirty();
     return taken;
   }
+  // A press its node answered (pressLater) outside the scene's dispatch --
+  // an edit given to a field by an engine that edits it (skiff.mirror's
+  // typed) -- kept for the host as a dispatched one's is.
+  void pressedAlong(const Path &path) { this->notePress(path); }
   // A click on the node at a path, and on each above it until one takes it:
   // where the tree is laid out elsewhere (HostWork::laidOutElsewhere), the
   // engine that laid it out saying which node was pressed.

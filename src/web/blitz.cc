@@ -27,4 +27,20 @@ bool scroll(float x, float y, double dx, double dy);
 // How far an element is scrolled down by the engine, in CSS pixels.
 [[nodiscard]] float scrolled(dom::Handle element);
 
+// The pointer and the keyboard, as the engine takes them for its own fields
+// (focus, caret, selection, editing): the pointer moved, pressed or let go
+// at a point (CSS pixels); text typed, as the system commits it; a key that
+// edits.
+enum class pointer { moved, pressed, released };
+void point(pointer what, float x, float y, int button);
+void commitText(std::string_view text);
+enum class editing_key { backspace = 1, erase, enter, left, right, up, down, home, end, tab };
+struct key_modifiers {
+  bool shift = false, control = false, alt = false, meta = false;
+};
+void key(editing_key which, key_modifiers held);
+// The fields the engine edited since, oldest first: each element and its
+// value now.
+[[nodiscard]] std::vector<std::pair<dom::Handle, std::string>> takeEdits();
+
 } // namespace skiff::web::blitz

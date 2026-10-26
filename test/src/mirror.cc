@@ -214,4 +214,33 @@ TEST(Mirror, APictureIsAnImg) {
   EXPECT_TRUE(shown.takeNotNative().empty());
 }
 
+// A field, as a widget says it is one.
+struct Field : scene::Node {
+  std::string fText = "hello world";
+  std::tuple<std::size_t, std::size_t, std::string> fLastEdit;
+  [[nodiscard]] scene::Look look() const { return scene::look::field{.text = fText, .placeholder = "Say", .size = 14.0f, .colour = 0xff000000u}; }
+  [[nodiscard]] std::string_view fieldText() const noexcept { return fText; }
+  void replaceRange(std::size_t from, std::size_t to, std::string_view with) {
+    fLastEdit = {from, to, std::string(with)};
+    fText.replace(from, to - from, with);
+  }
+};
+
+TEST(Mirror, AFieldIsTheEnginesAndItsEditsComeBack) {
+  dom::reset();
+  scene::Scene tree(Field{});
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  const std::string html = dom::dump(dom::root());
+  EXPECT_TRUE(html.contains("<input")) << html;
+  EXPECT_TRUE(html.contains("value=\"hello world\"")) << html;
+  EXPECT_TRUE(html.contains("placeholder=\"Say\"")) << html;
+  // The engine's field edited: given back as the one edit between them.
+  EXPECT_TRUE(shown.typed(tree, shown.elementOf(tree.root().fState), "hello brave world"));
+  EXPECT_EQ(tree.root().fText, "hello brave world");
+  EXPECT_EQ(tree.root().fLastEdit, (std::tuple<std::size_t, std::size_t, std::string>{6, 6, "brave "}));
+  EXPECT_TRUE(shown.typed(tree, shown.elementOf(tree.root().fState), "hello world"));
+  EXPECT_EQ(tree.root().fLastEdit, (std::tuple<std::size_t, std::size_t, std::string>{6, 12, ""}));
+}
+
 } // namespace
