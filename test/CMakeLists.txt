@@ -36,8 +36,13 @@ if(TEST_INSTALLED_VERSION)
   find_package(skiff REQUIRED)
 else()
   # The widgets' members called on what their combinators made: kept
-  # concrete (Held's own behaviour is tested apart).
-  set(SKIFF_CONCRETE_COMBINATORS ON CACHE BOOL "" FORCE)
+  # concrete (Held's own behaviour is tested apart) -- or, with
+  # SKIFF_TEST_ERASED, erased, as a program's Debug build has them.
+  if(SKIFF_TEST_ERASED)
+    set(SKIFF_CONCRETE_COMBINATORS OFF CACHE BOOL "" FORCE)
+  else()
+    set(SKIFF_CONCRETE_COMBINATORS ON CACHE BOOL "" FORCE)
+  endif()
   CPMAddPackage(NAME skiff SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/..)
 endif()
 
@@ -80,6 +85,18 @@ add_executable(skiffClickTests ${CMAKE_CURRENT_SOURCE_DIR}/src/click.cc)
 target_link_libraries(skiffClickTests PRIVATE gtest gtest_main skiff::skiff)
 set_target_properties(skiffClickTests PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
 add_test(NAME skiffClickTests COMMAND skiffClickTests)
+
+# A virtual Sections wheeled down, and mux's emoji card -- in a menu, popped
+# at the press, laid out provisionally -- wheeled and dragged: each on its
+# own, quick to build and run.
+add_executable(skiffSectionsWheel ${CMAKE_CURRENT_SOURCE_DIR}/src/sections_wheel.cc)
+target_link_libraries(skiffSectionsWheel PRIVATE gtest gtest_main skiff::skiff)
+set_target_properties(skiffSectionsWheel PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
+add_test(NAME skiffSectionsWheel COMMAND skiffSectionsWheel)
+add_executable(skiffEmojiCard ${CMAKE_CURRENT_SOURCE_DIR}/src/emoji_card.cc)
+target_link_libraries(skiffEmojiCard PRIVATE gtest gtest_main skiff::skiff)
+set_target_properties(skiffEmojiCard PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
+add_test(NAME skiffEmojiCard COMMAND skiffEmojiCard)
 endif()
 
 # The page's tests: skiff.web with its in-memory document, nothing of Skia.

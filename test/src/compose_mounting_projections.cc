@@ -182,25 +182,24 @@ TEST(Compose, MountedConstructsInPlaceAndKeepsEqualFacts) {
 
 TEST(Compose, ProjectionsReadFieldsAndRefreshFromModelEdits) {
   auto model = twoAccounts();
-  auto label = text_for<model::Field<&Count::n>>(
-      [](int n) { return std::format("{} items", n); },
-      nodes::Text("", 12.0f, 0u));
+  const auto items = [](int n) { return std::format("{} items", n); };
+  auto made = text_for<model::Field<&Count::n>>(items, nodes::Text("", 12.0f, 0u));
+  auto &label = made_as<projected_t<model::Field<&Count::n>, decltype(items), TextOf>>(made);
   bind::Binding<Model> binding;
-  binding.refresh(label, model);
+  binding.refresh(made, model);
   EXPECT_EQ(label.text(), "0 items");
   (void)model.apply(
       model::edit(model::placeOf<Count, Root>(), model::setTo(Count{8})));
-  binding.refresh(label, model);
+  binding.refresh(made, model);
   EXPECT_EQ(label.text(), "8 items");
 }
 
 TEST(Compose, StyleProjectionPreservesItsChildren) {
   auto model = twoAccounts();
+  const auto digits = [](int n) { return std::to_string(n); };
   auto node = spec_for<Count>(
       [](const Count &now) -> scene::Spec { return {.visible = now.n > 0}; },
-      row(text_for<model::Field<&Count::n>>(
-          [](int n) { return std::to_string(n); },
-          nodes::Text("", 12.0f, 0u))));
+      row(text_for<model::Field<&Count::n>>(digits, nodes::Text("", 12.0f, 0u))));
   bind::Binding<Model> binding;
   binding.refresh(node, model);
   EXPECT_FALSE(node.visible());
@@ -208,20 +207,23 @@ TEST(Compose, StyleProjectionPreservesItsChildren) {
       model::edit(model::placeOf<Count, Root>(), model::setTo(Count{4})));
   binding.refresh(node, model);
   EXPECT_TRUE(node.visible());
-  EXPECT_EQ(std::get<0>(node.fParts).text(), "4");
+  EXPECT_EQ((made_as<projected_t<model::Field<&Count::n>, decltype(digits), TextOf>>(node).text()), "4");
 }
 
 TEST(Compose, PollingKeepsAnExternalDeadlineAndTheNodesOwnTimer) {
+  using Column = Ticking<part_t<decltype(column(nodes::Text("", 14.0f, 0u)))>>;
+  using Timer = Ticking<part_t<decltype(every<model::Nothing>(1000.0))>>;
   auto quiet = keep_ticking(false, column(nodes::Text("Quiet", 14.0f, 0u)));
-  EXPECT_FALSE(quiet.wantsTick());
+  EXPECT_FALSE(made_as<Column>(quiet).wantsTick());
   auto deadline = keep_ticking(true, column(nodes::Text("Pending", 14.0f, 0u)));
-  EXPECT_TRUE(deadline.wantsTick());
+  EXPECT_TRUE(made_as<Column>(deadline).wantsTick());
   auto timer = keep_ticking(false, every<model::Nothing>(1000.0));
-  EXPECT_TRUE(timer.wantsTick());
+  EXPECT_TRUE(made_as<Timer>(timer).wantsTick());
 }
 
 TEST(Compose, NamedPressKeepsItsAccessibleLabelAndActions) {
-  auto button = onClick(model::Nothing{}, nodes::Text("Save", 14.0f, 0u), "Save settings");
+  auto made = onClick(model::Nothing{}, nodes::Text("Save", 14.0f, 0u), "Save settings");
+  auto &button = made_as<OnClick<model::Nothing, part_t<nodes::Text>>>(made);
   const auto info = button.semantics();
   EXPECT_EQ(info.fLabel, "Save settings");
   EXPECT_EQ(info.fActions.size(), 2u);
@@ -230,7 +232,8 @@ TEST(Compose, NamedPressKeepsItsAccessibleLabelAndActions) {
 }
 
 TEST(Compose, LocalModelDoesNotHideTheNodesSceneState) {
-  auto node = local<int>(nodes::Text("Local", 14.0f, 0u), 3);
+  auto made = local<int>(nodes::Text("Local", 14.0f, 0u), 3);
+  auto &node = made_as<bind::Local<int, bind::NoHandlers, part_t<nodes::Text>>>(made);
   EXPECT_EQ(&scene::stateOf(node), &static_cast<scene::Node&>(node).fState);
   EXPECT_EQ(node.fModel.root(), 3);
   node.apply({.width = 80.0f});
@@ -245,8 +248,8 @@ TEST(Compose, NamedClickKeepsTheWrappedToggleRoleAndValue) {
       return result;
     }
   };
-  auto node = onClick(model::Nothing{}, Toggle{}, "Encrypt local data");
-  const auto info = node.semantics();
+  auto made = onClick(model::Nothing{}, Toggle{}, "Encrypt local data");
+  const auto info = made_as<OnClick<model::Nothing, part_t<Toggle>>>(made).semantics();
   EXPECT_EQ(info.fRole.index(), scene::SemanticRole(scene::semantic_role::toggle{}).index());
   EXPECT_EQ(info.fValue, "on");
   EXPECT_EQ(info.fLabel, "Encrypt local data");
@@ -279,12 +282,13 @@ TEST(Compose, PressFactoryReadsCurrentDataWithoutRebuildingTheNode) {
 TEST(Compose, VisibilityProjectionReadsLocalModelFields) {
   struct Flag { bool on = false; };
   model::Model<int, bind::NoReactions> model(0);
-  auto node = local<Flag>(shown_for<model::Field<&Flag::on>>(
-      [](bool on) { return on; }, Pad{}), Flag{});
+  const auto on = [](bool on) { return on; };
+  using Shown = decltype(shown_for<model::Field<&Flag::on>>(on, Pad{}));
+  auto node = local<Flag>(shown_for<model::Field<&Flag::on>>(on, Pad{}), Flag{});
   bind::Binding<decltype(model)> binding;
   binding.refresh(node, model);
   EXPECT_FALSE(node.visible());
-  node.fModel.apply(model::over<model::Field<&Flag::on>>(model::setTo(true)));
+  made_as<bind::Local<Flag, bind::NoHandlers, part_t<Shown>>>(node).fModel.apply(model::over<model::Field<&Flag::on>>(model::setTo(true)));
   binding.invalidate();
   binding.refresh(node, model);
   EXPECT_TRUE(node.visible());
@@ -300,16 +304,21 @@ TEST(Compose, AProjectionOverAProjectedNodeTellsItTheSamePart) {
   };
   model::Model<Root, bind::NoReactions> model;
   // Shown as one projection says, its width as the one under it does.
-  auto node = shown_for<Flag>([](const Flag& now) { return now.on; },
-                              spec_for<Flag>([](const Flag& now) { return scene::Spec{.width = static_cast<float>(now.width)}; }, Pad{}));
+  struct WidthOf {
+    scene::Spec operator()(const Flag& now) const { return scene::Spec{.width = static_cast<float>(now.width)}; }
+  };
+  auto node = shown_for<Flag>([](const Flag& now) { return now.on; }, spec_for<Flag>(WidthOf{}, Pad{}));
+  // Its width, on the node the spec is read into: the same node where
+  // combinators are concrete, the one held under it where they are erased.
+  const auto width = [&] { return made_as<projected_t<Flag, WidthOf, SpecOf<part_t<Pad>>>>(node).fState.width(); };
   bind::Binding<decltype(model)> binding;
   binding.refresh(node, model);
-  EXPECT_FALSE(node.visible());
-  EXPECT_EQ(node.fState.width(), 10.0f);
+  EXPECT_FALSE(scene::stateOf(node).fVisible);
+  EXPECT_EQ(width(), 10.0f);
   model.apply(model::edit(model::placeOf<Flag, Root>(), model::setTo(Flag{true, 30})));
   binding.refresh(node, model);
-  EXPECT_TRUE(node.visible());
-  EXPECT_EQ(node.fState.width(), 30.0f);
+  EXPECT_TRUE(scene::stateOf(node).fVisible);
+  EXPECT_EQ(width(), 30.0f);
 }
 
 TEST(Compose, ARefreshCombinesChangedPathsAndLeavesOtherBindingsAlone) {
@@ -333,26 +342,36 @@ TEST(Compose, ARefreshCombinesChangedPathsAndLeavesOtherBindingsAlone) {
   binding.refresh(page, model);
   model.applyBatch(model::over<First>(model::setTo(First{1})), model::over<Second>(model::setTo(Second{2})));
   binding.refresh(page, model);
-  EXPECT_EQ(std::get<0>(page.fParts).reads, 2);
-  EXPECT_EQ(std::get<0>(page.fParts).value, 1);
-  EXPECT_EQ(std::get<1>(page.fParts).reads, 2);
-  EXPECT_EQ(std::get<1>(page.fParts).value, 2);
-  EXPECT_EQ(std::get<2>(page.fParts).reads, 1);
+  auto &first = made_as<bind::Bound<First, part_t<Probe>>>(page);
+  auto &second = made_as<bind::Bound<Second, part_t<Probe>>>(page);
+  auto &third = made_as<bind::Bound<Third, part_t<Probe>>>(page);
+  EXPECT_EQ(first.reads, 2);
+  EXPECT_EQ(first.value, 1);
+  EXPECT_EQ(second.reads, 2);
+  EXPECT_EQ(second.value, 2);
+  EXPECT_EQ(third.reads, 1);
   binding.refresh(page, model);
-  EXPECT_EQ(std::get<0>(page.fParts).reads, 2);
+  EXPECT_EQ(first.reads, 2);
 }
 
 TEST(Compose, PointerHandlerRetainsClickOutputsAndReadsItsNode) {
-  auto node = onPointer<std::string>([](auto& base, const scene::pointer::down& event, scene::PointerReply& reply) -> std::optional<std::string> {
+  const auto said = [](auto& base, const scene::pointer::down& event, scene::PointerReply& reply) -> std::optional<std::string> {
     if (event.button != 3) return std::nullopt;
     reply.handle();
-    return std::get<0>(base.fParts).text();
-  }, onClick(42, column(vbox(), nodes::Text("event", 13.0f, 0))));
-  static_assert(std::same_as<OutOf<decltype(node)>, model::Types<int, std::string>>);
-  EXPECT_EQ(node.onPress(), 42);
+    return made_as<nodes::Text>(base).text();
+  };
+  using Inner = decltype(column(vbox(), nodes::Text("event", 13.0f, 0)));
+  using Clicked = OnClick<int, part_t<Inner>>;
+  using Pointed = OnPointer<std::string, std::remove_cvref_t<decltype(said)>, part_t<decltype(onClick(42, std::declval<Inner>()))>>;
+  auto node = onPointer<std::string>(said, onClick(42, column(vbox(), nodes::Text("event", 13.0f, 0))));
+  // What a press gives, typed where the combinators are concrete: through a
+  // Held, what the click under it gives is not seen.
+  static_assert(scene::kErasedCombinators || std::same_as<OutOf<decltype(node)>, model::Types<int, std::string>>);
+  EXPECT_EQ(made_as<Clicked>(node).onPress(), 42);
   scene::PointerReply reply;
-  EXPECT_EQ(node.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 3}, reply), "event");
-  EXPECT_FALSE(node.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 1}, reply).has_value());
+  auto &pointed = made_as<Pointed>(node);
+  EXPECT_EQ(pointed.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 3}, reply), "event");
+  EXPECT_FALSE(pointed.onPointer(scene::phase::bubble{}, scene::pointer::down{.button = 1}, reply).has_value());
 }
 
 TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
@@ -406,13 +425,15 @@ TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
     bind::Binding<PlainModel> binding;
     binding.refresh(holder, model);
     local_t &target = findLocal(holder);
-    EXPECT_FALSE(target.fOpen);
-    ASSERT_TRUE(bind::press(target, model, scene::Path{}));
+    EXPECT_FALSE((made_as<bind::Bound<Expanded, part_t<Chevron>>>(target).fOpen));
+    // The click in it, wherever it is under what holds it.
+    ASSERT_TRUE(bind::press(target, model,
+        pressPathTo(target, made_as<OnClick<FlipLocal, part_t<decltype(bound<Expanded>(Chevron{}))>>>(target).fState)));
     // Also exercise detail::LocalPass<PlainModel> directly (the Release path).
     bind::detail::LocalPass<PlainModel> pass{model};
     bind::detail::visitNode(pass, holder, model::Place<int, model::Path<>>{});
     binding.refresh(holder, model);
-    EXPECT_TRUE(target.fOpen);
+    EXPECT_TRUE((made_as<bind::Bound<Expanded, part_t<Chevron>>>(target).fOpen));
   };
 
   memo_rows_t rows(makeItem);

@@ -4,11 +4,14 @@
 // Included after the imports; what it declares is in the unnamed namespace.
 #pragma once
 
+#include "made.h"
+
 namespace {
 
 
 using namespace skiff;
 using namespace skiff::compose;
+
 
 struct ReadReceipts {
   bool on = true;
@@ -150,13 +153,19 @@ using Page = decltype(accountsPage());
 
 // The parts of a row, by where they are in the expression: the scope, the
 // local and the column are one node, the column's.
-auto &rowColumn(auto &row) { return row; }
-auto &nameOf(auto &row) {
-  return std::get<0>(std::get<0>(rowColumn(row).fParts).fParts);
-}
-auto &chevronOf(auto &row) {
-  return std::get<1>(std::get<0>(rowColumn(row).fParts).fParts);
-}
+// The parts of a row, found as they are -- bound to what they read -- each
+// time they are asked for: the n-th of each kind is the n-th row's.
+using NameNode = bind::Bound<DisplayName, part_t<Label>>;
+using ChevronNode = bind::Bound<Expanded, part_t<Chevron>>;
+using SwitchNode = bind::Bound<ReadReceipts, part_t<Switch>>;
+struct RowParts {
+  NameNode *name;
+  ChevronNode *chevron;
+  SwitchNode *toggle;
+};
+NameNode &nameOf(const RowParts &row) { return *row.name; }
+ChevronNode &chevronOf(const RowParts &row) { return *row.chevron; }
+SwitchNode &switchOf(const RowParts &row) { return *row.toggle; }
 struct NoReactions {};
 
 // A message's menu as mux makes it: a card sized by what it holds, at
@@ -339,6 +348,26 @@ inline auto view() {
 
 // A window over a list (mux's timeline), scrolled to its top with nothing
 // above it held: it asks for what is older, and the program hears it.
+// A face that measures, for tests of words' widths: DejaVu Sans, where the
+// machine has it -- skia-lite's default face, and a SkFont made without one,
+// measure nothing (as skiff main's tests have it).
+namespace test_font {
+struct TestFont {
+  skia::SkFont font;
+  bool ok = false;
+  TestFont() {
+    auto manager = skia::SkFontMgr_New_Custom_Directory("/usr/share/fonts");
+    auto face = manager ? manager->matchFamilyStyle("DejaVu Sans", skia::SkFontStyle()) : nullptr;
+    if (!face)
+      return;
+    skiff::paint::fonts().setPrimary(face);
+    font = skia::SkFont(face);
+    skiff::paint::defaultFont() = &font;
+    ok = true;
+  }
+  ~TestFont() { skiff::paint::defaultFont() = nullptr; }
+};
+}  // namespace test_font
 namespace window_edge {
 namespace c = skiff::compose;
 struct FeedTold {

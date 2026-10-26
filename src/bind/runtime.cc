@@ -82,6 +82,24 @@ struct AnyModel {
 // ---- what a press and a handler answer, erased ----------------------------------------
 
 // An event sent, held: its type and itself.
+// Whether a scope's keys lead to its part in a model, from a place: the
+// way there has a keyed step for each key -- as a release build's walks ask
+// it (kScopeLeads). A model that holds the part another way -- a page's
+// field, where the scope's key leads into another model's map of them -- is
+// not the scope's: taken for it, its press went to the wrong model, and its
+// reads came from there.
+inline bool scopeLeads(const AnyModel &model, const mrt::Place &here, const mrt::Want &want, std::size_t keys) {
+  const mrt::Shape *at = mrt::shapeAt(*model.fRoot, here.fSteps);
+  if (at == nullptr)
+    return false;
+  const auto way = mrt::pathTo(*at, want);
+  if (!way)
+    return keys == 0;
+  const auto keyed = std::ranges::count_if(*way, [](const mrt::Step &one) {
+    return std::visit(spl::overloaded{[](mrt::step::at) { return true; }, [](const auto &) { return false; }}, one);
+  });
+  return static_cast<std::size_t>(keyed) == keys;
+}
 struct Sent {
   mrt::TypeKey fType = nullptr;
   std::shared_ptr<const void> fEvent;
@@ -759,7 +777,8 @@ private:
       bool *was;
       ~Restore() { at = was; }
     } restore{fBeyond, beyondWas};
-    if (table->fScoped != nullptr && owns(table->fScoped->fWithin)) {
+    if (table->fScoped != nullptr && owns(table->fScoped->fWithin) &&
+        scopeLeads(fModel, here, table->fScoped->fWithin, table->fScoped->fKeys(node.node()).size())) {
       inner = below(here, table->fScoped->fWithin, table->fScoped->fKeys(node.node()));
       if (!inner)
         return;
@@ -1047,6 +1066,13 @@ private:
     const auto *table = static_cast<const Table *>(node.bindTable());
     std::optional<mrt::Place> inner;
     std::optional<PressFrame> scope;
+    // A scope this model holds the part of another way than its keys lead
+    // -- another model's scope: the press below it is not this model's to
+    // make (passed, for the model the scope is of), not made in the part
+    // this one holds.
+    if (table != nullptr && table->fScoped != nullptr && owns(table->fScoped->fWithin) &&
+        !scopeLeads(fModel, here, table->fScoped->fWithin, table->fScoped->fKeys(node.node()).size()))
+      return;
     if (table != nullptr && table->fScoped != nullptr && owns(table->fScoped->fWithin)) {
       inner = below(here, table->fScoped->fWithin, table->fScoped->fKeys(node.node()));
       if (!inner)

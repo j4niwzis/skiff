@@ -57,7 +57,11 @@ TEST(Compose, AScopeIsOfTheModelItsKeysLeadInNotOneHoldingItsPartAnotherWay) {
   showing.refresh(node, shown);
   setting.refresh(node, settings);
   showing.refresh(node, shown);
-  const LeadReads *reads = scene::findNode<LeadReads>(node);
+  // The scope is itself the bound node it is made over (Scoped derives from
+  // its content): found as it is, its own type.
+  // Erased, the bound node is held under it.
+  using Reads = std::conditional_t<scene::kErasedCombinators, bind::Bound<model::Field<&LeadAccount::n>, part_t<LeadReads>>, decltype(node)>;
+  const auto *reads = scene::findNode<Reads>(node);
   ASSERT_NE(reads, nullptr);
   EXPECT_EQ(reads->n, 7);
 }
@@ -216,7 +220,10 @@ TEST(Compose, APressAnsweringAnEditMakesItWhereItsPartIs) {
     for (double at = 100.0; at < 200.0; at += 16.0)
       frame(at);
   }
-  const PickReads *picked = scene::findNode<PickReads>(tree.root());
+  // Found as it is in the tree: bound, a node of its own type -- the
+  // walks, erased, find a type as it is, not what it is made over.
+  using BoundReads = bind::Bound<model::Field<&PickDraft::choice>, c::part_t<PickReads>>;
+  const BoundReads *picked = scene::findNode<BoundReads>(tree.root());
   ASSERT_NE(picked, nullptr);
   EXPECT_EQ(picked->n, 5);
   EXPECT_EQ(settings.look(model::placeOf<LeadAccount, scope_leads::LeadSettings>(std::string("a")))->n, 9);
@@ -280,13 +287,16 @@ TEST(Compose, AModelIsThePartsItsTreesViewsSayTheyKeep) {
   bind::Binding<bind::ModelOf<Tree>> binding;
   binding.refresh(tree.root(), m);
   EXPECT_EQ(lastTally(), 0);
+  // The tallies' buttons, wherever the build puts them.
+  using Plus = OnClick<Pressed, part_t<nodes::Text>>;
+  const auto plusAt = [&](std::size_t at) { return pressPathTo(tree.root(), all_made_as<Plus>(tree.root()).at(at)->fState); };
   // The first tally's button: sent up to its own state's handlers.
-  EXPECT_TRUE(bind::press(tree.root(), m, scene::Path{0, 1}));
+  EXPECT_TRUE(bind::press(tree.root(), m, plusAt(0)));
   EXPECT_EQ(m.look<Tally>()->n, 1);
   binding.refresh(tree.root(), m);
   EXPECT_EQ(lastTally(), 1);
   // The second says the same part: the same one, pressed again.
-  EXPECT_TRUE(bind::press(tree.root(), m, scene::Path{3, 1}));
+  EXPECT_TRUE(bind::press(tree.root(), m, plusAt(1)));
   EXPECT_EQ(m.look<Tally>()->n, 2);
 }
 

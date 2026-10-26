@@ -70,6 +70,15 @@ public:
     this->invalidateLayout();
   }
   [[nodiscard]] bool moving() const noexcept { return fScroll.moving(); }
+  // What is above the view grown or shrunk by `delta`, as its owner knows:
+  // the view, where it is going and where a drag began moved with it, so
+  // that what is in view stays and a glide or a drag under way goes on.
+  void shiftBy(float delta) {
+    if (delta == 0.0f)
+      return;
+    fScroll.shift(delta);
+    this->invalidateLayout();
+  }
   // Whether a scroll step copies what is in view, where the host copies:
   // not over what does not scroll with it -- a gradient behind it, which a
   // copy moved along, a little further off at every step.
@@ -197,9 +206,106 @@ public:
   [[nodiscard]] float current() const noexcept { return fScroll.offset(); }
   [[nodiscard]] float extent() const noexcept { return fExtent; }
 
+  // In a provisional box -- a parent sized by what it holds measuring
+  // first in the room it might have (a message's menu with the reaction
+  // picker unrolled in it): laid out as in any, and then what it is
+  // scrolled to put back as it was. Fitted to that box -- clamped to its
+  // extent there, kept at its end, held to what was in view -- then to the
+  // real one at every frame, a wheel's glide was let go and the view went
+  // back to the top, and a drag let go went back too. Laid out all the
+  // same: where the real box is the same, its layout is not made again.
+  // What the reader is looking at stays where it is when what is above
+  // it changes -- history coming in above, a row above growing: the first
+  // item in view is remembered, and the view follows it. Not at the end,
+  // where the view follows the newest instead. The rows' bounds are where
+  // they are laid out: in view, less the offset.
+  struct Anchor {
+    skiff::scene::NodeId id = 0;
+    float top = 0.0f;
+  };
+  // Not where the view is put somewhere on purpose -- an offset set, the
+  // end asked for: held to what was in view, a jump landed back near where
+  // it left, beside the message it went to.
+  [[nodiscard]] std::vector<Anchor> anchorsIn(const skia::SkRect &box, float offset) {
+    std::vector<Anchor> anchors;
+    if (fHolds && fLaidOut && !this->atEnd() && !fJumpTo && !fToEnd && !fGlidingToEnd) {
+      this->eachItem([&](const skiff::scene::State &item) {
+        if (anchors.size() < 4 && item.fVisible && item.fBounds.fBottom - offset > box.fTop) {
+          anchors.push_back(Anchor{item.fId, item.fBounds.fTop});
+        }
+      });
+    }
+    return anchors;
+  }
+  // What a view was as the frame's layout pass found it.
+  struct Provisional {
+    std::uint64_t pass = 0;
+    skiff::scene::ScrollGesture scroll;
+    float extent = 0.0f;
+    std::optional<float> jumpTo;
+    skia::SkRect lastBox = skia::SkRect::MakeEmpty();
+    float lastOffset = 0.0f;
+    bool laidOut = false, toEnd = false, glidingToEnd = false;
+    float endTarget = 0.0f;
+    std::vector<Anchor> anchors;
+    std::size_t moves = 0;  // the copies asked for before it
+  };
   void layoutChildren() {
     namespace scene = skiff::scene;
+    // Laid out more than once in a frame -- in a parent sized by what it
+    // holds, first in the room that parent might have; a popover laid out
+    // where it opens, then moved where it goes: each time from where the
+    // frame found it, the last standing. Only the first undone, the others
+    // went on from what it left: a box of no height, then the real one,
+    // each moved the view by the height it changed by -- down a screen,
+    // then back to the top -- and the wheel's way was lost at every frame;
+    // the box laid out in last kept nothing to scroll in, or the view went
+    // to its end.
+    // Not where the view was moved since the last of them -- a jump asked
+    // for, the offset set between two layouts of one pass: that move kept,
+    // and laid out from.
+    if (fFrameStart && fFrameStart->pass == scene::work::layoutPass() && this->asLeft()) {
+      const Provisional &before = *fFrameStart;
+      fScroll = before.scroll;
+      fExtent = before.extent;
+      fJumpTo = before.jumpTo;
+      fLastBox = before.lastBox;
+      fLastOffset = before.lastOffset;
+      fLaidOut = before.laidOut;
+      fToEnd = before.toEnd;
+      fGlidingToEnd = before.glidingToEnd;
+      fEndTarget = before.endTarget;
+      // The copies the earlier ones asked for, taken back.
+      auto &moves = scene::scrollMoves();
+      const auto from = moves.begin() + static_cast<std::ptrdiff_t>(std::min(before.moves, moves.size()));
+      moves.erase(std::remove_if(from, moves.end(), [&](const scene::ScrollMove &move) { return move.node == fState.fId; }),
+                  moves.end());
+    } else {
+      fFrameStart = Provisional{
+          .pass = scene::work::layoutPass(), .scroll = fScroll, .extent = fExtent, .jumpTo = fJumpTo,
+          .lastBox = fLastBox, .lastOffset = fLastOffset, .laidOut = fLaidOut, .toEnd = fToEnd,
+          .glidingToEnd = fGlidingToEnd, .endTarget = fEndTarget,
+          .anchors = this->anchorsIn(fLastBox, scene::snapToPixel(fScroll.offset())),
+          .moves = scene::scrollMoves().size()};
+    }
+    this->layoutInBox(&fFrameStart->anchors);
+    fLeft = Left{fScroll.offset(), fScroll.target(), fScroll.dragging(), fJumpTo, fToEnd, fGlidingToEnd};
+  }
+  // How a layout left the view: as it still is, nothing moved it since.
+  struct Left {
+    float offset = 0.0f, target = 0.0f;
+    bool dragging = false;
+    std::optional<float> jumpTo;
+    bool toEnd = false, glidingToEnd = false;
+    friend bool operator==(const Left &, const Left &) = default;
+  };
+  [[nodiscard]] bool asLeft() const {
+    return fLeft == Left{fScroll.offset(), fScroll.target(), fScroll.dragging(), fJumpTo, fToEnd, fGlidingToEnd};
+  }
+  void layoutInBox(const std::vector<Anchor> *given) {
+    namespace scene = skiff::scene;
     const skia::SkRect box = fState.contentBox();
+
     // Placed on whole device pixels: the glide goes on smoothly, and what
     // is drawn follows it a whole pixel at a time -- every row, its text
     // and its fills together.
@@ -218,33 +324,16 @@ public:
     if (fLaidOut && box != fLastBox) {
       fState.markDamaged();
     }
-    // What the reader is looking at stays where it is when what is above
-    // it changes -- history coming in above, a row above growing: the first
-    // item in view is remembered, and the view follows it. Not at the end,
-    // where the view follows the newest instead. The rows' bounds are where
-    // they are laid out: in view, less the offset.
-    struct Anchor {
-      scene::NodeId id = 0;
-      float top = 0.0f;
-    };
-    // Several, in case the first goes with the change: the first of them
-    // still there is kept in place.
-    std::vector<Anchor> anchors;
     // At the end and at rest, the view stays at the end, however much comes
     // above and however its own box changes (a bar opened under it): not
     // left where it was to be glided down again. Not while it is moving: a
     // wheel moving it off the end is not pulled back.
     const bool following = fLaidOut && this->atEnd() && !fScroll.dragging() && !fScroll.moving();
-    // Not where the view is put somewhere on purpose -- an offset set, the
-    // end asked for: held to what was in view, a jump landed back near where
-    // it left, beside the message it went to.
-    if (fHolds && fLaidOut && box == fLastBox && !this->atEnd() && !fJumpTo && !fToEnd && !fGlidingToEnd) {
-      this->eachItem([&](const scene::State &item) {
-        if (anchors.size() < 4 && item.fVisible && item.fBounds.fBottom - offset > box.fTop) {
-          anchors.push_back(Anchor{item.fId, item.fBounds.fTop});
-        }
-      });
-    }
+    // Several, in case the first goes with the change: the first of them
+    // still there is kept in place -- those a provisional pass found before
+    // it laid the rows out, where it came first.
+    const std::vector<Anchor> anchors =
+        box != fLastBox ? std::vector<Anchor>{} : given != nullptr ? *given : this->anchorsIn(box, offset);
     const bool laidOutBefore = fLaidOut;
     const skia::SkRect boxBefore = fLastBox;
     fLaidOut = true;
@@ -807,6 +896,8 @@ private:
   bool fLaidOut = false;
   skia::SkRect fLastBox = skia::SkRect::MakeEmpty();
   float fLastOffset = 0.0f;
+  std::optional<Provisional> fFrameStart;  // as the frame found it
+  Left fLeft;                              // as its last layout left it
 };
 
 } // namespace skiff::nodes

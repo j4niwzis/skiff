@@ -100,7 +100,9 @@ TEST(Compose, PlacedAtIsShownWhereThereIsAPoint) {
 
 TEST(Compose, RestingSaysWhenThePointerHasRestedAndWhenItLeaves) {
   std::vector<bool> said;
-  auto node = resting(300.0, [&](bool on) { said.push_back(on); }, nodes::Text("x", 13.0f, 0));
+  const auto rest = [&](bool on) { said.push_back(on); };
+  auto made = resting(300.0, rest, nodes::Text("x", 13.0f, 0));
+  auto &node = made_as<Resting<std::remove_cvref_t<decltype(rest)>, part_t<nodes::Text>>>(made);
   node.fState.fHovered = true;
   node.update(1000.0);
   node.update(1200.0);
@@ -125,13 +127,13 @@ TEST(Compose, AShownIfHidesWhereItsReadSaysSo) {
   struct Count { int n = 0; };
   struct Root { model::Tracked<Count> count; };
   model::Model<Root, bind::NoReactions> model{Root{}};
+  const auto digits = [](const Count &now) { return std::to_string(now.n); };
   auto node = shown_if<Count>([](const Count &now) { return now.n > 0; },
-                              row(text_of<Count>([](const Count &now) { return std::to_string(now.n); },
-                                                 nodes::Text("", 12.0f, 0u))));
+                              row(text_of<Count>(digits, nodes::Text("", 12.0f, 0u))));
   bind::Binding<decltype(model)> binding;
   binding.refresh(node, model);
   EXPECT_FALSE(node.visible());
-  EXPECT_EQ(std::get<0>(node.fParts).text(), "0");
+  EXPECT_EQ((made_as<bind::Derived<std::remove_cvref_t<decltype(digits)>, TextOf, Count>>(node).text()), "0");
 }
 
 // A node that reads the model itself, from more than one model: refreshed
@@ -205,7 +207,7 @@ TEST(Compose, AnOverloadedReaderIsRefreshedAsRootAndAsAPart) {
   bind::Binding<OtherModel> fourth;
   third.refresh(moved, its);
   fourth.refresh(moved, other);
-  const auto &part = std::get<0>(std::get<0>(moved.fParts).fParts);
+  const auto &part = made_as<OverloadedReading>(moved);
   EXPECT_EQ(part.fByModel, 1);
   EXPECT_EQ(part.fByRoot, 1);
   WrappedReading wrapped;

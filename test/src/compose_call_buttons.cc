@@ -40,7 +40,12 @@ TEST(Compose, ACallButtonInAChatHeadIsShownAndPressed) {
   frame();
   std::print("{}", scene::laidOutText(tree.root()));
   float left = -1.0f, top = -1.0f, width = 0.0f;
-  scene::forEachNode<c::OnClick<Pressed, c::part_t<Probe>>>(tree.root(), [&](auto &one) {
+  // Found as it is in the tree: the named view, which is the click itself
+  // (shown_if over visible over styled over onClick, each the node it is
+  // made over) -- the walks, erased, find a type as it is: there the click,
+  // held under what is made over it.
+  using Button = std::conditional_t<scene::kErasedCombinators, c::OnClick<Pressed, c::part_t<Probe>>, decltype(button())>;
+  scene::forEachNode<Button>(tree.root(), [&](auto &one) {
     left = one.bounds().fLeft;
     top = one.bounds().fTop;
     width = one.bounds().width();

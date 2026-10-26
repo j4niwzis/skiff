@@ -112,11 +112,9 @@ inline auto card() {
 }  // namespace said_card
 TEST(Compose, AButtonWhoseTextIsReadInACardIsPressedWhereItIsDrawn) {
   using namespace said_card;
-  skia::SkFont font;
-  paint::defaultFont() = &font;
-  struct cleanup {
-    ~cleanup() { paint::defaultFont() = nullptr; }
-  } clear;
+  test_font::TestFont font;
+  if (!font.ok)
+    GTEST_SKIP() << "Needs DejaVu Sans to measure the words";
   scene::Scene tree(c::column(c::vbox(32.0f, {.fill = true, .padding = {16.0f, 16.0f, 16.0f, 16.0f}}), said_card::card()));
   FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
   bind::Binding<FeedModel> binding;

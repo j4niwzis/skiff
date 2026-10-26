@@ -613,8 +613,11 @@ struct TextStyled {
   // Its own colour, and a plate behind it in another, where the message's
   // HTML says (<font color>, data-mx-color, data-mx-bg-color): the
   // innermost stretch's where they nest.
-  std::optional<skia::SkColor> colour;
-  std::optional<skia::SkColor> background;
+  std::optional<Colour> colour;
+  std::optional<Colour> background;
+  // Its size, as a share of the text: a heading (HTML h1..h6), drawn on
+  // lines of its own, each as tall as its size.
+  float scale = 1.0f;
 };
 
 struct Spec {
@@ -1375,6 +1378,9 @@ struct HostWork {
   // controls stand for. Given, down and up, before the next frame.
   std::vector<key::down> keys;
   bool typing = false;
+  // Whether the pointer is a finger, as the host last saw it: a drag in a
+  // text field then scrolls it, as a phone's do, rather than selecting.
+  bool byTouch = false;
   // Where what is typed into is, in the window's points, as last drawn: for
   // the host to tell the system, whose keyboard on a screen -- and whose
   // suggestions -- go beside it, not over it.
@@ -1442,13 +1448,29 @@ bool answerPress(N &, const C &) {
 // answerWith, found by the carried type), else -- nothing carried, as
 // outside a release build -- kept for its path to be added as the routing
 // leaves it.
-template <class N, class A, class C>
-void answerWith(N &, const A &answer, const C &) {
+// Kept as the node's Answer where it is one (an alternative of it made
+// the whole); else as itself -- a node that answers for more than one of
+// what it wraps (a named view over keys_for and onKeys) said an Answer of
+// one of them, and the other's answer could not be made one.
+template <class N, class A>
+  requires std::constructible_from<typename N::Answer, const A &>
+void keepAnswer(const A &answer) {
   if constexpr (kErasedWalks) {
     hostWork().answerNow = std::make_shared<const typename N::Answer>(answer);
     hostWork().answerType = &kTypeKey<typename N::Answer>;
   }
 }
+template <class N, class A> void keepAnswer(const A &answer) {
+  if constexpr (kErasedWalks) {
+    hostWork().answerNow = std::make_shared<const A>(answer);
+    hostWork().answerType = &kTypeKey<A>;
+  }
+}
+// Unconstrained, the one answerWith here: skiff::bind's, constrained to
+// carried frames, is taken over it wherever frames are carried. (Two of
+// them constrained each its own way here, a release build found both and
+// bind's equally good: ambiguous.)
+template <class N, class A, class C> void answerWith(N &, const A &answer, const C &) { keepAnswer<N>(answer); }
 template <class N, class A, class C> void answered(N &node, const A &answer, const C &carried) {
   answerWith(node, answer, carried);
 }

@@ -22,19 +22,25 @@ import skiff.paint;
 
 namespace {
 
-auto &switchOf(auto &row) { return std::get<1>(rowColumn(row).fParts); }
-auto &removeOf(auto &row) { return std::get<2>(rowColumn(row).fParts); }
-auto &rowsOf(Page &page) { return std::get<0>(page.fParts).fRows; }
 // Where they are, to press: the list, the row, then down its column.
-scene::Path chevronAt(std::uint32_t row) { return {0, row, 0, 1}; }
-scene::Path switchAt(std::uint32_t row) { return {0, row, 1}; }
-scene::Path removeAt(std::uint32_t row) { return {0, row, 2}; }
+struct Rows {
+  Page *page;
+  [[nodiscard]] std::size_t size() const { return all_made_as<NameNode>(*page).size(); }
+  RowParts operator[](std::size_t at) const {
+    return {all_made_as<NameNode>(*page).at(at), all_made_as<ChevronNode>(*page).at(at), all_made_as<SwitchNode>(*page).at(at)};
+  }
+};
+Rows rowsOf(Page &page) { return {&page}; }
+using RemoveNode = OnClick<Removed, part_t<Pad>>;
+scene::Path chevronAt(Page &page, std::uint32_t row) { return pressPathTo(page, chevronOf(rowsOf(page)[row]).fState); }
+scene::Path switchAt(Page &page, std::uint32_t row) { return pressPathTo(page, switchOf(rowsOf(page)[row]).fState); }
+scene::Path removeAt(Page &page, std::uint32_t row) { return pressPathTo(page, all_made_as<RemoveNode>(page).at(row)->fState); }
 
 TEST(Compose, APageWrittenAsAnExpressionShowsTheModel) {
   Model m = twoAccounts();
   Page page = accountsPage();
   bind::refresh(page, m);
-  auto &rows = rowsOf(page);
+  auto rows = rowsOf(page);
   ASSERT_EQ(rows.size(), 2u);
   EXPECT_EQ(nameOf(rows[0]).fText, "A");
   EXPECT_EQ(nameOf(rows[1]).fText, "B");
@@ -46,9 +52,9 @@ TEST(Compose, LocalStateIsEachRowsOwnAndTellsNoOne) {
   Model m = twoAccounts();
   Page page = accountsPage();
   bind::refresh(page, m);
-  auto &rows = rowsOf(page);
+  auto rows = rowsOf(page);
   const auto before = m.revision();
-  EXPECT_TRUE(bind::press(page, m, chevronAt(1)));
+  EXPECT_TRUE(bind::press(page, m, chevronAt(page, 1)));
   bind::refresh(page, m);
   EXPECT_FALSE(chevronOf(rows[0]).fOpen);
   EXPECT_TRUE(chevronOf(rows[1]).fOpen);
@@ -60,7 +66,7 @@ TEST(Compose, ARowsEventIsTakenByItsScopeAndItsLocalStateGoesWithIt) {
   Model m = twoAccounts();
   Page page = accountsPage();
   bind::refresh(page, m);
-  EXPECT_TRUE(bind::press(page, m, removeAt(0)));
+  EXPECT_TRUE(bind::press(page, m, removeAt(page, 0)));
   bind::refresh(page, m);
   ASSERT_EQ(rowsOf(page).size(), 1u);
   EXPECT_EQ(nameOf(rowsOf(page)[0]).fText, "B");
@@ -99,26 +105,30 @@ auto counterPage() {
   return scoped<SettingsT>(CountEvents{}, column(process<Stepper>()));
 }
 using CounterPage = decltype(counterPage());
-auto &viewOf(CounterPage &page) {
-  return std::get<0>(std::get<0>(page.fParts).fParts);
-}
+auto &numberOf(CounterPage &page) { return made_as<bind::Bound<Stepper::State, part_t<Number>>>(page); }
 
 TEST(Compose, AProcessorStepsItsHiddenStateAndSendsWhatChanged) {
   Model m = twoAccounts();
   CounterPage page = counterPage();
   bind::refresh(page, m);
-  auto &view = viewOf(page);
   // The process, its view, then the button in it.
-  const auto button = [](std::uint32_t at) { return scene::Path{0, 0, at}; };
+  // The view's buttons, by where they are in it: -, the count, +, reset.
+  const auto button = [&](std::uint32_t at) -> scene::Path {
+    switch (at) {
+      case 0: return pressPathTo(page, made_as<OnClick<Dec, part_t<Pad>>>(page).fState);
+      case 2: return pressPathTo(page, made_as<OnClick<Inc, part_t<Pad>>>(page).fState);
+      default: return pressPathTo(page, made_as<OnClick<Reset, part_t<Pad>>>(page).fState);
+    }
+  };
   EXPECT_TRUE(bind::press(page, m, button(2)));  // +
   EXPECT_TRUE(bind::press(page, m, button(2)));  // +
   EXPECT_TRUE(bind::press(page, m, button(0)));  // -
   bind::refresh(page, m);
-  EXPECT_EQ(std::get<1>(view.fParts).fValue, 1);
+  EXPECT_EQ(numberOf(page).fValue, 1);
   EXPECT_EQ(m.look<Count>()->n, 1);  // Changed, taken by the scope around it
   EXPECT_TRUE(bind::press(page, m, button(3)));  // reset, in place: nothing sent
   bind::refresh(page, m);
-  EXPECT_EQ(std::get<1>(view.fParts).fValue, 0);
+  EXPECT_EQ(numberOf(page).fValue, 0);
   EXPECT_EQ(m.look<Count>()->n, 1);
 }
 
@@ -153,12 +163,14 @@ TEST(Compose, APipeGivesWhatItsEndTakesAndPassesTheRestUp) {
                              model::Types<Cleared>>);
   Model m = twoAccounts();
   auto page = scoped<SettingsT>(ClearedEvents{}, column(SearchField{} >> Filtered{}));
-  auto &pipe = std::get<0>(page.fParts);
+  auto &pipe = made_as<Pipe<SearchField, Filtered>>(page);
   // The pipe, then its field.
   pipe.fPipe.from.type("bo");
-  EXPECT_TRUE(bind::press(page, m, scene::Path{0, 0}));
+  EXPECT_TRUE(bind::press(page, m, pressPathTo(page, pipe.fPipe.from.fState)));
+  deliverAnswers(page, m);
   pipe.fPipe.from.clear();
-  EXPECT_TRUE(bind::press(page, m, scene::Path{0, 0}));
+  EXPECT_TRUE(bind::press(page, m, pressPathTo(page, pipe.fPipe.from.fState)));
+  deliverAnswers(page, m);
   EXPECT_EQ(pipe.fPipe.to.fQuery, "bo");
   EXPECT_EQ(m.look<Count>()->n, -1);
   // And told from outside, as Fudgets' input: send<>.
@@ -177,9 +189,12 @@ TEST(Compose, APipeReadsEitherWayRound) {
 
 TEST(Compose, SideBySideIsPlacedApartFromHowItIsWired) {
   auto both = onClick(Inc{}, Pad{}) + onClick(Dec{}, Pad{});
-  static_assert(std::same_as<OutOf<decltype(both)>, model::Types<Inc, Dec>>);
+  // Typed where the combinators are concrete: a Held does not say what the
+  // click under it gives.
+  static_assert(scene::kErasedCombinators || std::same_as<OutOf<decltype(both)>, model::Types<Inc, Dec>>);
+  using Placed = typename BoxOfPar<decltype(both)>::type;
   auto placed = place(hbox(4.0f), std::move(both));
-  static_assert(std::tuple_size_v<decltype(placed.fParts)> == 2);
+  static_assert(std::tuple_size_v<decltype(made_as<Placed>(placed).fParts)> == 2);
 }
 
 TEST(Compose, TimeIsEvents) {
@@ -207,11 +222,11 @@ TEST(Compose, ABindingDoesOnlyWhatCanHaveHappened) {
   Page page = accountsPage();
   bind::Binding<Model> binding;
   binding.refresh(page, m);
-  auto &rows = rowsOf(page);
+  auto rows = rowsOf(page);
   EXPECT_EQ(switchOf(rows[0]).fReads, 1);
   binding.refresh(page, m);
   EXPECT_EQ(switchOf(rows[0]).fReads, 1);
-  EXPECT_TRUE(bind::press(page, m, switchAt(0)));
+  EXPECT_TRUE(bind::press(page, m, switchAt(page, 0)));
   binding.refresh(page, m);
   EXPECT_EQ(switchOf(rows[0]).fReads, 2);
   EXPECT_EQ(switchOf(rows[1]).fReads, 1);  // its scope's part did not move
@@ -224,7 +239,7 @@ TEST(Compose, ARefreshGoesOnlyWhereTheChangeIs) {
   Page page = accountsPage();
   bind::Binding<Model> binding;
   binding.refresh(page, m);
-  auto &rows = rowsOf(page);
+  auto rows = rowsOf(page);
   const auto name = model::placeOf<DisplayName, Root>(std::string("@b:x.org"));
   using P = decltype(name)::PathType;
   m.apply(model::Edit<Root, P, model::SetTo<DisplayName>>{name, model::setTo(DisplayName{"Bee"})});
@@ -245,9 +260,9 @@ TEST(Compose, ALocalChangeGoesOnlyToItsLocal) {
   Page page = accountsPage();
   bind::Binding<Model> binding;
   binding.refresh(page, m);
-  auto &rows = rowsOf(page);
+  auto rows = rowsOf(page);
   const int before0 = switchOf(rows[0]).fReads;
-  EXPECT_TRUE(bind::press(page, m, chevronAt(1)));
+  EXPECT_TRUE(bind::press(page, m, chevronAt(page, 1)));
   binding.refresh(page, m);
   EXPECT_TRUE(chevronOf(rows[1]).fOpen);
   EXPECT_FALSE(chevronOf(rows[0]).fOpen);
@@ -268,7 +283,7 @@ TEST(Compose, WhatANodeSendsIsWhatItsPressAnswers) {
   static_assert(std::same_as<OutOf<Pinger>, model::Types<Ping>>);
   Model m = twoAccounts();
   auto page = scoped<SettingsT>(PingEvents{}, column(Pinger{}));
-  EXPECT_TRUE(bind::press(page, m, scene::Path{0}));
+  EXPECT_TRUE(bind::press(page, m, pressPathTo(page, made_as<Pinger>(page).fState)));
   EXPECT_EQ(m.look<Count>()->n, 42);
 }
 
@@ -302,15 +317,16 @@ struct SumOf {
 };
 TEST(Compose, ADerivedValueIsComputedAgainOnlyWhereWhatItReadsMoved) {
   SumModel m{SumRoot{}};
-  auto total = derived<Alpha, Beta>(SumOf{}, Total{});
+  auto made = derived<Alpha, Beta>(SumOf{}, Total{});
+  auto &total = made_as<bind::Derived<SumOf, part_t<Total>, Alpha, Beta>>(made);
   bind::Binding<SumModel> binding;
-  binding.refresh(total, m);
+  binding.refresh(made, m);
   EXPECT_EQ(total.fTotal, 3);
   m.apply(model::over<Gamma>(model::setTo(Gamma{5})));
-  binding.refresh(total, m);
+  binding.refresh(made, m);
   EXPECT_EQ(total.fComputed, 1);
   m.apply(model::over<Alpha>(model::setTo(Alpha{10})));
-  binding.refresh(total, m);
+  binding.refresh(made, m);
   EXPECT_EQ(total.fTotal, 12);
   EXPECT_EQ(total.fComputed, 2);
 }
