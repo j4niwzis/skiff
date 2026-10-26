@@ -96,4 +96,30 @@ TEST(Mirror, APressOnAnElementPressesItsNode) {
   EXPECT_EQ(shown.elementOf(*plus), element);
 }
 
+TEST(Mirror, AClickOnAnElementIsTheScenesClickOnItsNode) {
+  dom::reset();
+  using Tree = decltype(page());
+  bind::ModelOf<Tree> m;
+  scene::Scene tree(page());
+  bind::Binding<bind::ModelOf<Tree>> binding;
+  binding.refresh(tree.root(), m);
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  scene::State *plus = plusOf(tree.root());
+  ASSERT_NE(plus, nullptr);
+  // Never laid out by skiff: no bounds, and clicked all the same.
+  EXPECT_TRUE(shown.click(tree, shown.elementOf(*plus)));
+  // The presses it made and what they answered, given as a host gives them
+  // after an event (mux's after_event): each path pressed in the model,
+  // then what was answered along the way.
+  bool pressed = false;
+  for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+    pressed = bind::press(tree.root(), m, way) || pressed;
+  for (const auto &one : std::exchange(scene::hostWork().answers, {}))
+    pressed = bind::answer(tree.root(), m, one) || pressed;
+  EXPECT_TRUE(pressed);
+  EXPECT_EQ(m.look<Count>()->n, 1);
+  scene::hostWork().laidOutElsewhere = false;
+}
+
 } // namespace

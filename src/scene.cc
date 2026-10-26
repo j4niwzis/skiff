@@ -4218,7 +4218,7 @@ bool clickPath(N &child, const Path &path, std::size_t at, float x, float y, con
   if (taken) {
     return true;
   }
-  if (child.fState.fBounds.contains(x, y) && clicked(child, x, y, carried)) {
+  if ((hostWork().laidOutElsewhere || child.fState.fBounds.contains(x, y)) && clicked(child, x, y, carried)) {
     answerHere(child, carried);
     keepAnswer(path, at);
     return true;
@@ -5520,6 +5520,15 @@ public:
       return false;
     }
     const bool taken = walk::clickPath(this->walked(), path, 0, x, y, startCarry(fRoot));
+    this->notePress(path);
+    this->restyleDirty();
+    return taken;
+  }
+  // A click on the node at a path, and on each above it until one takes it:
+  // where the tree is laid out elsewhere (HostWork::laidOutElsewhere), the
+  // engine that laid it out saying which node was pressed.
+  bool clickAlong(const Path &path) {
+    const bool taken = walk::clickPath(this->walked(), path, 0, 0.0f, 0.0f, startCarry(fRoot));
     this->notePress(path);
     this->restyleDirty();
     return taken;

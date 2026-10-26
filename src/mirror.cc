@@ -230,6 +230,23 @@ public:
     return bind::press(root, model, way);
   }
 
+  // A press on an element, as the window gives one: clicked along the path
+  // of its node in the scene -- onClick there, and on each node above it
+  // until one takes it; what it answers goes as a window's press's does.
+  template <class S> bool click(S &scene, dom::Handle element) {
+    const auto found = fNodeOf.find(element);
+    if (found == fNodeOf.end()) return false;
+    scene::Path way;
+    if constexpr (scene::kErasedWalks) {
+      auto seen = scene::AnyNodeRef::of(scene.root());
+      if (!scene::walk::findPath(seen, found->second, way)) return false;
+    } else {
+      if (!scene::walk::findPath(scene.root(), found->second, way)) return false;
+    }
+    scene::hostWork().laidOutElsewhere = true;
+    return scene.clickAlong(way);
+  }
+
   // The element a node is, where it is shown.
   [[nodiscard]] dom::Handle elementOf(const scene::State &state) const {
     const auto found = fShown.find(state.fId);

@@ -1400,6 +1400,10 @@ struct HostWork {
   // Whether the pointer is a finger, as the host last saw it: a drag in a
   // text field then scrolls it, as a phone's do, rather than selecting.
   bool byTouch = false;
+  // Whether the tree is laid out by an engine of its own (skiff.mirror's):
+  // its nodes have no bounds of skiff's, and a press along a path reaches
+  // the nodes on it wherever the engine put them.
+  bool laidOutElsewhere = false;
   // Where what is typed into is, in the window's points, as last drawn: for
   // the host to tell the system, whose keyboard on a screen -- and whose
   // suggestions -- go beside it, not over it.
