@@ -37,8 +37,10 @@ struct Group {
   int count = 0;
   friend bool operator==(const Group &, const Group &) = default;
 };
+// A cell pressed: taken there, nothing sent up -- an event no scope takes
+// is refused where the routing is typed (a release build).
 struct Pressed {
-  int operator()() const { return 0; }
+  scene::Taken operator()() const { return {}; }
 };
 // The panel's preview, as mux's (emoji_kept.cc, with_preview): what a cell
 // rested on shows large, the page's own state, an overlay mounted over it.
