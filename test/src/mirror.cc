@@ -348,7 +348,10 @@ TEST(Mirror, AFieldInsideHeldContentIsEditable) {
   ASSERT_NE(field, nullptr);
   mirror::Mirror shown;
   shown.sync(tree.root());
-  EXPECT_TRUE(shown.typed(tree, shown.elementOf(field->fState), "hello from the browser"));
+  const auto input = dom::child(shown.elementOf(field->fState), 0);
+  // An input notification follows the engine's edit of its native control.
+  dom::fire(input, "input", "hello from the browser");
+  EXPECT_TRUE(shown.typed(tree, input, "hello from the browser"));
   EXPECT_EQ(field->fText, "hello from the browser");
   shown.sync(tree.root());
   EXPECT_TRUE(dom::dump(dom::root()).contains("hello from the browser"));
