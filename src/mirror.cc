@@ -79,9 +79,12 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   const bool relX = s.fRelativeSizeAxes.has<scene::axis::x>(), relY = s.fRelativeSizeAxes.has<scene::axis::y>();
   sizeOf(m, "width", s.fWidth, relX, s.fAutoSizeAxes.has<scene::axis::x>());
   sizeOf(m, "height", s.fHeight, relY, s.fAutoSizeAxes.has<scene::axis::y>());
-  if (s.fMinWidth > 0.0f) m.style("min-width", px(s.fMinWidth));
+  // A grid or flex item's automatic minimum is its content's size. Scene
+  // containers may be smaller than their contents (notably a timeline),
+  // so that minimum must not push the composer outside the window.
+  m.style("min-width", px(s.fMinWidth));
+  m.style("min-height", px(s.fMinHeight));
   if (s.fMaxWidth > 0.0f) m.style("max-width", px(s.fMaxWidth));
-  if (s.fMinHeight > 0.0f) m.style("min-height", px(s.fMinHeight));
   if (s.fMaxHeight > 0.0f) m.style("max-height", px(s.fMaxHeight));
   const scene::Margin none{};
   if (!(s.fMargin == none)) m.style("margin", skiff::web::margin(s.fMargin));
@@ -140,7 +143,8 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
                    const bool along = flow.row ? s.fGrowAxes.has<scene::axis::x>() || relX
                                                : s.fGrowAxes.has<scene::axis::y>() || relY;
                    m.style("flex", along ? "1 1 0%" : (s.fShrinkAxes.has<scene::axis::x>() || s.fShrinkAxes.has<scene::axis::y>()) ? "0 1 auto" : "0 0 auto");
-                   if (along) m.style(flow.row ? "min-width" : "min-height", "0");
+                   if (along && (flow.row ? s.fMinWidth : s.fMinHeight) <= 0.0f)
+                     m.style(flow.row ? "min-width" : "min-height", "0");
                    const bool across = flow.row ? s.fGrowAxes.has<scene::axis::y>() : s.fGrowAxes.has<scene::axis::x>();
                    if (s.fAlignSelf) m.style("align-self", std::string(skiff::web::alignment(*s.fAlignSelf)));
                    else if (across) m.style("align-self", "stretch");
@@ -158,7 +162,11 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
                    m.style("justify-self", relX ? "stretch" : placeAlong(s.fAnchor.x));
                    m.style("align-self", relY ? "stretch" : placeAlong(s.fAnchor.y));
                  },
-                 [](const in_scroll &) {}},
+                 [&](const in_scroll &) {
+                   // The contents keep their height; only the viewport is
+                   // bounded. Flex's default shrink collapsed long histories.
+                   m.style("flex", "0 0 auto");
+                 }},
              holder);
   // Its offset, where it is its own: in a flow, a part in the flow is where
   // the flow put it -- skiff's layout writes that place into its offset
@@ -166,7 +174,12 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   // Written again, every part was moved down a second time: rows twice as
   // far apart, icons above their words.
   const bool flowed = spl::visit(spl::overloaded{[&](const in_flex &) { return !s.fOutOfFlow; }, [](const auto &) { return false; }}, holder);
-  const float dx = (flowed ? 0.0f : s.fX) + s.fShiftX, dy = (flowed ? 0.0f : s.fY) + s.fShiftY;
+  // ScrollContainer writes -current() into its contents' shift. The engine
+  // already applies that displacement through scrollTop; a transform here
+  // scrolled the same contents twice, beneath neighbouring panels.
+  const bool scrolled = spl::visit(spl::overloaded{[](const in_scroll &) { return true; }, [](const auto &) { return false; }}, holder);
+  const float dx = (flowed ? 0.0f : s.fX) + (scrolled ? 0.0f : s.fShiftX);
+  const float dy = (flowed ? 0.0f : s.fY) + (scrolled ? 0.0f : s.fShiftY);
   if (dx != 0.0f || dy != 0.0f) transform += "translate(" + px(dx) + "," + px(dy) + ") ";
   if (s.fScale != 1.0f) transform += "scale(" + number(s.fScale) + ") ";
   if (!transform.empty()) {
@@ -725,6 +738,10 @@ public:
     fAtRoot = true;
     const dom::Handle top = this->visit(root, detail::in_cell{});
     this->order(fInto, std::vector<dom::Handle>{top});
+    // Only attached, populated elements can scroll: setting scrollTop on
+    // an empty or detached viewport was clamped to zero on its first frame.
+    for (const auto &[element, offset] : std::exchange(fScrollDue, {}))
+      dom::scrollTo(element, offset);
     std::erase_if(fShown, [&](auto &kept) {
       if (kept.second.seen == fPass) return false;
       fNodeOf.erase(kept.second.handle);
@@ -878,7 +895,7 @@ private:
     scene::ErasedNode node(ref);
     return this->write(node.fState, node.look(), node.acceptsInput(), holder, [&](auto &&each) { node.forEachChild(each); },
                        [&](Markup &into, Pictures &pictures) { return this->recordErased(node, into, pictures); },
-                       [] { return std::optional<float>(); }, [](const scene::TextLink &) -> const skia::SkImage * { return nullptr; });
+                       [&] { return node.scrollOffset(); }, [](const scene::TextLink &) -> const skia::SkImage * { return nullptr; });
   }
   // A node that paints itself, recorded as elements where all it paints has
   // one (HtmlPainter); whether it was. Else -- a path, a picture; an erased
@@ -946,6 +963,13 @@ private:
     Pictures pictures;
     const detail::Holder theirs = detail::kindOf(now, look, pictureOf, pictures);
     detail::stateOf(now, state, holder);
+    // Scene masking clips the viewport, but overflow:hidden also disables
+    // the engine's own scrolling. A scrolling look owns its overflow.
+    spl::visit(spl::overloaded{[&](const scene::look::scrolled &) {
+                                now.style("overflow", "");
+                                now.style("overflow-x", "hidden");
+                                now.style("overflow-y", "auto");
+                              }, [](const auto &) {}}, look);
     // The root: the whole page, whatever its own size says -- the scene gives
     // it the window's box by hand, not by a size of its own, and written as
     // its State has it, it was as big as its content, and everything sized
@@ -991,7 +1015,7 @@ private:
     // skiff before the frame (readScrolled); moved by skiff itself (a jump,
     // following its end), written to the engine.
     if (const std::optional<float> offset = scrolled(); offset && std::abs(*offset - shown.scrolled) > 0.5f) {
-      now.scroll(*offset);
+      fScrollDue.emplace_back(shown.handle, *offset);
       shown.scrolled = *offset;
     }
     shown.seen = fPass;
@@ -1064,6 +1088,15 @@ private:
   }
   template <class ScrolledOf> void readIn(scene::AnyNodeRef &ref, ScrolledOf &scrolledOf) {
     scene::ErasedNode node(ref);
+    if (const auto offset = node.scrollOffset()) {
+      if (const auto found = fShown.find(node.fState.fId); found != fShown.end()) {
+        const float engine = scrolledOf(found->second.handle);
+        if (std::abs(engine - found->second.scrolled) > 0.5f) {
+          found->second.scrolled = engine;
+          if (std::abs(engine - *offset) > 0.5f) node.setScrollOffset(engine);
+        }
+      }
+    }
     node.forEachChild([&](scene::AnyNodeRef &child) { this->readIn(child, scrolledOf); });
   }
 
@@ -1075,6 +1108,7 @@ private:
   }
 
   dom::Handle fInto;
+  std::vector<std::pair<dom::Handle, float>> fScrollDue;
   std::uint64_t fPass = 0;
   // The next element written is the root's (sync): the whole page.
   bool fAtRoot = false;

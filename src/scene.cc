@@ -4592,6 +4592,10 @@ struct NodeOps {
   bool (*fOnClick)(void *, float, float);
   double (*fOwnWakeAt)(void *);
   Look (*fLook)(void *);
+  // Optional scrolling hooks for walks through held content. A page's
+  // engine must both follow a scene jump and give user scrolling back.
+  std::optional<float> (*fScrollOffset)(void *);
+  void (*fSetScrollOffset)(void *, float);
   // Its own drawing through a painter of any type -- skiff.mirror's, which
   // writes it as elements: whether it draws so.
   bool (*fDrawThrough)(void *, skiff::paint::ErasedPainter &, float);
@@ -4781,6 +4785,16 @@ inline constexpr NodeOps kNodeOps{
     +[](void *n, float x, float y) -> bool { return walk::clicked(nodeAs<T>(n), x, y, NoCarry{}); },
     +[](void *n) -> double { return walk::ownWakeAt(nodeAs<T>(n)); },
     +[](void *n) -> Look { return nodeAs<T>(n).look(); },
+    +[](void *n) -> std::optional<float> {
+      if constexpr (requires(const T &node) { { node.current() } -> std::convertible_to<float>; node.extent(); })
+        return nodeAs<T>(n).current();
+      else
+        return std::nullopt;
+    },
+    +[](void *n, float offset) {
+      if constexpr (requires(T &node) { node.setCurrent(offset); node.extent(); })
+        nodeAs<T>(n).setCurrent(offset);
+    },
     +[](void *n, skiff::paint::ErasedPainter &p, float alpha) -> bool {
       if constexpr (requires(T &node) { node.drawSelf(p, alpha); }) {
         nodeAs<T>(n).drawSelf(p, alpha);
@@ -4914,6 +4928,8 @@ public:
   [[nodiscard]] bool focusChangesAppearance() const { return fOps->fFocusChangesAppearance(fNode); }
   [[nodiscard]] Semantics semantics() const { return fOps->fSemantics(fNode); }
   [[nodiscard]] Look look() const { return fOps->fLook(fNode); }
+  [[nodiscard]] std::optional<float> scrollOffset() const { return fOps->fScrollOffset(fNode); }
+  void setScrollOffset(float offset) { fOps->fSetScrollOffset(fNode, offset); }
   // Its own drawing, through `p`: whether it draws so.
   bool drawThrough(skiff::paint::ErasedPainter &p, float alpha) { return fOps->fDrawThrough(fNode, p, alpha); }
   void onFocusChanged(bool focused) { fOps->fOnFocusChanged(fNode, focused); }

@@ -203,6 +203,54 @@ TEST(Mirror, APartInAFlowIsNotMovedAgain) {
   EXPECT_FALSE(html.contains("translate(0px,36px)")) << html;
 }
 
+TEST(Mirror, AScrollViewportStaysScrollableAndMovesItsContentsOnce) {
+  dom::reset();
+  scene::Scene tree(nodes::ScrollContainer(
+      c::column(c::vbox(4.0f, {.fillX = true, .autoSize = scene::axes::kY}), Plate{}, Plate{}, Plate{}, Plate{})));
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 60.0f));
+  tree.root().setCurrent(30.0f);
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 60.0f));
+  ASSERT_GT(tree.root().current(), 0.0f);
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  const dom::Handle viewport = shown.elementOf(tree.root().fState);
+  const std::string html = dom::dump(viewport);
+  const std::string viewportTag = html.substr(0, html.find('>'));
+  EXPECT_TRUE(viewportTag.contains("overflow-y:auto;")) << html;
+  EXPECT_FALSE(viewportTag.contains("overflow:hidden;")) << html;
+  EXPECT_TRUE(html.contains("flex:0 0 auto;")) << html;
+  EXPECT_FALSE(html.contains("translate(0px,-30px)")) << html;
+  // A user scroll is read back into the scene, whose next layout shifts
+  // its contents. Mirroring that layout must still leave movement to CSS.
+  shown.readScrolled(tree.root(), [&](dom::Handle element) { return element == viewport ? 45.0f : 0.0f; });
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 60.0f));
+  EXPECT_FLOAT_EQ(tree.root().current(), 45.0f);
+  shown.sync(tree.root());
+  EXPECT_FALSE(dom::dump(viewport).contains("translate(0px,-45px)"));
+}
+
+TEST(Mirror, AScrollInsideHeldContentIsReadBackToo) {
+  dom::reset();
+  auto scroll = c::styled({.fillX = true, .height = 60.0f}, nodes::ScrollContainer(
+      c::column(c::vbox(4.0f, {.fillX = true, .autoSize = scene::axes::kY}), Plate{}, Plate{}, Plate{}, Plate{})));
+  using Scroll = decltype(scroll);
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(scroll), Plate{}));
+  Scroll *view = nullptr;
+  scene::forEachNode<Scroll>(tree.root(), [&](Scroll &node) { view = &node; });
+  ASSERT_NE(view, nullptr);
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 100.0f));
+  view->setCurrent(30.0f);
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 100.0f));
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  const dom::Handle viewport = shown.elementOf(view->fState);
+  ASSERT_NE(viewport, dom::kNone);
+  EXPECT_TRUE(dom::dump(viewport).contains("data-skiff-scroll=\"30\""));
+  shown.readScrolled(tree.root(), [&](dom::Handle element) { return element == viewport ? 45.0f : 0.0f; });
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 100.0f));
+  EXPECT_FLOAT_EQ(view->current(), 45.0f);
+}
+
 // The root the whole page, whatever it is: a column, or a wrapper over held
 // content (a debug build's root), whose element is the wrapper's.
 TEST(Mirror, TheRootIsTheWholePage) {

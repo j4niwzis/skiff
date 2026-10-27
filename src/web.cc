@@ -100,11 +100,13 @@ struct Css {
          "[data-skiff-reveal]{opacity:0;transition:opacity .12s}\n"
          "*:hover>[data-skiff-reveal],[data-skiff-reveal]:focus-within{opacity:1}\n"
          "[data-skiff-tail]{position:relative}\n"
-         "[data-skiff-tail]::after{content:'';position:absolute;bottom:0;width:0;height:0;border-style:solid}\n"
-         "[data-skiff-tail=right]::after{right:calc(-1*var(--skiff-tail-w));border-width:0 0 var(--skiff-tail-h) var(--skiff-tail-w);"
-         "border-color:transparent transparent transparent var(--skiff-bg)}\n"
-         "[data-skiff-tail=left]::after{left:calc(-1*var(--skiff-tail-w));border-width:0 var(--skiff-tail-w) var(--skiff-tail-h) 0;"
-         "border-color:transparent var(--skiff-bg) transparent transparent}\n";
+         // The scene's cubic edge, scaled to the tail's size. Kept as a
+         // shape, so an embedded engine needs no image fetcher for it.
+         "[data-skiff-tail]::after{content:'';position:absolute;bottom:0;width:var(--skiff-tail-w);height:var(--skiff-tail-h);"
+         "background:var(--skiff-bg);pointer-events:none;"
+         "clip-path:shape(from 0% 0%,curve to 100% 100% with 0% 58.333333% / 40% 91.666667%,line to 0% 100%,close)}\n"
+         "[data-skiff-tail=right]::after{right:calc(-1*var(--skiff-tail-w))}\n"
+         "[data-skiff-tail=left]::after{left:calc(-1*var(--skiff-tail-w));transform:scaleX(-1)}\n";
 }
 
 // A Spec laid over another: what the later says, said; the rest as it was.

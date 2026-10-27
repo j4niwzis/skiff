@@ -66,6 +66,7 @@ pub struct Page {
     taken: String,
     buttons: MouseEventButtons,
     shell: Arc<Shell>,
+    scrolls: Vec<(NodeId, f64)>,
 }
 
 // What the document's events leave for the host: each field's value as an
@@ -129,6 +130,7 @@ pub extern "C" fn skiff_blitz_new(width: u32, height: u32, scale: f32) -> *mut P
         taken: String::new(),
         buttons: MouseEventButtons::None,
         shell,
+        scrolls: Vec::new(),
     }))
 }
 #[unsafe(no_mangle)]
@@ -221,7 +223,16 @@ pub extern "C" fn skiff_blitz_set_viewport(p: *mut Page, width: u32, height: u32
 /// Styles and layout brought up to date with what changed.
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_resolve(p: *mut Page, now_ms: f64) {
-    page(p).doc.resolve(now_ms / 1000.0);
+    let p = page(p);
+    p.doc.resolve(now_ms / 1000.0);
+    // Offsets are requested while the DOM is being changed. Applying them
+    // against the previous layout clamped jumps to the old scroll extent,
+    // or to zero for a viewport first populated in this frame.
+    for (node, offset) in std::mem::take(&mut p.scrolls) {
+        if p.doc.get_node(node).is_some() {
+            p.doc.scroll_to(node, 0.0, offset, ScrollBehavior::Instant);
+        }
+    }
 }
 /// Painted into `out`: `height` rows of `stride` bytes, RGBA, the page's
 /// physical size.
@@ -266,10 +277,13 @@ pub extern "C" fn skiff_blitz_scroll_at(p: *mut Page, x: f32, y: f32, dx: f64, d
 pub extern "C" fn skiff_blitz_scroll_offset(p: *mut Page, node: u64) -> f64 {
     page(p).doc.get_node(id(node)).map_or(0.0, |n| n.scroll_offset().y)
 }
-/// A box scrolled down to an offset, in CSS pixels, at once.
+/// A box scrolled down to an offset, in CSS pixels, after the next layout.
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_scroll_to(p: *mut Page, node: u64, y: f64) {
-    page(p).doc.scroll_to(id(node), 0.0, y, ScrollBehavior::Instant);
+    let p = page(p);
+    let node = id(node);
+    p.scrolls.retain(|(target, _)| *target != node);
+    p.scrolls.push((node, y));
 }
 /// An <img>'s picture: `width` by `height` pixels, RGBA, not premultiplied,
 /// row after row -- the element laid out and painted again with it. `key`,
@@ -481,4 +495,77 @@ pub extern "C" fn skiff_blitz_take_ime_area(p: *mut Page, x: *mut f32, y: *mut f
         *height = ah;
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn style(p: *mut Page, node: u64, name: &str, value: &str) {
+        skiff_blitz_set_style(p, node, name.as_ptr(), name.len(), value.as_ptr(), value.len());
+    }
+
+    #[test]
+    fn scroll_requests_use_the_new_layout() {
+        let p = skiff_blitz_new(400, 300, 1.0);
+        let body = skiff_blitz_body(p);
+        style(p, body, "margin", "0");
+        let viewport = skiff_blitz_create_element(p, b"div".as_ptr(), 3);
+        style(p, viewport, "width", "200px");
+        style(p, viewport, "height", "60px");
+        style(p, viewport, "overflow-y", "auto");
+        let content = skiff_blitz_create_element(p, b"div".as_ptr(), 3);
+        style(p, content, "height", "1000px");
+        skiff_blitz_append(p, viewport, content);
+        skiff_blitz_append(p, body, viewport);
+        let below = skiff_blitz_create_element(p, b"div".as_ptr(), 3);
+        style(p, below, "height", "1000px");
+        skiff_blitz_append(p, body, below);
+        // Before this viewport has ever been laid out, its extent is zero.
+        skiff_blitz_scroll_to(p, viewport, 45.0);
+        skiff_blitz_resolve(p, 0.0);
+        assert!((skiff_blitz_scroll_offset(p, viewport) - 45.0).abs() < 0.1);
+        // With the outer page scrollable too, a wheel over the room stays
+        // in that room rather than moving the entire page.
+        assert!(skiff_blitz_scroll_at(p, 10.0, 10.0, 0.0, -50.0));
+        assert!((skiff_blitz_scroll_offset(p, viewport) - 95.0).abs() < 0.1);
+        assert_eq!(page(p).doc.viewport_scroll().y, 0.0);
+        // Growing content must not clamp a jump against its previous height.
+        style(p, content, "height", "2000px");
+        skiff_blitz_scroll_to(p, viewport, 1500.0);
+        skiff_blitz_resolve(p, 16.0);
+        assert!((skiff_blitz_scroll_offset(p, viewport) - 1500.0).abs() < 0.1);
+        // The last request wins, and a removed viewport is harmless.
+        skiff_blitz_scroll_to(p, viewport, 80.0);
+        skiff_blitz_scroll_to(p, viewport, 100.0);
+        skiff_blitz_resolve(p, 32.0);
+        assert!((skiff_blitz_scroll_offset(p, viewport) - 100.0).abs() < 0.1);
+        skiff_blitz_scroll_to(p, viewport, 10.0);
+        skiff_blitz_remove(p, viewport);
+        skiff_blitz_resolve(p, 48.0);
+        skiff_blitz_free(p);
+    }
+
+    #[test]
+    fn a_curved_tail_needs_no_image_provider() {
+        let p = skiff_blitz_new(60, 60, 1.0);
+        let tail = skiff_blitz_create_element(p, b"div".as_ptr(), 3);
+        style(p, tail, "position", "absolute");
+        style(p, tail, "left", "20px");
+        style(p, tail, "top", "20px");
+        style(p, tail, "width", "10px");
+        style(p, tail, "height", "12px");
+        style(p, tail, "background", "red");
+        style(p, tail, "clip-path", "shape(from 0% 0%,curve to 100% 100% with 0% 58.333333% / 40% 91.666667%,line to 0% 100%,close)");
+        skiff_blitz_append(p, skiff_blitz_body(p), tail);
+        skiff_blitz_resolve(p, 0.0);
+        let mut pixels = vec![0; 60 * 60 * 4];
+        skiff_blitz_paint(p, pixels.as_mut_ptr(), 60 * 4);
+        let pixel = |x: usize, y: usize| &pixels[(y * 60 + x) * 4..(y * 60 + x) * 4 + 3];
+        // Filled beside the bubble, clear above the curve. A rectangular
+        // fallback or the old straight triangle colours the latter red.
+        assert_eq!(pixel(20, 30), &[255, 0, 0]);
+        assert_eq!(pixel(25, 28), &[255, 255, 255]);
+        skiff_blitz_free(p);
+    }
 }
