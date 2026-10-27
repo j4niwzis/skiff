@@ -98,6 +98,9 @@ fn text<'a>(ptr: *const u8, len: usize) -> std::borrow::Cow<'a, str> {
 fn html_name(name: &str) -> QualName {
     QualName::new(None, ns!(html), LocalName::from(name))
 }
+fn attribute_name(name: &str) -> QualName {
+    QualName::new(None, ns!(), LocalName::from(name))
+}
 // Node ids across the C API: Blitz's own, as their raw u64 (0, the null id,
 // is none).
 fn id(raw: u64) -> NodeId {
@@ -146,6 +149,23 @@ pub extern "C" fn skiff_blitz_body(p: *mut Page) -> u64 {
     let p = page(p);
     p.doc.query_selector("body").ok().flatten().map_or(0, NodeId::as_u64)
 }
+/// Embedded faces are shared with the scene's font stack. Falling back to
+/// the system font gave text different widths from its surrounding widgets.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_add_font(p: *mut Page, bytes: *const u8, len: usize, face: u32) {
+    use blitz_dom::net::{FontFaceOverrides, Resource, ResourceLoadResponse};
+    if bytes.is_null() || len == 0 { return; }
+    // SAFETY: the host keeps this font buffer alive for the call.
+    let data = unsafe { std::slice::from_raw_parts(bytes, len) };
+    page(p).doc.load_resource(ResourceLoadResponse {
+        request_id: 0, node_id: None, resolved_url: None,
+        result: Ok(Resource::Font(blitz_traits::net::Bytes::copy_from_slice(data), FontFaceOverrides {
+            family_name: Some(if face == 2 { "skiff-emoji" } else { "skiff-text" }.into()),
+            weight: Some(if face == 1 { 700.0 } else { 400.0 }),
+            ..Default::default()
+        })),
+    });
+}
 /// The page's own style sheet: the rules what is written selects on.
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_add_css(p: *mut Page, css: *const u8, len: usize) {
@@ -161,7 +181,13 @@ pub extern "C" fn skiff_blitz_add_css(p: *mut Page, css: *const u8, len: usize) 
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_create_element(p: *mut Page, tag: *const u8, len: usize) -> u64 {
-    page(p).doc.mutate().create_element(html_name(&text(tag, len)), vec![]).as_u64()
+    let tag = text(tag, len);
+    let name = match tag.as_ref() {
+        "svg" | "g" | "polygon" | "polyline" | "line" | "circle" | "path" | "rect" | "text" | "defs" =>
+            QualName::new(None, ns!(svg), LocalName::from(tag.as_ref())),
+        _ => html_name(&tag),
+    };
+    page(p).doc.mutate().create_element(name, vec![]).as_u64()
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_create_text(p: *mut Page, value: *const u8, len: usize) -> u64 {
@@ -187,11 +213,27 @@ pub extern "C" fn skiff_blitz_remove(p: *mut Page, node: u64) {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_set_attribute(p: *mut Page, node: u64, name: *const u8, name_len: usize, value: *const u8, value_len: usize) {
-    page(p).doc.mutate().set_attribute(id(node), html_name(&text(name, name_len)), &text(value, value_len));
+    page(p).doc.mutate().set_attribute(id(node), attribute_name(&text(name, name_len)), &text(value, value_len));
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_clear_attribute(p: *mut Page, node: u64, name: *const u8, name_len: usize) {
-    page(p).doc.mutate().clear_attribute(id(node), html_name(&text(name, name_len)));
+    page(p).doc.mutate().clear_attribute(id(node), attribute_name(&text(name, name_len)));
+}
+/// A control's live value. A textarea initially reads its child text,
+/// whereas an existing editor is updated through the value attribute.
+#[unsafe(no_mangle)]
+pub extern "C" fn skiff_blitz_set_value(p: *mut Page, node: u64, value: *const u8, len: usize) {
+    let p = page(p);
+    let value = text(value, len);
+    let initial_textarea = p.doc.get_node(id(node)).and_then(|n| n.element_data())
+        .is_some_and(|el| el.name.local == LocalName::from("textarea") && el.text_input_data().is_none());
+    let mut m = p.doc.mutate();
+    m.set_attribute(id(node), attribute_name("value"), &value);
+    if initial_textarea {
+        m.remove_and_drop_all_children(id(node));
+        let child = m.create_text_node(&value);
+        m.append_children(id(node), &[child]);
+    }
 }
 /// A style property set on the element, or -- an empty value -- taken away.
 #[unsafe(no_mangle)]
@@ -360,17 +402,23 @@ pub extern "C" fn skiff_blitz_commit_text(p: *mut Page, value: *const u8, len: u
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_key(p: *mut Page, which: u32, mods: u32) {
     let p = page(p);
-    let named = match which {
-        1 => NamedKey::Backspace,
-        2 => NamedKey::Delete,
-        3 => NamedKey::Enter,
-        4 => NamedKey::ArrowLeft,
-        5 => NamedKey::ArrowRight,
-        6 => NamedKey::ArrowUp,
-        7 => NamedKey::ArrowDown,
-        8 => NamedKey::Home,
-        9 => NamedKey::End,
-        10 => NamedKey::Tab,
+    let key = match which {
+        1 => Key::Named(NamedKey::Backspace),
+        2 => Key::Named(NamedKey::Delete),
+        3 => Key::Named(NamedKey::Enter),
+        4 => Key::Named(NamedKey::ArrowLeft),
+        5 => Key::Named(NamedKey::ArrowRight),
+        6 => Key::Named(NamedKey::ArrowUp),
+        7 => Key::Named(NamedKey::ArrowDown),
+        8 => Key::Named(NamedKey::Home),
+        9 => Key::Named(NamedKey::End),
+        10 => Key::Named(NamedKey::Tab),
+        11 => Key::Character("a".into()),
+        12 => Key::Character("c".into()),
+        13 => Key::Character("x".into()),
+        14 => Key::Character("v".into()),
+        15 => Key::Character("z".into()),
+        16 => Key::Character("y".into()),
         _ => return,
     };
     let mut modifiers = Modifiers::empty();
@@ -388,7 +436,7 @@ pub extern "C" fn skiff_blitz_key(p: *mut Page, which: u32, mods: u32) {
     }
     for state in [KeyState::Pressed, KeyState::Released] {
         let event = BlitzKeyEvent {
-            key: Key::Named(named),
+            key: key.clone(),
             code: Code::Unidentified,
             modifiers,
             location: Location::Standard,
@@ -425,13 +473,17 @@ pub extern "C" fn skiff_blitz_focused(p: *mut Page) -> u64 {
 /// A node's box in the viewport, in CSS pixels: whether it has one.
 #[unsafe(no_mangle)]
 pub extern "C" fn skiff_blitz_rect(p: *mut Page, node: u64, x: *mut f32, y: *mut f32, width: *mut f32, height: *mut f32) -> bool {
-    let Some(rect) = page(p).doc.get_client_bounding_rect(id(node)) else {
+    let p = page(p);
+    let Some(rect) = p.doc.get_client_bounding_rect(id(node)) else {
         return false;
     };
+    // This pinned Blitz revision subtracts the element's own scroll from
+    // CSSOM geometry. Its border box stays still; only its contents move.
+    let own_scroll = *p.doc.get_node(id(node)).unwrap().scroll_offset();
     // SAFETY: the C side passes four places to write to, alive for the call.
     unsafe {
-        *x = rect.x as f32;
-        *y = rect.y as f32;
+        *x = (rect.x + own_scroll.x) as f32;
+        *y = (rect.y + own_scroll.y) as f32;
         *width = rect.width as f32;
         *height = rect.height as f32;
     }
@@ -503,6 +555,49 @@ mod tests {
 
     fn style(p: *mut Page, node: u64, name: &str, value: &str) {
         skiff_blitz_set_style(p, node, name.as_ptr(), name.len(), value.as_ptr(), value.len());
+    }
+
+    #[test]
+    fn field_values_survive_layout_and_user_edits() {
+        let p = skiff_blitz_new(400, 200, 1.0);
+        let field = skiff_blitz_create_element(p, b"textarea".as_ptr(), 8);
+        style(p, field, "width", "300px");
+        style(p, field, "height", "80px");
+        skiff_blitz_set_value(p, field, b"draft".as_ptr(), 5);
+        skiff_blitz_append(p, skiff_blitz_body(p), field);
+        skiff_blitz_resolve(p, 0.0);
+        let value = |p: *mut Page| page(p).doc.get_node(id(field)).unwrap().element_data().unwrap()
+            .text_input_data().unwrap().editor.raw_text().to_string();
+        assert_eq!(value(p), "draft");
+        skiff_blitz_pointer(p, 1, 20.0, 20.0, 0);
+        skiff_blitz_pointer(p, 2, 20.0, 20.0, 0);
+        assert_eq!(skiff_blitz_focused(p), field);
+        skiff_blitz_commit_text(p, "я".as_ptr(), "я".len());
+        assert!(value(p).contains('я'));
+        assert!(page(p).inputs.iter().any(|(node, _)| *node == id(field)));
+        skiff_blitz_set_value(p, field, b"".as_ptr(), 0);
+        skiff_blitz_resolve(p, 16.0);
+        assert_eq!(value(p), "");
+        skiff_blitz_set_value(p, field, b"restored".as_ptr(), 8);
+        skiff_blitz_resolve(p, 32.0);
+        assert_eq!(value(p), "restored");
+        skiff_blitz_free(p);
+    }
+
+    #[test]
+    fn attributes_match_unqualified_css_selectors() {
+        let p = skiff_blitz_new(100, 100, 1.0);
+        let css = "[data-test]{width:42px;height:23px}";
+        skiff_blitz_add_css(p, css.as_ptr(), css.len());
+        let node = skiff_blitz_create_element(p, b"div".as_ptr(), 3);
+        skiff_blitz_set_attribute(p, node, b"data-test".as_ptr(), 9, b"".as_ptr(), 0);
+        skiff_blitz_append(p, skiff_blitz_body(p), node);
+        skiff_blitz_resolve(p, 0.0);
+        assert_eq!(page(p).doc.get_client_bounding_rect(id(node)).unwrap().width, 42.0);
+        skiff_blitz_clear_attribute(p, node, b"data-test".as_ptr(), 9);
+        skiff_blitz_resolve(p, 16.0);
+        assert_ne!(page(p).doc.get_client_bounding_rect(id(node)).unwrap().width, 42.0);
+        skiff_blitz_free(p);
     }
 
     #[test]

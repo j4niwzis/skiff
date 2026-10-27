@@ -35,7 +35,9 @@ bool scroll(float x, float y, double dx, double dy);
 enum class pointer { moved, pressed, released };
 void point(pointer what, float x, float y, int button);
 void commitText(std::string_view text);
-enum class editing_key { backspace = 1, erase, enter, left, right, up, down, home, end, tab };
+enum class editing_key { backspace = 1, erase, enter, left, right, up, down, home, end, tab, select_all, copy, cut, paste, undo, redo };
+enum class font_face { regular, semibold, emoji };
+void fontData(const unsigned char *bytes, std::size_t size, font_face face);
 struct key_modifiers {
   bool shift = false, control = false, alt = false, meta = false;
 };

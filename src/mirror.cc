@@ -61,11 +61,14 @@ struct in_flex {
 struct in_cell {};
 struct in_scroll {};
 using Holder = spl::variant<in_flex, in_cell, in_scroll>;
+inline constexpr skiff::web::Part kField{0xfffffff0u}, kPlaceholder{0xfffffff1u};
 
 // The size along one axis, as the State says it.
-inline void sizeOf(Markup &m, std::string_view property, float size, bool relative, bool automatic) {
-  if (relative)
-    m.style(property, number(size * 100.0f) + "%");
+inline void sizeOf(Markup &m, std::string_view property, float size, bool relative, bool automatic, float margin = 0.0f) {
+  if (relative) {
+    const std::string share = number(size * 100.0f) + "%";
+    m.style(property, margin == 0.0f ? share : "calc(" + share + " - " + px(size * margin) + ")");
+  }
   else if (!automatic && size > 0.0f)
     m.style(property, px(size));
 }
@@ -77,8 +80,8 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   if (!s.fVisible)
     m.style("display", "none");
   const bool relX = s.fRelativeSizeAxes.has<scene::axis::x>(), relY = s.fRelativeSizeAxes.has<scene::axis::y>();
-  sizeOf(m, "width", s.fWidth, relX, s.fAutoSizeAxes.has<scene::axis::x>());
-  sizeOf(m, "height", s.fHeight, relY, s.fAutoSizeAxes.has<scene::axis::y>());
+  sizeOf(m, "width", s.fWidth, relX, s.fAutoSizeAxes.has<scene::axis::x>(), s.fMargin.totalX());
+  sizeOf(m, "height", s.fHeight, relY, s.fAutoSizeAxes.has<scene::axis::y>(), s.fMargin.totalY());
   // A grid or flex item's automatic minimum is its content's size. Scene
   // containers may be smaller than their contents (notably a timeline),
   // so that minimum must not push the composer outside the window.
@@ -136,31 +139,41 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   // Placed by its anchor, out of the flow it is in: over it, its origin on
   // the anchor.
   std::string transform;
+  const auto anchored = [&](bool absolute) {
+    m.style("position", absolute ? "absolute" : "relative");
+    const auto offset = [](float at, float margins) {
+      const auto percent = number(at * 100.0f) + "%";
+      return at * margins == 0.0f ? percent : "calc(" + percent + " - " + px(at * margins) + ")";
+    };
+    m.style("left", offset(s.fAnchor.x, s.fMargin.totalX()));
+    m.style("top", offset(s.fAnchor.y, s.fMargin.totalY()));
+    if (s.fOrigin.x != 0.0f || s.fOrigin.y != 0.0f)
+      transform += "translate(" + number(-s.fOrigin.x * 100.0f) + "%," + number(-s.fOrigin.y * 100.0f) + "%) ";
+  };
   spl::visit(spl::overloaded{
                  [&](const in_flex &flow) {
                    // Along the flow: its own size, or an equal share of what is
                    // left where it grows. Across: where its alignment says.
                    const bool along = flow.row ? s.fGrowAxes.has<scene::axis::x>() || relX
                                                : s.fGrowAxes.has<scene::axis::y>() || relY;
-                   m.style("flex", along ? "1 1 0%" : (s.fShrinkAxes.has<scene::axis::x>() || s.fShrinkAxes.has<scene::axis::y>()) ? "0 1 auto" : "0 0 auto");
+                   const bool grows = flow.row ? s.fGrowAxes.has<scene::axis::x>() : s.fGrowAxes.has<scene::axis::y>();
+                   const bool shrinks = flow.row ? s.fShrinkAxes.has<scene::axis::x>() : s.fShrinkAxes.has<scene::axis::y>();
+                   m.style("flex", grows ? "1 1 0px" : shrinks ? "0 1 auto" : "0 0 auto");
                    if (along && (flow.row ? s.fMinWidth : s.fMinHeight) <= 0.0f)
                      m.style(flow.row ? "min-width" : "min-height", "0");
                    const bool across = flow.row ? s.fGrowAxes.has<scene::axis::y>() : s.fGrowAxes.has<scene::axis::x>();
                    if (s.fAlignSelf) m.style("align-self", std::string(skiff::web::alignment(*s.fAlignSelf)));
                    else if (across) m.style("align-self", "stretch");
                    if (s.fOutOfFlow) {
-                     m.style("position", "absolute");
-                     m.style("left", number(s.fAnchor.x * 100.0f) + "%");
-                     m.style("top", number(s.fAnchor.y * 100.0f) + "%");
-                     if (s.fOrigin.x != 0.0f || s.fOrigin.y != 0.0f)
-                       transform += "translate(" + number(-s.fOrigin.x * 100.0f) + "%," + number(-s.fOrigin.y * 100.0f) + "%) ";
+                     anchored(true);
                    }
                  },
                  [&](const in_cell &) {
                    // In the one cell of what holds it, where its anchor is.
                    m.style("grid-area", "1/1");
-                   m.style("justify-self", relX ? "stretch" : placeAlong(s.fAnchor.x));
-                   m.style("align-self", relY ? "stretch" : placeAlong(s.fAnchor.y));
+                   m.style("justify-self", "start");
+                   m.style("align-self", "start");
+                   anchored(s.fOutOfFlow);
                  },
                  [&](const in_scroll &) {
                    // The contents keep their height; only the viewport is
@@ -190,8 +203,7 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
 
 // The element a node is made as: a field the engine's own, else a box.
 [[nodiscard]] inline std::string_view tagOf(const scene::Look &look) {
-  return spl::visit(spl::overloaded{[](const scene::look::field &field) { return std::string_view(field.multiline ? "textarea" : "input"); },
-                                    [](const auto &) { return std::string_view("div"); }},
+  return spl::visit(spl::overloaded{[](const auto &) { return std::string_view("div"); }},
                     look);
 }
 
@@ -346,16 +358,36 @@ template <class PictureOf>
                                       // it shows empty; its text in the field's
                                       // size and colour, on nothing of its own --
                                       // the node's plate is its State's.
-                                      m.attr("value", field.text);
-                                      if (!field.placeholder.empty()) m.attr("placeholder", field.placeholder);
-                                      if (field.masked) m.attr("type", "password");
-                                      m.style("display", "block");
-                                      m.style("font-size", px(field.size));
-                                      m.style("color", rgba(field.colour));
-                                      m.style("background", "transparent");
-                                      m.style("border", "none");
-                                      m.style("outline", "none");
-                                      m.style("resize", "none");
+                                      m.style("display", "grid");
+                                      m.style("position", "relative");
+                                      m.style("cursor", "text");
+                                      m.inner(field.multiline ? "textarea" : "input", kField, [&](Markup &input) {
+                                        input.value(field.text);
+                                        if (!field.placeholder.empty()) input.attr("aria-label", field.placeholder);
+                                        if (field.masked) input.attr("type", "password");
+                                        input.style("grid-area", "1/1");
+                                        input.style("width", "100%"); input.style("height", "100%");
+                                        input.style("min-width", "0"); input.style("min-height", "0");
+                                        input.style("box-sizing", "border-box");
+                                        input.style("padding", "0"); input.style("margin", "0");
+                                        input.style("font-size", px(field.size));
+                                        input.style("font-family", "inherit");
+                                        input.style("color", rgba(field.colour));
+                                        input.style("background", "transparent");
+                                        input.style("border", "none"); input.style("outline", "none");
+                                        input.style("resize", "none");
+                                      });
+                                      // Blitz has no native placeholder painting. A sibling
+                                      // keeps it out of the editor's actual value and selection.
+                                      if (field.text.empty() && !field.placeholder.empty())
+                                        m.inner("div", kPlaceholder, [&](Markup &hint) {
+                                          hint.text(field.placeholder);
+                                          hint.style("grid-area", "1/1"); hint.style("align-self", "center");
+                                          hint.style("font-size", px(field.size)); hint.style("color", rgba(field.colour));
+                                          hint.style("opacity", "0.65"); hint.style("pointer-events", "none");
+                                          hint.style("min-width", "0"); hint.style("overflow", "hidden");
+                                          hint.style("white-space", "nowrap");
+                                        });
                                       return in_cell{};
                                     }},
                     look);
@@ -745,7 +777,7 @@ public:
     std::erase_if(fShown, [&](auto &kept) {
       if (kept.second.seen == fPass) return false;
       fNodeOf.erase(kept.second.handle);
-      for (const auto &[part, h] : kept.second.inner) dom::destroy(h);
+      for (const auto &[part, h] : kept.second.inner) { fNodeOf.erase(h); dom::destroy(h); }
       dom::destroy(kept.second.handle);
       return true;
     });
@@ -795,7 +827,9 @@ public:
     this->editIn(scene.root(), found->second, value, edited);
     if (!edited) return false;
     // What was written of it is the engine's now: not written back.
-    if (const auto shown = fShown.find(found->second); shown != fShown.end()) shown->second.markup.attr("value", value);
+    if (const auto shown = fShown.find(found->second); shown != fShown.end())
+      for (auto &part : shown->second.markup.fInner)
+        if (part.fPart == detail::kField) part.fMarkup.value(value);
     scene::Path way;
     if constexpr (scene::kErasedWalks) {
       auto seen = scene::AnyNodeRef::of(scene.root());
@@ -844,6 +878,12 @@ public:
   [[nodiscard]] dom::Handle elementOf(const scene::State &state) const {
     const auto found = fShown.find(state.fId);
     return found == fShown.end() ? dom::kNone : found->second.handle;
+  }
+  [[nodiscard]] dom::Handle ownerOf(dom::Handle element) const {
+    const auto found = fNodeOf.find(element);
+    if (found == fNodeOf.end()) return dom::kNone;
+    const auto shown = fShown.find(found->second);
+    return shown == fShown.end() ? dom::kNone : shown->second.handle;
   }
   [[nodiscard]] std::size_t size() const noexcept { return fShown.size(); }
   // What could not be written as the engine's own -- by the node's type and
@@ -963,6 +1003,17 @@ private:
     Pictures pictures;
     const detail::Holder theirs = detail::kindOf(now, look, pictureOf, pictures);
     detail::stateOf(now, state, holder);
+    // Text's pixel size was measured by skiff's font stack. Let this
+    // engine measure it: its font metrics and line breaks can differ.
+    // Reusing the measured height clipped lines and overlapped later rows.
+    spl::visit(spl::overloaded{[&](const scene::look::words &words) {
+                                now.style("height", "");
+                                if (!state.fRelativeSizeAxes.has<scene::axis::x>() && !state.fGrowAxes.has<scene::axis::x>()) {
+                                  now.style("width", "max-content");
+                                  now.style("max-width", state.fMaxWidth > 0.0f ? web::px(state.fMaxWidth) : "100%");
+                                }
+                                if (!words.elided && words.wrapped != std::optional(false)) now.style("overflow-wrap", "break-word");
+                              }, [](const auto &) {}}, look);
     // Scene masking clips the viewport, but overflow:hidden also disables
     // the engine's own scrolling. A scrolling look owns its overflow.
     spl::visit(spl::overloaded{[&](const scene::look::scrolled &) {
@@ -1001,7 +1052,7 @@ private:
     }
     if (pressable) {
       now.listen("click");
-      now.style("cursor", "pointer");
+      if (std::ranges::none_of(now.fStyles, [](const auto &rule) { return rule.first == "cursor"; })) now.style("cursor", "pointer");
     }
     auto [at, made] = fShown.try_emplace(state.fId);
     Shown &shown = at->second;
@@ -1027,8 +1078,9 @@ private:
     std::vector<std::pair<skiff::web::Part, dom::Handle>> kept;
     skiff::web::detail::writeInner(shown.handle, now.fInner, shown.markup.fInner, shown.inner, kept);
     for (const auto &[part, h] : shown.inner)
-      if (!std::ranges::contains(kept, h, &std::pair<skiff::web::Part, dom::Handle>::second)) dom::destroy(h);
+      if (!std::ranges::contains(kept, h, &std::pair<skiff::web::Part, dom::Handle>::second)) { fNodeOf.erase(h); dom::destroy(h); }
     shown.inner = std::move(kept);
+    for (const auto &[part, h] : shown.inner) fNodeOf.insert_or_assign(h, state.fId);
     // Its pictures' pixels, given to the elements they are shown in -- again
     // only where the picture there is another.
     for (const auto &[part, image] : pictures) {
@@ -1053,25 +1105,15 @@ private:
 
   template <class N> void editIn(N &node, scene::NodeId id, std::string_view value, bool &edited) {
     if (edited) return;
-    if constexpr (requires(N &n) {
-                    { n.fieldText() } -> std::convertible_to<std::string_view>;
-                    n.replaceRange(std::size_t{}, std::size_t{}, std::string_view{});
-                  }) {
-      if (node.fState.fId == id) {
-        const std::string_view was = node.fieldText();
-        // What both keep at the start and at the end; the rest replaced.
-        const auto start = static_cast<std::size_t>(std::ranges::mismatch(was, value).in1 - was.begin());
-        const auto wasRest = was.substr(start) | std::views::reverse;
-        const auto end = static_cast<std::size_t>(std::ranges::distance(wasRest.begin(), std::ranges::mismatch(wasRest, value.substr(start) | std::views::reverse).in1));
-        node.replaceRange(start, was.size() - end, value.substr(start, value.size() - end - start));
-        edited = true;
-        return;
-      }
-    }
+    if (node.fState.fId == id) edited = scene::editField(node, value);
+    if (edited) return;
     scene::eachChild(node, [&](auto &child) { this->editIn(child, id, value, edited); });
   }
   void editIn(scene::AnyNodeRef &ref, scene::NodeId id, std::string_view value, bool &edited) {
+    if (edited) return;
     scene::ErasedNode node(ref);
+    if (node.fState.fId == id) edited = node.editField(value);
+    if (edited) return;
     node.forEachChild([&](scene::AnyNodeRef &child) { this->editIn(child, id, value, edited); });
   }
   template <class N, class ScrolledOf> void readIn(N &node, ScrolledOf &scrolledOf) {

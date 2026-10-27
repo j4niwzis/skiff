@@ -172,6 +172,10 @@ TEST(Mirror, APathIsSvg) {
   EXPECT_TRUE(html.contains("fill=\"rgba(0,0,0,1)\"")) << html;
   EXPECT_EQ(shown.recorded(), 1u);
   EXPECT_TRUE(shown.takeNotNative().empty());
+  const auto owner = shown.elementOf(tree.root().fState);
+  const auto svg = dom::child(owner, 0);
+  EXPECT_EQ(shown.ownerOf(svg), owner);
+  EXPECT_EQ(shown.ownerOf(dom::child(svg, 0)), owner);
 }
 
 // In a column -- seen through the walks' table outside a release build --
@@ -325,13 +329,50 @@ TEST(Mirror, AFieldIsTheEnginesAndItsEditsComeBack) {
   const std::string html = dom::dump(dom::root());
   EXPECT_TRUE(html.contains("<input")) << html;
   EXPECT_TRUE(html.contains("value=\"hello world\"")) << html;
-  EXPECT_TRUE(html.contains("placeholder=\"Say\"")) << html;
+  EXPECT_TRUE(html.contains("aria-label=\"Say\"")) << html;
   // The engine's field edited: given back as the one edit between them.
   EXPECT_TRUE(shown.typed(tree, shown.elementOf(tree.root().fState), "hello brave world"));
   EXPECT_EQ(tree.root().fText, "hello brave world");
   EXPECT_EQ(tree.root().fLastEdit, (std::tuple<std::size_t, std::size_t, std::string>{6, 6, "brave "}));
   EXPECT_TRUE(shown.typed(tree, shown.elementOf(tree.root().fState), "hello world"));
   EXPECT_EQ(tree.root().fLastEdit, (std::tuple<std::size_t, std::size_t, std::string>{6, 12, ""}));
+}
+
+TEST(Mirror, AFieldInsideHeldContentIsEditable) {
+  dom::reset();
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), Field{}));
+  Field *field = nullptr;
+  scene::forEachNode<Field>(tree.root(), [&](Field &one) { field = &one; });
+  ASSERT_NE(field, nullptr);
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  EXPECT_TRUE(shown.typed(tree, shown.elementOf(field->fState), "hello from the browser"));
+  EXPECT_EQ(field->fText, "hello from the browser");
+  shown.sync(tree.root());
+  EXPECT_TRUE(dom::dump(dom::root()).contains("hello from the browser"));
+}
+
+TEST(Mirror, EditingPreservesUtf8CharacterBoundaries) {
+  Field field;
+  field.fText = "аxё";
+  EXPECT_TRUE(scene::editField(field, "бxю"));
+  EXPECT_EQ(field.fText, "бxю");
+  EXPECT_EQ(std::get<0>(field.fLastEdit), 0u);
+  EXPECT_EQ(std::get<1>(field.fLastEdit), 5u);
+}
+
+TEST(Mirror, RelativeSizesLeaveRoomForMarginsAndDoNotBecomeGrowers) {
+  scene::State state;
+  state.apply({.fill = true, .margin = {2.0f, 14.0f, 4.0f, 14.0f}});
+  web::Markup markup;
+  mirror::detail::stateOf(markup, state, mirror::detail::in_flex{false});
+  const auto style = [&](std::string_view key) {
+    const auto found = std::ranges::find(markup.fStyles, key, &std::pair<std::string, std::string>::first);
+    return found == markup.fStyles.end() ? std::string() : found->second;
+  };
+  EXPECT_EQ(style("width"), "calc(100% - 28px)");
+  EXPECT_EQ(style("height"), "calc(100% - 6px)");
+  EXPECT_EQ(style("flex"), "0 0 auto");
 }
 
 // A field that sends on Enter, as mux's composer does.

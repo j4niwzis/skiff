@@ -4567,6 +4567,24 @@ struct Walks {
   double (*fWakeAt)(void *, const NodeOps *);
   void (*fDamageOver)(void *, const NodeOps *, NodeId, const skia::SkRect &, bool &, skia::SkRect &);
 };
+// A field edited by another layout engine: preserve the unchanged ends so
+// rich text spans and undo history survive. UTF-8 bytes shared by different
+// characters are not character boundaries.
+template <class T>
+  requires requires(T &node) { node.fieldText(); node.replaceRange(std::size_t{}, std::size_t{}, std::string_view{}); }
+bool editField(T &node, std::string_view value) {
+  const std::string_view was = node.fieldText();
+  const auto continuation = [](char c) { return (static_cast<unsigned char>(c) & 0xc0u) == 0x80u; };
+  auto start = static_cast<std::size_t>(std::ranges::mismatch(was, value).in1 - was.begin());
+  while (start > 0 && start < was.size() && continuation(was[start])) --start;
+  const auto rest = was.substr(start) | std::views::reverse;
+  auto end = static_cast<std::size_t>(std::ranges::distance(rest.begin(), std::ranges::mismatch(rest, value.substr(start) | std::views::reverse).in1));
+  while (end > 0 && (continuation(was[was.size() - end]) || continuation(value[value.size() - end]))) --end;
+  if (was != value) node.replaceRange(start, was.size() - end, value.substr(start, value.size() - end - start));
+  return true;
+}
+template <class T> bool editField(T &, std::string_view) { return false; }
+
 struct NodeOps {
   // The core of it first: what skiff.bind reaches a node through, whatever draws it.
   AnyNodeOps core;
@@ -4596,6 +4614,7 @@ struct NodeOps {
   // engine must both follow a scene jump and give user scrolling back.
   std::optional<float> (*fScrollOffset)(void *);
   void (*fSetScrollOffset)(void *, float);
+  bool (*fEditField)(void *, std::string_view);
   // Its own drawing through a painter of any type -- skiff.mirror's, which
   // writes it as elements: whether it draws so.
   bool (*fDrawThrough)(void *, skiff::paint::ErasedPainter &, float);
@@ -4795,6 +4814,7 @@ inline constexpr NodeOps kNodeOps{
       if constexpr (requires(T &node) { node.setCurrent(offset); node.extent(); })
         nodeAs<T>(n).setCurrent(offset);
     },
+    +[](void *n, std::string_view value) -> bool { return editField(nodeAs<T>(n), value); },
     +[](void *n, skiff::paint::ErasedPainter &p, float alpha) -> bool {
       if constexpr (requires(T &node) { node.drawSelf(p, alpha); }) {
         nodeAs<T>(n).drawSelf(p, alpha);
@@ -4930,6 +4950,7 @@ public:
   [[nodiscard]] Look look() const { return fOps->fLook(fNode); }
   [[nodiscard]] std::optional<float> scrollOffset() const { return fOps->fScrollOffset(fNode); }
   void setScrollOffset(float offset) { fOps->fSetScrollOffset(fNode, offset); }
+  bool editField(std::string_view value) { return fOps->fEditField(fNode, value); }
   // Its own drawing, through `p`: whether it draws so.
   bool drawThrough(skiff::paint::ErasedPainter &p, float alpha) { return fOps->fDrawThrough(fNode, p, alpha); }
   void onFocusChanged(bool focused) { fOps->fOnFocusChanged(fNode, focused); }

@@ -556,7 +556,7 @@ inline void writeOwn(dom::Handle h, const Markup &now, const Markup &was) {
     if (!std::ranges::contains(was.fListened, event)) dom::listen(h, event);
   if (now.fText && now.fText != was.fText) dom::text(h, *now.fText);
   else if (!now.fText && was.fText) dom::text(h, "");
-  if (now.fValue) dom::value(h, *now.fValue);
+  if (now.fValue && now.fValue != was.fValue) dom::value(h, *now.fValue);
   if (now.fChecked) dom::checked(h, *now.fChecked);
   if (now.fScroll) dom::scrollTo(h, *now.fScroll);
   for (const DrawCall &call : now.fDrawn) play(h, call);

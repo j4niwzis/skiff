@@ -11,6 +11,7 @@ struct skiff_blitz_page;
 skiff_blitz_page *skiff_blitz_new(std::uint32_t width, std::uint32_t height, float scale);
 std::uint64_t skiff_blitz_body(skiff_blitz_page *page);
 void skiff_blitz_add_css(skiff_blitz_page *page, const char *css, std::size_t len);
+void skiff_blitz_add_font(skiff_blitz_page *page, const unsigned char *bytes, std::size_t len, std::uint32_t face);
 std::uint64_t skiff_blitz_create_element(skiff_blitz_page *page, const char *tag, std::size_t len);
 std::uint64_t skiff_blitz_create_text(skiff_blitz_page *page, const char *text, std::size_t len);
 void skiff_blitz_set_text(skiff_blitz_page *page, std::uint64_t node, const char *text, std::size_t len);
@@ -19,6 +20,7 @@ void skiff_blitz_remove(skiff_blitz_page *page, std::uint64_t node);
 void skiff_blitz_set_attribute(skiff_blitz_page *page, std::uint64_t node, const char *name, std::size_t name_len, const char *value,
                                std::size_t value_len);
 void skiff_blitz_clear_attribute(skiff_blitz_page *page, std::uint64_t node, const char *name, std::size_t name_len);
+void skiff_blitz_set_value(skiff_blitz_page *page, std::uint64_t node, const char *value, std::size_t len);
 void skiff_blitz_set_style(skiff_blitz_page *page, std::uint64_t node, const char *name, std::size_t name_len, const char *value,
                            std::size_t value_len);
 std::uint64_t skiff_blitz_parent(skiff_blitz_page *page, std::uint64_t node);
@@ -143,8 +145,15 @@ void style(Handle h, std::string_view p, std::string_view v) {
   memory::style(h, p, v);
   if (nodeOf(h) != 0) skiff_blitz_set_style(page(), nodeOf(h), p.data(), p.size(), v.data(), v.size());
 }
-void value(Handle h, std::string_view v) { memory::value(h, v); }
-void checked(Handle h, bool on) { memory::checked(h, on); }
+void value(Handle h, std::string_view v) {
+  memory::value(h, v);
+  if (nodeOf(h) != 0) skiff_blitz_set_value(page(), nodeOf(h), v.data(), v.size());
+}
+void checked(Handle h, bool on) {
+  memory::checked(h, on);
+  if (on) attr(h, "checked", "true");
+  else dropAttr(h, "checked");
+}
 // Presses come from Blitz's hit test (blitz::at), not from listeners.
 void listen(Handle h, std::string_view event) { memory::listen(h, event); }
 void canvasSize(Handle h, int width, int height) { memory::canvasSize(h, width, height); }
@@ -177,6 +186,9 @@ void reset() { memory::reset(); }
 } // namespace dom
 
 namespace blitz {
+void fontData(const unsigned char *bytes, std::size_t size, font_face face) {
+  skiff_blitz_add_font(page(), bytes, size, static_cast<std::uint32_t>(face));
+}
 void viewport(std::uint32_t width, std::uint32_t height, float scale, float zoom) { skiff_blitz_set_viewport(page(), width, height, scale, zoom); }
 std::optional<std::string> takeCopied() {
   const char *value = nullptr;
