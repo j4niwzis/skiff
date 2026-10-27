@@ -7,6 +7,14 @@ import gtest;
 #include "gtest/gtest-macros.h"
 
 namespace {
+TEST(Images, CanvasReportsItsOwningSurface) {
+  auto surface = skia::Raster(skia::SkImageInfo::MakeN32Premul(12, 8));
+  ASSERT_TRUE(surface);
+  EXPECT_EQ(surface->getCanvas()->getSurface(), surface.get());
+  skia::SkCanvas standalone(12, 8);
+  EXPECT_EQ(standalone.getSurface(), nullptr);
+}
+
 struct inline_images {
   static inline skia::Sp<skia::SkImage> image;
   static inline int drawn = 0;

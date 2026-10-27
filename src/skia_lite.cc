@@ -908,7 +908,8 @@ public:
     canvas->fPage = lite::attach(id, width, height, scale);
     return canvas;
   }
-  void attach(Pixels *target) { fTarget = target; }
+  void attach(Pixels *target, SkSurface *surface = nullptr) { fTarget = target; fSurface = surface; }
+  [[nodiscard]] SkSurface *getSurface() const noexcept { return fSurface; }
   void record(std::vector<lite::Command> *into) { fRecord = into; }
 
   int save() {
@@ -1102,6 +1103,7 @@ private:
   friend class SkFont;
   std::vector<Level> fStack;
   SkRect fDevice{};
+  SkSurface *fSurface = nullptr;
   Pixels *fTarget = nullptr;
   lite::Target fPage = 0;
   std::vector<lite::Command> *fRecord = nullptr;
@@ -1114,8 +1116,10 @@ public:
   explicit SkSurface(const SkImageInfo &info)
       : fInfo(info), fPixels{info.width(), info.height(), std::vector<SkColor>(info.computeMinByteSize() / 4)},
         fCanvas(std::make_unique<SkCanvas>(SkRect::MakeIWH(info.width(), info.height()))) {
-    fCanvas->attach(&fPixels);
+    fCanvas->attach(&fPixels, this);
   }
+  SkSurface(const SkSurface &) = delete;
+  SkSurface &operator=(const SkSurface &) = delete;
   [[nodiscard]] SkCanvas *getCanvas() noexcept { return fCanvas.get(); }
   [[nodiscard]] Sp<SkImage> makeImageSnapshot() const { return std::make_shared<SkImage>(fPixels); }
   [[nodiscard]] int width() const noexcept { return fInfo.width(); }
