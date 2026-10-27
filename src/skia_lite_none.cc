@@ -5,6 +5,8 @@ module skia;
 import std;
 
 namespace skia::lite {
+Sp<SkImage> decode(const void *, std::size_t, int) { return nullptr; }
+std::string encode(const SkImage &, bool) { return {}; }
 void draw(Target, const SkMatrix &, const std::vector<float> &, const SkPaint &) {}
 void clip(Target, const SkMatrix &, const std::vector<float> &) {}
 void save(Target) {}

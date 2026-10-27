@@ -356,6 +356,10 @@ template <class PictureOf>
                                       m.style(css::cursor{css::text{}});
                                       m.inner(field.multiline ? "textarea" : "input", kField, [&](Markup &input) {
                                         input.value(field.text);
+                                        if (field.selection) {
+                                          input.attr("data-skiff-anchor", std::to_string(field.selection->first));
+                                          input.attr("data-skiff-caret", std::to_string(field.selection->second));
+                                        }
                                         if (!field.placeholder.empty()) input.attr("aria-label", field.placeholder);
                                         if (field.masked) input.attr("type", "password");
                                         input.style(css::grid_area{css::cell{1, 1}});
@@ -835,6 +839,15 @@ public:
     return true;
   }
 
+  // A native editor's caret and selection, already converted to UTF-8.
+  template <class S> bool selected(S &scene, dom::Handle element, std::size_t anchor, std::size_t caret) {
+    const auto found = fNodeOf.find(element);
+    if (found == fNodeOf.end()) return false;
+    bool selected = false;
+    this->selectIn(scene.root(), found->second, anchor, caret, selected);
+    return selected;
+  }
+
   // A key for the program rather than the engine's field -- Enter, which
   // sends or breaks a line as the program says; Escape; a shortcut: given
   // to skiff as the window gives keys, its focus put on the node of
@@ -1106,6 +1119,19 @@ private:
     if (node.fState.fId == id) edited = node.editField(value);
     if (edited) return;
     node.forEachChild([&](scene::AnyNodeRef &child) { this->editIn(child, id, value, edited); });
+  }
+  template <class N> void selectIn(N &node, scene::NodeId id, std::size_t anchor, std::size_t caret, bool &selected) {
+    if (selected) return;
+    if (node.fState.fId == id) selected = scene::selectField(node, anchor, caret);
+    if (selected) return;
+    scene::eachChild(node, [&](auto &child) { this->selectIn(child, id, anchor, caret, selected); });
+  }
+  void selectIn(scene::AnyNodeRef &ref, scene::NodeId id, std::size_t anchor, std::size_t caret, bool &selected) {
+    if (selected) return;
+    scene::ErasedNode node(ref);
+    if (node.fState.fId == id) selected = node.selectField(anchor, caret);
+    if (selected) return;
+    node.forEachChild([&](scene::AnyNodeRef &child) { this->selectIn(child, id, anchor, caret, selected); });
   }
   template <class N, class ScrolledOf> void readIn(N &node, ScrolledOf &scrolledOf) {
     if constexpr (requires(N &n) { n.setCurrent(0.0f); { n.current() } -> std::convertible_to<float>; n.extent(); }) {

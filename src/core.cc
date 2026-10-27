@@ -663,6 +663,8 @@ struct field {
   bool masked = false;
   float size = 0.0f;
   Colour colour = 0;
+  // UTF-8 byte offsets, anchor first and caret second.
+  std::optional<std::pair<std::size_t, std::size_t>> selection;
 };
 } // namespace look
 using Look = spl::variant<look::box, look::flow, look::words, look::scrolled, look::drawn, look::field>;

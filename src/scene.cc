@@ -4585,6 +4585,14 @@ bool editField(T &node, std::string_view value) {
 }
 template <class T> bool editField(T &, std::string_view) { return false; }
 
+template <class T>
+  requires requires(T &node, std::size_t at) { node.selectField(at, at); }
+bool selectField(T &node, std::size_t anchor, std::size_t caret) {
+  node.selectField(anchor, caret);
+  return true;
+}
+template <class T> bool selectField(T &, std::size_t, std::size_t) { return false; }
+
 struct NodeOps {
   // The core of it first: what skiff.bind reaches a node through, whatever draws it.
   AnyNodeOps core;
@@ -4615,6 +4623,7 @@ struct NodeOps {
   std::optional<float> (*fScrollOffset)(void *);
   void (*fSetScrollOffset)(void *, float);
   bool (*fEditField)(void *, std::string_view);
+  bool (*fSelectField)(void *, std::size_t, std::size_t);
   // Its own drawing through a painter of any type -- skiff.mirror's, which
   // writes it as elements: whether it draws so.
   bool (*fDrawThrough)(void *, skiff::paint::ErasedPainter &, float);
@@ -4815,6 +4824,7 @@ inline constexpr NodeOps kNodeOps{
         nodeAs<T>(n).setCurrent(offset);
     },
     +[](void *n, std::string_view value) -> bool { return editField(nodeAs<T>(n), value); },
+    +[](void *n, std::size_t anchor, std::size_t caret) -> bool { return selectField(nodeAs<T>(n), anchor, caret); },
     +[](void *n, skiff::paint::ErasedPainter &p, float alpha) -> bool {
       if constexpr (requires(T &node) { node.drawSelf(p, alpha); }) {
         nodeAs<T>(n).drawSelf(p, alpha);
@@ -4951,6 +4961,7 @@ public:
   [[nodiscard]] std::optional<float> scrollOffset() const { return fOps->fScrollOffset(fNode); }
   void setScrollOffset(float offset) { fOps->fSetScrollOffset(fNode, offset); }
   bool editField(std::string_view value) { return fOps->fEditField(fNode, value); }
+  bool selectField(std::size_t anchor, std::size_t caret) { return fOps->fSelectField(fNode, anchor, caret); }
   // Its own drawing, through `p`: whether it draws so.
   bool drawThrough(skiff::paint::ErasedPainter &p, float alpha) { return fOps->fDrawThrough(fNode, p, alpha); }
   void onFocusChanged(bool focused) { fOps->fOnFocusChanged(fNode, focused); }

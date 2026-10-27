@@ -648,13 +648,22 @@ public:
     made->fBytes.assign(from, from + size);
     return made;
   }
+  [[nodiscard]] static Sp<SkData> MakeWithoutCopy(const void *bytes, std::size_t size) {
+    auto made = std::make_shared<SkData>();
+    // Like Skia's API, the owner keeps the supplied bytes alive.
+    made->fBorrowed = static_cast<const std::uint8_t *>(bytes);
+    made->fBorrowedSize = size;
+    return made;
+  }
   [[nodiscard]] static Sp<SkData> MakeEmpty() { return std::make_shared<SkData>(); }
-  [[nodiscard]] const void *data() const noexcept { return fBytes.data(); }
-  [[nodiscard]] const std::uint8_t *bytes() const noexcept { return fBytes.data(); }
-  [[nodiscard]] std::size_t size() const noexcept { return fBytes.size(); }
-  [[nodiscard]] bool isEmpty() const noexcept { return fBytes.empty(); }
+  [[nodiscard]] const void *data() const noexcept { return bytes(); }
+  [[nodiscard]] const std::uint8_t *bytes() const noexcept { return fBorrowed ? fBorrowed : fBytes.data(); }
+  [[nodiscard]] std::size_t size() const noexcept { return fBorrowed ? fBorrowedSize : fBytes.size(); }
+  [[nodiscard]] bool isEmpty() const noexcept { return size() == 0; }
 
 private:
+  const std::uint8_t *fBorrowed = nullptr;
+  std::size_t fBorrowedSize = 0;
   std::vector<std::uint8_t> fBytes;
 };
 
@@ -709,8 +718,8 @@ struct Pixels {
   }
 };
 
-inline std::uint32_t &nextImageId() {
-  static std::uint32_t id = 0;
+inline std::atomic<std::uint32_t> &nextImageId() {
+  static std::atomic<std::uint32_t> id{0};
   return id;
 }
 
@@ -1479,17 +1488,26 @@ private:
 
 // ---- files of images -------------------------------------------------------------
 //
-// None decoded or written here: there is no codec without Skia. A picture
-// made of pixels the program has is still an image.
+// The browser supplies its codecs; the stand-in outside a browser has none.
+// A picture made of pixels the program has is still an image on either host.
 
 inline constexpr std::int64_t kMostPixels = std::int64_t{64} << 20;
 struct Frame {
   Sp<SkImage> image;
   int durationMs = 100;
 };
-inline Sp<SkImage> decodeImage(const void *, std::size_t) { return nullptr; }
-inline Sp<SkImage> decodeImageAtMost(const void *, std::size_t, int) { return nullptr; }
-inline std::vector<Frame> decodeFrames(const void *, std::size_t, std::size_t = 64u << 20) { return {}; }
+namespace lite {
+Sp<SkImage> decode(const void *data, std::size_t size, int most);
+std::string encode(const SkImage &image, bool jpeg);
+}
+inline Sp<SkImage> decodeImage(const void *data, std::size_t size) { return lite::decode(data, size, 0); }
+inline Sp<SkImage> decodeImageAtMost(const void *data, std::size_t size, int most) { return lite::decode(data, size, most); }
+// Browser image decoding returns the first frame, including animated formats.
+inline std::vector<Frame> decodeFrames(const void *data, std::size_t size, std::size_t budget = 64u << 20) {
+  auto image = decodeImage(data, size);
+  if (!image || static_cast<std::size_t>(image->width()) * image->height() > budget / 4) return {};
+  return {{std::move(image), 100}};
+}
 // Four bytes each -- red, green, blue, alpha, not premultiplied -- row after row: copied.
 inline Sp<SkImage> imageFromRGBA(int width, int height, const std::uint8_t *rgba) {
   if (width <= 0 || height <= 0 || rgba == nullptr)
@@ -1499,7 +1517,7 @@ inline Sp<SkImage> imageFromRGBA(int width, int height, const std::uint8_t *rgba
     pixels.colours[i] = colorSetARGB(rgba[i * 4 + 3], rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]);
   return std::make_shared<SkImage>(std::move(pixels));
 }
-inline std::string encodeImage(const SkImage &, bool) { return {}; }
+inline std::string encodeImage(const SkImage &image, bool jpeg) { return lite::encode(image, jpeg); }
 namespace apng {
 inline std::uint32_t word(std::string_view data, std::size_t at) {
   std::uint32_t value = 0;

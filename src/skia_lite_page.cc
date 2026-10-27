@@ -10,11 +10,13 @@ module skia;
 import std;
 
 // clang-format off
+EM_JS_DEPS(skia_lite_codec, "malloc");
 EM_JS(void, skiaLiteInit, (), {
   if (Module.skiaLite) return;
   const L = Module.skiaLite = { ctx: [null], els: [null], scale: [1] };
   L.font = function(size, bold) {
-    return (bold ? "600 " : "") + size + 'px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+    const family = typeof document === 'undefined' ? 'sans-serif' : getComputedStyle(document.body).fontFamily;
+    return (bold ? "600 " : "") + size + 'px ' + (family || 'sans-serif');
   };
   L.rgba = function(r, g, b, a) {
     return 'rgba(' + Math.round(r * 255) + ',' + Math.round(g * 255) + ',' + Math.round(b * 255) + ',' + a + ')';
@@ -76,7 +78,7 @@ EM_JS(void, skiaLiteInit, (), {
     return ctx;
   };
   L.measure = function() {
-    return L.mctx || (L.mctx = document.createElement('canvas').getContext('2d'));
+    return L.mctx || (L.mctx = (typeof OffscreenCanvas === 'undefined' ? document.createElement('canvas'):new OffscreenCanvas(1,1)).getContext('2d'));
   };
 });
 EM_JS(int, skiaLiteAttach, (const char *id, int len, int w, int h, float scale), {
@@ -174,9 +176,71 @@ EM_JS(void, skiaLiteMetrics, (float size, int bold, float *out), {
   HEAPF32[out >> 2] = -(m.fontBoundingBoxAscent || size * 0.8);
   HEAPF32[(out >> 2) + 1] = m.fontBoundingBoxDescent || size * 0.2;
 });
+// Decoding can run on a pthread. OffscreenCanvas and createImageBitmap do
+// not require the DOM, and the caller's bytes are copied before yielding.
+EM_ASYNC_JS(unsigned char *, skiaLiteDecode, (const void *data, size_t size, int most, int *dimensions), {
+  let bitmap;
+  try {
+    if (!size || size > 67108864) return 0;
+    bitmap = await createImageBitmap(new Blob([HEAPU8.slice(data,data+size)]));
+    const ratio = most > 0 ? Math.min(1,most/Math.max(bitmap.width,bitmap.height)):1;
+    const width = Math.max(1,Math.round(bitmap.width*ratio)), height = Math.max(1,Math.round(bitmap.height*ratio));
+    if (width*height > 67108864) return 0;
+    const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(width,height):document.createElement('canvas');
+    canvas.width = width;canvas.height = height;
+    const context = canvas.getContext('2d',{willReadFrequently:true});
+    context.drawImage(bitmap,0,0,width,height);
+    const pixels = context.getImageData(0,0,width,height).data;
+    const result = _malloc(pixels.length);if (!result) return 0;
+    HEAPU8.set(pixels,result);
+    HEAP32[dimensions >> 2] = width;HEAP32[(dimensions >> 2)+1] = height;
+    return result;
+  } catch (error) {return 0;}
+  finally {bitmap?.close();}
+});
+EM_ASYNC_JS(char *, skiaLiteEncode, (const unsigned char *rgba, int width, int height, int jpeg, size_t *length), {
+  try {
+    if (!width || !height || width*height > 67108864) return 0;
+    const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(width,height):document.createElement('canvas');
+    canvas.width = width;canvas.height = height;
+    const context = canvas.getContext('2d');
+    context.putImageData(new ImageData(new Uint8ClampedArray(HEAPU8.slice(rgba,rgba+width*height*4)),width,height),0,0);
+    const type = jpeg ? 'image/jpeg':'image/png';
+    const blob = canvas.convertToBlob ? await canvas.convertToBlob({type,quality:0.9}):
+      await new Promise(resolve => canvas.toBlob(resolve,type,0.9));
+    const bytes = new Uint8Array(await blob.arrayBuffer()), result = _malloc(bytes.length);
+    if (!result) return 0;
+    HEAPU8.set(bytes,result);HEAPU32[length >> 2] = bytes.length;
+    return result;
+  } catch (error) {return 0;}
+});
 // clang-format on
 
 namespace skia::lite {
+Sp<SkImage> decode(const void *data, std::size_t size, int most) {
+  if (!data || size == 0) return nullptr;
+  std::array<int, 2> dimensions{};
+  auto *pixels = skiaLiteDecode(data, size, most, dimensions.data());
+  if (!pixels) return nullptr;
+  const auto result = imageFromRGBA(dimensions[0], dimensions[1], pixels);
+  std::free(pixels);
+  return result;
+}
+std::string encode(const SkImage &image, bool jpeg) {
+  if (image.width() <= 0 || image.height() <= 0 || static_cast<std::int64_t>(image.width()) * image.height() > kMostPixels) return {};
+  // Canvas reads a contiguous RGBA buffer while its asynchronous call runs.
+  const auto rgba = image.pixels().colours | std::views::transform([](SkColor colour) {
+    return std::array{static_cast<std::uint8_t>(colour >> 16), static_cast<std::uint8_t>(colour >> 8),
+                      static_cast<std::uint8_t>(colour), static_cast<std::uint8_t>(colour >> 24)};
+  }) | std::views::join | std::ranges::to<std::vector>();
+  std::size_t length = 0;
+  char *data = skiaLiteEncode(rgba.data(), image.width(), image.height(), jpeg ? 1 : 0, &length);
+  if (!data) return {};
+  std::string result(data, length);
+  std::free(data);
+  return result;
+}
+
 namespace {
 std::array<float, 6> matrixOf(const SkMatrix &m) {
   return {m.getScaleX(), m.getSkewY(), m.getSkewX(), m.getScaleY(), m.getTranslateX(), m.getTranslateY()};

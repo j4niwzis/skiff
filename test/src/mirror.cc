@@ -313,8 +313,10 @@ TEST(Mirror, APictureIsAnImg) {
 struct Field : scene::Node {
   std::string fText = "hello world";
   std::tuple<std::size_t, std::size_t, std::string> fLastEdit;
-  [[nodiscard]] scene::Look look() const { return scene::look::field{.text = fText, .placeholder = "Say", .size = 14.0f, .colour = 0xff000000u}; }
+  std::pair<std::size_t, std::size_t> fSelection{};
+  [[nodiscard]] scene::Look look() const { return scene::look::field{.text = fText, .placeholder = "Say", .size = 14.0f, .colour = 0xff000000u, .selection = fSelection}; }
   [[nodiscard]] std::string_view fieldText() const noexcept { return fText; }
+  void selectField(std::size_t anchor, std::size_t caret) { fSelection = {anchor, caret}; }
   void replaceRange(std::size_t from, std::size_t to, std::string_view with) {
     fLastEdit = {from, to, std::string(with)};
     fText.replace(from, to - from, with);
@@ -350,6 +352,23 @@ TEST(Mirror, AFieldInsideHeldContentIsEditable) {
   EXPECT_EQ(field->fText, "hello from the browser");
   shown.sync(tree.root());
   EXPECT_TRUE(dom::dump(dom::root()).contains("hello from the browser"));
+}
+
+TEST(Mirror, BrowserSelectionReachesHeldFieldsAndIsMirroredBack) {
+  dom::reset();
+  scene::Scene tree(c::styled({}, Field{}));
+  Field *field = nullptr;
+  scene::forEachNode<Field>(tree.root(), [&](Field &node) { field = &node; });
+  ASSERT_NE(field, nullptr);
+  field->fText = "а🙂b";
+  mirror::Mirror shown;
+  shown.sync(tree.root());
+  EXPECT_TRUE(shown.selected(tree, shown.elementOf(field->fState), 6, 2));
+  EXPECT_EQ(field->fSelection, (std::pair<std::size_t, std::size_t>{6, 2}));
+  shown.sync(tree.root());
+  const auto html = dom::dump(dom::root());
+  EXPECT_TRUE(html.contains("data-skiff-anchor=\"6\""));
+  EXPECT_TRUE(html.contains("data-skiff-caret=\"2\""));
 }
 
 TEST(Mirror, EditingPreservesUtf8CharacterBoundaries) {
