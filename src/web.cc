@@ -29,6 +29,7 @@
 //                         nothing to press for
 export module skiff.web;
 
+export import :css;
 export import :dom;
 // The page in Blitz, for a host that shows it there (SKIFF_WEB_DOM=blitz).
 export import :blitz;
@@ -72,20 +73,29 @@ export namespace skiff::web {
   return a.at <= 0.25f ? "flex-start" : a.at >= 0.75f ? "flex-end" : "center";
 }
 
+// Typed translations of the scene's layout values, shared by both bridges.
+[[nodiscard]] inline css::sides cssMargin(const scene::Margin &m) {
+  return {css::pixels{m.fTop}, css::pixels{m.fRight}, css::pixels{m.fBottom}, css::pixels{m.fLeft}};
+}
+[[nodiscard]] inline css::Alignment cssAlignment(scene::Align a) {
+  if (a.at <= 0.25f) return css::flex_start{};
+  if (a.at >= 0.75f) return css::flex_end{};
+  return css::center{};
+}
+[[nodiscard]] inline css::Justification cssJustification(const scene::Justify &how) {
+  return spl::visit(spl::overloaded{[](scene::justify::start) -> css::Justification { return css::flex_start{}; },
+                                  [](scene::justify::middle) -> css::Justification { return css::center{}; },
+                                  [](scene::justify::end) -> css::Justification { return css::flex_end{}; },
+                                  [](scene::justify::space_between) -> css::Justification { return css::space_between{}; },
+                                  [](scene::justify::space_around) -> css::Justification { return css::space_around{}; }}, how);
+}
+
 // The declarations a node's element gets, from its Spec and flags.
 struct Css {
-  std::vector<std::pair<std::string, std::string>> fRules;
-  // Attributes the stylesheet's rules select on (pageCss): a hover
-  // background, a tail, a part revealed on hover.
+  css::Declarations fRules;
+  // Attributes selected by pageCss, beside the typed inline declarations.
   std::vector<std::pair<std::string, std::string>> fAttrs;
-  void set(std::string property, std::string value) {
-    for (auto &[p, v] : fRules)
-      if (p == property) {
-        v = std::move(value);
-        return;
-      }
-    fRules.emplace_back(std::move(property), std::move(value));
-  }
+  void set(css::Declaration one) { css::set(fRules, std::move(one)); }
   void attr(std::string name, std::string value = {}) { fAttrs.emplace_back(std::move(name), std::move(value)); }
 };
 
@@ -220,7 +230,7 @@ struct InnerElement;
 // An element as it is now: what a node writes of itself.
 struct Markup {
   std::vector<std::pair<std::string, std::string>> fAttrs;
-  std::vector<std::pair<std::string, std::string>> fStyles;
+  css::Declarations fStyles;
   std::optional<std::string> fText;
   // A control's value and a checkbox's state, set as the model says.
   std::optional<std::string> fValue;
@@ -233,11 +243,10 @@ struct Markup {
   std::vector<InnerElement> fInner;
 
   void attr(std::string_view name, std::string_view value) { set(fAttrs, name, value); }
-  // An empty value is no style: what was there is taken away.
-  void style(std::string_view property, std::string_view value) {
-    if (value.empty()) std::erase_if(fStyles, [&](const auto &one) { return one.first == property; });
-    else set(fStyles, property, value);
-  }
+  void style(css::Declaration one) { css::set(fStyles, std::move(one)); }
+  template <class Property> void eraseStyle() { css::erase<Property>(fStyles); }
+  // Opaque CSS supplied by a caller. Built-in nodes use typed declarations.
+  void style(std::string_view property, std::string_view value) { css::set(fStyles, property, value); }
   void text(std::string_view words) { fText = std::string(words); }
   void value(std::string_view now) { fValue = std::string(now); }
   void checked(bool on) { fChecked = on; }
@@ -305,7 +314,7 @@ inline void writeStart(std::string &out, std::string_view tag, const Markup &m) 
   }
   if (!m.fStyles.empty()) {
     out += " style=\"";
-    for (const auto &[p, v] : m.fStyles) out += escapedHtml(p) + ':' + escapedHtml(v) + ';';
+    for (const auto &one : m.fStyles) out += escapedHtml(css::name(one)) + ':' + escapedHtml(css::value(one)) + ';';
     out += '"';
   }
   if (m.fValue && tag != "textarea" && tag != "select") out += " value=\"" + escapedHtml(*m.fValue) + '"';
@@ -339,9 +348,9 @@ struct State {
   bool fSelected = false;
   bool fDisabled = false;
   dom::Handle fHandle = dom::kNone;
-  // The element's display when shown: the tag's own (""), a stack's flex.
+  // The element's display when shown: the tag's default, or a typed override.
   // Written on every sync, so that a node shown again is not left display:none.
-  std::string fDisplay;
+  std::optional<css::Display> fDisplay;
   // Written to its element at the next sync.
   bool fDirty = true;
   // The way of the stack it is in -- a row, or a column -- where it is in
@@ -350,7 +359,7 @@ struct State {
   // What another node gives it -- a drawer its sheet -- beside what it says
   // of itself: a class, and styles.
   std::vector<std::string> fClasses;
-  std::vector<std::pair<std::string, std::string>> fStyles;
+  css::Declarations fStyles;
   // In a browser: what was written to the element last, and the elements the
   // node made in itself, by their Part.
   Markup fShown;
@@ -423,38 +432,39 @@ struct State {
 [[nodiscard]] inline Css cssOf(const State &state) {
   const scene::Spec &s = state.fSpec;
   Css css;
-  css.set("display", state.fVisible ? state.fDisplay : "none");
+  if (!state.fVisible) css.set(css::display{css::none{}});
+  else if (state.fDisplay) css.set(css::display{*state.fDisplay});
   // Placed: out of the flow, at an anchor of its stack, by an origin of its own.
   const bool placed = s.place || s.anchor;
   scene::Anchor origin = scene::anchor::kTopLeft;
   if (placed) {
     const scene::Anchor at = s.place ? *s.place : *s.anchor;
     origin = s.place ? *s.place : s.origin.value_or(scene::anchor::kTopLeft);
-    css.set("position", "absolute");
-    css.set("left", number(at.x * 100.0f) + "%");
-    css.set("top", number(at.y * 100.0f) + "%");
+    css.set(css::position{css::absolute{}});
+    css.set(css::left{css::percent{at.x * 100.0f}});
+    css.set(css::top{css::percent{at.y * 100.0f}});
   } else if (s.depth) {
-    css.set("position", "relative");
+    css.set(css::position{css::relative{}});
   }
-  if (s.depth) css.set("z-index", std::to_string(static_cast<int>(std::lround(*s.depth))));
+  if (s.depth) css.set(css::z_index{static_cast<int>(std::lround(*s.depth))});
   if (s.fill) {
     // An equal share of the stack's way, whatever is in it: a basis of nothing, so two filling
     // parts are two halves, as two filling children of a scene's flow are.
-    css.set("flex", "1 1 0%");
-    if (!s.minWidth) css.set("min-width", "0");
-    css.set("align-self", "stretch");
+    css.set(css::flex{css::flex_values{1, 1, css::percent{0}}});
+    if (!s.minWidth) css.set(css::min_width{css::zero{}});
+    css.set(css::align_self{css::stretch{}});
   }
-  if (s.fillX) css.set("width", "100%");
-  if (s.fillY) css.set("height", "100%");
+  if (s.fillX) css.set(css::width{css::percent{100}});
+  if (s.fillY) css.set(css::height{css::percent{100}});
   // A size on an axis the node fills, or is relative on, is a share of its parent's -- as on the scene.
   const bool relX = (s.relativeSize && s.relativeSize->has<scene::axis::x>()) || s.fill || s.fillX;
   const bool relY = (s.relativeSize && s.relativeSize->has<scene::axis::y>()) || s.fill || s.fillY;
-  if (s.width) css.set("width", relX ? number(*s.width * 100.0f) + "%" : px(*s.width));
-  if (s.height) css.set("height", relY ? number(*s.height * 100.0f) + "%" : px(*s.height));
-  if (s.minWidth) css.set("min-width", px(*s.minWidth));
-  if (s.maxWidth) css.set("max-width", px(*s.maxWidth));
-  if (s.minHeight) css.set("min-height", px(*s.minHeight));
-  if (s.maxHeight) css.set("max-height", px(*s.maxHeight));
+  if (s.width) css.set(relX ? css::width{css::percent{*s.width * 100.0f}} : css::width{css::pixels{*s.width}});
+  if (s.height) css.set(relY ? css::height{css::percent{*s.height * 100.0f}} : css::height{css::pixels{*s.height}});
+  if (s.minWidth) css.set(css::min_width{css::pixels{*s.minWidth}});
+  if (s.maxWidth) css.set(css::max_width{css::pixels{*s.maxWidth}});
+  if (s.minHeight) css.set(css::min_height{css::pixels{*s.minHeight}});
+  if (s.maxHeight) css.set(css::max_height{css::pixels{*s.maxHeight}});
   // Growing along the stack: an equal share of what is left (a basis of
   // nothing), able to shrink -- CSS's `flex: 1`. Across it: the stack's
   // breadth (align-self: stretch), as a scene's flow gives one grown across
@@ -467,56 +477,53 @@ struct State {
     // grown child of a scene's flow keeps its minWidth: then, where a flow
     // wraps, it wraps rather than squeezing.
     if (along) {
-      css.set("flex", "1 1 0%");
-      if (!s.minWidth) css.set("min-width", "0");
+      css.set(css::flex{css::flex_values{1, 1, css::percent{0}}});
+      if (!s.minWidth) css.set(css::min_width{css::zero{}});
     }
-    if (across && !s.alignSelf && !s.fill) css.set("align-self", "stretch");
+    if (across && !s.alignSelf && !s.fill) css.set(css::align_self{css::stretch{}});
   }
-  if (s.shrink && (s.shrink->has<scene::axis::x>() || s.shrink->has<scene::axis::y>())) css.set("flex-shrink", "1");
-  if (s.alignSelf) css.set("align-self", std::string(alignment(*s.alignSelf)));
-  if (s.margin.given) css.set("margin", margin(*s.margin.given));
-  if (s.padding.given) css.set("padding", margin(*s.padding.given));
-  if (s.padding.given || s.width || s.height || s.border) css.set("box-sizing", "border-box");
+  if (s.shrink && (s.shrink->has<scene::axis::x>() || s.shrink->has<scene::axis::y>())) css.set(css::flex_shrink{1});
+  if (s.alignSelf) css.set(css::align_self{cssAlignment(*s.alignSelf)});
+  if (s.margin.given) css.set(css::margin{cssMargin(*s.margin.given)});
+  if (s.padding.given) css.set(css::padding{cssMargin(*s.padding.given)});
+  if (s.padding.given || s.width || s.height || s.border) css.set(css::box_sizing{css::border_box{}});
   if (s.corners) {
     const scene::Corners &k = *s.corners;
-    css.set("border-radius", px(k.topLeft) + " " + px(k.topRight) + " " + px(k.bottomRight) + " " + px(k.bottomLeft));
+    css.set(css::border_radius{css::sides{css::pixels{k.topLeft}, css::pixels{k.topRight}, css::pixels{k.bottomRight}, css::pixels{k.bottomLeft}}});
   } else if (s.cornerRadius) {
-    css.set("border-radius", px(*s.cornerRadius));
+    css.set(css::border_radius{css::sides{css::pixels{*s.cornerRadius}}});
   }
   std::optional<scene::Colour> background;
   if (state.fSelected && s.selectedBackground) background = *s.selectedBackground;
   else if (s.background) background = *s.background;
-  if (background) css.set("background-color", rgba(*background));
-  if (s.gradient) css.set("background-image", "linear-gradient(" + rgba(s.gradient->top) + "," + rgba(s.gradient->bottom) + ")");
+  if (background) css.set(css::background_color{css::argb{*background}});
+  if (s.gradient) css.set(css::background_image{css::linear_gradient{css::argb{s.gradient->top}, css::argb{s.gradient->bottom}}});
   if (s.hoverBackground) {
-    css.set("--skiff-hover-bg", rgba(*s.hoverBackground));
+    css.set(css::hover_background{css::argb{*s.hoverBackground}});
     css.attr("data-skiff-hover");
   }
   if (s.focusBackground) {
-    css.set("--skiff-focus-bg", rgba(*s.focusBackground));
+    css.set(css::focus_background{css::argb{*s.focusBackground}});
     css.attr("data-skiff-focus");
   }
-  if (s.border) css.set("border", px(s.border->width) + " solid " + rgba(s.border->colour));
-  if (s.shadow) css.set("box-shadow", "0 " + px(s.shadow->offsetY) + " " + px(s.shadow->offsetY * 2.0f) + " " + rgba(s.shadow->colour));
+  if (s.border) css.set(css::border{css::line{css::pixels{s.border->width}, css::argb{s.border->colour}}});
+  if (s.shadow) css.set(css::box_shadow{css::shadow{css::zero{}, css::pixels{s.shadow->offsetY}, css::pixels{s.shadow->offsetY * 2.0f}, css::argb{s.shadow->colour}}});
   if (s.tail && s.tail->shown) {
-    css.attr("data-skiff-tail", spl::holds_alternative<scene::tail_side::left>(s.tail->side) ? "left" : "right");
-    css.set("--skiff-tail-w", px(s.tail->width));
-    css.set("--skiff-tail-h", px(s.tail->height));
-    if (background) css.set("--skiff-bg", rgba(*background));
+    css.attr("data-skiff-tail", spl::visit(spl::overloaded{[](scene::tail_side::left) { return "left"; }, [](scene::tail_side::right) { return "right"; }}, s.tail->side));
+    css.set(css::tail_width{css::pixels{s.tail->width}});
+    css.set(css::tail_height{css::pixels{s.tail->height}});
+    if (background) css.set(css::tail_background{css::argb{*background}});
   }
   if (s.revealOnHover && *s.revealOnHover) css.attr("data-skiff-reveal");
-  if (s.alpha) css.set("opacity", number(*s.alpha));
-  if (s.masking && *s.masking) css.set("overflow", "hidden");
-  std::string transform;
+  if (s.alpha) css.set(css::opacity{*s.alpha});
+  if (s.masking && *s.masking) css.set(css::overflow{css::hidden{}});
+  css::transforms transform;
   if (placed && (origin.x != 0.0f || origin.y != 0.0f))
-    transform += "translate(" + number(-origin.x * 100.0f) + "%," + number(-origin.y * 100.0f) + "%) ";
+    transform.values.emplace_back(css::translate{css::percent{-origin.x * 100.0f}, css::percent{-origin.y * 100.0f}});
   const float dx = s.x.value_or(0.0f) + s.shiftX.value_or(0.0f), dy = s.y.value_or(0.0f) + s.shiftY.value_or(0.0f);
-  if (dx != 0.0f || dy != 0.0f) transform += "translate(" + px(dx) + "," + px(dy) + ") ";
-  if (s.scale && *s.scale != 1.0f) transform += "scale(" + number(*s.scale) + ") ";
-  if (!transform.empty()) {
-    transform.pop_back();
-    css.set("transform", transform);
-  }
+  if (dx != 0.0f || dy != 0.0f) transform.values.emplace_back(css::translate{css::pixels{dx}, css::pixels{dy}});
+  if (s.scale && *s.scale != 1.0f) transform.values.emplace_back(css::scale{*s.scale});
+  if (!transform.values.empty()) css.set(css::transform{std::move(transform)});
   return css;
 }
 
@@ -543,15 +550,12 @@ inline void writeOwn(dom::Handle h, const Markup &now, const Markup &was) {
     if (was.attrOf(n) != std::optional<std::string_view>(v)) dom::attr(h, n, v);
   for (const auto &[n, v] : was.fAttrs)
     if (!now.attrOf(n)) dom::dropAttr(h, n);
-  const auto styleOf = [](const Markup &m, std::string_view p) -> std::optional<std::string_view> {
-    for (const auto &[q, v] : m.fStyles)
-      if (q == p) return std::string_view(v);
-    return std::nullopt;
-  };
-  for (const auto &[p, v] : now.fStyles)
-    if (styleOf(was, p) != std::optional<std::string_view>(v)) dom::style(h, p, v);
-  for (const auto &[p, v] : was.fStyles)
-    if (!styleOf(now, p)) dom::style(h, p, "");
+  for (const auto &one : now.fStyles) {
+    const auto *previous = css::find(was.fStyles, css::name(one));
+    if (previous == nullptr || *previous != one) dom::style(h, css::name(one), css::value(one));
+  }
+  for (const auto &one : was.fStyles)
+    if (!css::find(now.fStyles, css::name(one))) dom::style(h, css::name(one), "");
   for (const std::string &event : now.fListened)
     if (!std::ranges::contains(was.fListened, event)) dom::listen(h, event);
   if (now.fText && now.fText != was.fText) dom::text(h, *now.fText);
@@ -641,12 +645,14 @@ struct Node : scene::NodeBase {
       markDirty();
     }
   }
+  void setStyle(css::Declaration one) {
+    if (css::set(fState.fStyles, std::move(one))) markDirty();
+  }
+  template <class Property> void eraseStyle() {
+    if (css::erase<Property>(fState.fStyles)) markDirty();
+  }
   void setStyle(std::string_view property, std::string_view value) {
-    const auto found = std::ranges::find(fState.fStyles, property, &std::pair<std::string, std::string>::first);
-    if (found != fState.fStyles.end() && found->second == value) return;
-    if (found != fState.fStyles.end()) fState.fStyles.erase(found);
-    if (!value.empty()) fState.fStyles.emplace_back(std::string(property), std::string(value));
-    markDirty();
+    if (css::set(fState.fStyles, property, value)) markDirty();
   }
   // The scene's words for the same: a node that changed how it looks is
   // written to the page at the next sync; nothing floats over a page.
@@ -761,21 +767,27 @@ public:
   [[nodiscard]] static constexpr std::string_view tag() { return "span"; }
   void markup(Markup &to) {
     to.attr("class", "skiff-text");
-    if (fSize) to.style("font-size", px(*fSize));
-    if (fColour) to.style("color", rgba(*fColour));
-    to.style("font-weight", fBold ? "600" : "");
-    to.style("font-family", fMonospace ? "ui-monospace, monospace" : "");
-    to.style("user-select", fSelectable ? "text" : "");
-    to.style("white-space", fWrapped ? "" : "nowrap");
-    to.style("overflow", fElided || fMaxLines ? "hidden" : "");
-    to.style("text-overflow", fElided ? "ellipsis" : "");
-    if (fMaxWidth > 0.0f) to.style("max-width", px(fMaxWidth));
+    if (fSize) to.style(css::font_size{css::pixels{*fSize}});
+    if (fColour) to.style(css::color{css::argb{*fColour}});
+    if (fBold) to.style(css::font_weight{600});
+    else to.eraseStyle<css::font_weight>();
+    if (fMonospace) to.style(css::font_family{css::ui_monospace{}});
+    else to.eraseStyle<css::font_family>();
+    if (fSelectable) to.style(css::user_select{css::text{}});
+    else to.eraseStyle<css::user_select>();
+    if (!fWrapped) to.style(css::white_space{css::nowrap{}});
+    else to.eraseStyle<css::white_space>();
+    if (fElided || fMaxLines) to.style(css::overflow{css::hidden{}});
+    else to.eraseStyle<css::overflow>();
+    if (fElided) to.style(css::text_overflow{css::ellipsis{}});
+    else to.eraseStyle<css::text_overflow>();
+    if (fMaxWidth > 0.0f) to.style(css::max_width{css::pixels{fMaxWidth}});
     // Lines at most: a box of its own kind -- its display the state's, so that
     // hidden it is still none.
-    fState.fDisplay = fMaxLines ? "-webkit-box" : "";
+    fState.fDisplay = fMaxLines ? std::optional<css::Display>(css::webkit_box{}) : std::nullopt;
     if (fMaxLines) {
-      to.style("-webkit-box-orient", "vertical");
-      to.style("-webkit-line-clamp", std::to_string(*fMaxLines));
+      to.style(css::box_orient{css::vertical{}});
+      to.style(css::line_clamp{*fMaxLines});
     }
     if (fStyles.empty() && fLinks.empty()) {
       to.text(fText);
@@ -803,39 +815,39 @@ public:
         std::string words = fText.substr(from, to_ - from);
         if (link) {
           run.attr("href", link->target);
-          run.style("color", rgba(fLinkColour));
+          run.style(css::color{css::argb{fLinkColour}});
           if (link->pill) {
             run.attr("class", "skiff-link-pill");
-            run.style("background-color", rgba((fLinkColour & 0x00ffffffu) | 0x30000000u));
-            run.style("border-radius", "6px");
-            run.style("padding", "0 4px");
+            run.style(css::background_color{css::argb{(fLinkColour & 0x00ffffffu) | 0x30000000u}});
+            run.style(css::border_radius{css::sides{css::pixels{6}}});
+            run.style(css::padding{css::sides{css::zero{}, css::pixels{4}}});
           }
           if (link->picture) words = link->plain;
         }
         for (const Styled &one : fStyles) {
           if (!(one.first <= from && to_ <= one.last)) continue;
-          if (one.strong) run.style("font-weight", "600");
-          if (one.emphasis) run.style("font-style", "italic");
+          if (one.strong) run.style(css::font_weight{600});
+          if (one.emphasis) run.style(css::font_style{css::italic{}});
           if (one.struck || one.underline)
-            run.style("text-decoration", std::string(one.struck ? "line-through" : "") + (one.struck && one.underline ? " " : "") + (one.underline ? "underline" : ""));
+            run.style(css::text_decoration{css::decoration{one.struck, one.underline}});
           if (one.code) {
-            run.style("font-family", "ui-monospace, monospace");
-            run.style("background-color", "rgba(255,255,255,0.08)");
-            run.style("border-radius", "3px");
-            if (one.block) run.style("display", "block");
+            run.style(css::font_family{css::ui_monospace{}});
+            run.style(css::background_color{css::rgba{255,255,255,0.08}});
+            run.style(css::border_radius{css::sides{css::pixels{3}}});
+            if (one.block) run.style(css::display{css::block{}});
           }
           if (one.quote) {
-            run.style("color", rgba(fQuoteColour));
+            run.style(css::color{css::argb{fQuoteColour}});
             if (one.first == from) {
-              run.style("border-left", "2px solid " + rgba(fQuoteColour));
-              run.style("padding-left", "6px");
+              run.style(css::border_left{css::line{css::pixels{2}, css::argb{fQuoteColour}}});
+              run.style(css::padding_left{css::pixels{6}});
             }
           }
-          if (one.marked) run.style("background-color", rgba((fQuoteColour & 0x00ffffffu) | 0x40000000u));
+          if (one.marked) run.style(css::background_color{css::argb{(fQuoteColour & 0x00ffffffu) | 0x40000000u}});
           if (one.spoiler) {
             run.attr("class", "skiff-spoiler");
-            run.style("background-color", "rgba(128,128,128,0.6)");
-            run.style("color", "transparent");
+            run.style(css::background_color{css::rgba{128,128,128,0.6}});
+            run.style(css::color{css::transparent{}});
           }
         }
         run.text(words);
@@ -1039,7 +1051,7 @@ template <class... Parts> struct Stack : Node {
   std::tuple<Parts...> fParts;
   Look fLook;
   explicit Stack(Look look, Parts... parts) : fParts(std::move(parts)...), fLook(std::move(look)) {
-    fState.fDisplay = "flex";
+    fState.fDisplay = css::flex_box{};
     fState.apply(fLook.fSpec);
   }
   void forEachChild(auto &&f) {
@@ -1047,11 +1059,11 @@ template <class... Parts> struct Stack : Node {
   }
   void markup(Markup &to) {
     to.attr("class", "skiff-stack");
-    to.style("display", "flex");
-    to.style("flex-direction", fLook.fHorizontal ? "row" : "column");
-    if (fLook.fGap > 0.0f) to.style("gap", px(fLook.fGap));
+    to.style(css::display{css::flex_box{}});
+    to.style(fLook.fHorizontal ? css::flex_direction{css::row{}} : css::flex_direction{css::column{}});
+    if (fLook.fGap > 0.0f) to.style(css::gap{css::pixels{fLook.fGap}});
     // Across its way, a child is its own size -- as in a scene's flow -- unless it fills or grows there.
-    to.style("align-items", fLook.fHorizontal ? "center" : "flex-start");
+    to.style(fLook.fHorizontal ? css::align_items{css::center{}} : css::align_items{css::flex_start{}});
   }
   void setGap(float gap) {
     fLook.fGap = gap;
@@ -1100,7 +1112,7 @@ template <class... Children> struct Flow : Node {
   scene::FlowOptions fOptions;
   Look fLook;  // its way, for its children: what a grow means in it
   explicit Flow(scene::FlowOptions options, Children... children) : fParts(std::move(children)...), fOptions(options) {
-    fState.fDisplay = "flex";
+    fState.fDisplay = css::flex_box{};
     fLook.fHorizontal = spl::holds_alternative<scene::direction::horizontal>(fOptions.direction);
   }
   void forEachChild(auto &&f) {
@@ -1130,13 +1142,13 @@ template <class... Children> struct Flow : Node {
   }
   void markup(Markup &to) {
     to.attr("class", "skiff-flow");
-    to.style("flex-direction", fLook.fHorizontal ? "row" : "column");
-    to.style("flex-wrap", fOptions.wrap ? "wrap" : "nowrap");
-    to.style("column-gap", px(fOptions.spacingX));
-    to.style("row-gap", px(fOptions.spacingY));
-    to.style("align-items", std::string(alignment(fOptions.crossAlign)));
-    to.style("justify-content", fOptions.centreRows ? std::string("center") : std::string(justified(fOptions.justify)));
-    to.style("position", "relative");
+    to.style(fLook.fHorizontal ? css::flex_direction{css::row{}} : css::flex_direction{css::column{}});
+    to.style(fOptions.wrap ? css::flex_wrap{css::wrap{}} : css::flex_wrap{css::nowrap{}});
+    to.style(css::column_gap{css::pixels{fOptions.spacingX}});
+    to.style(css::row_gap{css::pixels{fOptions.spacingY}});
+    to.style(css::align_items{cssAlignment(fOptions.crossAlign)});
+    to.style(css::justify_content{fOptions.centreRows ? css::Justification{css::center{}} : cssJustification(fOptions.justify)});
+    to.style(css::position{css::relative{}});
   }
 };
 template <class... Children> Flow(scene::FlowOptions, Children...) -> Flow<Children...>;
@@ -1148,7 +1160,7 @@ template <class... Children> Flow(scene::FlowOptions, Children...) -> Flow<Child
 template <class... Children> struct ScrollContainer : Node {
   std::tuple<Children...> fParts;
   Look fLook;
-  explicit ScrollContainer(Children... children) : fParts(std::move(children)...) { fState.fDisplay = "flex"; }
+  explicit ScrollContainer(Children... children) : fParts(std::move(children)...) { fState.fDisplay = css::flex_box{}; }
   void forEachChild(auto &&f) {
     std::apply([&](auto &...each) { (f(each), ...); }, fParts);
   }
@@ -1159,10 +1171,10 @@ template <class... Children> struct ScrollContainer : Node {
   void markup(Markup &to) {
     to.attr("class", "skiff-scroll");
     to.listen("scroll");
-    to.style("flex-direction", fLook.fHorizontal ? "row" : "column");
-    to.style("overflow-x", fLook.fHorizontal ? "auto" : "hidden");
-    to.style("overflow-y", fLook.fHorizontal ? "hidden" : "auto");
-    to.style("position", "relative");
+    to.style(fLook.fHorizontal ? css::flex_direction{css::row{}} : css::flex_direction{css::column{}});
+    to.style(fLook.fHorizontal ? css::overflow_x{css::auto_{}} : css::overflow_x{css::hidden{}});
+    to.style(fLook.fHorizontal ? css::overflow_y{css::hidden{}} : css::overflow_y{css::auto_{}});
+    to.style(css::position{css::relative{}});
     if (fWanted) {
       to.scroll(*fWanted);
       fWanted.reset();
@@ -1227,7 +1239,8 @@ template <PictureSource Source> struct Image : Node {
     const scene::Picture *found = picture();
     fShown = found ? found->url : std::string();
     if (!fShown.empty()) to.attr("src", fShown);
-    to.style("object-fit", spl::holds_alternative<scene::fit::contain>(fFit) ? "contain" : "cover");
+    to.style(spl::visit(spl::overloaded{[](scene::fit::contain) { return css::object_fit{css::contain{}}; },
+                                       [](scene::fit::cover) { return css::object_fit{css::cover{}}; }}, fFit));
   }
 
 private:
@@ -1377,21 +1390,18 @@ struct Shape : Node {
   void setClass(std::string name) { change(fClass, std::move(name)); }
   // A style of the shape's own, beyond its fill and stroke: an offset-path,
   // a dash, a transition -- written as given.
-  void style(std::string name, std::string value) {
-    for (auto &[n, v] : fStyles)
-      if (n == name) {
-        if (v != value) {
-          v = std::move(value);
-          markDirty();
-        }
-        return;
-      }
-    fStyles.emplace_back(std::move(name), std::move(value));
-    markDirty();
+  void style(css::Declaration one) {
+    if (css::set(fStyles, std::move(one))) markDirty();
   }
-  std::vector<std::pair<std::string, std::string>> fStyles;
+  template <class Property> void eraseStyle() {
+    if (css::erase<Property>(fStyles)) markDirty();
+  }
+  void style(std::string name, std::string value) {
+    if (css::set(fStyles, name, value)) markDirty();
+  }
+  css::Declarations fStyles;
   void markupShape(Markup &to) {
-    for (const auto &[n, v] : fStyles) to.style(n, v);
+    for (const auto &one : fStyles) to.style(one);
     to.attr("fill", hexOf(fFill));
     to.attr("stroke", hexOf(fStroke));
     to.attr("stroke-width", number(fStrokeWidth));
@@ -1565,7 +1575,7 @@ struct Rows : Node {
   bool fFlex = true;
   std::vector<dom::Handle> fShownRows;  // the rows' elements as last appended, in order
   explicit Rows(Look look, std::string_view tag = "div", bool flex = true) : fLook(std::move(look)), fTag(tag), fFlex(flex) {
-    if (fFlex) fState.fDisplay = "flex";
+    if (fFlex) fState.fDisplay = css::flex_box{};
     fState.apply(fLook.fSpec);
   }
   [[nodiscard]] std::string_view tag() const noexcept { return fTag; }
@@ -1575,11 +1585,11 @@ struct Rows : Node {
   void markup(Markup &to) {
     if (!fFlex) return;
     to.attr("class", "skiff-stack");
-    to.style("display", "flex");
-    to.style("flex-direction", fLook.fHorizontal ? "row" : "column");
-    if (fLook.fGap > 0.0f) to.style("gap", px(fLook.fGap));
+    to.style(css::display{css::flex_box{}});
+    to.style(fLook.fHorizontal ? css::flex_direction{css::row{}} : css::flex_direction{css::column{}});
+    if (fLook.fGap > 0.0f) to.style(css::gap{css::pixels{fLook.fGap}});
     // Across its way, a child is its own size -- as in a scene's flow -- unless it fills or grows there.
-    to.style("align-items", fLook.fHorizontal ? "center" : "flex-start");
+    to.style(fLook.fHorizontal ? css::align_items{css::center{}} : css::align_items{css::flex_start{}});
   }
 };
 namespace detail {
@@ -1815,7 +1825,8 @@ template <class N> [[nodiscard]] Markup markupOf(N &node) {
     m.attr("data-view", std::string_view(std::remove_cvref_t<N>::viewName()));
   // Shown or not first, as the browser reads an element's style: what the
   // node says after it, then the rest of its Spec.
-  m.style("display", node.fState.fVisible ? node.fState.fDisplay : "none");
+  if (!node.fState.fVisible) m.style(css::display{css::none{}});
+  else if (node.fState.fDisplay) m.style(css::display{*node.fState.fDisplay});
   node.markup(m);
   const State &state = node.fState;
   if (!state.fClasses.empty()) {
@@ -1826,9 +1837,9 @@ template <class N> [[nodiscard]] Markup markupOf(N &node) {
     m.attr("class", classes);
   }
   const Css css = cssOf(state);
-  for (const auto &[property, value] : css.fRules) m.style(property, value);
+  for (const auto &one : css.fRules) m.style(one);
   for (const auto &[name, value] : css.fAttrs) m.attr(name, value);
-  for (const auto &[property, value] : state.fStyles) m.style(property, value);
+  for (const auto &one : state.fStyles) m.style(one);
   if (state.fDisabled) m.attr("disabled", "");
   return m;
 }
@@ -2498,12 +2509,12 @@ private:
       press.attr("value", at + ".click");
       if (naming) {
         for (const auto &[n, v] : naming->fAttrs) press.attr(n, v);
-        for (const auto &[p, v] : naming->fStyles) press.style(p, v);
+        for (const auto &one : naming->fStyles) press.style(one);
       }
       writeStart(out, "button", press);
     } else if (naming) {
       for (const auto &[n, v] : naming->fAttrs) m.attr(n, v);
-      for (const auto &[p, v] : naming->fStyles) m.style(p, v);
+      for (const auto &one : naming->fStyles) m.style(one);
     }
     writeStart(out, tag, m);
     if (!voidElement(tag)) {
@@ -2556,7 +2567,7 @@ private:
     Markup naming;
     naming.attr("slot", "n" + std::to_string(slot));
     naming.attr("id", "n" + std::to_string(id) + "v" + live::kVersion);
-    if (place) naming.style("order", std::to_string(*place));
+    if (place) naming.style(css::order{static_cast<int>(*place)});
     std::string bare;
     subtree(node, bare, w, &naming);
     return bare;

@@ -101,7 +101,7 @@ endif()
 
 # The page's tests: skiff.web with its in-memory document, nothing of Skia.
 if(TARGET skiff::web)
-  add_executable(skiffWebTests ${CMAKE_CURRENT_SOURCE_DIR}/src/web.cc)
+  add_executable(skiffWebTests ${CMAKE_CURRENT_SOURCE_DIR}/src/web.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/css.cc)
   target_link_libraries(skiffWebTests PRIVATE gtest gtest_main skiff::web)
   set_target_properties(skiffWebTests PROPERTIES CXX_STANDARD 23 CXX_SCAN_FOR_MODULES ON)
   add_test(NAME skiffWebTests COMMAND skiffWebTests)

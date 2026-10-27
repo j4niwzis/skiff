@@ -442,6 +442,7 @@ if(SKIFF_WEB)
   target_compile_features(skiff_web PUBLIC cxx_std_${skiff_cxx_standard})
   target_sources(skiff_web PUBLIC
     FILE_SET CXX_MODULES FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/web.cc
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src/web/css.cc
                                ${CMAKE_CURRENT_SOURCE_DIR}/src/web/dom.cc
                                ${CMAKE_CURRENT_SOURCE_DIR}/src/web/memory.cc
                                # Declarations only, in every build, so that

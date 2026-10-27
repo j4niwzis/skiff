@@ -100,6 +100,30 @@ them through invalidating methods such as `setPosition()`, `setSize()`,
 `setVisible()` and `setAlpha()`. Only container subclasses can use the raw
 child-arrangement hooks while they are already inside a layout pass.
 
+### CSS declarations
+
+The web and mirror backends translate `scene::Spec` and `scene::Look` into
+`web::css` declarations. Properties accept typed values; compound values
+such as borders and transforms remain structured until the DOM or HTML
+writer serializes them.
+
+```cpp
+namespace css = skiff::web::css;
+
+void markup(skiff::web::Markup &to) {
+  to.style(css::position{css::relative{}});
+  to.style(css::width{css::pixels{120}});
+  to.style(css::overflow_y{css::auto_{}});
+  to.style(css::border{css::line{css::pixels{1}, css::argb{0xff808080}}});
+  to.eraseStyle<css::height>();
+}
+```
+
+`Node::setStyle` and `Shape::style` accept the same declarations. Removing a
+property uses `eraseStyle<Property>()`. The two-string overload remains for
+opaque CSS extensions; an empty value removes that property. Opaque values
+are passed through without parsing.
+
 ## Input and accessibility
 
 `dispatchPointer()`, `dispatchKey()` and `dispatchText()` route capture,

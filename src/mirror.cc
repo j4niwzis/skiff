@@ -34,6 +34,7 @@ export namespace skiff::mirror {
 
 
 namespace dom = skiff::web::dom;
+namespace css = skiff::web::css;
 using skiff::web::Markup;
 
 namespace detail {
@@ -41,6 +42,8 @@ namespace detail {
 using skiff::web::px;
 using skiff::web::number;
 using skiff::web::rgba;
+using skiff::web::cssMargin;
+using skiff::web::cssAlignment;
 
 // Whether a flow runs across: its direction, visited.
 [[nodiscard]] inline bool isRow(const scene::Direction &d) {
@@ -64,13 +67,14 @@ using Holder = spl::variant<in_flex, in_cell, in_scroll>;
 inline constexpr skiff::web::Part kField{0xfffffff0u}, kPlaceholder{0xfffffff1u};
 
 // The size along one axis, as the State says it.
-inline void sizeOf(Markup &m, std::string_view property, float size, bool relative, bool automatic, float margin = 0.0f) {
+template <class Property>
+inline void sizeOf(Markup &m, float size, bool relative, bool automatic, float margin = 0.0f) {
   if (relative) {
-    const std::string share = number(size * 100.0f) + "%";
-    m.style(property, margin == 0.0f ? share : "calc(" + share + " - " + px(size * margin) + ")");
+    if (margin == 0.0f) m.style(Property{css::percent{size * 100.0f}});
+    else m.style(Property{css::calculated{css::percent{size * 100.0f}, css::pixels{size * margin}}});
+  } else if (!automatic && size > 0.0f) {
+    m.style(Property{css::pixels{size}});
   }
-  else if (!automatic && size > 0.0f)
-    m.style(property, px(size));
 }
 
 // What every node's element is, from its State: shown or not, its sizes,
@@ -78,38 +82,38 @@ inline void sizeOf(Markup &m, std::string_view property, float size, bool relati
 // opacity, its shift and scale, and where it is in what holds it.
 inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   if (!s.fVisible)
-    m.style("display", "none");
+    m.style(css::display{css::none{}});
   const bool relX = s.fRelativeSizeAxes.has<scene::axis::x>(), relY = s.fRelativeSizeAxes.has<scene::axis::y>();
-  sizeOf(m, "width", s.fWidth, relX, s.fAutoSizeAxes.has<scene::axis::x>(), s.fMargin.totalX());
-  sizeOf(m, "height", s.fHeight, relY, s.fAutoSizeAxes.has<scene::axis::y>(), s.fMargin.totalY());
+  sizeOf<css::width>(m, s.fWidth, relX, s.fAutoSizeAxes.has<scene::axis::x>(), s.fMargin.totalX());
+  sizeOf<css::height>(m, s.fHeight, relY, s.fAutoSizeAxes.has<scene::axis::y>(), s.fMargin.totalY());
   // A grid or flex item's automatic minimum is its content's size. Scene
   // containers may be smaller than their contents (notably a timeline),
   // so that minimum must not push the composer outside the window.
-  m.style("min-width", px(s.fMinWidth));
-  m.style("min-height", px(s.fMinHeight));
-  if (s.fMaxWidth > 0.0f) m.style("max-width", px(s.fMaxWidth));
-  if (s.fMaxHeight > 0.0f) m.style("max-height", px(s.fMaxHeight));
+  m.style(css::min_width{css::pixels{s.fMinWidth}});
+  m.style(css::min_height{css::pixels{s.fMinHeight}});
+  if (s.fMaxWidth > 0.0f) m.style(css::max_width{css::pixels{s.fMaxWidth}});
+  if (s.fMaxHeight > 0.0f) m.style(css::max_height{css::pixels{s.fMaxHeight}});
   const scene::Margin none{};
-  if (!(s.fMargin == none)) m.style("margin", skiff::web::margin(s.fMargin));
-  if (!(s.fPadding == none)) m.style("padding", skiff::web::margin(s.fPadding));
-  m.style("box-sizing", "border-box");
+  if (!(s.fMargin == none)) m.style(css::margin{cssMargin(s.fMargin)});
+  if (!(s.fPadding == none)) m.style(css::padding{cssMargin(s.fPadding)});
+  m.style(css::box_sizing{css::border_box{}});
   if (s.fCorners) {
     const scene::Corners &k = *s.fCorners;
-    m.style("border-radius", px(k.topLeft) + " " + px(k.topRight) + " " + px(k.bottomRight) + " " + px(k.bottomLeft));
+    m.style(css::border_radius{css::sides{css::pixels{k.topLeft}, css::pixels{k.topRight}, css::pixels{k.bottomRight}, css::pixels{k.bottomLeft}}});
   } else if (s.fCornerRadius > 0.0f) {
-    m.style("border-radius", px(s.fCornerRadius));
+    m.style(css::border_radius{css::sides{css::pixels{s.fCornerRadius}}});
   }
   const auto background = s.selected() && s.fSelectedBackground ? s.fSelectedBackground : s.fBackground;
-  if (background) m.style("background-color", rgba(*background));
+  if (background) m.style(css::background_color{css::argb{*background}});
   // What the engine does itself, under the pointer and with the focus: a
   // background, a part shown -- variables on the element, and attributes
   // skiff.web's sheet (pageCss) selects on with :hover and :focus-within.
   if (s.fHoverBackground) {
-    m.style("--skiff-hover-bg", rgba(*s.fHoverBackground));
+    m.style(css::hover_background{css::argb{*s.fHoverBackground}});
     m.attr("data-skiff-hover", "");
   }
   if (s.fFocusBackground) {
-    m.style("--skiff-focus-bg", rgba(*s.fFocusBackground));
+    m.style(css::focus_background{css::argb{*s.fFocusBackground}});
     m.attr("data-skiff-focus", "");
   }
   if (s.fRevealOnHover) m.attr("data-skiff-reveal", "");
@@ -117,38 +121,35 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   if (s.fTail && s.fTail->shown) {
     m.attr("data-skiff-tail", spl::visit(spl::overloaded{[](scene::tail_side::left) { return "left"; }, [](scene::tail_side::right) { return "right"; }},
                                          s.fTail->side));
-    m.style("--skiff-tail-w", px(s.fTail->width));
-    m.style("--skiff-tail-h", px(s.fTail->height));
-    if (background) m.style("--skiff-bg", rgba(*background));
+    m.style(css::tail_width{css::pixels{s.fTail->width}});
+    m.style(css::tail_height{css::pixels{s.fTail->height}});
+    if (background) m.style(css::tail_background{css::argb{*background}});
   }
   // The pointer's shape over it.
-  if (const std::string_view cursor = spl::visit(spl::overloaded{[](scene::cursor::arrow) { return std::string_view(); },
-                                                                  [](scene::cursor::text) { return std::string_view("text"); },
-                                                                  [](scene::cursor::hand) { return std::string_view("pointer"); },
-                                                                  [](scene::cursor::resize_horizontal) { return std::string_view("ew-resize"); },
-                                                                  [](scene::cursor::resize_vertical) { return std::string_view("ns-resize"); }},
-                                                  s.cursorShape());
-      !cursor.empty())
-    m.style("cursor", cursor);
-  if (s.fGradient) m.style("background-image", "linear-gradient(" + rgba(s.fGradient->top) + "," + rgba(s.fGradient->bottom) + ")");
-  if (s.fBorder) m.style("border", px(s.fBorder->width) + " solid " + rgba(s.fBorder->colour));
-  if (s.fShadow) m.style("box-shadow", "0 " + px(s.fShadow->offsetY) + " " + px(s.fShadow->offsetY * 2.0f) + " " + rgba(s.fShadow->colour));
-  if (s.fAlpha < 1.0f) m.style("opacity", number(s.fAlpha));
-  if (s.fMasking) m.style("overflow", "hidden");
-  if (s.fDepth != 0.0f) m.style("z-index", std::to_string(static_cast<int>(std::lround(s.fDepth))));
+  spl::visit(spl::overloaded{[](scene::cursor::arrow) {},
+                           [&](scene::cursor::text) { m.style(css::cursor{css::text{}}); },
+                           [&](scene::cursor::hand) { m.style(css::cursor{css::pointer{}}); },
+                           [&](scene::cursor::resize_horizontal) { m.style(css::cursor{css::ew_resize{}}); },
+                           [&](scene::cursor::resize_vertical) { m.style(css::cursor{css::ns_resize{}}); }}, s.cursorShape());
+  if (s.fGradient) m.style(css::background_image{css::linear_gradient{css::argb{s.fGradient->top}, css::argb{s.fGradient->bottom}}});
+  if (s.fBorder) m.style(css::border{css::line{css::pixels{s.fBorder->width}, css::argb{s.fBorder->colour}}});
+  if (s.fShadow) m.style(css::box_shadow{css::shadow{css::zero{}, css::pixels{s.fShadow->offsetY}, css::pixels{s.fShadow->offsetY * 2.0f}, css::argb{s.fShadow->colour}}});
+  if (s.fAlpha < 1.0f) m.style(css::opacity{s.fAlpha});
+  if (s.fMasking) m.style(css::overflow{css::hidden{}});
+  if (s.fDepth != 0.0f) m.style(css::z_index{static_cast<int>(std::lround(s.fDepth))});
   // Placed by its anchor, out of the flow it is in: over it, its origin on
   // the anchor.
-  std::string transform;
+  css::transforms transform;
   const auto anchored = [&](bool absolute) {
-    m.style("position", absolute ? "absolute" : "relative");
+    m.style(absolute ? css::position{css::absolute{}} : css::position{css::relative{}});
     const auto offset = [](float at, float margins) {
-      const auto percent = number(at * 100.0f) + "%";
-      return at * margins == 0.0f ? percent : "calc(" + percent + " - " + px(at * margins) + ")";
+      if (at * margins == 0.0f) return css::Length{css::percent{at * 100.0f}};
+      return css::Length{css::calculated{css::percent{at * 100.0f}, css::pixels{at * margins}}};
     };
-    m.style("left", offset(s.fAnchor.x, s.fMargin.totalX()));
-    m.style("top", offset(s.fAnchor.y, s.fMargin.totalY()));
+    m.style(css::left{offset(s.fAnchor.x, s.fMargin.totalX())});
+    m.style(css::top{offset(s.fAnchor.y, s.fMargin.totalY())});
     if (s.fOrigin.x != 0.0f || s.fOrigin.y != 0.0f)
-      transform += "translate(" + number(-s.fOrigin.x * 100.0f) + "%," + number(-s.fOrigin.y * 100.0f) + "%) ";
+      transform.values.emplace_back(css::translate{css::percent{-s.fOrigin.x * 100.0f}, css::percent{-s.fOrigin.y * 100.0f}});
   };
   spl::visit(spl::overloaded{
                  [&](const in_flex &flow) {
@@ -158,27 +159,28 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
                                                : s.fGrowAxes.has<scene::axis::y>() || relY;
                    const bool grows = flow.row ? s.fGrowAxes.has<scene::axis::x>() : s.fGrowAxes.has<scene::axis::y>();
                    const bool shrinks = flow.row ? s.fShrinkAxes.has<scene::axis::x>() : s.fShrinkAxes.has<scene::axis::y>();
-                   m.style("flex", grows ? "1 1 0px" : shrinks ? "0 1 auto" : "0 0 auto");
+                   m.style(css::flex{css::flex_values{grows ? 1.0f : 0.0f, grows || shrinks ? 1.0f : 0.0f,
+                       grows ? css::Size{css::pixels{0}} : css::Size{css::auto_{}}}});
                    if (along && (flow.row ? s.fMinWidth : s.fMinHeight) <= 0.0f)
-                     m.style(flow.row ? "min-width" : "min-height", "0");
+                     m.style(flow.row ? css::Declaration{css::min_width{css::zero{}}} : css::Declaration{css::min_height{css::zero{}}});
                    const bool across = flow.row ? s.fGrowAxes.has<scene::axis::y>() : s.fGrowAxes.has<scene::axis::x>();
-                   if (s.fAlignSelf) m.style("align-self", std::string(skiff::web::alignment(*s.fAlignSelf)));
-                   else if (across) m.style("align-self", "stretch");
+                   if (s.fAlignSelf) m.style(css::align_self{skiff::web::cssAlignment(*s.fAlignSelf)});
+                   else if (across) m.style(css::align_self{css::stretch{}});
                    if (s.fOutOfFlow) {
                      anchored(true);
                    }
                  },
                  [&](const in_cell &) {
                    // In the one cell of what holds it, where its anchor is.
-                   m.style("grid-area", "1/1");
-                   m.style("justify-self", "start");
-                   m.style("align-self", "start");
+                   m.style(css::grid_area{css::cell{1, 1}});
+                   m.style(css::justify_self{css::start{}});
+                   m.style(css::align_self{css::start{}});
                    anchored(s.fOutOfFlow);
                  },
                  [&](const in_scroll &) {
                    // The contents keep their height; only the viewport is
                    // bounded. Flex's default shrink collapsed long histories.
-                   m.style("flex", "0 0 auto");
+                   m.style(css::flex{css::flex_values{0, 0, css::auto_{}}});
                  }},
              holder);
   // Its offset, where it is its own: in a flow, a part in the flow is where
@@ -193,12 +195,9 @@ inline void stateOf(Markup &m, const scene::State &s, const Holder &holder) {
   const bool scrolled = spl::visit(spl::overloaded{[](const in_scroll &) { return true; }, [](const auto &) { return false; }}, holder);
   const float dx = (flowed ? 0.0f : s.fX) + (scrolled ? 0.0f : s.fShiftX);
   const float dy = (flowed ? 0.0f : s.fY) + (scrolled ? 0.0f : s.fShiftY);
-  if (dx != 0.0f || dy != 0.0f) transform += "translate(" + px(dx) + "," + px(dy) + ") ";
-  if (s.fScale != 1.0f) transform += "scale(" + number(s.fScale) + ") ";
-  if (!transform.empty()) {
-    transform.pop_back();
-    m.style("transform", transform);
-  }
+  if (dx != 0.0f || dy != 0.0f) transform.values.emplace_back(css::translate{css::pixels{dx}, css::pixels{dy}});
+  if (s.fScale != 1.0f) transform.values.emplace_back(css::scale{s.fScale});
+  if (!transform.values.empty()) m.style(css::transform{std::move(transform)});
 }
 
 // The element a node is made as: a field the engine's own, else a box.
@@ -247,9 +246,9 @@ void runsOf(Markup &m, const scene::look::words &words, PictureOf &&pictureOf, s
     if (link && link->picture) {
       if (const skia::SkImage *picture = pictureOf(*link)) {
         m.inner("img", skiff::web::Part{part}, [&](Markup &img) {
-          img.style("width", px(words.size * 1.2f));
-          img.style("height", px(words.size * 1.2f));
-          img.style("vertical-align", "middle");
+          img.style(css::width{css::pixels{words.size * 1.2f}});
+          img.style(css::height{css::pixels{words.size * 1.2f}});
+          img.style(css::vertical_align{css::middle{}});
           img.attr("alt", link->plain);
           img.attr("data-skiff-picture", std::to_string(picture->uniqueID()));
         });
@@ -260,31 +259,30 @@ void runsOf(Markup &m, const scene::look::words &words, PictureOf &&pictureOf, s
     m.inner(link ? "a" : "span", skiff::web::Part{part}, [&](Markup &run) {
       run.text(words.text.substr(from, to - from));
       const scene::Colour colour = link ? words.linkColour : style.colour.value_or(style.quote ? words.quoteColour : words.colour);
-      run.style("color", rgba(colour));
-      if (style.strong) run.style("font-weight", "bold");
-      if (style.emphasis) run.style("font-style", "italic");
+      run.style(css::color{css::argb{colour}});
+      if (style.strong) run.style(css::font_weight{css::bold{}});
+      if (style.emphasis) run.style(css::font_style{css::italic{}});
       if (style.struck || style.underline)
-        run.style("text-decoration", std::string(style.struck ? "line-through" : "") + (style.struck && style.underline ? " " : "") +
-                                         (style.underline ? "underline" : ""));
+        run.style(css::text_decoration{css::decoration{style.struck, style.underline}});
       if (style.code) {
-        run.style("font-family", "monospace");
-        run.style("background-color", rgba((colour & 0x00ffffffu) | 0x1a000000u));
-        run.style("border-radius", "3px");
+        run.style(css::font_family{css::monospace{}});
+        run.style(css::background_color{css::argb{(colour & 0x00ffffffu) | 0x1a000000u}});
+        run.style(css::border_radius{css::sides{css::pixels{3}}});
       }
-      if (style.marked) run.style("background-color", rgba((words.quoteColour & 0x00ffffffu) | 0x47000000u));
-      if (style.background) run.style("background-color", rgba(*style.background));
+      if (style.marked) run.style(css::background_color{css::argb{(words.quoteColour & 0x00ffffffu) | 0x47000000u}});
+      if (style.background) run.style(css::background_color{css::argb{*style.background}});
       if (style.spoiler) {
-        run.style("background-color", rgba(colour));
-        run.style("color", "transparent");
-        run.style("border-radius", "3px");
+        run.style(css::background_color{css::argb{colour}});
+        run.style(css::color{css::transparent{}});
+        run.style(css::border_radius{css::sides{css::pixels{3}}});
       }
-      if (style.scale != 1.0f) run.style("font-size", px(words.size * style.scale));
+      if (style.scale != 1.0f) run.style(css::font_size{css::pixels{words.size * style.scale}});
       if (link) {
         run.attr("href", link->target);
         if (link->pill) {
-          run.style("background-color", rgba((words.linkColour & 0x00ffffffu) | 0x29000000u));
-          run.style("border-radius", "999px");
-          run.style("padding", "0 6px");
+          run.style(css::background_color{css::argb{(words.linkColour & 0x00ffffffu) | 0x29000000u}});
+          run.style(css::border_radius{css::sides{css::pixels{999}}});
+          run.style(css::padding{css::sides{css::zero{}, css::pixels{6}}});
         }
       }
     });
@@ -294,26 +292,21 @@ void runsOf(Markup &m, const scene::look::words &words, PictureOf &&pictureOf, s
 // What kind of node it is, as an element, and how it holds its parts: what
 // its look says.
 inline void flexOf(Markup &m, const scene::FlowOptions &o) {
-  m.style("display", "flex");
-  m.style("position", "relative");
-  m.style("flex-direction", isRow(o.direction) ? "row" : "column");
-  m.style("flex-wrap", o.wrap ? "wrap" : "nowrap");
-  if (o.spacingX > 0.0f || o.spacingY > 0.0f) m.style("gap", px(o.spacingY) + " " + px(o.spacingX));
-  m.style("align-items", std::string(skiff::web::alignment(o.crossAlign)));
-  m.style("justify-content", spl::visit(spl::overloaded{[](scene::justify::start) { return "flex-start"; },
-                                                        [](scene::justify::middle) { return "center"; },
-                                                        [](scene::justify::end) { return "flex-end"; },
-                                                        [](scene::justify::space_between) { return "space-between"; },
-                                                        [](scene::justify::space_around) { return "space-around"; }},
-                                        o.justify));
+  m.style(css::display{css::flex_box{}});
+  m.style(css::position{css::relative{}});
+  m.style(isRow(o.direction) ? css::flex_direction{css::row{}} : css::flex_direction{css::column{}});
+  m.style(o.wrap ? css::flex_wrap{css::wrap{}} : css::flex_wrap{css::nowrap{}});
+  if (o.spacingX > 0.0f || o.spacingY > 0.0f) m.style(css::gap{css::gaps{css::pixels{o.spacingY}, css::pixels{o.spacingX}}});
+  m.style(css::align_items{skiff::web::cssAlignment(o.crossAlign)});
+  m.style(css::justify_content{skiff::web::cssJustification(o.justify)});
 }
 template <class PictureOf>
 [[nodiscard]] Holder kindOf(Markup &m, const scene::Look &look, PictureOf &&pictureOf,
                             std::vector<std::pair<std::uint32_t, const skia::SkImage *>> &pictures) {
   return spl::visit(spl::overloaded{[&](const scene::look::box &box) -> Holder {
-                                      m.style("display", "grid");
-                                      m.style("position", "relative");
-                                      if (box.colour) m.style("background-color", rgba(*box.colour));
+                                      m.style(css::display{css::grid{}});
+                                      m.style(css::position{css::relative{}});
+                                      if (box.colour) m.style(css::background_color{css::argb{*box.colour}});
                                       return in_cell{};
                                     },
                                     [&](const scene::look::flow &flow) -> Holder {
@@ -321,18 +314,18 @@ template <class PictureOf>
                                       return in_flex{isRow(flow.options.direction)};
                                     },
                                     [&](const scene::look::words &words) -> Holder {
-                                      m.style("display", "block");
-                                      m.style("white-space", "pre-wrap");
-                                      m.style("font-size", px(words.size));
-                                      m.style("line-height", number(1.25f));
-                                      m.style("color", rgba(words.colour));
-                                      if (words.bold) m.style("font-weight", "bold");
+                                      m.style(css::display{css::block{}});
+                                      m.style(css::white_space{css::pre_wrap{}});
+                                      m.style(css::font_size{css::pixels{words.size}});
+                                      m.style(css::line_height{1.25f});
+                                      m.style(css::color{css::argb{words.colour}});
+                                      if (words.bold) m.style(css::font_weight{css::bold{}});
                                       if (words.elided) {
-                                        m.style("white-space", "nowrap");
-                                        m.style("overflow", "hidden");
-                                        m.style("text-overflow", "ellipsis");
+                                        m.style(css::white_space{css::nowrap{}});
+                                        m.style(css::overflow{css::hidden{}});
+                                        m.style(css::text_overflow{css::ellipsis{}});
                                       } else if (words.wrapped == std::optional<bool>(false)) {
-                                        m.style("white-space", "pre");
+                                        m.style(css::white_space{css::pre{}});
                                       }
                                       // Plain: its words. Styled or linked: its runs.
                                       if (words.styles.empty() && words.links.empty())
@@ -342,15 +335,15 @@ template <class PictureOf>
                                       return in_cell{};
                                     },
                                     [&](const scene::look::scrolled &) -> Holder {
-                                      m.style("display", "flex");
-                                      m.style("flex-direction", "column");
-                                      m.style("overflow-y", "auto");
-                                      m.style("position", "relative");
+                                      m.style(css::display{css::flex_box{}});
+                                      m.style(css::flex_direction{css::column{}});
+                                      m.style(css::overflow_y{css::auto_{}});
+                                      m.style(css::position{css::relative{}});
                                       return in_scroll{};
                                     },
                                     [&](const scene::look::drawn &) -> Holder {
-                                      m.style("display", "grid");
-                                      m.style("position", "relative");
+                                      m.style(css::display{css::grid{}});
+                                      m.style(css::position{css::relative{}});
                                       return in_cell{};
                                     },
                                     [&](const scene::look::field &field) -> Holder {
@@ -358,35 +351,35 @@ template <class PictureOf>
                                       // it shows empty; its text in the field's
                                       // size and colour, on nothing of its own --
                                       // the node's plate is its State's.
-                                      m.style("display", "grid");
-                                      m.style("position", "relative");
-                                      m.style("cursor", "text");
+                                      m.style(css::display{css::grid{}});
+                                      m.style(css::position{css::relative{}});
+                                      m.style(css::cursor{css::text{}});
                                       m.inner(field.multiline ? "textarea" : "input", kField, [&](Markup &input) {
                                         input.value(field.text);
                                         if (!field.placeholder.empty()) input.attr("aria-label", field.placeholder);
                                         if (field.masked) input.attr("type", "password");
-                                        input.style("grid-area", "1/1");
-                                        input.style("width", "100%"); input.style("height", "100%");
-                                        input.style("min-width", "0"); input.style("min-height", "0");
-                                        input.style("box-sizing", "border-box");
-                                        input.style("padding", "0"); input.style("margin", "0");
-                                        input.style("font-size", px(field.size));
-                                        input.style("font-family", "inherit");
-                                        input.style("color", rgba(field.colour));
-                                        input.style("background", "transparent");
-                                        input.style("border", "none"); input.style("outline", "none");
-                                        input.style("resize", "none");
+                                        input.style(css::grid_area{css::cell{1, 1}});
+                                        input.style(css::width{css::percent{100}}); input.style(css::height{css::percent{100}});
+                                        input.style(css::min_width{css::zero{}}); input.style(css::min_height{css::zero{}});
+                                        input.style(css::box_sizing{css::border_box{}});
+                                        input.style(css::padding{css::sides{css::zero{}}}); input.style(css::margin{css::sides{css::zero{}}});
+                                        input.style(css::font_size{css::pixels{field.size}});
+                                        input.style(css::font_family{css::inherit{}});
+                                        input.style(css::color{css::argb{field.colour}});
+                                        input.style(css::background{css::transparent{}});
+                                        input.style(css::border{css::none{}}); input.style(css::outline{css::none{}});
+                                        input.style(css::resize{css::none{}});
                                       });
                                       // Blitz has no native placeholder painting. A sibling
                                       // keeps it out of the editor's actual value and selection.
                                       if (field.text.empty() && !field.placeholder.empty())
                                         m.inner("div", kPlaceholder, [&](Markup &hint) {
                                           hint.text(field.placeholder);
-                                          hint.style("grid-area", "1/1"); hint.style("align-self", "center");
-                                          hint.style("font-size", px(field.size)); hint.style("color", rgba(field.colour));
-                                          hint.style("opacity", "0.65"); hint.style("pointer-events", "none");
-                                          hint.style("min-width", "0"); hint.style("overflow", "hidden");
-                                          hint.style("white-space", "nowrap");
+                                          hint.style(css::grid_area{css::cell{1, 1}}); hint.style(css::align_self{css::center{}});
+                                          hint.style(css::font_size{css::pixels{field.size}}); hint.style(css::color{css::argb{field.colour}});
+                                          hint.style(css::opacity{0.65}); hint.style(css::pointer_events{css::none{}});
+                                          hint.style(css::min_width{css::zero{}}); hint.style(css::overflow{css::hidden{}});
+                                          hint.style(css::white_space{css::nowrap{}});
                                         });
                                       return in_cell{};
                                     }},
@@ -481,16 +474,16 @@ public:
   // Pictures: an <img> where each is painted -- filling its box as a cover
   // where it fills it, cut to a rounded box where it is seen through one.
   void imageFilled(const skia::SkImage *image, const skia::SkRect &at, float alpha = 1.0f) const {
-    this->picture(image, at, alpha, "cover", 0.0f);
+    this->picture(image, at, alpha, css::cover{}, 0.0f);
   }
   void image(const skia::SkImage *image, const skia::SkRect &at, float alpha = 1.0f, Sampling = Sampling::linear) const {
-    this->picture(image, at, alpha, "fill", 0.0f);
+    this->picture(image, at, alpha, css::fill{}, 0.0f);
   }
   void imagePart(const skia::SkImage *image, const skia::SkRect &, const skia::SkRect &to, float alpha = 1.0f, Sampling = Sampling::linear) const {
-    this->picture(image, to, alpha, "cover", 0.0f);
+    this->picture(image, to, alpha, css::cover{}, 0.0f);
   }
   void imageThrough(const skia::SkRRect &shape, const skia::SkImage *image, const skia::SkRect &at, float alpha, Sampling = Sampling::linear) const {
-    this->picture(image, at, alpha, "cover", shape.radii(skia::SkRRect::kUpperLeft_Corner).fX);
+    this->picture(image, at, alpha, css::cover{}, shape.radii(skia::SkRRect::kUpperLeft_Corner).fX);
   }
   void imageThrough(const skia::SkPath &, const skia::SkImage *image, const skia::SkRect &, float, Sampling = Sampling::linear) const {
     if (image != nullptr) this->lose("a picture through a path");
@@ -541,13 +534,13 @@ protected:
     if (!fRecording->lost) fRecording->lostWhat = what;
     fRecording->lost = true;
   }
-  void picture(const skia::SkImage *image, const skia::SkRect &at, float alpha, std::string_view fit, float radius) const {
+  void picture(const skia::SkImage *image, const skia::SkRect &at, float alpha, css::Fit fit, float radius) const {
     if (image == nullptr || alpha <= 0.0f) return;
     this->element("img", [&](Markup &e) {
       this->at(e, this->placed(at));
-      e.style("object-fit", fit);
-      if (radius > 0.0f) e.style("border-radius", px(radius));
-      if (alpha < 1.0f) e.style("opacity", number(alpha));
+      e.style(css::object_fit{fit});
+      if (radius > 0.0f) e.style(css::border_radius{css::sides{css::pixels{radius}}});
+      if (alpha < 1.0f) e.style(css::opacity{alpha});
       e.attr("data-skiff-picture", std::to_string(image->uniqueID()));
     });
     fRecording->pictures.emplace_back(static_cast<std::uint32_t>(fRecording->parts), image);
@@ -565,32 +558,33 @@ protected:
   // Where a box of the painting is in the element: moved as it was
   // translated, from the node's own box.
   [[nodiscard]] skia::SkRect placed(const skia::SkRect &r) const { return r.makeOffset(fX - fLeft, fY - fTop); }
-  [[nodiscard]] static std::string colourOf(skia::SkColor c, float alpha) {
+  [[nodiscard]] static css::argb cssColour(skia::SkColor c, float alpha) {
     const float a = static_cast<float>((c >> 24) & 0xffu) / 255.0f * std::clamp(alpha, 0.0f, 1.0f);
     const auto byte = static_cast<scene::Colour>(std::lround(a * 255.0f));
-    return rgba((byte << 24) | (c & 0x00ffffffu));
+    return {(byte << 24) | (c & 0x00ffffffu)};
   }
+  [[nodiscard]] static std::string colourOf(skia::SkColor c, float alpha) { return rgba(cssColour(c, alpha).value); }
   [[nodiscard]] static bool unseen(skia::SkColor color, float alpha) { return ((color >> 24) & 0xffu) == 0 || alpha <= 0.0f; }
   void element(std::string_view tag, auto &&write) const {
     fInto->inner(tag, skiff::web::Part{static_cast<std::uint32_t>(++fRecording->parts)}, [&](Markup &e) {
-      e.style("position", "absolute");
+      e.style(css::position{css::absolute{}});
       write(e);
     });
   }
   // A part of an element made here: numbered on from those before.
   [[nodiscard]] skiff::web::Part nextPart() const { return skiff::web::Part{static_cast<std::uint32_t>(++fRecording->parts)}; }
   void at(Markup &e, const skia::SkRect &r) const {
-    e.style("left", px(r.fLeft));
-    e.style("top", px(r.fTop));
-    e.style("width", px(r.width()));
-    e.style("height", px(r.height()));
+    e.style(css::left{css::pixels{r.fLeft}});
+    e.style(css::top{css::pixels{r.fTop}});
+    e.style(css::width{css::pixels{r.width()}});
+    e.style(css::height{css::pixels{r.height()}});
   }
   void plate(const skia::SkRect &rect, float radius, skia::SkColor color, float alpha) const {
     if (unseen(color, alpha) || rect.isEmpty()) return;
     this->element("div", [&](Markup &e) {
       this->at(e, this->placed(rect));
-      e.style("background-color", colourOf(color, alpha));
-      if (radius > 0.0f) e.style("border-radius", px(radius));
+      e.style(css::background_color{cssColour(color, alpha)});
+      if (radius > 0.0f) e.style(css::border_radius{css::sides{css::pixels{radius}}});
     });
   }
   void edge(const skia::SkRect &rect, float radius, float width, skia::SkColor color, float alpha) const {
@@ -599,9 +593,9 @@ protected:
     const skia::SkRect outer = this->placed(rect).makeOutset(width * 0.5f, width * 0.5f);
     this->element("div", [&](Markup &e) {
       this->at(e, outer);
-      e.style("box-sizing", "border-box");
-      e.style("border", px(width) + " solid " + colourOf(color, alpha));
-      if (radius > 0.0f) e.style("border-radius", px(radius + width * 0.5f));
+      e.style(css::box_sizing{css::border_box{}});
+      e.style(css::border{css::line{css::pixels{width}, cssColour(color, alpha)}});
+      if (radius > 0.0f) e.style(css::border_radius{css::sides{css::pixels{radius + width * 0.5f}}});
     });
   }
   void words(const std::string &str, float x, float baseline, float size, skia::SkColor color, float alpha, bool bold,
@@ -611,17 +605,17 @@ protected:
     skia::SkFontMetrics metrics;
     (void)fFont->getMetrics(&metrics);
     this->element("div", [&](Markup &e) {
-      e.style("left", px(x + fX - fLeft));
-      e.style("top", px(baseline + metrics.fAscent + fY - fTop));
+      e.style(css::left{css::pixels{x + fX - fLeft}});
+      e.style(css::top{css::pixels{baseline + metrics.fAscent + fY - fTop}});
       if (width) {
-        e.style("width", px(*width));
-        e.style("overflow", "hidden");
+        e.style(css::width{css::pixels{*width}});
+        e.style(css::overflow{css::hidden{}});
       }
-      e.style("white-space", "pre");
-      if (fMonospace) e.style("font-family", "monospace");
-      e.style("font-size", px(size));
-      e.style("color", colourOf(color, alpha));
-      if (bold) e.style("font-weight", "bold");
+      e.style(css::white_space{css::pre{}});
+      if (fMonospace) e.style(css::font_family{css::monospace{}});
+      e.style(css::font_size{css::pixels{size}});
+      e.style(css::color{cssColour(color, alpha)});
+      if (bold) e.style(css::font_weight{css::bold{}});
       e.text(str);
     });
   }
@@ -726,9 +720,9 @@ private:
   // viewBox), moved as the painting was translated.
   void shape(auto &&write) const {
     this->element("svg", [&](Markup &svg) {
-      svg.style("left", "0");
-      svg.style("top", "0");
-      svg.style("overflow", "visible");
+      svg.style(css::left{css::zero{}});
+      svg.style(css::top{css::zero{}});
+      svg.style(css::overflow{css::visible{}});
       svg.attr("width", number(fBox.width()));
       svg.attr("height", number(fBox.height()));
       svg.attr("viewBox", number(fBox.fLeft - fX) + " " + number(fBox.fTop - fY) + " " + number(fBox.width()) + " " + number(fBox.height()));
@@ -1007,19 +1001,19 @@ private:
     // engine measure it: its font metrics and line breaks can differ.
     // Reusing the measured height clipped lines and overlapped later rows.
     spl::visit(spl::overloaded{[&](const scene::look::words &words) {
-                                now.style("height", "");
+                                now.eraseStyle<css::height>();
                                 if (!state.fRelativeSizeAxes.has<scene::axis::x>() && !state.fGrowAxes.has<scene::axis::x>()) {
-                                  now.style("width", "max-content");
-                                  now.style("max-width", state.fMaxWidth > 0.0f ? web::px(state.fMaxWidth) : "100%");
+                                  now.style(css::width{css::max_content{}});
+                                  now.style(state.fMaxWidth > 0.0f ? css::max_width{css::pixels{state.fMaxWidth}} : css::max_width{css::percent{100}});
                                 }
-                                if (!words.elided && words.wrapped != std::optional(false)) now.style("overflow-wrap", "break-word");
+                                if (!words.elided && words.wrapped != std::optional(false)) now.style(css::overflow_wrap{css::break_word{}});
                               }, [](const auto &) {}}, look);
     // Scene masking clips the viewport, but overflow:hidden also disables
     // the engine's own scrolling. A scrolling look owns its overflow.
     spl::visit(spl::overloaded{[&](const scene::look::scrolled &) {
-                                now.style("overflow", "");
-                                now.style("overflow-x", "hidden");
-                                now.style("overflow-y", "auto");
+                                now.eraseStyle<css::overflow>();
+                                now.style(css::overflow_x{css::hidden{}});
+                                now.style(css::overflow_y{css::auto_{}});
                               }, [](const auto &) {}}, look);
     // The root: the whole page, whatever its own size says -- the scene gives
     // it the window's box by hand, not by a size of its own, and written as
@@ -1030,19 +1024,16 @@ private:
     // wrapper over held content, whose id (stateOf) is its content's, not the
     // wrapper's written here, and the root was never found.
     if (std::exchange(fAtRoot, false)) {
-      now.style("width", "100%");
-      now.style("height", "100%");
+      now.style(css::width{css::percent{100}});
+      now.style(css::height{css::percent{100}});
     }
     // A node that paints itself: what it paints, as elements of its own --
     // its size skiff's where it says none. Where something of it has no
     // element (a picture), it is said not native, and that is not shown.
     const bool paints = spl::visit(spl::overloaded{[](const scene::look::drawn &) { return true; }, [](const auto &) { return false; }}, look);
     if (paints) {
-      const auto unsized = [&](std::string_view property) {
-        return std::ranges::none_of(now.fStyles, [&](const auto &style) { return style.first == property; });
-      };
-      if (unsized("width") && state.fBounds.width() > 0.0f) now.style("width", skiff::web::px(state.fBounds.width()));
-      if (unsized("height") && state.fBounds.height() > 0.0f) now.style("height", skiff::web::px(state.fBounds.height()));
+      if (!css::find<css::width>(now.fStyles) && state.fBounds.width() > 0.0f) now.style(css::width{css::pixels{state.fBounds.width()}});
+      if (!css::find<css::height>(now.fStyles) && state.fBounds.height() > 0.0f) now.style(css::height{css::pixels{state.fBounds.height()}});
       Markup recorded;
       Pictures painted;
       if (records(recorded, painted)) {
@@ -1052,7 +1043,7 @@ private:
     }
     if (pressable) {
       now.listen("click");
-      if (std::ranges::none_of(now.fStyles, [](const auto &rule) { return rule.first == "cursor"; })) now.style("cursor", "pointer");
+      if (!css::find<css::cursor>(now.fStyles)) now.style(css::cursor{css::pointer{}});
     }
     auto [at, made] = fShown.try_emplace(state.fId);
     Shown &shown = at->second;

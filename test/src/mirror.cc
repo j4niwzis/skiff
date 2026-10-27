@@ -366,13 +366,9 @@ TEST(Mirror, RelativeSizesLeaveRoomForMarginsAndDoNotBecomeGrowers) {
   state.apply({.fill = true, .margin = {2.0f, 14.0f, 4.0f, 14.0f}});
   web::Markup markup;
   mirror::detail::stateOf(markup, state, mirror::detail::in_flex{false});
-  const auto style = [&](std::string_view key) {
-    const auto found = std::ranges::find(markup.fStyles, key, &std::pair<std::string, std::string>::first);
-    return found == markup.fStyles.end() ? std::string() : found->second;
-  };
-  EXPECT_EQ(style("width"), "calc(100% - 28px)");
-  EXPECT_EQ(style("height"), "calc(100% - 6px)");
-  EXPECT_EQ(style("flex"), "0 0 auto");
+  EXPECT_EQ(web::css::value(*web::css::find<web::css::width>(markup.fStyles)), "calc(100% - 28px)");
+  EXPECT_EQ(web::css::value(*web::css::find<web::css::height>(markup.fStyles)), "calc(100% - 6px)");
+  EXPECT_EQ(web::css::value(*web::css::find<web::css::flex>(markup.fStyles)), "0 0 auto");
 }
 
 // A field that sends on Enter, as mux's composer does.
