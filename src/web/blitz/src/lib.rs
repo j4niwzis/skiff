@@ -568,4 +568,18 @@ mod tests {
         assert_eq!(pixel(25, 28), &[255, 255, 255]);
         skiff_blitz_free(p);
     }
+
+    #[test]
+    fn a_window_page_does_not_scroll_behind_its_panels() {
+        let p = skiff_blitz_new(400, 300, 1.0);
+        let css = "html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden}";
+        skiff_blitz_add_css(p, css.as_ptr(), css.len());
+        let content = skiff_blitz_create_element(p, b"div".as_ptr(), 3);
+        style(p, content, "height", "2000px");
+        skiff_blitz_append(p, skiff_blitz_body(p), content);
+        skiff_blitz_resolve(p, 0.0);
+        skiff_blitz_scroll_at(p, 250.0, 100.0, 0.0, -50.0);
+        assert_eq!(page(p).doc.viewport_scroll().y, 0.0);
+        skiff_blitz_free(p);
+    }
 }
