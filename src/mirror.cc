@@ -684,11 +684,11 @@ public:
   }
   // A line: a plate where it is across or down with its ends cut; else SVG's.
   void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, bool round = true) const {
-    if (!round && this->straight(x1, y1, x2, y2, width, color, alpha)) return;
+    if (!round && fAngle == 0.0f && this->straight(x1, y1, x2, y2, width, color, alpha)) return;
     this->stroked("M" + number(x1) + " " + number(y1) + "L" + number(x2) + " " + number(y2), width, color, alpha, round ? "round" : "butt");
   }
   void line(float x1, float y1, float x2, float y2, float width, skia::SkColor color, float alpha, Cap cap) const {
-    if (cap == Cap::butt && this->straight(x1, y1, x2, y2, width, color, alpha)) return;
+    if (cap == Cap::butt && fAngle == 0.0f && this->straight(x1, y1, x2, y2, width, color, alpha)) return;
     this->stroked("M" + number(x1) + " " + number(y1) + "L" + number(x2) + " " + number(y2), width, color, alpha, capOf(cap));
   }
   void arc(const skia::SkRect &oval, float startDegrees, float sweepDegrees, float width, skia::SkColor color, float alpha) const {
@@ -697,8 +697,49 @@ public:
   void fillArc(const skia::SkRect &oval, float startDegrees, float sweepDegrees, skia::SkColor color, float alpha) const {
     this->filled(arcData(oval, startDegrees, sweepDegrees) + "Z", color, alpha);
   }
+  // Turned, as an icon is turned about where it stands (the paperclip's
+  // 45 degrees, lost before: Storage's row had no icon on a page). What is
+  // drawn after it is SVG turned about there -- a plate cannot turn -- and
+  // a move after a turn, which SVG's one turn would not follow, is lost.
+  void save() const {
+    HtmlPainter::save();
+    fAngles.push_back(fAngle);
+  }
+  void restore() const {
+    HtmlPainter::restore();
+    if (fAngles.empty()) return;
+    fAngle = fAngles.back();
+    fAngles.pop_back();
+  }
+  void rotate(float degrees) const { fAngle += degrees; }
+  void translate(float dx, float dy) const {
+    if (fAngle != 0.0f && (dx != 0.0f || dy != 0.0f)) this->lose("a move after a turn");
+    HtmlPainter::translate(dx, dy);
+  }
+  void fillRect(const skia::SkRect &rect, skia::SkColor color, float alpha = 1.0f) const { this->fillRounded(rect, 0.0f, color, alpha); }
+  void fillRounded(const skia::SkRect &rect, float radius, skia::SkColor color, float alpha = 1.0f) const {
+    if (fAngle == 0.0f) HtmlPainter::fillRounded(rect, radius, color, alpha);
+    else this->filled(roundedData(rect, radius), color, alpha);
+  }
+  void strokeRounded(const skia::SkRect &rect, float radius, skia::SkColor color, float width, float alpha = 1.0f) const {
+    if (fAngle == 0.0f) HtmlPainter::strokeRounded(rect, radius, color, width, alpha);
+    else this->stroked(roundedData(rect, radius), width, color, alpha, "round");
+  }
 
 private:
+  mutable float fAngle = 0.0f;
+  mutable std::vector<float> fAngles;
+  // A box with rounded corners, as SVG's path data.
+  [[nodiscard]] static std::string roundedData(const skia::SkRect &box, float radius) {
+    const float r = std::max(0.0f, std::min({radius, box.width() * 0.5f, box.height() * 0.5f}));
+    const std::string corner = "A" + number(r) + " " + number(r) + " 0 0 1 ";
+    if (r == 0.0f)
+      return "M" + number(box.fLeft) + " " + number(box.fTop) + "H" + number(box.fRight) + "V" + number(box.fBottom) + "H" + number(box.fLeft) + "Z";
+    return "M" + number(box.fLeft + r) + " " + number(box.fTop) + "H" + number(box.fRight - r) + corner + number(box.fRight) + " " +
+           number(box.fTop + r) + "V" + number(box.fBottom - r) + corner + number(box.fRight - r) + " " + number(box.fBottom) + "H" +
+           number(box.fLeft + r) + corner + number(box.fLeft) + " " + number(box.fBottom - r) + "V" + number(box.fTop + r) + corner +
+           number(box.fLeft + r) + " " + number(box.fTop) + "Z";
+  }
   [[nodiscard]] static std::string_view capOf(Cap cap) { return cap == Cap::butt ? "butt" : cap == Cap::square ? "square" : "round"; }
   // An arc of the oval in its box, from a start angle through a sweep
   // (degrees, clockwise from three o'clock), as SVG's path data.
@@ -731,7 +772,10 @@ private:
       svg.attr("height", number(fBox.height()));
       svg.attr("viewBox", number(fBox.fLeft - fX) + " " + number(fBox.fTop - fY) + " " + number(fBox.width()) + " " + number(fBox.height()));
       svg.attr("xmlns", "http://www.w3.org/2000/svg");
-      svg.inner("path", this->nextPart(), write);
+      svg.inner("path", this->nextPart(), [&](Markup &path) {
+        write(path);
+        if (fAngle != 0.0f) path.attr("transform", "rotate(" + number(fAngle) + ")");
+      });
     });
   }
   void filled(const std::string &data, skia::SkColor color, float alpha) const {
