@@ -2466,6 +2466,8 @@ struct NodeInfo {
   Cursor fCursor = cursor::arrow{};
   // Where it was last drawn, in the window.
   skia::SkRect fDrawn = skia::SkRect::MakeEmpty();
+  // What it takes, where it takes text.
+  TextKind fTextKind = text_kind::plain{};
 };
 
 // The children a frame's walks visit: all of them -- or, below a node told
@@ -4003,8 +4005,9 @@ void SemanticDelivery::next(P &, AnyNodeRef &child, const Path &path, std::size_
 template <class N> std::optional<NodeInfo> info(N &child, NodeId id) {
   const State &state = child.fState;
   if (state.fId == id) {
+    const Semantics said = child.semantics();
     return NodeInfo{child.focusable(), state.fDisabled, state.fVisible,
-                    isTextBox(child.semantics().fRole), state.fCursor, state.fDrawnBounds};
+                    isTextBox(said.fRole), state.fCursor, state.fDrawnBounds, textKindOf(said.fRole)};
   }
   std::optional<NodeInfo> found;
   if (const NodeId next = work::childToward(state.fId, id); next != 0) {
@@ -5711,6 +5714,7 @@ public:
     const NodeId previous = fFocus;
     fFocus = id;
     hostWork().typing = now && now->fTakesText;
+    hostWork().typingKind = now ? now->fTextKind : TextKind{text_kind::plain{}};
     if (previous != 0) {
       (void)walk::focusChanged(this->walked(), previous, false, {}, fViewport.width());
     }

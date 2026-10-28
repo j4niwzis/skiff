@@ -1277,13 +1277,27 @@ using SemanticAction =
                  semantic_action::increment, semantic_action::decrement,
                  semantic_action::set_value>;
 
+// What a box of text takes, for the keyboard a platform shows for it:
+// words; a secret -- a password: not suggested, not learnt, not shown; or
+// lines, Enter a new one.
+namespace text_kind {
+struct plain {};
+struct secret {};
+struct lines {};
+} // namespace text_kind
+using TextKind = spl::variant<text_kind::plain, text_kind::secret, text_kind::lines>;
+
 // What a node is to a screen reader.
 namespace semantic_role {
 struct none {};
 struct group {};
 struct button {};
 struct text {};
-struct text_box {};
+// What it takes said with it: a password's keyboard was the words' --
+// suggesting, learning, showing what was typed (a tester's).
+struct text_box {
+  TextKind kind = text_kind::plain{};
+};
 struct slider {};
 struct toggle {};
 struct tab {};
@@ -1332,6 +1346,11 @@ struct Semantics {
   std::vector<SemanticAction> fActions;
 };
 
+[[nodiscard]] inline TextKind textKindOf(const SemanticRole &role) {
+  return spl::visit(spl::overloaded{[](const semantic_role::text_box &box) { return box.kind; },
+                                    [](const auto &) { return TextKind{text_kind::plain{}}; }},
+                    role);
+}
 [[nodiscard]] inline bool isTextBox(const SemanticRole &role) {
   return spl::visit(spl::overloaded{[](semantic_role::text_box) { return true; },
                                [](auto) { return false; }},
@@ -1427,6 +1446,8 @@ struct HostWork {
   // controls stand for. Given, down and up, before the next frame.
   std::vector<key::down> keys;
   bool typing = false;
+  // What the box typed into takes, for the keyboard the host asks for.
+  TextKind typingKind = text_kind::plain{};
   // Whether the pointer is a finger, as the host last saw it: a drag in a
   // text field then scrolls it, as a phone's do, rather than selecting.
   bool byTouch = false;
