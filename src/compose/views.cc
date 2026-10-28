@@ -319,19 +319,15 @@ template <class Make, class N> struct TappedOff : N {
   Make fMake;
   std::optional<skia::SkPoint> fFrom;
   TappedOff(Make make, N node) : N(std::move(node)), fMake(std::move(make)) {}
+  // While a card is up, the layer over the window takes a press itself
+  // where no card is under it: a tap off the card is the layer's -- its
+  // target -- and nothing under it is pressed too. Taking only what went
+  // down through it, it heard nothing pressed beside it -- a room in the
+  // list under a chat's menu: the menu stayed up (a tester's).
+  [[nodiscard]] bool acceptsInput() const { return const_cast<TappedOff &>(*this).cards().shown; }
   using N::onPointer;
   void onPointer(scene::phase::capture, const scene::pointer::down &press, scene::PointerReply &) {
-    bool on = false;
-    bool shown = false;
-    scene::eachChild(static_cast<N &>(*this), [&](auto &popup) {
-      if (!scene::stateOf(popup).fVisible)
-        return;
-      scene::eachChild(popup, [&](auto &card) {
-        const scene::State &state = scene::stateOf(card);
-        shown = shown || state.fVisible;
-        on = on || (state.fVisible && state.fBounds.contains(press.x, press.y));
-      });
-    });
+    const auto [shown, on] = this->cards(press.x, press.y);
     fFrom = shown && !on ? std::optional(skia::SkPoint::Make(press.x, press.y)) : std::nullopt;
   }
   std::optional<Answer> onPointer(scene::phase::capture, const scene::pointer::up &lift, scene::PointerReply &) {
@@ -339,6 +335,35 @@ template <class Make, class N> struct TappedOff : N {
     if (!from || std::hypot(lift.x - from->fX, lift.y - from->fY) >= 8.0f)
       return std::nullopt;
     return std::invoke(fMake);
+  }
+  // Pressed where no card is: the layer the target, told so.
+  void onPointer(scene::phase::target, const scene::pointer::down &press, scene::PointerReply &reply) {
+    this->onPointer(scene::phase::capture{}, press, reply);
+    reply.handle();
+  }
+  std::optional<Answer> onPointer(scene::phase::target, const scene::pointer::up &lift, scene::PointerReply &reply) {
+    reply.handle();
+    return this->onPointer(scene::phase::capture{}, lift, reply);
+  }
+
+private:
+  // Whether a card is up, and whether a point is on one.
+  struct seen {
+    bool shown = false;
+    bool on = false;
+  };
+  seen cards(float x = -1.0f, float y = -1.0f) {
+    seen out;
+    scene::eachChild(static_cast<N &>(*this), [&](auto &popup) {
+      if (!scene::stateOf(popup).fVisible)
+        return;
+      scene::eachChild(popup, [&](auto &card) {
+        const scene::State &state = scene::stateOf(card);
+        out.shown = out.shown || state.fVisible;
+        out.on = out.on || (state.fVisible && state.fBounds.contains(x, y));
+      });
+    });
+    return out;
   }
 };
 template <class Make, class N> auto tapped_off(Make make, N node) {

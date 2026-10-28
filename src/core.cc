@@ -1441,6 +1441,16 @@ inline std::vector<TextMenuAsk> &textMenusAsked() {
 // A type, told by the address of its own: what an erased answer is, outside a
 // release build -- one per type, the same wherever it is seen.
 template <class T> inline constexpr char kTypeKey = 0;
+// A box of text as it is, for a host whose keyboard edits the text itself
+// (Android's input method): its text and its selection, in bytes; and
+// whether it is what the keyboard made -- not to be told back to it.
+struct Editing {
+  std::string text;
+  std::size_t anchor = 0, caret = 0;
+  bool byKeyboard = false;
+  friend bool operator==(const Editing &, const Editing &) = default;
+};
+
 struct HostWork {
   // Keys for the node with the focus, as if pressed: what the host's own
   // controls stand for. Given, down and up, before the next frame.
@@ -1448,6 +1458,13 @@ struct HostWork {
   bool typing = false;
   // What the box typed into takes, for the keyboard the host asks for.
   TextKind typingKind = text_kind::plain{};
+  // The box typed into, as it says it is while it has the focus (and none
+  // once it lets it go); and what the host's keyboard made of it, for the
+  // box to take as it is. A keyboard told only what was typed at the end --
+  // never the text, nor where the caret was -- moved its own caret
+  // somewhere mux's was not, and what it typed went elsewhere (a tester's).
+  std::optional<Editing> editing;
+  std::optional<Editing> edited;
   // Whether the pointer is a finger, as the host last saw it: a drag in a
   // text field then scrolls it, as a phone's do, rather than selecting.
   bool byTouch = false;

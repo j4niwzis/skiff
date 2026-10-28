@@ -2151,7 +2151,7 @@ template <class N> struct PlacedAt : N {
       return;
     const skia::SkRect box = this->fState.fLastConstraint;
     const auto shift = scene::work::drawnOffset(this->fState.fId);
-    const skia::SkRect &self = this->fState.fBounds;
+    const skia::SkRect self = this->extent();
     const float x = std::clamp(fAt->fX - shift.x, box.fLeft, std::max(box.fLeft, box.fRight - self.width()));
     const float y = std::clamp(fAt->fY - shift.y, box.fTop, std::max(box.fTop, box.fBottom - self.height()));
     this->setPosition(x - box.fLeft, y - box.fTop);
@@ -2160,12 +2160,33 @@ template <class N> struct PlacedAt : N {
 private:
   [[nodiscard]] bool placed() const {
     const skia::SkRect box = this->fState.fLastConstraint;
-    if (box.isEmpty() || this->fState.fBounds.isEmpty())
+    const skia::SkRect self = this->extent();
+    if (box.isEmpty() || self.isEmpty())
       return false;
     const auto shift = scene::work::drawnOffset(this->fState.fId);
-    const float x = std::clamp(fAt->fX - shift.x, box.fLeft, std::max(box.fLeft, box.fRight - this->fState.fBounds.width()));
-    const float y = std::clamp(fAt->fY - shift.y, box.fTop, std::max(box.fTop, box.fBottom - this->fState.fBounds.height()));
+    const float x = std::clamp(fAt->fX - shift.x, box.fLeft, std::max(box.fLeft, box.fRight - self.width()));
+    const float y = std::clamp(fAt->fY - shift.y, box.fTop, std::max(box.fTop, box.fBottom - self.height()));
     return std::abs(this->fState.fBounds.fLeft - x) < 0.5f && std::abs(this->fState.fBounds.fTop - y) < 0.5f;
+  }
+  // As wide and tall as what it shows, from where it is: its own box, and
+  // its parts' as laid out -- a card wider than the wrapper that holds it
+  // was kept inside the window by the wrapper's width, and ran off its edge
+  // (a tester's: a chat's menu, its words cut).
+  [[nodiscard]] skia::SkRect extent() const {
+    skia::SkRect all = this->fState.fBounds;
+    const auto grow = [&](const auto &self, auto &node) -> void {
+      scene::eachChild(node, [&](auto &part) {
+        const scene::State &state = scene::stateOf(part);
+        if (!state.fVisible)
+          return;
+        if (!state.fBounds.isEmpty())
+          all = skia::SkRect::MakeLTRB(all.fLeft, all.fTop, std::max(all.fRight, state.fBounds.fRight),
+                                       std::max(all.fBottom, state.fBounds.fBottom));
+        self(self, part);
+      });
+    };
+    grow(grow, static_cast<N &>(const_cast<PlacedAt &>(*this)));
+    return all;
   }
 };
 template <class Want, class Compute, class N> auto placed_at(Compute compute, N node) {

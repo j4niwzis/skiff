@@ -5736,6 +5736,9 @@ public:
     fFocus = id;
     hostWork().typing = now && now->fTakesText;
     hostWork().typingKind = now ? now->fTextKind : TextKind{text_kind::plain{}};
+    // Another box, or none: what the last one said is not this one's.
+    hostWork().editing.reset();
+    hostWork().edited.reset();
     if (previous != 0) {
       (void)walk::focusChanged(this->walked(), previous, false, {}, fViewport.width());
     }

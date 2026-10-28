@@ -173,3 +173,42 @@ TEST(Compose, AHoldingFlickInsideAFlickTakesItsOwnDrag) {
   EXPECT_EQ(m.look<Flicks>()->inner, 1);
   EXPECT_EQ(m.look<Flicks>()->outer, 1);
 }
+
+namespace {
+struct CloseMenu {};
+struct RowPressed {};
+struct MenuFacts {
+  int closed = 0, pressed = 0;
+};
+inline auto menuOverList() {
+  return state<MenuFacts>(handlers(handle<CloseMenu>([] { return model::over<MenuFacts>([](MenuFacts now) { ++now.closed; return now; }); }),
+                                   handle<RowPressed>([] { return model::over<MenuFacts>([](MenuFacts now) { ++now.pressed; return now; }); })),
+                          column(vbox(0.0f, {.fill = true}),
+                                 onClick(RowPressed{}, styled({.fillX = true, .height = 40.0f}, nodes::Text("room", 13.0f, 0xff000000u))),
+                                 tapped_off([] { return CloseMenu{}; },
+                                            Box<nodes::Box<>>(vbox(0.0f, {.place = scene::anchor::kTopLeft, .fill = true}),
+                                                              styled({.place = scene::anchor::kTopLeft, .x = 200.0f, .y = 100.0f,
+                                                                      .width = 100.0f, .height = 50.0f}, nodes::Box<>(0xff202020u))))));
+}
+}  // namespace
+// A menu over a list, its tap-off beside the list: a tap on a room under it
+// closes the menu, and does not press the room (a tester's: the chat's menu
+// would not close).
+TEST(Compose, ATapOffAMenuOverAListClosesIt) {
+  using Tree = decltype(menuOverList());
+  bind::ModelOf<Tree> m;
+  scene::Scene tree(menuOverList());
+  bind::Binding<bind::ModelOf<Tree>> binding;
+  binding.refresh(tree.root(), m);
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  scene::hostWork().answers.clear();
+  (void)tree.dispatchPointer(scene::pointer::down{20, 20, 1});
+  (void)tree.dispatchPointer(scene::pointer::up{20, 20, 1});
+  for (const auto &one : std::exchange(scene::hostWork().answers, {}))
+    (void)bind::answer(tree.root(), m, one);
+  for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+    (void)bind::press(tree.root(), m, way);
+  binding.refresh(tree.root(), m);
+  EXPECT_EQ(m.look<MenuFacts>()->closed, 1);
+  EXPECT_EQ(m.look<MenuFacts>()->pressed, 0);
+}
