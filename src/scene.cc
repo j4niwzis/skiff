@@ -422,7 +422,11 @@ public:
 private:
   // Where it is going, within its bounds as they are now.
   [[nodiscard]] float aim() const noexcept { return std::clamp(fTarget, fLo, fHi); }
-  static constexpr float kFriction = 0.994f;
+  // Per millisecond: a flick's speed falls to 1/e in 400 ms, as a phone's
+  // own lists glide (Android's fling lasts a second or two). At 0.994 it
+  // was 170 ms: a flick stopped almost as the finger left (a tester's: the
+  // scrolling's speed falls off fast).
+  static constexpr float kFriction = 0.9975f;
   static constexpr float kMinVelocity = 0.05f;
   static constexpr float kVelocityMix = 0.35f;
   static constexpr float kOverscroll = 0.4f;
@@ -5561,6 +5565,10 @@ public:
       }
       fDown = 0;
       fCapture = routed.fCaptureRequest;
+      // A drag something took -- a list scrolled from a field the finger
+      // came down on: not a tap on the field, which does not take the focus.
+      if (fFocusOnLift != routed.fCaptureRequest)
+        fFocusOnLift = 0;
     }
     if (ending) {
       fDown = 0;
@@ -5572,12 +5580,25 @@ public:
     // A press that moves the focus is taken by what it moved it to: a text
     // field pressed answers nothing itself, and has the press all the same.
     const NodeId focusBefore = fFocus;
+    // By touch, a press on what takes the focus gives it as the finger
+    // lifts, a tap: a scroll begun on a field took the focus to it, its
+    // keyboard up, as the finger came down (a tester's). By mouse, at once.
+    const bool lifted = spl::visit(spl::overloaded{[](const pointer::up &) { return true; }, [](const auto &) { return false; }}, input);
     if (routed.fFocusRequest != 0) {
       this->focus(routed.fFocusRequest);
     } else if (routed.fTargetDelivered && press && routed.fTargetFocusable) {
-      this->focus(target);
+      if (hostWork().byTouch) {
+        fFocusOnLift = target;
+      } else {
+        this->focus(target);
+        focusVisible() = false;
+      }
+    } else if (lifted && fFocusOnLift != 0) {
+      this->focus(std::exchange(fFocusOnLift, 0));
       focusVisible() = false;
     }
+    if (ending && !lifted)
+      fFocusOnLift = 0;
     this->notePress(path);
     this->restyleDirty();
     return reply.fHandled || (press && fFocus != focusBefore);
@@ -5877,6 +5898,8 @@ private:
   // Whether the last tick came to something still moving.
   bool fTickAnimating = false;
   NodeId fDown = 0;
+  // Pressed by touch on what takes the focus: given it as the finger lifts.
+  NodeId fFocusOnLift = 0;
   NodeId fFocus = 0;
   float fHoverX = 0.0f, fHoverY = 0.0f;
   bool fHoverSeen = false;
