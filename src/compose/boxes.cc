@@ -2248,6 +2248,13 @@ template <class N> struct Popped : N {
     if (!fAt || this->fState.fBounds.isEmpty())
       return;
     const skia::SkPoint want = this->target();
+    // Shown already: where it is, while all of it still fits there -- moved
+    // to where it would open now only where it no longer does. Moved at
+    // every change of its size (readers listed into it a moment later), it
+    // jumped under the finger about to press it: a reaction missed (a
+    // tester's).
+    if (fPlaced && want != this->now() && this->fitsWhereItIs())
+      return;
     if (want != this->now()) {
       const skia::SkRect box = this->fState.fLastConstraint;
       this->setPosition(want.fX - box.fLeft, want.fY - box.fTop);
@@ -2260,6 +2267,12 @@ template <class N> struct Popped : N {
 private:
   [[nodiscard]] skia::SkPoint now() const {
     return {std::round(this->fState.fBounds.fLeft), std::round(this->fState.fBounds.fTop)};
+  }
+  // All of it inside its parent, as laid out now.
+  [[nodiscard]] bool fitsWhereItIs() const {
+    const skia::SkRect box = this->fState.fLastConstraint;
+    const skia::SkRect &self = this->fState.fBounds;
+    return !box.isEmpty() && self.fLeft >= box.fLeft && self.fTop >= box.fTop && self.fRight <= box.fRight && self.fBottom <= box.fBottom;
   }
   // Where it goes, in its parent's coordinates as laid out.
   [[nodiscard]] skia::SkPoint target() const {

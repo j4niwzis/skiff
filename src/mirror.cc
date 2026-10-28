@@ -1054,9 +1054,20 @@ private:
         pictures.append_range(std::move(painted));
       }
     }
+    // A layer over the rest taking no input of its own -- a column's popup
+    // layer, filling it, its menus shown at times -- lets presses through
+    // to what is under it, as skiff does: an element takes the browser's
+    // presses whatever skiff thinks, and the chat list under such a layer
+    // could not be clicked (the web smoke test: Mad Tea Party covered).
+    // What takes input in it takes them again; a view that scrolls is the
+    // browser's to scroll.
+    const bool scrolls = spl::visit(spl::overloaded{[](const scene::look::scrolled &) { return true; }, [](const auto &) { return false; }}, look);
     if (pressable) {
       now.listen("click");
       if (!css::find<css::cursor>(now.fStyles)) now.style(css::cursor{css::pointer{}});
+      now.style(css::pointer_events{css::auto_{}});
+    } else if (state.fOutOfFlow && !scrolls) {
+      now.style(css::pointer_events{css::none{}});
     }
     auto [at, made] = fShown.try_emplace(state.fId);
     Shown &shown = at->second;
