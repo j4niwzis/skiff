@@ -661,20 +661,37 @@ template <class Act, class N> struct Flicked : N {
   Act fAct;
   float fReach;
   std::optional<skia::SkPoint> fFrom;
-  Flicked(float reach, Act act, N node) : N(std::move(node)), fAct(std::move(act)), fReach(reach) {}
+  // Holding (flicked_holding): a drag across it taken as it starts, so that
+  // what it is in -- a screen flicked a step back -- does not take it too.
+  bool fHolds = false, fHeld = false;
+  Flicked(float reach, Act act, N node, bool holds = false)
+      : N(std::move(node)), fAct(std::move(act)), fReach(reach), fHolds(holds) {}
   [[nodiscard]] bool acceptsInput() const { return true; }
   using N::onPointer;
   void onPointer(scene::phase::capture, const scene::pointer::down &press, scene::PointerReply &) {
     fFrom.reset();
+    fHeld = false;
     if (press.button <= 1)
       fFrom = skia::SkPoint{press.x, press.y};
   }
+  void onPointer(scene::phase::capture, const scene::pointer::move &at, scene::PointerReply &reply) {
+    if (!fHolds || !fFrom || fHeld || reply.fCaptured || !scene::pointerHeld())
+      return;
+    const float dx = at.x - fFrom->fX, dy = at.y - fFrom->fY;
+    if (std::abs(dx) < 8.0f || std::abs(dx) < 2.0f * std::abs(dy))
+      return;
+    fHeld = true;
+    reply.capturePointer();
+    reply.handle();
+  }
   std::optional<Answer> onPointer(scene::phase::capture, const scene::pointer::up &lift, scene::PointerReply &reply) {
     const auto from = std::exchange(fFrom, std::nullopt);
+    const bool held = std::exchange(fHeld, false);
     // Held by what is under it -- a message swiped to answer it: the drag
     // is that one's, and so is its lift. Taken here first, on its way down,
-    // the swipe never heard it, and stuck to the pointer.
-    if (!from || reply.fCaptured)
+    // the swipe never heard it, and stuck to the pointer. Held by this one
+    // itself, it is its own.
+    if (!from || (reply.fCaptured && !held))
       return std::nullopt;
     const float dx = lift.x - from->fX, dy = lift.y - from->fY;
     if (std::abs(dx) < fReach || std::abs(dy) > std::abs(dx) * 0.5f)
@@ -684,9 +701,27 @@ template <class Act, class N> struct Flicked : N {
       reply.handle();
     return answer;
   }
+  // Where nothing under it takes input -- a bar of words, a screen's margin
+  // -- it is the press's target itself, and is told so, not on the way down
+  // to one: the same handled there.
+  void onPointer(scene::phase::target, const scene::pointer::down &press, scene::PointerReply &reply) {
+    this->onPointer(scene::phase::capture{}, press, reply);
+  }
+  void onPointer(scene::phase::target, const scene::pointer::move &at, scene::PointerReply &reply) {
+    this->onPointer(scene::phase::capture{}, at, reply);
+  }
+  std::optional<Answer> onPointer(scene::phase::target, const scene::pointer::up &lift, scene::PointerReply &reply) {
+    return this->onPointer(scene::phase::capture{}, lift, reply);
+  }
 };
 template <class Act, class N> auto flicked(float reach, Act act, N node) {
   return erased(Flicked<Act, part_t<N>>(reach, std::move(act), as_part(std::move(node))));
+}
+// The same over a part of something flicked itself -- a bar in a screen
+// that flicks a step back: its drags across taken as they start, the
+// screen's flick not made of them.
+template <class Act, class N> auto flicked_holding(float reach, Act act, N node) {
+  return erased(Flicked<Act, part_t<N>>(reach, std::move(act), as_part(std::move(node)), true));
 }
 
 // A node shown for a moment each time what it reads moves on -- a number,

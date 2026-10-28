@@ -115,3 +115,61 @@ TEST(Compose, PassiveContentDoesNotAlsoClickTheButtonsParent) {
 }
 
 }  // namespace
+
+namespace {
+struct OuterFlick {};
+struct InnerFlick {};
+struct Flicks {
+  int outer = 0, inner = 0;
+};
+inline auto flicking() {
+  return state<Flicks>(handlers(handle<OuterFlick>([] { return model::over<Flicks>([](Flicks now) { ++now.outer; return now; }); }),
+                                handle<InnerFlick>([] { return model::over<Flicks>([](Flicks now) { ++now.inner; return now; }); })),
+                       flicked(60.0f, [](bool) { return std::optional<OuterFlick>(OuterFlick{}); },
+                               column(vbox(0.0f, {.fill = true}),
+                                      flicked_holding(60.0f, [](bool) { return std::optional<InnerFlick>(InnerFlick{}); },
+                                                      styled({.fillX = true, .height = 40.0f}, nodes::Text("pins", 13.0f, 0xff000000u))),
+                                      styled({.fillX = true, .height = 200.0f}, nodes::Text("chat", 13.0f, 0xff000000u)))));
+}
+}  // namespace
+
+namespace {
+template <class N> void showBoxes(N& node, int level) {
+  if constexpr (requires { node.has_value(); }) {
+    if (node) showBoxes(*node, level);
+  } else if constexpr (std::ranges::range<N>) {
+    for (auto& one : node) showBoxes(one, level);
+  } else {
+    const auto& b = scene::stateOf(node).fBounds;
+    std::println("box: {:{}}{}..{} x {}..{} input {}", "", level * 2, b.fLeft, b.fRight, b.fTop, b.fBottom, node.acceptsInput());
+    if (level < 20) node.forEachChild([&](auto& child) { showBoxes(child, level + 1); });
+  }
+}
+}  // namespace
+// A bar that flicks inside a screen that flicks (mux's pinned bar, the
+// screen's step back): the drag across the bar is the bar's alone; one
+// across the rest, the screen's.
+TEST(Compose, AHoldingFlickInsideAFlickTakesItsOwnDrag) {
+  using Tree = decltype(flicking());
+  bind::ModelOf<Tree> m;
+  scene::Scene tree(flicking());
+  bind::Binding<bind::ModelOf<Tree>> binding;
+  binding.refresh(tree.root(), m);
+  (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  const auto drag = [&](float y) {
+    scene::hostWork().answers.clear();
+    (void)tree.dispatchPointer(scene::pointer::down{20, y, 1});
+    (void)tree.dispatchPointer(scene::pointer::move{60, y + 1});
+    (void)tree.dispatchPointer(scene::pointer::move{220, y + 2});
+    (void)tree.dispatchPointer(scene::pointer::up{220, y + 2, 1});
+    for (const auto &one : std::exchange(scene::hostWork().answers, {}))
+      (void)bind::answer(tree.root(), m, one);
+    binding.refresh(tree.root(), m);
+  };
+  drag(20.0f);
+  EXPECT_EQ(m.look<Flicks>()->inner, 1);
+  EXPECT_EQ(m.look<Flicks>()->outer, 0);
+  drag(150.0f);
+  EXPECT_EQ(m.look<Flicks>()->inner, 1);
+  EXPECT_EQ(m.look<Flicks>()->outer, 1);
+}
