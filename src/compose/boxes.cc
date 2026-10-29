@@ -580,9 +580,11 @@ template <class N>
 std::vector<N> as_parts(std::vector<N> nodes) {
   return nodes;
 }
+// Each made a part as the vector is made from them: no lambda of its own
+// for each node type -- its transform's closure was instantiated for every
+// one, a few seconds of each build (mux's time trace).
 template <class N> std::vector<part_t<N>> as_parts(std::vector<N> nodes) {
-  return nodes | std::views::as_rvalue | std::views::transform([](N &&one) { return part_t<N>(std::move(one)); }) |
-         std::ranges::to<std::vector>();
+  return nodes | std::views::as_rvalue | std::ranges::to<std::vector<part_t<N>>>();
 }
 
 // A wrapper that says its own size along some axes (in its measure):
