@@ -2243,6 +2243,17 @@ template <class N> struct Popped : N {
     else
       return fAt.has_value() && !fPlaced;
   }
+  // Laid out in a box of another size -- the window made smaller, a phone's
+  // on-screen keyboard come up under a menu opened before it: where it no
+  // longer fits there, placed again (ticked until it is). Only then: a size
+  // of its own changing (readers listed into it) moves it no more than it did.
+  void measure(const skia::SkRect &parent) {
+    N::measure(parent);
+    if (fAt && fPlaced && !this->fitsWhereItIs()) {
+      fPlaced = false;
+      scene::work::mark(this->fState.fId);
+    }
+  }
   void update(double nowMs) {
     N::update(nowMs);
     if (!fAt || this->fState.fBounds.isEmpty())
