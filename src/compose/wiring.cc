@@ -1253,8 +1253,11 @@ private:
       // it said nothing seen and asked for no page at its edges, and stood
       // where it was, its older messages never coming (a tester's: the
       // timeline frozen, not scrolling on).
-      if (fAimedAt || ++fAimFrames > 600)
+      if (fAimedAt) {
         fAim.reset();
+      } else if (++fAimFrames > 600) {
+        this->letGoOfAim();
+      }
       return;
     }
     if (!found->bounds().isEmpty()) {
@@ -1306,7 +1309,7 @@ private:
     // never laid out (hidden) had the view paged back and forth past it
     // for ever.
     if (++fAimFrames > 180) {
-      fAim.reset();
+      this->letGoOfAim();
       return;
     }
     if (this->moving())
@@ -1317,6 +1320,16 @@ private:
     const float page = this->bounds().height();
     this->setCurrent(std::max(0.0f, this->current() + (found < laid ? -page : page)));
     this->markDamaged();
+  }
+  // An aim given up before it was reached: said as reached all the same,
+  // so that what waits on it lets go. Held while it waited, a program's jump
+  // stayed on its way for good -- nothing it showed counted as read since,
+  // and a chat reopened at its old first unread, above what was read (a
+  // tester's).
+  void letGoOfAim() {
+    if (!fAimedAt)
+      this->say(Aimed{*fAim});
+    fAim.reset();
   }
   void say(Answer answer) {
     fDue.push_back(std::move(answer));
