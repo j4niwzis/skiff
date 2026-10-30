@@ -508,12 +508,12 @@ auto bound(B node) {
   return lifted([](auto n) { return bound<Want>(std::move(n)); }, std::move(node));
 }
 template <class... Reads, class Compute, a_builder B>
-  requires(!kTakesOnePart<Compute, Reads...>)
+  requires reads_parts<Compute, Reads...>
 auto derived(Compute compute, B node) {
   return lifted([compute = std::move(compute)](auto n) mutable { return derived<Reads...>(std::move(compute), std::move(n)); }, std::move(node));
 }
 template <class Read, class Compute, a_builder B>
-  requires kTakesOnePart<Compute, Read>
+  requires reads_one_part<Compute, Read>
 auto derived(Compute compute, B node) {
   return lifted([compute = std::move(compute)](auto n) mutable { return derived<Read>(std::move(compute), std::move(n)); }, std::move(node));
 }
@@ -534,7 +534,7 @@ auto hidden(Handlers handlers, B node, T initial = {}) {
   }, std::move(node));
 }
 template <class T, class Handlers, a_builder B>
-  requires(!std::derived_from<Handlers, scene::NodeBase>)
+  requires handlers_not_node<Handlers>
 auto state(Handlers handlers, B node) {
   return lifted([handlers = std::move(handlers)](auto n) mutable { return state<T>(std::move(handlers), std::move(n)); }, std::move(node));
 }

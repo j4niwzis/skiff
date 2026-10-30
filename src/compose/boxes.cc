@@ -958,8 +958,17 @@ auto bound(N node) {
 template <class Compute, class... Reads> inline constexpr bool kTakesOnePart = false;
 template <class Compute, class Read>
 inline constexpr bool kTakesOnePart<Compute, Read> = std::invocable<Compute &, const typename bind::BoundValueT<Read>::type &>;
+// Said as concepts, so that what is said over them -- the same over a
+// builder (compose:builders) -- is told apart from them by the language's
+// own ordering of constraints, not by these saying what they are not.
+template <class Compute, class... Reads>
+concept reads_parts = !kTakesOnePart<Compute, Reads...>;
+template <class Compute, class Read>
+concept reads_one_part = kTakesOnePart<Compute, Read>;
+template <class Handlers>
+concept handlers_not_node = !std::derived_from<Handlers, scene::NodeBase>;
 template <class... Reads, class Compute, class N>
-  requires(!kTakesOnePart<Compute, Reads...> && !a_builder<N>)
+  requires reads_parts<Compute, Reads...>
 auto derived(Compute compute, N node) {
   return erased(bind::Derived<Compute, part_t<N>, Reads...>(as_part(std::move(node)), std::move(compute)));
 }
@@ -1068,7 +1077,7 @@ template <class... H> Handlers<H...> handlers(H... each) { return {std::move(eac
 // with the handlers that answer what is sent within -- and the model the
 // tree is bound to holds it because the view says so (bind::ModelOf).
 template <class T, class Handlers, class N>
-  requires(!std::derived_from<Handlers, scene::NodeBase> && !a_builder<N>)
+  requires handlers_not_node<Handlers>
 auto state(Handlers handlers, N node) {
   bind::Stated<T, Handlers, part_t<N>> made(std::move(handlers), as_part(std::move(node)));
   over_held(made);
@@ -1385,7 +1394,7 @@ auto projected(Compute compute, N node) {
 // the model alone, a view derived from a page's draft was never made, and
 // nothing said so (mux's room members, an empty page).
 template <class Read, class Compute, class N>
-  requires(kTakesOnePart<Compute, Read> && !a_builder<N>)
+  requires reads_one_part<Compute, Read>
 auto derived(Compute compute, N node) {
   return ::skiff::compose::projected<Read>(std::move(compute), std::move(node));
 }

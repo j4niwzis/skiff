@@ -119,4 +119,11 @@ TEST(Builders, MoreWrappersOverAPieceAreBuilders) {
   EXPECT_TRUE(node.visible());
 }
 
+struct some_handlers {};
+// derived and state over a builder: theirs chosen, not ambiguous with the
+// eager ones (constraints said as concepts).
+static_assert(requires(decltype(name_piece(std::string())) b) { c::derived<>([](auto&) { return 0; }, std::move(b)); });
+static_assert(requires(decltype(name_piece(std::string())) b) { c::state<int>(some_handlers{}, std::move(b)); });
+static_assert(c::a_builder<decltype(c::state<int>(some_handlers{}, name_piece(std::string())))>);
+
 }  // namespace
