@@ -744,9 +744,24 @@ template <class Want, class Tell, a_builder B>
 auto kept_scroll(Tell tell, B node) {
   return lifted([tell = std::move(tell)](auto n) mutable { return kept_scroll<Want>(std::move(tell), std::move(n)); }, std::move(node));
 }
+// What a view named by its type is, built: a builder's what it builds
+// under the rules; a node's itself; void, none named.
+template <class View, class Rules>
+struct built_view {
+  using type = decltype(built(std::declval<View>(), std::declval<const Rules&>()));
+};
+template <class Rules>
+struct built_view<void, Rules> {
+  using type = void;
+};
+// Over a builder: the view it scrolls named as built under the same rules
+// -- a View that is itself a builder (a marked part of what it holds) is
+// found as what that builds.
 template <class Key, class View = void, a_builder B>
 auto remembered_scroll(B node) {
-  return lifted([](auto n) { return remembered_scroll<Key, View>(std::move(n)); }, std::move(node));
+  return Builder{[node = std::move(node)]<class Rules>(const Rules& rules) mutable {
+    return remembered_scroll<Key, typename built_view<View, Rules>::type>(built(std::move(node), rules));
+  }};
 }
 template <class Key, a_builder B>
 auto restarted_scroll(B node) {
@@ -826,6 +841,19 @@ auto side_scroll(B line, bool verticalWheel = false) {
 // the rules, its maker made one of built rows. Its lanes function is asked
 // with the rules' type -- lanes.operator()<Rules>(found) -- so that it may
 // name the lanes as they were built.
+// A part marked by Tag, found by its type as the walks see it: concrete in
+// every build (marked() erases it outside a release one), so that what
+// names it -- a scroll kept for it -- finds it as the type it names. Over a
+// builder, a builder of it.
+template <class Tag, class N>
+  requires(!a_builder<N>)
+Marked<Tag, N> marked_as(N node) {
+  return Marked<Tag, N>(std::move(node));
+}
+template <class Tag, a_builder B>
+auto marked_as(B node) {
+  return lifted([](auto n) { return marked_as<Tag>(std::move(n)); }, std::move(node));
+}
 template <class Lanes, class Rules>
 struct lanes_under {
   Lanes lanes;

@@ -389,4 +389,21 @@ TEST(BuildersParity, CaptureOverAPieceIsABuilder) {
   EXPECT_EQ(trace(), (std::vector<std::string>{"caught:oz"}));
 }
 
+// A scroll kept for a list whose rows hold pieces: the view it scrolls named
+// as a builder, found as what that builds.
+struct kept_view {};
+TEST(BuildersParity, ARememberedScrollFindsItsViewAsBuilt) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<first_piece_fn>(c::around(traced{"scrolls"}))))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  auto view = c::marked_as<kept_view>(c::scrolled(c::column(c::vbox(0.0f), first_piece(std::string("pat")))));
+  static_assert(c::a_builder<decltype(view)>);
+  auto made = c::remembered_scroll<int, decltype(view)>(std::move(view));
+  static_assert(c::a_builder<decltype(made)>);
+  auto node = std::move(made).build(rules);
+  EXPECT_EQ(node.current(), 0.0f);
+  EXPECT_EQ(trace(), (std::vector<std::string>{"scrolls:pat"}));
+}
+
 }  // namespace
