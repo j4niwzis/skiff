@@ -433,6 +433,15 @@ public:
         this->followed(offset);
       }
     }
+    // A gesture this layout left moving -- the contents shorter than they
+    // were under the view, its offset now past their end (the bounds are
+    // not clamped to here, the target is clamped as it is used) -- ticked
+    // from the next frame, which springs it back within them. Nothing else
+    // marked it: the view stood where it was, drawn past the contents' end
+    // with an empty band under the last row, and with nothing to scroll a
+    // drag never armed (a tester's: the timeline frozen on a phone).
+    if (fScroll.moving() && !fScroll.dragging())
+      scene::work::moving().push_back(fState.fId);
     // The contents drawn where the view is -- and what of them is in view,
     // with a screen above and below, so what is scrolled to next is ready:
     // in the space they are laid out in, the view moved down by the offset.
