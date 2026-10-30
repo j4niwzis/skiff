@@ -603,6 +603,10 @@ auto onKey(K key, E event, B node) {
   return lifted([key = std::move(key), event = std::move(event)](auto n) mutable { return onKey(std::move(key), std::move(event), std::move(n)); },
                 std::move(node));
 }
+template <class E, class Ask, a_builder B>
+auto onCapture(Ask ask, B node) {
+  return lifted([ask = std::move(ask)](auto n) mutable { return onCapture<E>(std::move(ask), std::move(n)); }, std::move(node));
+}
 template <class Ask, a_builder B>
 auto onKeys(Ask ask, B node) {
   return lifted([ask = std::move(ask)](auto n) mutable { return onKeys(std::move(ask), std::move(n)); }, std::move(node));

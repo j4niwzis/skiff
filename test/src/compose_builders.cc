@@ -372,4 +372,21 @@ TEST(BuildersParity, KeptRowsOfPiecesAreShapedAsEachIsMade) {
   EXPECT_EQ(trace(), (std::vector<std::string>{"kept:max", "kept:ned"}));
 }
 
+// A press caught on its way down, over a piece: a builder (the window's).
+struct caught_at {
+  template <class N>
+  std::optional<int> operator()(const N&, const scene::pointer::down&, scene::PointerReply&) const { return std::nullopt; }
+};
+TEST(BuildersParity, CaptureOverAPieceIsABuilder) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<first_piece_fn>(c::around(traced{"caught"}))))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  auto made = c::onCapture<int>(caught_at{}, c::column(c::vbox(0.0f), first_piece(std::string("oz"))));
+  static_assert(c::a_builder<decltype(made)>);
+  auto node = std::move(made).build(rules);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"caught:oz"}));
+}
+
 }  // namespace
