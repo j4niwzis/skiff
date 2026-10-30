@@ -113,6 +113,22 @@ auto lifted(Make make, Args... args) {
   }};
 }
 
+// A maker whose rows are builders -- a list's, a window's, a mount's -- made
+// one whose rows are built, under the rules the list itself is built under:
+// what a node that keeps a maker (WindowFrom, MemoRows, listed) is given when
+// it is made in a builder's build. The row's type is then what is built.
+template <class Make, class Rules>
+struct built_maker {
+  Make make;
+  Rules rules;
+  template <class... Items>
+  auto operator()(const Items&... items) const {
+    return built(make(items...), rules);
+  }
+};
+template <class Make, class Rules, class... Items>
+using built_row_t = decltype(std::declval<const built_maker<Make, Rules>&>()(std::declval<const Items&>()...));
+
 // ---- rules --------------------------------------------------------------------------
 
 // What is done with a piece: put something before it or after it (in a row,

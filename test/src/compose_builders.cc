@@ -71,4 +71,15 @@ TEST(Builders, BeforePutsWhatItMakesFromTheFactsBeside) {
   EXPECT_TRUE(node.visible());
 }
 
+TEST(Builders, AMakerOfBuildersMakesBuiltRows) {
+  constexpr auto rules = c::program_rules{c::on<name_piece_fn>(c::drop) | c::on<name_piece_fn>(c::around([](auto node, const who_facts&) { return node; }))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  const auto make = [](const std::string& name) { return name_piece(name); };
+  const c::built_maker<decltype(make), decltype(rules)> rows{make, rules};
+  auto row = rows(std::string("dee"));
+  static_assert(!c::a_builder<decltype(row)>);
+  EXPECT_FALSE(row.visible());
+}
+
 }  // namespace
