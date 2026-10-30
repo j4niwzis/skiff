@@ -119,6 +119,23 @@ TEST(Builders, MoreWrappersOverAPieceAreBuilders) {
   EXPECT_TRUE(node.visible());
 }
 
+// A piece about a node its caller made: the node moved in, its facts given.
+inline constexpr struct about_piece_fn : c::piece<about_piece_fn> {
+  using facts_type = who_facts;
+  static who_facts facts(const who_facts& who, const auto&) { return who; }
+  template <class N>
+  N make(const who_facts&, N node) const {
+    return node;
+  }
+} about_piece{};
+TEST(Builders, APieceAboutANodeTakesItMoved) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<about_piece_fn>(c::before(initial{}, 4.0f))))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  auto made = about_piece(who_facts{"kim"}, nodes::Text("kim", 13.0f, 0xff000000u));
+  auto node = std::move(made).build(rules);
+  EXPECT_TRUE(node.visible());
+}
 struct some_handlers {};
 struct some_facts {
   std::string name;

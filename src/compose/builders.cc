@@ -372,10 +372,12 @@ struct erased_piece {
 // the table's verbs run on it.
 template <class Self>
 struct piece {
+  // Its arguments forwarded: a node given it (what a row is about, made by
+  // its caller) moved in, not copied; its facts read from them first.
   template <class... Args>
-  auto operator()(const Args&... args) const {
-    auto facts = facts_of<Self>(args...);
-    auto made = static_cast<const Self&>(*this).make(args...);
+  auto operator()(Args&&... args) const {
+    auto facts = facts_of<Self>(std::as_const(args)...);
+    auto made = static_cast<const Self&>(*this).make(std::forward<Args>(args)...);
     if constexpr (scene::kErasedCombinators) {
       return Builder{erased_piece{[made = std::move(made), facts = std::move(facts)]() mutable {
         Held node(built(std::move(made), table_rules{}));
