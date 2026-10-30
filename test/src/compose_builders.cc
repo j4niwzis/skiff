@@ -285,4 +285,16 @@ TEST(BuildersParity, AMountedPieceIsShapedWhenItsFactsCome) {
   EXPECT_EQ(trace(), (std::vector<std::string>{"mounted:hap"}));
 }
 
+TEST(BuildersParity, AScrolledPieceIsABuilderShapedOnce) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<first_piece_fn>(c::around(traced{"scrolled"}))))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  auto made = c::scrolled(c::column(c::vbox(0.0f), first_piece(std::string("ida"))));
+  static_assert(c::a_builder<decltype(made)>);
+  auto node = std::move(made).build(rules);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"scrolled:ida"}));
+}
+
 }  // namespace

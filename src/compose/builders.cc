@@ -409,6 +409,11 @@ template <class... Parts>
 auto row(Look look, Parts... parts) {
   return lifted([](Look l, auto... p) { return row(std::move(l), std::move(p)...); }, std::move(look), std::move(parts)...);
 }
+template <class... Parts>
+  requires any_builder<Parts...>
+auto scrolled(Parts... parts) {
+  return lifted([](auto... p) { return scrolled(std::move(p)...); }, std::move(parts)...);
+}
 template <a_builder B>
 auto visible(bool on, B node) {
   return lifted([on](auto n) { return visible(on, std::move(n)); }, std::move(node));

@@ -881,6 +881,13 @@ auto row(Parts... parts) {
   return erased(Box<part_t<Parts>...>(hbox(), as_part(std::move(parts))...));
 }
 
+// Its parts in a view that scrolls: a ScrollContainer, made by a combinator
+// so that a builder given it makes a builder (its lifted overload).
+template <class... Parts>
+nodes::ScrollContainer<Parts...> scrolled(Parts... parts) {
+  return nodes::ScrollContainer<Parts...>(std::move(parts)...);
+}
+
 // A subtree whose presence and constructor arguments are model data. Made
 // in place: controls may refer to themselves, so a rendered temporary must
 // never be moved into the tree. Make returns the arguments, not a node.
