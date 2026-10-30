@@ -54,6 +54,10 @@ struct Builder {
 };
 template <class Make>
 Builder(Make) -> Builder<Make>;
+// A builder made: see make_builder, below the rules (it builds under the
+// table's outside a release build).
+template <class F>
+auto make_builder(F f);
 
 // A part that holds a builder: one itself, or an optional or a list of them,
 // or a variant one of whose kinds is one (a message's blocks: a link's,
@@ -141,9 +145,9 @@ struct Named<Self, B> {
 // argument built under the same rules.
 template <class Make, class... Args>
 auto lifted(Make make, Args... args) {
-  return Builder{[make = std::move(make), ... args = std::move(args)](const auto& rules) mutable {
+  return make_builder([make = std::move(make), ... args = std::move(args)](const auto& rules) mutable {
     return make(built(std::move(args), rules)...);
-  }};
+  });
 }
 
 // A maker whose rows are builders -- a list's, a window's, a mount's -- made
@@ -262,6 +266,28 @@ constexpr auto rule_tuple(const program_rules<R>& all) {
 struct table_rules {
   using is_program_rules = std::true_type;
 };
+// What a builder is made as. In a release build, the callable itself, built
+// where the program builds its views, under its rules folded. Outside one,
+// built at once, where it is made -- its pieces' rules are the table's
+// there, whatever it is built under -- and what it made kept, as its own
+// type, until it is built: the nodes of a view made in the unit its code is
+// emitted in, not all of them in the one the window is built in (scene.cc's
+// half a thousand seconds, a debug build's).
+template <class Made>
+struct prebuilt {
+  Made made;
+  template <class Rules>
+  Made operator()(const Rules&) {
+    return std::move(made);
+  }
+};
+template <class F>
+auto make_builder(F f) {
+  if constexpr (scene::kErasedCombinators)
+    return Builder{prebuilt<decltype(f(table_rules{}))>{f(table_rules{})}};
+  else
+    return Builder{std::move(f)};
+}
 template <class T>
 concept the_program_rules = requires { typename T::is_program_rules; };
 
@@ -414,16 +440,16 @@ struct piece {
     auto facts = facts_of<Self>(std::as_const(args)...);
     auto made = static_cast<const Self&>(*this).make(std::forward<Args>(args)...);
     if constexpr (scene::kErasedCombinators) {
-      return Builder{erased_piece{[made = std::move(made), facts = std::move(facts)]() mutable {
+      return make_builder(erased_piece{[made = std::move(made), facts = std::move(facts)]() mutable {
         Held node(built(std::move(made), table_rules{}));
         const auto found = rule_table().find(piece_key<Self>());
         return found == rule_table().end() ? std::move(node) : apply_table(found->second, 0, std::move(node), &facts);
-      }}};
+      }});
     } else {
-      return Builder{[made = std::move(made), facts = std::move(facts)]<class Rules>(const Rules& rules) mutable {
+      return make_builder([made = std::move(made), facts = std::move(facts)]<class Rules>(const Rules& rules) mutable {
         static_assert(the_program_rules<Rules>, "a piece built where the program's rules are not known (under no_rules)");
         return fold_rules<Self, 0>(rule_tuple(rules), built(std::move(made), rules), facts);
-      }};
+      });
     }
   }
 };
@@ -767,9 +793,9 @@ struct built_view<void, Rules> {
 // found as what that builds.
 template <class Key, class View = void, a_builder B>
 auto remembered_scroll(B node) {
-  return Builder{[node = std::move(node)]<class Rules>(const Rules& rules) mutable {
+  return make_builder([node = std::move(node)]<class Rules>(const Rules& rules) mutable {
     return remembered_scroll<Key, typename built_view<View, Rules>::type>(built(std::move(node), rules));
-  }};
+  });
 }
 template <class Key, a_builder B>
 auto restarted_scroll(B node) {
@@ -797,17 +823,17 @@ struct built_arguments {
 };
 template <a_builder Content, class Facts, class Make>
 auto mount(Make make, scene::Spec spec = {}, bool floats = false) {
-  return Builder{[make = std::move(make), spec, floats]<class Rules>(const Rules& rules) mutable {
+  return make_builder([make = std::move(make), spec, floats]<class Rules>(const Rules& rules) mutable {
     using made_t = decltype(built(std::declval<Content>(), rules));
     return mount<made_t, Facts>(built_arguments<Make, Rules>{std::move(make), rules}, spec, floats);
-  }};
+  });
 }
 template <a_builder Content, class Facts, class Make>
 auto mount_now(Make make, const Facts& first, scene::Spec spec = {}) {
-  return Builder{[make = std::move(make), first, spec]<class Rules>(const Rules& rules) mutable {
+  return make_builder([make = std::move(make), first, spec]<class Rules>(const Rules& rules) mutable {
     using made_t = decltype(built(std::declval<Content>(), rules));
     return mount_now<made_t, Facts>(built_arguments<Make, Rules>{std::move(make), rules}, first, spec);
-  }};
+  });
 }
 
 // A list whose maker makes builders: built when the list is, its maker one
@@ -815,9 +841,9 @@ auto mount_now(Make make, const Facts& first, scene::Spec spec = {}) {
 template <class Element, class Make>
   requires a_builder<std::invoke_result_t<Make&, const Element&>>
 auto listed(Look look, Make make) {
-  return Builder{[look = std::move(look), make = std::move(make)]<class Rules>(const Rules& rules) mutable {
+  return make_builder([look = std::move(look), make = std::move(make)]<class Rules>(const Rules& rules) mutable {
     return listed<Element>(std::move(look), built_maker<Make, Rules>{std::move(make), rules});
-  }};
+  });
 }
 
 
@@ -835,11 +861,11 @@ auto memo_rows(Make make, Holder holder, scene::Spec spec = {.fillX = true, .aut
 template <class Key, class View, class Item, class Make, class Holder>
   requires a_builder<std::invoke_result_t<Make&, const Item&>>
 auto memo_rows(Make make, Holder holder, scene::Spec spec = {.fillX = true, .autoSize = scene::axes::kY}) {
-  return Builder{[make = std::move(make), holder = std::move(holder), spec = std::move(spec)]<class Rules>(const Rules& rules) mutable {
+  return make_builder([make = std::move(make), holder = std::move(holder), spec = std::move(spec)]<class Rules>(const Rules& rules) mutable {
     using maker = built_maker<Make, Rules>;
     return nodes::MemoRows<Key, View, std::invoke_result_t<maker&, const Item&>, maker, Holder>(maker{std::move(make), rules}, std::move(holder),
                                                                                                std::move(spec));
-  }};
+  });
 }
 template <a_builder B>
 auto side_scroll(B line, bool verticalWheel = false) {
@@ -873,10 +899,10 @@ struct lanes_under {
 template <class Key, class View, class Make, class Surface, class Lanes>
   requires(a_builder<std::invoke_result_t<Make&, const Key&, const View&, bool>> || holds_builder<Surface>::value)
 auto reorder_bars(Surface surface, Make make, Lanes lanes, skia::SkColor highlight = 0) {
-  return Builder{[surface = std::move(surface), make = std::move(make), lanes = std::move(lanes), highlight]<class Rules>(const Rules& rules) mutable {
+  return make_builder([surface = std::move(surface), make = std::move(make), lanes = std::move(lanes), highlight]<class Rules>(const Rules& rules) mutable {
     return reorder_bars<Key, View>(built(std::move(surface), rules), built_maker<Make, Rules>{std::move(make), rules},
                                    lanes_under<Lanes, Rules>{std::move(lanes)}, highlight);
-  }};
+  });
 }
 
 }  // namespace skiff::compose
