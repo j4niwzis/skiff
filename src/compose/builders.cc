@@ -194,6 +194,27 @@ constexpr auto operator|(A a, B b) {
 }
 // No rules: what a builder built where nothing shapes it is built under.
 inline constexpr rules<> no_rules{};
+// The rules a program builds its views under -- every plugin's, gathered
+// where all of them are seen. A piece is built only under them, never under
+// no_rules: what a release build folds and what a debug build's table
+// applies are then the same rules, and a piece built where they are not
+// known does not compile.
+template <class R>
+struct program_rules {
+  using is_program_rules = std::true_type;
+  R rules;
+};
+template <class R>
+constexpr auto rule_tuple(const program_rules<R>& all) {
+  return rule_tuple(all.rules);
+}
+// Outside a release build, what a piece's own parts are built under: the
+// table holds the program's rules.
+struct table_rules {
+  using is_program_rules = std::true_type;
+};
+template <class T>
+concept the_program_rules = requires { typename T::is_program_rules; };
 
 // A verb done on a node: one code for both builds -- the release fold calls
 // it with the concrete node, the debug table with the held one.
@@ -266,11 +287,30 @@ auto fold_rules(const std::tuple<Rules...>& all, N node, const Facts& facts) {
     return fold_rules<Piece, I + 1>(all, rule_on(std::get<I>(all), std::type_identity<Piece>{}, std::move(node), facts), facts);
 }
 
+// A callable kept by its type erased, outside a release build only: its
+// state on the heap, called and freed through a pointer each -- what the
+// table and an erased piece keep (std::move_only_function is not in every
+// standard library skiff is built with).
+template <class Sig>
+struct erased_call;
+template <class R, class... Args>
+struct erased_call<R(Args...)> {
+  std::unique_ptr<void, void (*)(void*)> state{nullptr, [](void*) {}};
+  R (*call)(void*, Args...) = nullptr;
+  erased_call() = default;
+  template <class F>
+    requires(!std::same_as<std::remove_cvref_t<F>, erased_call>)
+  erased_call(F f)
+      : state(new F(std::move(f)), [](void* at) { delete static_cast<F*>(at); }),
+        call([](void* at, Args... args) -> R { return (*static_cast<F*>(at))(std::forward<Args>(args)...); }) {}
+  R operator()(Args... args) const { return call(state.get(), std::forward<Args>(args)...); }
+};
+
 // The table a debug build applies a piece's rules from, filled by the
 // program as it starts from its rules (register_rules): for each piece, by
 // its key, the verbs on it in order, each over the held node.
 struct table_verb {
-  std::move_only_function<Held(Held, const void*) const> apply;
+  erased_call<Held(Held, const void*)> apply;
 };
 inline std::unordered_map<model::rt::TypeKey, std::vector<table_verb>>& rule_table() {
   static std::unordered_map<model::rt::TypeKey, std::vector<table_verb>> table;
@@ -301,9 +341,10 @@ inline Held apply_table(const std::vector<table_verb>& verbs, std::size_t at, He
 // named view is -- its type the same whatever it makes -- its rules the
 // table's; the rules it is built under not asked.
 struct erased_piece {
-  std::move_only_function<Held()> make;
+  erased_call<Held()> make;
   template <class Rules>
   Held operator()(const Rules&) {
+    static_assert(the_program_rules<Rules>, "a piece built where the program's rules are not known (under no_rules)");
     return make();
   }
 };
@@ -320,12 +361,13 @@ struct piece {
     auto made = static_cast<const Self&>(*this).make(args...);
     if constexpr (scene::kErasedCombinators) {
       return Builder{erased_piece{[made = std::move(made), facts = std::move(facts)]() mutable {
-        Held node(built(std::move(made), no_rules));
+        Held node(built(std::move(made), table_rules{}));
         const auto found = rule_table().find(piece_key<Self>());
         return found == rule_table().end() ? std::move(node) : apply_table(found->second, 0, std::move(node), &facts);
       }}};
     } else {
-      return Builder{[made = std::move(made), facts = std::move(facts)](const auto& rules) mutable {
+      return Builder{[made = std::move(made), facts = std::move(facts)]<class Rules>(const Rules& rules) mutable {
+        static_assert(the_program_rules<Rules>, "a piece built where the program's rules are not known (under no_rules)");
         return fold_rules<Self, 0>(rule_tuple(rules), built(std::move(made), rules), facts);
       }};
     }
