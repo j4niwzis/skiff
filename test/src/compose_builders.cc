@@ -82,4 +82,14 @@ TEST(Builders, AMakerOfBuildersMakesBuiltRows) {
   EXPECT_FALSE(row.visible());
 }
 
+TEST(Builders, WrappersOverAPieceAreBuildersToo) {
+  constexpr auto rules = c::program_rules{c::on<name_piece_fn>(c::drop) | c::on<name_piece_fn>(c::around([](auto node, const who_facts&) { return node; }))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  auto made = c::appearing(true, c::onClickAt([](auto&, float, float) { return std::optional<int>(); }, c::column(c::vbox(0.0f), name_piece(std::string("eve")))));
+  static_assert(c::a_builder<decltype(made)>);
+  auto node = std::move(made).build(rules);
+  EXPECT_TRUE(node.visible());
+}
+
 }  // namespace

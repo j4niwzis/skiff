@@ -28,6 +28,7 @@
 export module skiff.compose:builders;
 
 import std;
+import skia;
 import skiff.scene;
 import skiff.model;
 import :boxes;
@@ -428,6 +429,40 @@ auto onClick(E event, B node, std::string label = {}) {
 template <a_builder B>
 auto said(std::optional<scene::SemanticRole> role, bool chosen, B node) {
   return lifted([role = std::move(role), chosen](auto n) mutable { return said(std::move(role), chosen, std::move(n)); }, std::move(node));
+}
+
+template <class Ask, a_builder B>
+auto onClickAt(Ask ask, B node) {
+  return lifted([ask = std::move(ask)](auto n) mutable { return onClickAt(std::move(ask), std::move(n)); }, std::move(node));
+}
+template <class Ask, a_builder B>
+auto onRightPressAt(Ask ask, B node) {
+  return lifted([ask = std::move(ask)](auto n) mutable { return onRightPressAt(std::move(ask), std::move(n)); }, std::move(node));
+}
+template <a_builder B>
+auto appearing(bool now, B node, float from = 12.0f) {
+  return lifted([now, from](auto n) { return appearing(now, std::move(n), from); }, std::move(node));
+}
+template <class Want, class Take, a_builder B>
+auto held_off_for(Take take, B node) {
+  return lifted([take = std::move(take)](auto n) mutable { return held_off_for<Want>(std::move(take), std::move(n)); }, std::move(node));
+}
+template <class Want, class Compute, a_builder B>
+auto washed_for(skia::SkColor colour, float held, float flash, Compute compute, B node) {
+  return lifted([colour, held, flash, compute = std::move(compute)](auto n) mutable {
+    return washed_for<Want>(colour, held, flash, std::move(compute), std::move(n));
+  }, std::move(node));
+}
+template <class Act, class Mark, class Show, class N>
+  requires any_builder<Mark, N>
+auto swiped(float reach, float most, Act act, Show show, Mark mark, N node) {
+  return lifted([reach, most, act = std::move(act), show = std::move(show)](auto m, auto n) mutable {
+    return swiped(reach, most, std::move(act), std::move(show), std::move(m), std::move(n));
+  }, std::move(mark), std::move(node));
+}
+template <class Want, class On, a_builder B>
+auto spanned_for(On on, B list) {
+  return lifted([on = std::move(on)](auto l) mutable { return spanned_for<Want>(std::move(on), std::move(l)); }, std::move(list));
 }
 
 }  // namespace skiff::compose
