@@ -120,6 +120,21 @@ TEST(Builders, MoreWrappersOverAPieceAreBuilders) {
 }
 
 struct some_handlers {};
+struct some_facts {
+  std::string name;
+  friend bool operator==(const some_facts&, const some_facts&) = default;
+};
+TEST(Builders, AMountOfABuilderIsOne) {
+  constexpr auto rules = c::program_rules{c::on<name_piece_fn>(c::drop) | c::on<name_piece_fn>(c::around([](auto node, const who_facts&) { return node; }))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  using content = decltype(c::column(c::vbox(0.0f), name_piece(std::string())));
+  auto made = c::mount<content, some_facts>([](const some_facts& now) { return std::tuple{c::column(c::vbox(0.0f), name_piece(now.name))}; });
+  static_assert(c::a_builder<decltype(made)>);
+  auto node = std::move(made).build(rules);
+  node.read(std::optional<some_facts>(some_facts{"joy"}));
+  EXPECT_TRUE(node.shown() != nullptr);
+}
 // derived and state over a builder: theirs chosen, not ambiguous with the
 // eager ones (constraints said as concepts).
 static_assert(requires(decltype(name_piece(std::string())) b) { c::derived<>([](auto&) { return 0; }, std::move(b)); });

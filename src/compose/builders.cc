@@ -713,6 +713,33 @@ template <class Tag, a_builder B>
 auto reorder_lane(B node) {
   return lifted([](auto n) { return reorder_lane<Tag>(std::move(n)); }, std::move(node));
 }
+// A mount whose content is a builder: built when the mount is; its maker's
+// arguments built under the same rules as it makes them, the content then
+// what they build.
+template <class Make, class Rules>
+struct built_arguments {
+  Make make;
+  Rules rules;
+  template <class Facts>
+  auto operator()(const Facts& now) {
+    return std::apply([&](auto&&... made) { return std::tuple{built(std::forward<decltype(made)>(made), rules)...}; }, make(now));
+  }
+};
+template <a_builder Content, class Facts, class Make>
+auto mount(Make make, scene::Spec spec = {}, bool floats = false) {
+  return Builder{[make = std::move(make), spec, floats]<class Rules>(const Rules& rules) mutable {
+    using made_t = decltype(built(std::declval<Content>(), rules));
+    return mount<made_t, Facts>(built_arguments<Make, Rules>{std::move(make), rules}, spec, floats);
+  }};
+}
+template <a_builder Content, class Facts, class Make>
+auto mount_now(Make make, const Facts& first, scene::Spec spec = {}) {
+  return Builder{[make = std::move(make), first, spec]<class Rules>(const Rules& rules) mutable {
+    using made_t = decltype(built(std::declval<Content>(), rules));
+    return mount_now<made_t, Facts>(built_arguments<Make, Rules>{std::move(make), rules}, first, spec);
+  }};
+}
+
 // A list whose maker makes builders: built when the list is, its maker one
 // of built rows under the same rules.
 template <class Element, class Make>
