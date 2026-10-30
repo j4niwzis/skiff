@@ -32,6 +32,7 @@ import skia;
 import splice;
 import skiff.scene;
 import skiff.model;
+import skiff.nodes;
 import :boxes;
 import :wiring;
 import :views;
@@ -789,6 +790,52 @@ template <class Element, class Make>
 auto listed(Look look, Make make) {
   return Builder{[look = std::move(look), make = std::move(make)]<class Rules>(const Rules& rules) mutable {
     return listed<Element>(std::move(look), built_maker<Make, Rules>{std::move(make), rules});
+  }};
+}
+
+
+// ---- nodes that keep a maker, made by combinators --------------------------------------
+
+// Rows kept by their keys (MemoRows): each made by Make from its item
+// (Item: a key, its view, and the rest). Where a row is a builder, a
+// builder of the rows: their maker made one of built rows (built_maker)
+// under the rules the rows are built under.
+template <class Key, class View, class Item, class Make, class Holder>
+  requires(!a_builder<std::invoke_result_t<Make&, const Item&>>)
+auto memo_rows(Make make, Holder holder, scene::Spec spec = {.fillX = true, .autoSize = scene::axes::kY}) {
+  return nodes::MemoRows<Key, View, std::invoke_result_t<Make&, const Item&>, Make, Holder>(std::move(make), std::move(holder), std::move(spec));
+}
+template <class Key, class View, class Item, class Make, class Holder>
+  requires a_builder<std::invoke_result_t<Make&, const Item&>>
+auto memo_rows(Make make, Holder holder, scene::Spec spec = {.fillX = true, .autoSize = scene::axes::kY}) {
+  return Builder{[make = std::move(make), holder = std::move(holder), spec = std::move(spec)]<class Rules>(const Rules& rules) mutable {
+    using maker = built_maker<Make, Rules>;
+    return nodes::MemoRows<Key, View, std::invoke_result_t<maker&, const Item&>, maker, Holder>(maker{std::move(make), rules}, std::move(holder),
+                                                                                               std::move(spec));
+  }};
+}
+template <a_builder B>
+auto side_scroll(B line, bool verticalWheel = false) {
+  return lifted([verticalWheel](auto l) { return side_scroll(std::move(l), verticalWheel); }, std::move(line));
+}
+// A drag between bars whose rows are builders (its maker's): built under
+// the rules, its maker made one of built rows. Its lanes function is asked
+// with the rules' type -- lanes.operator()<Rules>(found) -- so that it may
+// name the lanes as they were built.
+template <class Lanes, class Rules>
+struct lanes_under {
+  Lanes lanes;
+  template <class Found>
+  auto operator()(const Found& found) const {
+    return lanes.template operator()<Rules>(found);
+  }
+};
+template <class Key, class View, class Make, class Surface, class Lanes>
+  requires(a_builder<std::invoke_result_t<Make&, const Key&, const View&, bool>> || holds_builder<Surface>::value)
+auto reorder_bars(Surface surface, Make make, Lanes lanes, skia::SkColor highlight = 0) {
+  return Builder{[surface = std::move(surface), make = std::move(make), lanes = std::move(lanes), highlight]<class Rules>(const Rules& rules) mutable {
+    return reorder_bars<Key, View>(built(std::move(surface), rules), built_maker<Make, Rules>{std::move(make), rules},
+                                   lanes_under<Lanes, Rules>{std::move(lanes)}, highlight);
   }};
 }
 

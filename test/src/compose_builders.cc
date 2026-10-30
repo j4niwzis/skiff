@@ -355,4 +355,21 @@ TEST(BuildersParity, ArrangedOverAPieceIsABuilderNotAmbiguous) {
   EXPECT_EQ(trace(), (std::vector<std::string>{"arranged:lee"}));
 }
 
+// Rows kept by their keys, made by a maker whose rows hold pieces.
+TEST(BuildersParity, KeptRowsOfPiecesAreShapedAsEachIsMade) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<first_piece_fn>(c::around(traced{"kept"}))))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  using item = std::pair<std::string, std::string>;
+  const auto make = [](const item& one) { return c::column(c::vbox(0.0f), first_piece(one.second)); };
+  auto made = c::memo_rows<std::string, std::string, item>(make, c::Box<>(c::hbox(4.0f)));
+  static_assert(c::a_builder<decltype(made)>);
+  // Scrolled sideways, it is a builder too (side_scroll lifted).
+  static_assert(c::a_builder<decltype(c::side_scroll(c::memo_rows<std::string, std::string, item>(make, c::Box<>(c::hbox(4.0f))), true))>);
+  auto node = std::move(made).build(rules);
+  node.read(std::vector<item>{{"a", "max"}, {"b", "ned"}});
+  EXPECT_EQ(trace(), (std::vector<std::string>{"kept:max", "kept:ned"}));
+}
+
 }  // namespace
