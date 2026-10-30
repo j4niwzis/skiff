@@ -33,6 +33,8 @@ import skiff.scene;
 import skiff.model;
 import :boxes;
 import :wiring;
+import :views;
+import :reorder;
 
 export namespace skiff::compose {
 
@@ -51,8 +53,6 @@ struct Builder {
 template <class Make>
 Builder(Make) -> Builder<Make>;
 
-template <class T>
-concept a_builder = requires { typename std::remove_cvref_t<T>::is_builder; };
 // A part that holds a builder: one itself, or an optional or a list of them.
 template <class T>
 struct holds_builder : std::bool_constant<a_builder<T>> {};
@@ -490,6 +490,237 @@ auto with_way_down(Look look, List list, Corner corner, Tell tell) {
   return lifted([tell = std::move(tell)](Look l, auto li, auto co) mutable {
     return with_way_down(std::move(l), std::move(li), std::move(co), std::move(tell));
   }, std::move(look), std::move(list), std::move(corner));
+}
+
+// ---- the rest of the combinators, lifted ----------------------------------------------
+
+template <class Tag, a_builder B>
+auto marked(Tag tag, B node) {
+  return lifted([tag = std::move(tag)](auto n) mutable { return marked(std::move(tag), std::move(n)); }, std::move(node));
+}
+template <a_builder B>
+auto keep_ticking(bool on, B node) {
+  return lifted([on](auto n) { return keep_ticking(on, std::move(n)); }, std::move(node));
+}
+template <class Want, a_builder B>
+  requires std::move_constructible<B>
+auto bound(B node) {
+  return lifted([](auto n) { return bound<Want>(std::move(n)); }, std::move(node));
+}
+template <class... Reads, class Compute, a_builder B>
+  requires(!kTakesOnePart<Compute, Reads...>)
+auto derived(Compute compute, B node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return derived<Reads...>(std::move(compute), std::move(n)); }, std::move(node));
+}
+template <class Read, class Compute, a_builder B>
+  requires kTakesOnePart<Compute, Read>
+auto derived(Compute compute, B node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return derived<Read>(std::move(compute), std::move(n)); }, std::move(node));
+}
+template <class T, a_builder B>
+auto local(B node, T initial = {}) {
+  return lifted([initial = std::move(initial)](auto n) mutable { return local<T>(std::move(n), std::move(initial)); }, std::move(node));
+}
+template <class T, class Handlers, a_builder B>
+auto local(Handlers handlers, B node, T initial = {}) {
+  return lifted([handlers = std::move(handlers), initial = std::move(initial)](auto n) mutable {
+    return local<T>(std::move(handlers), std::move(n), std::move(initial));
+  }, std::move(node));
+}
+template <class T, class Handlers, a_builder B>
+auto hidden(Handlers handlers, B node, T initial = {}) {
+  return lifted([handlers = std::move(handlers), initial = std::move(initial)](auto n) mutable {
+    return hidden<T>(std::move(handlers), std::move(n), std::move(initial));
+  }, std::move(node));
+}
+template <class T, class Handlers, a_builder B>
+  requires(!std::derived_from<Handlers, scene::NodeBase>)
+auto state(Handlers handlers, B node) {
+  return lifted([handlers = std::move(handlers)](auto n) mutable { return state<T>(std::move(handlers), std::move(n)); }, std::move(node));
+}
+template <class Within, class Handlers, a_builder B, class... Keys>
+auto scoped(Handlers handlers, B node, Keys... keys) {
+  return lifted([handlers = std::move(handlers), ... keys = std::move(keys)](auto n) mutable {
+    return scoped<Within>(std::move(handlers), std::move(n), std::move(keys)...);
+  }, std::move(node));
+}
+template <a_builder B>
+auto named(std::string label, std::string hint, B node) {
+  return lifted([label = std::move(label), hint = std::move(hint)](auto n) mutable { return named(std::move(label), std::move(hint), std::move(n)); },
+                std::move(node));
+}
+template <class Want, class Compute, a_builder B>
+auto chosen_for(Compute compute, std::optional<scene::SemanticRole> role, B node) {
+  return lifted([compute = std::move(compute), role = std::move(role)](auto n) mutable {
+    return chosen_for<Want>(std::move(compute), std::move(role), std::move(n));
+  }, std::move(node));
+}
+template <class K, class E, a_builder B>
+auto onKey(K key, E event, B node) {
+  return lifted([key = std::move(key), event = std::move(event)](auto n) mutable { return onKey(std::move(key), std::move(event), std::move(n)); },
+                std::move(node));
+}
+template <class Ask, a_builder B>
+auto onKeys(Ask ask, B node) {
+  return lifted([ask = std::move(ask)](auto n) mutable { return onKeys(std::move(ask), std::move(n)); }, std::move(node));
+}
+template <class... Reads, class Compute, a_builder B>
+auto shown_if(Compute compute, B node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return shown_if<Reads...>(std::move(compute), std::move(n)); }, std::move(node));
+}
+template <class Want, class Phase, class Compute, class Ask, a_builder B>
+auto keys_for(Compute compute, Ask ask, B node) {
+  return lifted([compute = std::move(compute), ask = std::move(ask)](auto n) mutable {
+    return keys_for<Want, Phase>(std::move(compute), std::move(ask), std::move(n));
+  }, std::move(node));
+}
+template <class Want, class Compute, class Apply, a_builder B>
+auto applied(Compute compute, Apply apply, B node) {
+  return lifted([compute = std::move(compute), apply = std::move(apply)](auto n) mutable {
+    return applied<Want>(std::move(compute), std::move(apply), std::move(n));
+  }, std::move(node));
+}
+template <class Want, class Compute, a_builder B>
+auto focused_by(Compute compute, B node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return focused_by<Want>(std::move(compute), std::move(n)); }, std::move(node));
+}
+template <class Want, class Compute, a_builder B>
+auto spec_for(Compute compute, B node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return spec_for<Want>(std::move(compute), std::move(n)); }, std::move(node));
+}
+template <class Want, class Compute, a_builder B>
+auto rekeyed_by(Compute compute, B node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return rekeyed_by<Want>(std::move(compute), std::move(n)); }, std::move(node));
+}
+template <class Ratio, a_builder B>
+auto fitted(Fit fit, Ratio ratio, B node) {
+  return lifted([fit, ratio = std::move(ratio)](auto n) mutable { return fitted(fit, std::move(ratio), std::move(n)); }, std::move(node));
+}
+template <class Fit_, a_builder B>
+auto shrunk(float wide, float gap, Fit_ fit, B node) {
+  return lifted([wide, gap, fit = std::move(fit)](auto n) mutable { return shrunk(wide, gap, std::move(fit), std::move(n)); }, std::move(node));
+}
+template <class Want, class Compute, a_builder B>
+auto placed_at(Compute compute, B node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return placed_at<Want>(std::move(compute), std::move(n)); }, std::move(node));
+}
+template <class Want, class Compute, a_builder B>
+auto popped_at(Compute compute, float edge, B node) {
+  return lifted([compute = std::move(compute), edge](auto n) mutable { return popped_at<Want>(std::move(compute), edge, std::move(n)); }, std::move(node));
+}
+template <class E, class Make, a_builder B>
+auto onPointer(Make make, B node) {
+  return lifted([make = std::move(make)](auto n) mutable { return onPointer<E>(std::move(make), std::move(n)); }, std::move(node));
+}
+template <class Act, a_builder B>
+auto onDragAcross(Act act, B node) {
+  return lifted([act = std::move(act)](auto n) mutable { return onDragAcross(std::move(act), std::move(n)); }, std::move(node));
+}
+template <class E, a_builder B>
+auto onRightPress(E event, B node) {
+  return lifted([event = std::move(event)](auto n) mutable { return onRightPress(std::move(event), std::move(n)); }, std::move(node));
+}
+template <class Act, a_builder B>
+auto resting(double ms, Act act, B node) {
+  return lifted([ms, act = std::move(act)](auto n) mutable { return resting(ms, std::move(act), std::move(n)); }, std::move(node));
+}
+template <class Act, a_builder B>
+auto hovering(Act act, B node) {
+  return lifted([act = std::move(act)](auto n) mutable { return hovering(std::move(act), std::move(n)); }, std::move(node));
+}
+template <class Act, a_builder B>
+auto hovering(Look look, Act act, B node) {
+  return lifted([look = std::move(look), act = std::move(act)](auto n) mutable { return hovering(std::move(look), std::move(act), std::move(n)); },
+                std::move(node));
+}
+template <class Ask, a_builder B>
+auto moves_focus(Ask ask, B node) {
+  return lifted([ask = std::move(ask)](auto n) mutable { return moves_focus(std::move(ask), std::move(n)); }, std::move(node));
+}
+template <class Want, class Make, a_builder B>
+auto asking_for(Make make, B node) {
+  return lifted([make = std::move(make)](auto n) mutable { return asking_for<Want>(std::move(make), std::move(n)); }, std::move(node));
+}
+template <class Act, a_builder B>
+auto flicked(float reach, Act act, B node) {
+  return lifted([reach, act = std::move(act)](auto n) mutable { return flicked(reach, std::move(act), std::move(n)); }, std::move(node));
+}
+template <class Act, a_builder B>
+auto flicked_holding(float reach, Act act, B node) {
+  return lifted([reach, act = std::move(act)](auto n) mutable { return flicked_holding(reach, std::move(act), std::move(n)); }, std::move(node));
+}
+template <class Want, class Compute, a_builder B>
+auto fading_for(Compute compute, double hold, B node) {
+  return lifted([compute = std::move(compute), hold](auto n) mutable { return fading_for<Want>(std::move(compute), hold, std::move(n)); },
+                std::move(node));
+}
+template <a_builder B>
+auto appearing_across(bool now, B node, float from, float duration = 220.0f) {
+  return lifted([now, from, duration](auto n) { return appearing_across(now, std::move(n), from, duration); }, std::move(node));
+}
+template <class Policy, a_builder B>
+auto arranged(typename Policy::State state, B node) {
+  return lifted([state = std::move(state)](auto n) mutable { return arranged<Policy>(std::move(state), std::move(n)); }, std::move(node));
+}
+template <a_builder B>
+auto place(Look look, B node) {
+  return lifted([](Look l, auto n) { return place(std::move(l), std::move(n)); }, std::move(look), std::move(node));
+}
+template <class M, class Told, class Compute, a_builder B>
+auto with_model(Compute compute, B node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return with_model<M, Told>(std::move(compute), std::move(n)); }, std::move(node));
+}
+template <a_builder B>
+auto focus_frame(Look look, B field) {
+  return lifted([](Look l, auto f) { return focus_frame(std::move(l), std::move(f)); }, std::move(look), std::move(field));
+}
+template <class Item, class Height, a_builder B>
+auto virtual_rows(Height height, B node, VirtualRowsOptions options = {}) {
+  return lifted([height = std::move(height), options](auto n) mutable { return virtual_rows<Item>(std::move(height), std::move(n), options); },
+                std::move(node));
+}
+template <class Want, class Compute, a_builder B>
+auto slid_for(Compute compute, B node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return slid_for<Want>(std::move(compute), std::move(n)); }, std::move(node));
+}
+template <class Under, class Over>
+  requires any_builder<Under, Over>
+auto frozen_under(Look look, Under under, Over over) {
+  return lifted([](Look l, auto u, auto o) { return frozen_under(std::move(l), std::move(u), std::move(o)); }, std::move(look), std::move(under),
+                std::move(over));
+}
+template <class Make, a_builder B>
+auto tapped_off(Make make, B node) {
+  return lifted([make = std::move(make)](auto n) mutable { return tapped_off(std::move(make), std::move(n)); }, std::move(node));
+}
+template <class Want, class Tell, a_builder B>
+auto kept_scroll(Tell tell, B node) {
+  return lifted([tell = std::move(tell)](auto n) mutable { return kept_scroll<Want>(std::move(tell), std::move(n)); }, std::move(node));
+}
+template <class Key, class View = void, a_builder B>
+auto remembered_scroll(B node) {
+  return lifted([](auto n) { return remembered_scroll<Key, View>(std::move(n)); }, std::move(node));
+}
+template <class Key, a_builder B>
+auto restarted_scroll(B node) {
+  return lifted([](auto n) { return restarted_scroll<Key>(std::move(n)); }, std::move(node));
+}
+template <a_builder B>
+auto clamped_width(WidthLimit limit, B node) {
+  return lifted([limit](auto n) { return clamped_width(limit, std::move(n)); }, std::move(node));
+}
+template <class Tag, a_builder B>
+auto reorder_lane(B node) {
+  return lifted([](auto n) { return reorder_lane<Tag>(std::move(n)); }, std::move(node));
+}
+// A list whose maker makes builders: built when the list is, its maker one
+// of built rows under the same rules.
+template <class Element, class Make>
+  requires a_builder<std::invoke_result_t<Make&, const Element&>>
+auto listed(Look look, Make make) {
+  return Builder{[look = std::move(look), make = std::move(make)]<class Rules>(const Rules& rules) mutable {
+    return listed<Element>(std::move(look), built_maker<Make, Rules>{std::move(make), rules});
+  }};
 }
 
 }  // namespace skiff::compose

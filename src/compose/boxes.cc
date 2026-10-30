@@ -558,6 +558,12 @@ template <NamedOverHeld N> [[nodiscard]] const scene::State &state_of(const N &n
 }
 [[nodiscard]] inline const scene::State &state_of(const Held &held) { return scene::stateOf(const_cast<Held &>(held).held()); }
 
+// A builder (compose:builders): what a view will be, built under a
+// program's rules. Said here, where the eager combinators whose own
+// constraints a builder's overload cannot subsume leave builders to it.
+template <class T>
+concept a_builder = requires { typename std::remove_cvref_t<T>::is_builder; };
+
 // A part as a combinator keeps it. A view named where it was written
 // (SKIFF_NAMED) is a type of its own -- what the compiler names, what a
 // hook is overloaded on -- and, outside a release build, a wrapper over a
@@ -953,7 +959,7 @@ template <class Compute, class... Reads> inline constexpr bool kTakesOnePart = f
 template <class Compute, class Read>
 inline constexpr bool kTakesOnePart<Compute, Read> = std::invocable<Compute &, const typename bind::BoundValueT<Read>::type &>;
 template <class... Reads, class Compute, class N>
-  requires(!kTakesOnePart<Compute, Reads...>)
+  requires(!kTakesOnePart<Compute, Reads...> && !a_builder<N>)
 auto derived(Compute compute, N node) {
   return erased(bind::Derived<Compute, part_t<N>, Reads...>(as_part(std::move(node)), std::move(compute)));
 }
@@ -1062,7 +1068,7 @@ template <class... H> Handlers<H...> handlers(H... each) { return {std::move(eac
 // with the handlers that answer what is sent within -- and the model the
 // tree is bound to holds it because the view says so (bind::ModelOf).
 template <class T, class Handlers, class N>
-  requires(!std::derived_from<Handlers, scene::NodeBase>)
+  requires(!std::derived_from<Handlers, scene::NodeBase> && !a_builder<N>)
 auto state(Handlers handlers, N node) {
   bind::Stated<T, Handlers, part_t<N>> made(std::move(handlers), as_part(std::move(node)));
   over_held(made);
@@ -1379,7 +1385,7 @@ auto projected(Compute compute, N node) {
 // the model alone, a view derived from a page's draft was never made, and
 // nothing said so (mux's room members, an empty page).
 template <class Read, class Compute, class N>
-  requires kTakesOnePart<Compute, Read>
+  requires(kTakesOnePart<Compute, Read> && !a_builder<N>)
 auto derived(Compute compute, N node) {
   return ::skiff::compose::projected<Read>(std::move(compute), std::move(node));
 }
