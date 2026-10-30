@@ -318,4 +318,41 @@ TEST(BuildersParity, AVariantHoldingAPieceIsBuiltAsTheKindItHolds) {
   EXPECT_EQ(trace(), (std::vector<std::string>{"kind:jo"}));
 }
 
+// A bubble's plugins' slots: a tuple of optionals, one holding a piece.
+TEST(BuildersParity, ATupleOfSlotsHoldingAPieceIsBuilt) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<first_piece_fn>(c::around(traced{"slot"}))))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  using piece_part = decltype(first_piece(std::string()));
+  std::tuple<std::optional<nodes::Text>, std::optional<piece_part>, std::optional<piece_part>> slots{
+      nodes::Text("here", 13.0f, 0xff000000u), first_piece(std::string("kai")), std::nullopt};
+  static_assert(c::holds_builder<decltype(slots)>::value);
+  auto made = c::column(c::vbox(0.0f), std::move(slots));
+  static_assert(c::a_builder<decltype(made)>);
+  auto node = std::move(made).build(rules);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"slot:kai"}));
+}
+
+// A policy laying out what it arranges: a card's, a bubble's.
+struct still_policy {
+  struct State {};
+  static void prepare(auto&, State&) {}
+  static void arrange(auto&, State&) {}
+  static bool settling(const auto&, const State&) { return false; }
+  static void settle(auto&, State&) {}
+};
+TEST(BuildersParity, ArrangedOverAPieceIsABuilderNotAmbiguous) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<first_piece_fn>(c::around(traced{"arranged"}))))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  auto made = c::arranged<still_policy>({}, c::column(c::vbox(0.0f), first_piece(std::string("lee"))));
+  static_assert(c::a_builder<decltype(made)>);
+  auto node = std::move(made).build(rules);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"arranged:lee"}));
+}
+
 }  // namespace

@@ -65,6 +65,10 @@ template <class T>
 struct holds_builder<std::vector<T>> : holds_builder<T> {};
 template <class... T>
 struct holds_builder<spl::variant<T...>> : std::bool_constant<(holds_builder<T>::value || ...)> {};
+// And a tuple of parts, one of which holds one (a bubble's plugins' slots:
+// each an optional of what its plugin made).
+template <class... T>
+struct holds_builder<std::tuple<T...>> : std::bool_constant<(holds_builder<T>::value || ...)> {};
 template <class... T>
 concept any_builder = (holds_builder<std::remove_cvref_t<T>>::value || ...);
 
@@ -92,6 +96,13 @@ template <class... T, class Rules>
 auto built(spl::variant<T...> part, const Rules& rules) {
   using Out = spl::variant<decltype(built(std::declval<T>(), rules))...>;
   return built_kind<0, Out>(part, rules);
+}
+template <class... T, class Rules>
+  requires(holds_builder<T>::value || ...)
+auto built(std::tuple<T...> parts, const Rules& rules) {
+  return std::apply([&](T&... each) {
+    return std::tuple<decltype(built(std::declval<T>(), rules))...>(built(std::move(each), rules)...);
+  }, parts);
 }
 template <class T, class Rules>
   requires holds_builder<T>::value

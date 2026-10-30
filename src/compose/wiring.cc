@@ -1052,7 +1052,12 @@ template <class Policy, class N> struct Arranged : N {
     Policy::settle(static_cast<N &>(*this), fRules);
   }
 };
-template <class Policy, class N> auto arranged(typename Policy::State rules, N node) {
+// Not over a builder: Policy is named only where it cannot be deduced
+// (Policy::State), so the builder's overload cannot be ordered over this
+// one -- the two told apart by this constraint instead.
+template <class Policy, class N>
+  requires(!a_builder<N>)
+auto arranged(typename Policy::State rules, N node) {
   // Concrete in every build: what reads the model for it reads it as itself.
   Arranged<Policy, N> made(std::move(rules), std::move(node));
   over_held(made);
