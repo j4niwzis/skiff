@@ -92,4 +92,18 @@ TEST(Builders, WrappersOverAPieceAreBuildersToo) {
   EXPECT_TRUE(node.visible());
 }
 
+struct pressed {};
+TEST(Builders, ManyAndPressOverPiecesAreBuilders) {
+  constexpr auto rules = c::program_rules{c::on<name_piece_fn>(c::drop) | c::on<name_piece_fn>(c::around([](auto node, const who_facts&) { return node; }))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  std::vector<decltype(name_piece(std::string()))> parts;
+  parts.push_back(name_piece(std::string("fay")));
+  parts.push_back(name_piece(std::string("gus")));
+  auto made = c::onPress([] { return pressed{}; }, c::many(c::vbox(0.0f), std::move(parts)));
+  static_assert(c::a_builder<decltype(made)>);
+  auto node = std::move(made).build(rules);
+  EXPECT_TRUE(node.visible());
+}
+
 }  // namespace

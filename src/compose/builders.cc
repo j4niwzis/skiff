@@ -465,4 +465,31 @@ auto spanned_for(On on, B list) {
   return lifted([on = std::move(on)](auto l) mutable { return spanned_for<Want>(std::move(on), std::move(l)); }, std::move(list));
 }
 
+template <a_builder B>
+auto many(Look look, std::vector<B> parts) {
+  return lifted([](Look l, auto p) { return many(std::move(l), std::move(p)); }, std::move(look), std::move(parts));
+}
+template <class Make, a_builder B>
+  requires MakesPress<Make>
+auto onPress(Make make, B node, std::string label = {}) {
+  return lifted([make = std::move(make), label = std::move(label)](auto n) mutable {
+    return onPress(std::move(make), std::move(n), std::move(label));
+  }, std::move(node));
+}
+template <class Want, class Compute, a_builder B>
+auto shown_for(Compute compute, B node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return shown_for<Want>(std::move(compute), std::move(n)); }, std::move(node));
+}
+template <class Want, class Compute, a_builder B>
+auto projected(Compute compute, B node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return projected<Want>(std::move(compute), std::move(n)); }, std::move(node));
+}
+template <class List, class Corner, class Tell>
+  requires any_builder<List, Corner>
+auto with_way_down(Look look, List list, Corner corner, Tell tell) {
+  return lifted([tell = std::move(tell)](Look l, auto li, auto co) mutable {
+    return with_way_down(std::move(l), std::move(li), std::move(co), std::move(tell));
+  }, std::move(look), std::move(list), std::move(corner));
+}
+
 }  // namespace skiff::compose
