@@ -623,6 +623,14 @@ template <class N> N &over_held(N &made) { return made; }
 // (Self::viewName(), the macro's spelling of it), written into the state of
 // what it names: while that is laid out it is the view its parts are in,
 // for what is told of them (an overflow).
+// A point a program may shape a named view at (SKIFF_NAMED_AS): its tag,
+// a type the program declares -- a name, never laid out. What the view
+// made is handed to shape_view(point<Tag>{}, made[, facts]) as it is
+// named: unqualified, so that the program's own, where the macro is written
+// in its namespace, is found by ordinary lookup -- the identity below
+// anywhere else -- and returned as any type: what the named view is then.
+template <class Tag> struct point {};
+
 template <class Self, class Base> struct Named : Base {
   // Its content's handlers, at this type's level, as Bound keeps them: a
   // call on a type derived from the node took Node's deducing-this
@@ -2460,3 +2468,8 @@ PageView<Facts, Page, Show, Same, Side, Pin> page_view(Show show, Same same, Sid
 }
 
 } // namespace skiff::compose
+
+// A named view shaped by no one: as it was made. In the global namespace, for
+// SKIFF_NAMED_AS written where the program has no shape_view of its own.
+export template <class Tag, class N> N shape_view(skiff::compose::point<Tag>, N node) { return node; }
+export template <class Tag, class N, class Facts> N shape_view(skiff::compose::point<Tag>, N node, const Facts &) { return node; }

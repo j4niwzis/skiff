@@ -46,3 +46,26 @@
     };                                                                                                                 \
     return name(skiff_named_made());                                                                                   \
   }()
+
+// SKIFF_NAMED_AS(tag, name, expression...): the same, and a point the program
+// may shape the view at (compose::point, shape_view): tag is a type the
+// program declares for it, the view's name in its API -- what a plugin is
+// put on. SKIFF_NAMED_OF(tag, name, facts, expression...): and what it was
+// made from, handed to what shapes it.
+#define SKIFF_NAMED_SHAPED(name, shaped)                                                                                \
+  [&] {                                                                                                                \
+    auto skiff_named_made = [&] { return shaped; };                                                                    \
+    struct name : ::skiff::compose::Named<name, decltype(skiff_named_made())> {                                         \
+      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::Named;                                        \
+      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onKey;                                        \
+      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onPointer;                                    \
+      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onText;                                       \
+      using ::skiff::compose::Named<name, decltype(skiff_named_made())>::onSemantic;                                   \
+      static constexpr const char *viewName() { return #name; }                                                        \
+    };                                                                                                                 \
+    return name(skiff_named_made());                                                                                   \
+  }()
+#define SKIFF_NAMED_AS(tag, name, ...)                                                                                  \
+  SKIFF_NAMED_SHAPED(name, shape_view(::skiff::compose::point<tag>{}, [&] { return __VA_ARGS__; }()))
+#define SKIFF_NAMED_OF(tag, name, facts, ...)                                                                           \
+  SKIFF_NAMED_SHAPED(name, shape_view(::skiff::compose::point<tag>{}, [&] { return __VA_ARGS__; }(), facts))
