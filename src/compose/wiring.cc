@@ -1247,8 +1247,14 @@ private:
     auto &all = rows().fRows;
     const auto found = std::ranges::find(all, *fAim, &Rows::Kept::fKey);
     if (found == all.end()) {
-      if (fAimedAt)
-        fAim.reset();  // gone, once aimed at
+      // Gone, once aimed at; or never made -- its window never came (a jump
+      // the program let go of, a page that failed) -- after ten seconds of
+      // frames. Kept for ever, the list did nothing else while it waited:
+      // it said nothing seen and asked for no page at its edges, and stood
+      // where it was, its older messages never coming (a tester's: the
+      // timeline frozen, not scrolling on).
+      if (fAimedAt || ++fAimFrames > 600)
+        fAim.reset();
       return;
     }
     if (!found->bounds().isEmpty()) {
