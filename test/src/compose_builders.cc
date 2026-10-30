@@ -297,4 +297,25 @@ TEST(BuildersParity, AScrolledPieceIsABuilderShapedOnce) {
   EXPECT_EQ(trace(), (std::vector<std::string>{"scrolled:ida"}));
 }
 
+// A message's blocks: each a variant, one kind of it holding a piece.
+struct code_block_kind {};
+TEST(BuildersParity, AVariantHoldingAPieceIsBuiltAsTheKindItHolds) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<first_piece_fn>(c::around(traced{"kind"}))))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  using piece_part = decltype(c::column(c::vbox(0.0f), first_piece(std::string())));
+  using block = spl::variant<nodes::Text, piece_part>;
+  std::vector<block> blocks;
+  blocks.emplace_back(std::in_place_index<0>, nodes::Text("code", 13.0f, 0xff000000u));
+  blocks.emplace_back(std::in_place_index<1>, c::column(c::vbox(0.0f), first_piece(std::string("jo"))));
+  blocks.emplace_back(std::in_place_index<0>, nodes::Text("more", 13.0f, 0xff000000u));
+  static_assert(c::holds_builder<block>::value);
+  auto made = c::many(c::vbox(0.0f), std::move(blocks));
+  static_assert(c::a_builder<decltype(made)>);
+  auto node = std::move(made).build(rules);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"kind:jo"}));
+}
+
 }  // namespace

@@ -29,6 +29,7 @@ export module skiff.compose:builders;
 
 import std;
 import skia;
+import splice;
 import skiff.scene;
 import skiff.model;
 import :boxes;
@@ -53,13 +54,17 @@ struct Builder {
 template <class Make>
 Builder(Make) -> Builder<Make>;
 
-// A part that holds a builder: one itself, or an optional or a list of them.
+// A part that holds a builder: one itself, or an optional or a list of them,
+// or a variant one of whose kinds is one (a message's blocks: a link's,
+// which holds a piece, beside a code block's, which does not).
 template <class T>
 struct holds_builder : std::bool_constant<a_builder<T>> {};
 template <class T>
 struct holds_builder<std::optional<T>> : holds_builder<T> {};
 template <class T>
 struct holds_builder<std::vector<T>> : holds_builder<T> {};
+template <class... T>
+struct holds_builder<spl::variant<T...>> : std::bool_constant<(holds_builder<T>::value || ...)> {};
 template <class... T>
 concept any_builder = (holds_builder<std::remove_cvref_t<T>>::value || ...);
 
@@ -73,16 +78,31 @@ template <a_builder B, class Rules>
 auto built(B part, const Rules& rules) {
   return std::move(part).build(rules);
 }
-template <class T, class Rules>
-  requires a_builder<T>
-auto built(std::optional<T> part, const Rules& rules) {
-  using N = decltype(std::move(*part).build(rules));
-  return part ? std::optional<N>(std::move(*part).build(rules)) : std::optional<N>();
+// A variant: the kind it holds built, as the same kind of the variant of
+// what each kind builds (by its index: two kinds may build alike).
+template <std::size_t I, class Out, class In, class Rules>
+Out built_kind(In& part, const Rules& rules) {
+  if constexpr (I + 1 < spl::variant_size_v<In>)
+    if (part.index() != I)
+      return built_kind<I + 1, Out>(part, rules);
+  return Out(std::in_place_index<I>, built(std::move(spl::get<I>(part)), rules));
+}
+template <class... T, class Rules>
+  requires(holds_builder<T>::value || ...)
+auto built(spl::variant<T...> part, const Rules& rules) {
+  using Out = spl::variant<decltype(built(std::declval<T>(), rules))...>;
+  return built_kind<0, Out>(part, rules);
 }
 template <class T, class Rules>
-  requires a_builder<T>
+  requires holds_builder<T>::value
+auto built(std::optional<T> part, const Rules& rules) {
+  using N = decltype(built(std::move(*part), rules));
+  return part ? std::optional<N>(built(std::move(*part), rules)) : std::optional<N>();
+}
+template <class T, class Rules>
+  requires holds_builder<T>::value
 auto built(std::vector<T> parts, const Rules& rules) {
-  return parts | std::views::as_rvalue | std::views::transform([&](T&& one) { return std::move(one).build(rules); }) |
+  return parts | std::views::as_rvalue | std::views::transform([&](T&& one) { return built(std::move(one), rules); }) |
          std::ranges::to<std::vector>();
 }
 
@@ -475,7 +495,8 @@ auto spanned_for(On on, B list) {
   return lifted([on = std::move(on)](auto l) mutable { return spanned_for<Want>(std::move(on), std::move(l)); }, std::move(list));
 }
 
-template <a_builder B>
+template <class B>
+  requires holds_builder<B>::value
 auto many(Look look, std::vector<B> parts) {
   return lifted([](Look l, auto p) { return many(std::move(l), std::move(p)); }, std::move(look), std::move(parts));
 }
