@@ -158,4 +158,131 @@ static_assert(requires(decltype(name_piece(std::string())) b) { c::derived<>([](
 static_assert(requires(decltype(name_piece(std::string())) b) { c::state<int>(some_handlers{}, std::move(b)); });
 static_assert(c::a_builder<decltype(c::state<int>(some_handlers{}, name_piece(std::string())))>);
 
+// ---- parity: the release fold and the debug table, the same results ----------------
+// Each test below expects the same values in both builds, so that a build
+// whose fold differs -- the rules' order, a rule run twice or on the wrong
+// piece, facts not the piece's own -- fails in the build it differs in.
+
+// What the verbs did, in the order they did it.
+std::vector<std::string>& trace() {
+  static std::vector<std::string> done;
+  return done;
+}
+// A verb around a piece that only says it ran: its tag and the facts' name.
+struct traced {
+  const char* tag;
+  template <class N>
+  N operator()(N node, const who_facts& facts) const {
+    trace().push_back(std::format("{}:{}", tag, facts.name));
+    return node;
+  }
+};
+// What a rule puts beside or instead of a piece, saying it was made.
+struct traced_mark {
+  const char* tag;
+  auto operator()(const who_facts& facts) const {
+    trace().push_back(std::format("{}:{}", tag, facts.name));
+    return nodes::Text(facts.name, 13.0f, 0xff000000u);
+  }
+};
+inline constexpr struct first_piece_fn : c::piece<first_piece_fn> {
+  using facts_type = who_facts;
+  static who_facts facts(const std::string& name) { return {name}; }
+  auto make(const std::string& name) const { return nodes::Text(name, 13.0f, 0xff000000u); }
+} first_piece{};
+inline constexpr struct second_piece_fn : c::piece<second_piece_fn> {
+  using facts_type = who_facts;
+  static who_facts facts(const std::string& name) { return {name}; }
+  auto make(const std::string& name) const { return nodes::Text(name, 13.0f, 0xff000000u); }
+} second_piece{};
+// A piece whose own make holds another piece: the inner one built first.
+inline constexpr struct outer_piece_fn : c::piece<outer_piece_fn> {
+  using facts_type = who_facts;
+  static who_facts facts(const std::string& name) { return {"outer " + name}; }
+  auto make(const std::string& name) const { return c::column(c::vbox(0.0f), second_piece(name)); }
+} outer_piece{};
+
+TEST(BuildersParity, RulesRunInTheirOrderOnTheirPieceOnly) {
+  constexpr auto rules = c::program_rules{c::on<first_piece_fn>(c::around(traced{"one"})) |
+                                          c::on<second_piece_fn>(c::around(traced{"other"})) |
+                                          c::on<first_piece_fn>(c::around(traced{"two"})) |
+                                          c::on<first_piece_fn>(c::before(traced_mark{"before"}, 2.0f)) |
+                                          c::on<first_piece_fn>(c::after(traced_mark{"after"}, 2.0f))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  auto node = first_piece(std::string("ann")).build(rules);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"one:ann", "two:ann", "before:ann", "after:ann"}));
+}
+
+TEST(BuildersParity, RegisteredTwiceTheRulesRunOnce) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<first_piece_fn>(c::around(traced{"once"}))))};
+  c::register_rules(rules.rules);
+  c::register_rules(rules.rules);
+  trace().clear();
+  auto node = first_piece(std::string("bob")).build(rules);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"once:bob"}));
+}
+
+TEST(BuildersParity, APieceInsideAPieceIsShapedFirst) {
+  constexpr auto rules = c::program_rules{c::on<outer_piece_fn>(c::around(traced{"outside"})) |
+                                          c::on<second_piece_fn>(c::around(traced{"inside"}))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  auto node = outer_piece(std::string("cy")).build(rules);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"inside:cy", "outside:outer cy"}));
+}
+
+TEST(BuildersParity, DropThenAroundSeesTheDroppedNode) {
+  constexpr auto rules = c::program_rules{c::on<first_piece_fn>(c::drop) | c::on<first_piece_fn>(c::around(traced{"seen"}))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  auto node = first_piece(std::string("dot")).build(rules);
+  EXPECT_FALSE(node.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"seen:dot"}));
+}
+
+TEST(BuildersParity, InsteadMakesItsOwnFromTheFacts) {
+  constexpr auto rules = c::program_rules{c::on<first_piece_fn>(c::instead(traced_mark{"instead"})) |
+                                          c::on<first_piece_fn>(c::around(traced{"then"}))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  auto node = first_piece(std::string("eli")).build(rules);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"instead:eli", "then:eli"}));
+}
+
+TEST(BuildersParity, RowsOfAMakerAreShapedOneByOneAsMade) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<first_piece_fn>(c::around(traced{"row"}))))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  const auto make = [](const std::string& name) { return first_piece(name); };
+  const c::built_maker<decltype(make), decltype(rules)> rows{make, rules};
+  auto first = rows(std::string("fin"));
+  EXPECT_EQ(trace(), (std::vector<std::string>{"row:fin"}));
+  auto second = rows(std::string("gil"));
+  EXPECT_TRUE(first.visible() && second.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"row:fin", "row:gil"}));
+}
+
+TEST(BuildersParity, AMountedPieceIsShapedWhenItsFactsCome) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<first_piece_fn>(c::around(traced{"mounted"}))))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  using content = decltype(c::column(c::vbox(0.0f), first_piece(std::string())));
+  auto made = c::mount<content, some_facts>([](const some_facts& now) { return std::tuple{c::column(c::vbox(0.0f), first_piece(now.name))}; });
+  auto node = std::move(made).build(rules);
+  EXPECT_TRUE(trace().empty());
+  node.read(std::optional<some_facts>(some_facts{"hap"}));
+  EXPECT_EQ(trace(), (std::vector<std::string>{"mounted:hap"}));
+}
+
 }  // namespace

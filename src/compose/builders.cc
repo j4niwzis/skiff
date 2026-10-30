@@ -344,8 +344,11 @@ void register_rule(const rule<Piece, Verb>& one) {
     return Held(apply_verb(verb, std::move(node), *static_cast<const Facts*>(facts)));
   }});
 }
+// The program's rules, as the table's: what was there before replaced, so
+// that registering them again does not run each verb twice.
 template <class... Rules>
 void register_rules(const rules<Rules...>& all) {
+  rule_table().clear();
   std::apply([](const auto&... each) { (register_rule(each), ...); }, all.all);
 }
 // The table's verbs for a piece, in order, over what it made.
