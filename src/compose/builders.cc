@@ -603,6 +603,14 @@ auto onKey(K key, E event, B node) {
   return lifted([key = std::move(key), event = std::move(event)](auto n) mutable { return onKey(std::move(key), std::move(event), std::move(n)); },
                 std::move(node));
 }
+// A list that asks for more near its end, over a scroll that is a builder
+// (c::scrolled of what holds pieces): a builder of it.
+template <class Want, class Key, class Compute, class Ask, a_builder B>
+auto fetching_for(Compute compute, Ask ask, B scroll) {
+  return lifted([compute = std::move(compute), ask = std::move(ask)](auto s) mutable {
+    return fetching_for<Want, Key>(std::move(compute), std::move(ask), std::move(s));
+  }, std::move(scroll));
+}
 template <class E, class Ask, a_builder B>
 auto onCapture(Ask ask, B node) {
   return lifted([ask = std::move(ask)](auto n) mutable { return onCapture<E>(std::move(ask), std::move(n)); }, std::move(node));

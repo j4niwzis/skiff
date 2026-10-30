@@ -406,4 +406,25 @@ TEST(BuildersParity, ARememberedScrollFindsItsViewAsBuilt) {
   EXPECT_EQ(trace(), (std::vector<std::string>{"scrolls:pat"}));
 }
 
+// A list asking for more near its end, its rows pieces.
+struct fetch_facts {
+  std::size_t made = 0;
+  friend bool operator==(const fetch_facts&, const fetch_facts&) = default;
+};
+struct more_asked {
+  std::optional<int> operator()() const { return std::nullopt; }
+};
+TEST(BuildersParity, FetchingOverAScrolledPieceIsABuilder) {
+  constexpr auto rules = c::program_rules{c::rules_of(c::rule_tuple(c::on<first_piece_fn>(c::around(traced{"fetched"}))))};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  trace().clear();
+  auto made = c::fetching_for<fetch_facts, int>([](const fetch_facts& now) { return c::Fetched<int>{0, now.made, false}; }, more_asked{},
+                                                c::scrolled(c::column(c::vbox(0.0f), first_piece(std::string("quin")))));
+  static_assert(c::a_builder<decltype(made)>);
+  auto node = std::move(made).build(rules);
+  EXPECT_TRUE(node.visible());
+  EXPECT_EQ(trace(), (std::vector<std::string>{"fetched:quin"}));
+}
+
 }  // namespace
