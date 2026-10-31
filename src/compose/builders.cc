@@ -290,6 +290,14 @@ auto make_builder(F f) {
 }
 template <class T>
 concept the_program_rules = requires { typename T::is_program_rules; };
+// A builder as a scene's root (scene::Scene's buildRoot): built there, once,
+// under no rules -- a program with rules builds its root itself, under its
+// own (as mux's window is), and gives the scene what that made.
+template <class B>
+  requires a_builder<std::remove_cvref_t<B>>
+auto buildRoot(B &&builder) {
+  return std::remove_cvref_t<B>(std::forward<B>(builder)).build(program_rules{no_rules});
+}
 
 // A verb done on a node: one code for both builds -- the release fold calls
 // it with the concrete node, the debug table with the held one.

@@ -5301,6 +5301,16 @@ public:
   explicit Scene(Root root)
     requires std::move_constructible<Root>
       : fRoot(std::move(root)) { work::roots().insert(this->rootState().fId); }
+  // A tree described, not made yet (compose's builders): built here, once,
+  // into the root -- by what its own namespace says builds a root of it
+  // (buildRoot, found by its type), so a whole view written as builders is
+  // a scene's root as a node is.
+  template <class Described>
+    requires(!std::same_as<std::remove_cvref_t<Described>, Root> &&
+             requires(Described &&described) { { buildRoot(std::forward<Described>(described)) } -> std::same_as<Root>; })
+  explicit Scene(Described &&described) : fRoot(buildRoot(std::forward<Described>(described))) {
+    work::roots().insert(this->rootState().fId);
+  }
   Scene(const Scene &) = delete;
   Scene &operator=(const Scene &) = delete;
 
@@ -5914,6 +5924,10 @@ private:
 
   friend class SceneHandle;
 };
+// A scene of a described tree: rooted at what it builds.
+template <class Described>
+  requires requires(Described &&described) { buildRoot(std::forward<Described>(described)); }
+Scene(Described &&) -> Scene<decltype(buildRoot(std::declval<Described>()))>;
 
 // A scene of any root type, not owned, inert once the scene is destroyed.
 class SceneHandle {

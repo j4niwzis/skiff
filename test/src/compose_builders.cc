@@ -240,6 +240,15 @@ TEST(Builders, AStepsChangeUnderABoundPartChangesItWherePressed) {
   EXPECT_EQ(m.root().limit.fValue.value, 32);
 }
 
+// A scene rooted at a builder: built there, once, and laid out as a node.
+TEST(Builders, ASceneIsRootedAtABuilder) {
+  auto view = SKIFF_NAMED(root_view, c::column(c::vbox(0.0f, {.fill = true}), name_piece(std::string("ann")), nodes::Text("bob", 13.0f, 0xff000000u)));
+  static_assert(c::a_builder<decltype(view)>);
+  scene::Scene tree(std::move(view));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 200.0f, 100.0f));
+  EXPECT_FLOAT_EQ(tree.rootState().fBounds.width(), 200.0f);
+}
+
 // derived and state over a builder: theirs chosen, not ambiguous with the
 // eager ones (constraints said as concepts).
 static_assert(requires(decltype(name_piece(std::string())) b) { c::derived<>([](auto&) { return 0; }, std::move(b)); });
