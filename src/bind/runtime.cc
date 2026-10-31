@@ -597,6 +597,16 @@ template <class T, class V>
 struct OwnValueT<T, model::SetTo<V>> {
   using type = V;
 };
+// Or any change of one part, by what it takes: a node that binds nothing
+// itself, its change made to the bound one's part above it -- outside a
+// release build, where that bound node holds it erased and is not the node
+// pressed. Untyped, it was dropped as missed: a step's change (halved,
+// doubled) under bound<Part> never made (a tester's: Storage's + and -).
+template <class T, class C>
+  requires(!IsBound<T> && requires { typename OnlyArgumentOf<C>::type; })
+struct OwnValueT<T, C> {
+  using type = typename OnlyArgumentOf<C>::type;
+};
 template <class T> struct PressOf {
   static std::optional<mrt::Want> wanted() {
     if constexpr (IsBound<T>)

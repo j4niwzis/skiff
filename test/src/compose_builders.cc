@@ -202,6 +202,44 @@ TEST(Builders, ANamedViewOverABuilderIsLaidOutWithItsRows) {
   EXPECT_GE(rows_laid(), 3);
 }
 
+// A step under bound<Part> -- a button's press an Own change of the part
+// (halved), not a SetTo -- as Settings' Storage has: pressed where the
+// press lands, the button's own onPress inside the bound node, the part
+// changes. Outside a release build that node holds the button erased, and
+// the change, untyped there, was dropped as missed.
+struct Limit {
+  long value = 64;
+  friend bool operator==(const Limit&, const Limit&) = default;
+};
+struct halve_limit {
+  Limit operator()(Limit now) const {
+    now.value /= 2;
+    return now;
+  }
+};
+struct halve_press {
+  using Answer = bind::Own<halve_limit>;
+  Answer operator()() const { return bind::own(halve_limit{}); }
+};
+struct LimitRoot {
+  model::Tracked<Limit> limit;
+};
+using LimitModel = model::Model<LimitRoot, bind::NoReactions>;
+auto step_button() {
+  return SKIFF_NAMED(step_button, c::onPress(halve_press{}, c::column(c::vbox(0.0f, {.width = 36.0f, .height = 36.0f}), RowProbe())));
+}
+TEST(Builders, AStepsChangeUnderABoundPartChangesItWherePressed) {
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), c::bound<Limit>(c::styled({.alignSelf = scene::align::kMiddle}, step_button()))));
+  LimitModel m{LimitRoot{.limit = {Limit{}}}};
+  bind::Binding<LimitModel> binding;
+  binding.refresh(tree.root(), m);
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 100.0f, 100.0f));
+  // The bound node, and the button's own press inside it.
+  for (const auto& path : {scene::Path{0}, scene::Path{0, 0}})
+    (void)bind::press(tree.root(), m, path);
+  EXPECT_EQ(m.root().limit.fValue.value, 32);
+}
+
 // derived and state over a builder: theirs chosen, not ambiguous with the
 // eager ones (constraints said as concepts).
 static_assert(requires(decltype(name_piece(std::string())) b) { c::derived<>([](auto&) { return 0; }, std::move(b)); });
