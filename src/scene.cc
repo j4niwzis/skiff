@@ -3782,13 +3782,11 @@ template <class N> NodeId idAt(N &child, const Path &path, std::size_t at) {
 // with what was carried down to it, where that can: then not kept.
 // An answer a handler on the way just kept: with the path to its node.
 inline void keepAnswer(const Path &path, std::size_t at) {
-  if constexpr (kErasedWalks) {
-    auto &work = hostWork();
-    if (work.answerNow) {
-      work.answers.push_back({Path(path.begin(), path.begin() + static_cast<std::ptrdiff_t>(at)), std::move(work.answerNow),
-                              std::exchange(work.answerType, nullptr)});
-      work.answerNow.reset();
-    }
+  auto &work = hostWork();
+  if (work.answerNow) {
+    work.answers.push_back({Path(path.begin(), path.begin() + static_cast<std::ptrdiff_t>(at)), std::move(work.answerNow),
+                            std::exchange(work.answerType, nullptr)});
+    work.answerNow.reset();
   }
 }
 template <class N, class C> void answerHere(N &child, const C &carried) {

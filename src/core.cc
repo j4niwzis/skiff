@@ -1551,17 +1551,18 @@ bool answerPress(N &, const C &) {
 // one of them, and the other's answer could not be made one.
 template <class N, class A>
   requires std::constructible_from<typename N::Answer, const A &>
+// In every build: where nothing is carried -- a scene with no program
+// carry, or below an erased node, past which nothing is -- what is not kept
+// is lost. Kept only outside a release build, a release build's flicks and
+// taps off a menu answered nothing (Compose.AHoldingFlickInsideAFlick...,
+// Compose.ATapOffAMenuOverAListClosesIt, red there since they were written).
 void keepAnswer(const A &answer) {
-  if constexpr (kErasedWalks) {
-    hostWork().answerNow = std::make_shared<const typename N::Answer>(answer);
-    hostWork().answerType = &kTypeKey<typename N::Answer>;
-  }
+  hostWork().answerNow = std::make_shared<const typename N::Answer>(answer);
+  hostWork().answerType = &kTypeKey<typename N::Answer>;
 }
 template <class N, class A> void keepAnswer(const A &answer) {
-  if constexpr (kErasedWalks) {
-    hostWork().answerNow = std::make_shared<const A>(answer);
-    hostWork().answerType = &kTypeKey<A>;
-  }
+  hostWork().answerNow = std::make_shared<const A>(answer);
+  hostWork().answerType = &kTypeKey<A>;
 }
 // Unconstrained, the one answerWith here: skiff::bind's, constrained to
 // carried frames, is taken over it wherever frames are carried. (Two of
