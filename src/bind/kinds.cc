@@ -376,7 +376,11 @@ template <template <class...> class X, class... A> struct ArgumentParts<X<A...>>
   using type = typename model::detail::Concat<typename NodePartsIn<A>::type...>::type;
 };
 template <class T> consteval auto partsOf() {
-  if constexpr (requires { typename T::StatePart; })
+  // A tree described, not made yet (compose's builders): the parts of what
+  // it builds as a root (buildRoot, as a scene builds it).
+  if constexpr (requires { buildRoot(std::declval<T>()); })
+    return PartsInT<decltype(buildRoot(std::declval<T>()))>{};
+  else if constexpr (requires { typename T::StatePart; })
     return typename model::detail::Concat<model::Types<typename T::StatePart>, PartsInT<typename T::StateContent>>::type{};
   else if constexpr (requires { typename T::NamedContent; })
     return PartsInT<typename T::NamedContent>{};

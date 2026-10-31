@@ -299,23 +299,32 @@ auto buildRoot(B &&builder) {
   return std::remove_cvref_t<B>(std::forward<B>(builder)).build(program_rules{no_rules});
 }
 
+// What a verb makes, as a node: said with the combinators (a builder), built
+// there and then -- under no rules: a verb's own making is not shaped again.
+template <class T>
+auto made_now(T made) {
+  if constexpr (a_builder<T>)
+    return std::move(made).build(program_rules{no_rules});
+  else
+    return made;
+}
 // A verb done on a node: one code for both builds -- the release fold calls
 // it with the concrete node, the debug table with the held one.
 template <class N, class Facts, class F>
 auto apply_verb(const before_t<F>& verb, N node, const Facts& facts) {
-  return row(hbox(verb.gap, {.autoSize = scene::axes::kBoth}), verb.f(facts), std::move(node));
+  return made_now(row(hbox(verb.gap, {.autoSize = scene::axes::kBoth}), verb.f(facts), std::move(node)));
 }
 template <class N, class Facts, class F>
 auto apply_verb(const after_t<F>& verb, N node, const Facts& facts) {
-  return row(hbox(verb.gap, {.autoSize = scene::axes::kBoth}), std::move(node), verb.f(facts));
+  return made_now(row(hbox(verb.gap, {.autoSize = scene::axes::kBoth}), std::move(node), verb.f(facts)));
 }
 template <class N, class Facts, class F>
 auto apply_verb(const around_t<F>& verb, N node, const Facts& facts) {
-  return verb.f(std::move(node), facts);
+  return made_now(verb.f(std::move(node), facts));
 }
 template <class N, class Facts, class F>
 auto apply_verb(const instead_t<F>& verb, N, const Facts& facts) {
-  return verb.f(facts);
+  return made_now(verb.f(facts));
 }
 template <class N, class Facts>
 auto apply_verb(drop_t, N node, const Facts&) {
@@ -462,71 +471,118 @@ struct piece {
   }
 };
 
-// ---- the combinators, lifted --------------------------------------------------------
-// Each the eager one's parameters, where a part is a builder: a builder of it.
+// ---- the combinators ------------------------------------------------------------------
+// Each said once: a builder whose build makes its node -- what it is given
+// where a node goes (a part: a builder, or a node made already) built under
+// the same rules, the node made of them there. The node types (compose's
+// boxes, views, wiring) are what is made; a view never makes one itself.
+// A part: what a build makes a node of -- a node, a builder, or a list, an
+// optional, a variant or a tuple of them (built, a node holding them).
+template <class T>
+struct part_like : std::bool_constant<std::derived_from<T, scene::NodeBase> || a_builder<T>> {};
+template <class T>
+struct part_like<std::optional<T>> : part_like<T> {};
+template <class T>
+struct part_like<std::vector<T>> : part_like<T> {};
+template <class... T>
+struct part_like<spl::variant<T...>> : std::bool_constant<(part_like<T>::value && ...)> {};
+template <class... T>
+struct part_like<std::tuple<T...>> : std::bool_constant<(part_like<T>::value && ...)> {};
+template <class T>
+concept a_part = part_like<std::remove_cvref_t<T>>::value;
 
+// A column or a row: what it is built into is a stack (Box) of its parts as
+// built -- nodes as they are, builders under the same rules -- made there,
+// erased where a build erases.
 template <class... Parts>
-  requires any_builder<Parts...>
 auto column(Look look, Parts... parts) {
-  return lifted([](Look l, auto... p) { return column(std::move(l), std::move(p)...); }, std::move(look), std::move(parts)...);
+  look.fHorizontal = false;
+  return lifted([](Look l, auto... p) { return erased(Box(std::move(l), as_part(std::move(p))...)); }, std::move(look), std::move(parts)...);
 }
 template <class... Parts>
-  requires any_builder<Parts...>
+  requires(!std::same_as<Parts, Look> && ...)
+auto column(Parts... parts) {
+  return column(vbox(), std::move(parts)...);
+}
+template <class... Parts>
 auto row(Look look, Parts... parts) {
-  return lifted([](Look l, auto... p) { return row(std::move(l), std::move(p)...); }, std::move(look), std::move(parts)...);
+  look.fHorizontal = true;
+  return lifted([](Look l, auto... p) { return erased(Box(std::move(l), as_part(std::move(p))...)); }, std::move(look), std::move(parts)...);
 }
 template <class... Parts>
-  requires any_builder<Parts...>
+  requires(!std::same_as<Parts, Look> && ...)
+auto row(Parts... parts) {
+  return row(hbox(), std::move(parts)...);
+}
+// Its parts in a view that scrolls.
+template <class... Parts>
 auto scrolled(Parts... parts) {
-  return lifted([](auto... p) { return scrolled(std::move(p)...); }, std::move(parts)...);
+  return lifted([](auto... p) { return nodes::ScrollContainer<decltype(p)...>(std::move(p)...); }, std::move(parts)...);
 }
-template <a_builder B>
-auto visible(bool on, B node) {
-  return lifted([on](auto n) { return visible(on, std::move(n)); }, std::move(node));
-}
-template <a_builder B>
-auto recorded(B node, bool on = true) {
-  return lifted([on](auto n) { return recorded(std::move(n), on); }, std::move(node));
-}
-template <a_builder B>
-auto with_cursor(scene::Cursor shape, B node) {
-  return lifted([shape](auto n) { return with_cursor(shape, std::move(n)); }, std::move(node));
-}
-template <a_builder B>
-auto styled(scene::Spec spec, B node) {
-  return lifted([spec](auto n) { return styled(spec, std::move(n)); }, std::move(node));
-}
-template <class E, a_builder B>
-auto onClick(E event, B node, std::string label = {}) {
-  return lifted([event = std::move(event), label = std::move(label)](auto n) mutable {
-    return onClick(std::move(event), std::move(n), std::move(label));
+// A node shown, or there but hidden.
+template <a_part N>
+auto visible(bool on, N node) {
+  return lifted([on](auto n) {
+    n.setVisible(on);
+    return n;
   }, std::move(node));
 }
-template <a_builder B>
+// A subtree whose drawing can be replayed until it is damaged (on the node
+// as the walks see it: a Held's, its node's).
+template <a_part N>
+auto recorded(N node, bool on = true) {
+  return lifted([on](auto n) {
+    state_of(n).setRecorded(on);
+    return n;
+  }, std::move(node));
+}
+// A node showing the pointer as `shape` over it.
+template <a_part N>
+auto with_cursor(scene::Cursor shape, N node) {
+  return lifted([shape](auto n) {
+    state_of(n).setCursor(shape);
+    return n;
+  }, std::move(node));
+}
+// A node with its spec applied: said as it is put in its place.
+template <a_part N>
+auto styled(scene::Spec spec, N node) {
+  return lifted([spec](auto n) {
+    n.apply(spec);
+    return n;
+  }, std::move(node));
+}
+template <class E, a_part B>
+auto onClick(E event, B node, std::string label = {}) {
+  return lifted([event = std::move(event), label = std::move(label)](auto n) mutable {
+    return erased(OnClick<E, part_t<decltype(n)>>(std::move(event), as_part(std::move(n)), std::move(label)));
+  }, std::move(node));
+}
+template <a_part B>
 auto said(std::optional<scene::SemanticRole> role, bool chosen, B node) {
-  return lifted([role = std::move(role), chosen](auto n) mutable { return said(std::move(role), chosen, std::move(n)); }, std::move(node));
+  return lifted([role = std::move(role), chosen](auto n) mutable { return erased(Said<part_t<decltype(n)>>(std::move(role), chosen, as_part(std::move(n)))); }, std::move(node));
 }
 
-template <class Ask, a_builder B>
+template <class Ask, a_part B>
 auto onClickAt(Ask ask, B node) {
-  return lifted([ask = std::move(ask)](auto n) mutable { return onClickAt(std::move(ask), std::move(n)); }, std::move(node));
+  return lifted([ask = std::move(ask)](auto n) mutable { return erased(OnClickAt<Ask, part_t<decltype(n)>>(std::move(ask), as_part(std::move(n)))); }, std::move(node));
 }
-template <class Ask, a_builder B>
+template <class Ask, a_part B>
 auto onRightPressAt(Ask ask, B node) {
-  return lifted([ask = std::move(ask)](auto n) mutable { return onRightPressAt(std::move(ask), std::move(n)); }, std::move(node));
+  return lifted([ask = std::move(ask)](auto n) mutable { return erased(OnRightPressAt<Ask, part_t<decltype(n)>>(std::move(ask), as_part(std::move(n)))); }, std::move(node));
 }
-template <a_builder B>
+template <a_part B>
 auto appearing(bool now, B node, float from = 12.0f) {
-  return lifted([now, from](auto n) { return appearing(now, std::move(n), from); }, std::move(node));
+  return lifted([now, from](auto n) { return erased(Appearing<part_t<decltype(n)>>(now, from, as_part(std::move(n)))); }, std::move(node));
 }
-template <class Want, class Take, a_builder B>
+template <class Want, class Take, a_part B>
 auto held_off_for(Take take, B node) {
-  return lifted([take = std::move(take)](auto n) mutable { return held_off_for<Want>(std::move(take), std::move(n)); }, std::move(node));
+  return lifted([take = std::move(take)](auto n) mutable { return detail::projecting<Want>(std::move(take), HeldOff<decltype(n)>(std::move(n))); }, std::move(node));
 }
-template <class Want, class Compute, a_builder B>
+template <class Want, class Compute, a_part B>
 auto washed_for(skia::SkColor colour, float held, float flash, Compute compute, B node) {
   return lifted([colour, held, flash, compute = std::move(compute)](auto n) mutable {
-    return washed_for<Want>(colour, held, flash, std::move(compute), std::move(n));
+    return detail::projecting<Want>(std::move(compute), Washed<part_t<decltype(n)>>(colour, held, flash, as_part(std::move(n))));
   }, std::move(node));
 }
 template <class Act, class Mark, class Show, class N>
@@ -541,25 +597,33 @@ auto spanned_for(On on, B list) {
   return lifted([on = std::move(on)](auto l) mutable { return spanned_for<Want>(std::move(on), std::move(l)); }, std::move(list));
 }
 
-template <class B>
-  requires holds_builder<B>::value
-auto many(Look look, std::vector<B> parts) {
-  return lifted([](Look l, auto p) { return many(std::move(l), std::move(p)); }, std::move(look), std::move(parts));
+// A stack of a list of parts, as many as there are, in their order.
+template <a_part N>
+auto many(Look look, std::vector<N> parts) {
+  return lifted([](Look l, auto p) {
+    using Made = typename decltype(p)::value_type;
+    return erased(Many<part_t<Made>>(std::move(l), as_parts(std::move(p))));
+  }, std::move(look), std::move(parts));
 }
-template <class Make, a_builder B>
+template <class Make, a_part B>
   requires MakesPress<Make>
 auto onPress(Make make, B node, std::string label = {}) {
   return lifted([make = std::move(make), label = std::move(label)](auto n) mutable {
-    return onPress(std::move(make), std::move(n), std::move(label));
+    return erased(OnPress<Make, part_t<decltype(n)>>(std::move(make), as_part(std::move(n)), std::move(label)));
   }, std::move(node));
 }
-template <class Want, class Compute, a_builder B>
-auto shown_for(Compute compute, B node) {
-  return lifted([compute = std::move(compute)](auto n) mutable { return shown_for<Want>(std::move(compute), std::move(n)); }, std::move(node));
+// Visibility projected from a bound part, a scope's or a Local's included.
+template <class Want, class Compute, a_part N>
+auto shown_for(Compute compute, N node) {
+  return lifted([compute = std::move(compute)](auto n) mutable {
+    return detail::projecting<Want>(std::move(compute), ShownBy<part_t<decltype(n)>>(as_part(std::move(n))));
+  }, std::move(node));
 }
-template <class Want, class Compute, a_builder B>
-auto projected(Compute compute, B node) {
-  return lifted([compute = std::move(compute)](auto n) mutable { return projected<Want>(std::move(compute), std::move(n)); }, std::move(node));
+// A node shown what Compute makes of the part Want, as it moves.
+template <class Want, class Compute, a_part N>
+auto projected(Compute compute, N node) {
+  return lifted([compute = std::move(compute)](auto n) mutable { return detail::projecting<Want>(std::move(compute), std::move(n)); },
+                std::move(node));
 }
 template <class List, class Corner, class Tell>
   requires any_builder<List, Corner>
@@ -571,71 +635,109 @@ auto with_way_down(Look look, List list, Corner corner, Tell tell) {
 
 // ---- the rest of the combinators, lifted ----------------------------------------------
 
-template <class Tag, a_builder B>
-auto marked(Tag tag, B node) {
-  return lifted([tag = std::move(tag)](auto n) mutable { return marked(std::move(tag), std::move(n)); }, std::move(node));
+// A node marked where it is made, found by its mark (scene::findNode).
+template <class Tag, a_part N>
+auto marked(Tag tag, N node) {
+  return lifted([tag = std::move(tag)](auto n) mutable {
+    return erased(Marked<Tag, part_t<decltype(n)>>(as_part(std::move(n)), std::move(tag)));
+  }, std::move(node));
 }
-template <a_builder B>
-auto keep_ticking(bool on, B node) {
-  return lifted([on](auto n) { return keep_ticking(on, std::move(n)); }, std::move(node));
+// A subtree kept polling while an external deadline is pending.
+template <a_part N>
+auto keep_ticking(bool on, N node) {
+  return lifted([on](auto n) { return erased(Ticking<part_t<decltype(n)>>(on, as_part(std::move(n)))); }, std::move(node));
 }
-template <class Want, a_builder B>
-  requires std::move_constructible<B>
-auto bound(B node) {
-  return lifted([](auto n) { return bound<Want>(std::move(n)); }, std::move(node));
+// A node bound to the part Want: read as it moves.
+template <class Want, a_part N>
+auto bound(N node) {
+  return lifted([](auto n) { return erased(bind::Bound<Want, part_t<decltype(n)>>(as_part(std::move(n)))); }, std::move(node));
 }
-template <class... Reads, class Compute, a_builder B>
+// A node shown what Compute makes of the parts it reads, as they move.
+template <class... Reads, class Compute, a_part N>
   requires reads_parts<Compute, Reads...>
-auto derived(Compute compute, B node) {
-  return lifted([compute = std::move(compute)](auto n) mutable { return derived<Reads...>(std::move(compute), std::move(n)); }, std::move(node));
+auto derived(Compute compute, N node) {
+  return lifted([compute = std::move(compute)](auto n) mutable {
+    return erased(bind::Derived<Compute, part_t<decltype(n)>, Reads...>(as_part(std::move(n)), std::move(compute)));
+  }, std::move(node));
 }
-template <class Read, class Compute, a_builder B>
+// What Compute makes of one part, the part taken: projected from it,
+// wherever it is -- a page's own state (a Local) as well as the model.
+template <class Read, class Compute, a_part N>
   requires reads_one_part<Compute, Read>
-auto derived(Compute compute, B node) {
-  return lifted([compute = std::move(compute)](auto n) mutable { return derived<Read>(std::move(compute), std::move(n)); }, std::move(node));
+auto derived(Compute compute, N node) {
+  return projected<Read>(std::move(compute), std::move(node));
 }
-template <class T, a_builder B>
-auto local(B node, T initial = {}) {
-  return lifted([initial = std::move(initial)](auto n) mutable { return local<T>(std::move(n), std::move(initial)); }, std::move(node));
-}
-template <class T, class Handlers, a_builder B>
-auto local(Handlers handlers, B node, T initial = {}) {
-  return lifted([handlers = std::move(handlers), initial = std::move(initial)](auto n) mutable {
-    return local<T>(std::move(handlers), std::move(n), std::move(initial));
+// A part of a page's own (a Local): what it is made with, kept over its
+// node; with the handlers that answer what is sent within, or none.
+template <class T, a_part N>
+auto local(N node, T initial = {}) {
+  return lifted([initial = std::move(initial)](auto n) mutable {
+    return erased(bind::Local<T, bind::NoHandlers, part_t<decltype(n)>>({}, as_part(std::move(n)), std::move(initial)));
   }, std::move(node));
 }
-template <class T, class Handlers, a_builder B>
-auto hidden(Handlers handlers, B node, T initial = {}) {
+template <class T, class Handlers, a_part N>
+  requires(!a_part<Handlers>)
+auto local(Handlers handlers, N node, T initial = {}) {
   return lifted([handlers = std::move(handlers), initial = std::move(initial)](auto n) mutable {
-    return hidden<T>(std::move(handlers), std::move(n), std::move(initial));
+    return erased(bind::Local<T, Handlers, part_t<decltype(n)>>(std::move(handlers), as_part(std::move(n)), std::move(initial)));
   }, std::move(node));
 }
-template <class T, class Handlers, a_builder B>
-  requires handlers_not_node<Handlers>
-auto state(Handlers handlers, B node) {
-  return lifted([handlers = std::move(handlers)](auto n) mutable { return state<T>(std::move(handlers), std::move(n)); }, std::move(node));
+// The same, its part kept out of what is shown (hidden state).
+template <class T, class Handlers, a_part N>
+auto hidden(Handlers handlers, N node, T initial = {}) {
+  return lifted([handlers = std::move(handlers), initial = std::move(initial)](auto n) mutable {
+    return erased(bind::Local<T, Handlers, part_t<decltype(n)>, true>(std::move(handlers), as_part(std::move(n)), std::move(initial)));
+  }, std::move(node));
 }
-template <class Within, class Handlers, a_builder B, class... Keys>
-auto scoped(Handlers handlers, B node, Keys... keys) {
+// A part of the model kept by the view it is made over -- the model the
+// tree is bound to holds it because the view says so (bind::ModelOf) --
+// with the handlers that answer what is sent within.
+template <class T, class Handlers, a_part N>
+  requires(!a_part<Handlers>)
+auto state(Handlers handlers, N node) {
+  return lifted([handlers = std::move(handlers)](auto n) mutable {
+    bind::Stated<T, Handlers, part_t<decltype(n)>> made(std::move(handlers), as_part(std::move(n)));
+    over_held(made);
+    return made;
+  }, std::move(node));
+}
+template <class T, a_part N>
+auto state(N node) {
+  return state<T>(Handlers<>{}, std::move(node));
+}
+// A scope over a part of Within, by its keys: what is sent within answered
+// by its handlers there. Concrete in every build: what moves it
+// (rekeyed_by) reads it as itself.
+template <class Within, class Handlers, a_part N, class... Keys>
+auto scoped(Handlers handlers, N node, Keys... keys) {
   return lifted([handlers = std::move(handlers), ... keys = std::move(keys)](auto n) mutable {
-    return scoped<Within>(std::move(handlers), std::move(n), std::move(keys)...);
+    bind::Scoped<Within, Handlers, decltype(n), Keys...> made(std::move(handlers), std::move(n), std::move(keys)...);
+    over_held(made);
+    return made;
   }, std::move(node));
 }
-template <a_builder B>
+template <a_part B>
 auto named(std::string label, std::string hint, B node) {
-  return lifted([label = std::move(label), hint = std::move(hint)](auto n) mutable { return named(std::move(label), std::move(hint), std::move(n)); },
+  return lifted([label = std::move(label), hint = std::move(hint)](auto n) mutable { Said<part_t<decltype(n)>> out(std::nullopt, false, as_part(std::move(n)));
+    out.fLabel = std::move(label);
+    out.fHint = std::move(hint);
+    return erased(std::move(out));
+  },
                 std::move(node));
 }
-template <class Want, class Compute, a_builder B>
-auto chosen_for(Compute compute, std::optional<scene::SemanticRole> role, B node) {
+// Said to be chosen (a tab, a choice) as Compute says of the part Want.
+template <class Want, class Compute, a_part N>
+auto chosen_for(Compute compute, std::optional<scene::SemanticRole> role, N node) {
   return lifted([compute = std::move(compute), role = std::move(role)](auto n) mutable {
-    return chosen_for<Want>(std::move(compute), std::move(role), std::move(n));
+    return detail::projecting<Want>(std::move(compute), Said<part_t<decltype(n)>>(std::move(role), false, as_part(std::move(n))));
   }, std::move(node));
 }
-template <class K, class E, a_builder B>
-auto onKey(K key, E event, B node) {
-  return lifted([key = std::move(key), event = std::move(event)](auto n) mutable { return onKey(std::move(key), std::move(event), std::move(n)); },
-                std::move(node));
+// A key answered with an event.
+template <class K, class E, a_part N>
+auto onKey(K key, E event, N node) {
+  return lifted([key = std::move(key), event = std::move(event)](auto n) mutable {
+    return erased(OnKey<E, part_t<decltype(n)>, K>(key, std::move(event), as_part(std::move(n))));
+  }, std::move(node));
 }
 // A list that asks for more near its end, over a scroll that is a builder
 // (c::scrolled of what holds pieces): a builder of it.
@@ -649,103 +751,140 @@ template <class E, class Ask, a_builder B>
 auto onCapture(Ask ask, B node) {
   return lifted([ask = std::move(ask)](auto n) mutable { return onCapture<E>(std::move(ask), std::move(n)); }, std::move(node));
 }
-template <class Ask, a_builder B>
-auto onKeys(Ask ask, B node) {
-  return lifted([ask = std::move(ask)](auto n) mutable { return onKeys(std::move(ask), std::move(n)); }, std::move(node));
+// Keys answered as `ask(press)` says.
+template <class Ask, a_part N>
+auto onKeys(Ask ask, N node) {
+  return lifted([ask = std::move(ask)](auto n) mutable { return erased(OnKeys<Ask, part_t<decltype(n)>>(std::move(ask), as_part(std::move(n)))); },
+                std::move(node));
 }
-template <class... Reads, class Compute, a_builder B>
-auto shown_if(Compute compute, B node) {
-  return lifted([compute = std::move(compute)](auto n) mutable { return shown_if<Reads...>(std::move(compute), std::move(n)); }, std::move(node));
+// Shown or hidden as Compute says of the parts it reads.
+template <class... Reads, class Compute, a_part N>
+auto shown_if(Compute compute, N node) {
+  return lifted([compute = std::move(compute)](auto n) mutable {
+    using Shown = ShownBy<part_t<decltype(n)>>;
+    return erased(bind::Derived<Compute, Shown, Reads...>(Shown(as_part(std::move(n))), std::move(compute)));
+  }, std::move(node));
 }
-template <class Want, class Phase, class Compute, class Ask, a_builder B>
-auto keys_for(Compute compute, Ask ask, B node) {
+// A text that reads what Compute makes of the parts it reads.
+template <class... Reads, class Compute>
+auto text_of(Compute compute, nodes::Text text) {
+  return lifted([compute = std::move(compute)](nodes::Text t) mutable {
+    return erased(bind::Derived<Compute, TextOf, Reads...>(TextOf(std::move(t)), std::move(compute)));
+  }, std::move(text));
+}
+// And of the one part Want.
+template <class Want, class Compute>
+auto text_for(Compute compute, nodes::Text text) {
+  return lifted([compute = std::move(compute)](nodes::Text t) mutable { return detail::projecting<Want>(std::move(compute), TextOf(std::move(t))); },
+                std::move(text));
+}
+// Keys answered as `ask(now, press)` says, with what Compute makes of the
+// part Want as last read -- in the phase given.
+template <class Want, class Phase, class Compute, class Ask, a_part N>
+auto keys_for(Compute compute, Ask ask, N node) {
   return lifted([compute = std::move(compute), ask = std::move(ask)](auto n) mutable {
-    return keys_for<Want, Phase>(std::move(compute), std::move(ask), std::move(n));
+    using K = std::remove_cvref_t<std::invoke_result_t<Compute &, const typename bind::BoundValueT<Want>::type &>>;
+    return detail::projecting<Want>(std::move(compute), KeysFor<Phase, K, Ask, part_t<decltype(n)>>(std::move(ask), as_part(std::move(n))));
   }, std::move(node));
 }
-template <class Want, class Compute, class Apply, a_builder B>
-auto applied(Compute compute, Apply apply, B node) {
+// A node shown what it reads by `apply(node, value)`: a leaf with no read
+// of its own (an icon's shape, an avatar's person).
+template <class Want, class Compute, class Apply, a_part N>
+auto applied(Compute compute, Apply apply, N node) {
   return lifted([compute = std::move(compute), apply = std::move(apply)](auto n) mutable {
-    return applied<Want>(std::move(compute), std::move(apply), std::move(n));
+    using Made = decltype(n);
+    using In = typename bind::BoundValueT<Want>::type;
+    using Out = std::remove_cvref_t<std::invoke_result_t<Compute &, const In &>>;
+    auto fn = erased_fn<void(Made &, const Out &)>(std::move(apply));
+    return detail::projecting<Want>(std::move(compute), Applied<decltype(fn), Made>(std::move(fn), std::move(n)));
   }, std::move(node));
 }
-template <class Want, class Compute, a_builder B>
-auto focused_by(Compute compute, B node) {
-  return lifted([compute = std::move(compute)](auto n) mutable { return focused_by<Want>(std::move(compute), std::move(n)); }, std::move(node));
+// Focused where what Compute makes of the part Want asks it anew.
+template <class Want, class Compute, a_part N>
+auto focused_by(Compute compute, N node) {
+  return lifted([compute = std::move(compute)](auto n) mutable {
+    return detail::projecting<Want>(std::move(compute), FocusedBy<part_t<decltype(n)>>(as_part(std::move(n))));
+  }, std::move(node));
 }
-template <class Want, class Compute, a_builder B>
-auto spec_for(Compute compute, B node) {
-  return lifted([compute = std::move(compute)](auto n) mutable { return spec_for<Want>(std::move(compute), std::move(n)); }, std::move(node));
+// Its spec as Compute makes it of the part Want.
+template <class Want, class Compute, a_part N>
+auto spec_for(Compute compute, N node) {
+  return lifted([compute = std::move(compute)](auto n) mutable {
+    return detail::projecting<Want>(std::move(compute), SpecOf<part_t<decltype(n)>>(as_part(std::move(n))));
+  }, std::move(node));
 }
-template <class Want, class Compute, a_builder B>
-auto rekeyed_by(Compute compute, B node) {
-  return lifted([compute = std::move(compute)](auto n) mutable { return rekeyed_by<Want>(std::move(compute), std::move(n)); }, std::move(node));
+// A scope moved to the keys Compute makes of the part Want.
+template <class Want, class Compute, a_part N>
+auto rekeyed_by(Compute compute, N node) {
+  return lifted([compute = std::move(compute)](auto n) mutable {
+    return detail::bound_to<Want>(Rekeyed<Compute, part_t<decltype(n)>>(std::move(compute), as_part(std::move(n))));
+  }, std::move(node));
 }
-template <class Ratio, a_builder B>
+template <class Ratio, a_part B>
 auto fitted(Fit fit, Ratio ratio, B node) {
-  return lifted([fit, ratio = std::move(ratio)](auto n) mutable { return fitted(fit, std::move(ratio), std::move(n)); }, std::move(node));
+  return lifted([fit, ratio = std::move(ratio)](auto n) mutable { return erased(Fitted<Ratio, decltype(n)>(fit, std::move(ratio), std::move(n))); }, std::move(node));
 }
-template <class Fit_, a_builder B>
+template <class Fit_, a_part B>
 auto shrunk(float wide, float gap, Fit_ fit, B node) {
-  return lifted([wide, gap, fit = std::move(fit)](auto n) mutable { return shrunk(wide, gap, std::move(fit), std::move(n)); }, std::move(node));
+  return lifted([wide, gap, fit = std::move(fit)](auto n) mutable { return erased(Shrunk<Fit_, decltype(n)>(wide, gap, std::move(fit), std::move(n))); }, std::move(node));
 }
-template <class Want, class Compute, a_builder B>
+template <class Want, class Compute, a_part B>
 auto placed_at(Compute compute, B node) {
-  return lifted([compute = std::move(compute)](auto n) mutable { return placed_at<Want>(std::move(compute), std::move(n)); }, std::move(node));
+  return lifted([compute = std::move(compute)](auto n) mutable { return detail::projecting<Want>(std::move(compute), PlacedAt<part_t<decltype(n)>>(as_part(std::move(n)))); }, std::move(node));
 }
-template <class Want, class Compute, a_builder B>
+template <class Want, class Compute, a_part B>
 auto popped_at(Compute compute, float edge, B node) {
-  return lifted([compute = std::move(compute), edge](auto n) mutable { return popped_at<Want>(std::move(compute), edge, std::move(n)); }, std::move(node));
+  return lifted([compute = std::move(compute), edge](auto n) mutable { return detail::projecting<Want>(std::move(compute), Popped<part_t<decltype(n)>>(edge, as_part(std::move(n)))); }, std::move(node));
 }
-template <class E, class Make, a_builder B>
+template <class E, class Make, a_part B>
 auto onPointer(Make make, B node) {
-  return lifted([make = std::move(make)](auto n) mutable { return onPointer<E>(std::move(make), std::move(n)); }, std::move(node));
+  return lifted([make = std::move(make)](auto n) mutable { return erased(OnPointer<E, Make, part_t<decltype(n)>>(std::move(make), as_part(std::move(n)))); }, std::move(node));
 }
-template <class Act, a_builder B>
+template <class Act, a_part B>
 auto onDragAcross(Act act, B node) {
-  return lifted([act = std::move(act)](auto n) mutable { return onDragAcross(std::move(act), std::move(n)); }, std::move(node));
+  return lifted([act = std::move(act)](auto n) mutable { return erased(OnDragAcross<Act, part_t<decltype(n)>>(std::move(act), as_part(std::move(n)))); }, std::move(node));
 }
-template <class E, a_builder B>
+template <class E, a_part B>
 auto onRightPress(E event, B node) {
-  return lifted([event = std::move(event)](auto n) mutable { return onRightPress(std::move(event), std::move(n)); }, std::move(node));
+  return lifted([event = std::move(event)](auto n) mutable { return erased(OnRightPress<E, part_t<decltype(n)>>(std::move(event), as_part(std::move(n)))); }, std::move(node));
 }
-template <class Act, a_builder B>
+template <class Act, a_part B>
 auto resting(double ms, Act act, B node) {
-  return lifted([ms, act = std::move(act)](auto n) mutable { return resting(ms, std::move(act), std::move(n)); }, std::move(node));
+  return lifted([ms, act = std::move(act)](auto n) mutable { return erased(Resting<Act, part_t<decltype(n)>>(ms, std::move(act), as_part(std::move(n)))); }, std::move(node));
 }
-template <class Act, a_builder B>
+template <class Act, a_part B>
 auto hovering(Act act, B node) {
-  return lifted([act = std::move(act)](auto n) mutable { return hovering(std::move(act), std::move(n)); }, std::move(node));
+  return lifted([act = std::move(act)](auto n) mutable { return erased(Hovering<Act, part_t<decltype(n)>>(std::move(act), as_part(std::move(n)))); }, std::move(node));
 }
-template <class Act, a_builder B>
+template <class Act, a_part B>
 auto hovering(Look look, Act act, B node) {
-  return lifted([look = std::move(look), act = std::move(act)](auto n) mutable { return hovering(std::move(look), std::move(act), std::move(n)); },
+  return lifted([look = std::move(look), act = std::move(act)](auto n) mutable { return erased(Hovering<Act, part_t<decltype(n)>>(std::move(look), std::move(act), as_part(std::move(n)))); },
                 std::move(node));
 }
-template <class Ask, a_builder B>
+template <class Ask, a_part B>
 auto moves_focus(Ask ask, B node) {
-  return lifted([ask = std::move(ask)](auto n) mutable { return moves_focus(std::move(ask), std::move(n)); }, std::move(node));
+  return lifted([ask = std::move(ask)](auto n) mutable { return erased(MovesFocus<Ask, part_t<decltype(n)>>(std::move(ask), as_part(std::move(n)))); }, std::move(node));
 }
-template <class Want, class Make, a_builder B>
+template <class Want, class Make, a_part B>
 auto asking_for(Make make, B node) {
-  return lifted([make = std::move(make)](auto n) mutable { return asking_for<Want>(std::move(make), std::move(n)); }, std::move(node));
+  return lifted([make = std::move(make)](auto n) mutable { return erased(bind::Bound<Want, AskingFor<Want, Make, part_t<decltype(n)>>>(AskingFor<Want, Make, part_t<decltype(n)>>(std::move(make), as_part(std::move(n))))); }, std::move(node));
 }
-template <class Act, a_builder B>
+template <class Act, a_part B>
 auto flicked(float reach, Act act, B node) {
-  return lifted([reach, act = std::move(act)](auto n) mutable { return flicked(reach, std::move(act), std::move(n)); }, std::move(node));
+  return lifted([reach, act = std::move(act)](auto n) mutable { return erased(Flicked<Act, part_t<decltype(n)>>(reach, std::move(act), as_part(std::move(n)))); }, std::move(node));
 }
-template <class Act, a_builder B>
+template <class Act, a_part B>
 auto flicked_holding(float reach, Act act, B node) {
-  return lifted([reach, act = std::move(act)](auto n) mutable { return flicked_holding(reach, std::move(act), std::move(n)); }, std::move(node));
+  return lifted([reach, act = std::move(act)](auto n) mutable { return erased(Flicked<Act, part_t<decltype(n)>>(reach, std::move(act), as_part(std::move(n)), true)); }, std::move(node));
 }
-template <class Want, class Compute, a_builder B>
+template <class Want, class Compute, a_part B>
 auto fading_for(Compute compute, double hold, B node) {
-  return lifted([compute = std::move(compute), hold](auto n) mutable { return fading_for<Want>(std::move(compute), hold, std::move(n)); },
+  return lifted([compute = std::move(compute), hold](auto n) mutable { return detail::projecting<Want>(std::move(compute), Fading<part_t<decltype(n)>>(hold, as_part(std::move(n)))); },
                 std::move(node));
 }
-template <a_builder B>
+template <a_part B>
 auto appearing_across(bool now, B node, float from, float duration = 220.0f) {
-  return lifted([now, from, duration](auto n) { return appearing_across(now, std::move(n), from, duration); }, std::move(node));
+  return lifted([now, from, duration](auto n) { return erased(Appearing<part_t<decltype(n)>, appear::across>(now, from, as_part(std::move(n)), duration)); }, std::move(node));
 }
 template <class Policy, a_builder B>
 auto arranged(typename Policy::State state, B node) {
