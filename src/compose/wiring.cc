@@ -496,10 +496,6 @@ private:
     scene::pressLater(this->fState);
   }
 };
-template <class Want, class Tag, class Compute, class Off, class On, class Picture>
-auto zoomable_for(Compute compute, float margin, Off off, On on, Picture picture, scene::Spec spec = {}) {
-  return detail::projecting<Want>(std::move(compute), Zoomable<Tag, Off, On, Picture>(margin, std::move(off), std::move(on), std::move(picture), std::move(spec)));
-}
 
 // A right press on a node -- a long press, on a phone -- answered by what
 // `ask(node, x, y)` makes of where it was: a message's menu, from what is
@@ -1840,13 +1836,5 @@ Par<As..., B> operator+(Par<As...> a, B b) {
 
 // Where things go, said apart from how messages flow: a Par's parts
 // stacked; anything else, alone in a stack.
-template <class... Parts> auto place(Look look, Par<Parts...> parts) {
-  return erased(std::apply(
-      [&](auto &...each) { return Box<Parts...>(std::move(look), std::move(each)...); },
-      parts.fParts));
-}
-template <class N> auto place(Look look, N node) {
-  return erased(Box<part_t<N>>(std::move(look), as_part(std::move(node))));
-}
 
 } // namespace skiff::compose

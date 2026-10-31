@@ -639,6 +639,75 @@ auto with_way_down(Look look, List list, Corner corner, Tell tell) {
   }, std::move(look), std::move(list), std::move(corner));
 }
 
+// ---- lists of the model's elements, and the rest -----------------------------------
+
+// The rows of a list part of the model, each made by `make` (from its
+// element, or from nothing) -- its rows built under the same rules -- in
+// a stack of `look`.
+template <class Key, class T, class F>
+auto each(F make, Look look = vbox()) {
+  return make_builder([make = std::move(make), look = std::move(look)]<class Rules>(const Rules& rules) mutable {
+    using Maker = MakeRow<T, built_maker<F, Rules>>;
+    using Row = std::invoke_result_t<const Maker&, const T&>;
+    return erased(bind::Each<Key, T, Row, Box<>, Maker>(Maker{built_maker<F, Rules>{std::move(make), rules}}, Box<>(std::move(look))));
+  });
+}
+// The same over one another: the shapes of a figure.
+template <class Key, class T, class F>
+auto group(F make) {
+  return make_builder([make = std::move(make)]<class Rules>(const Rules& rules) mutable {
+    using Maker = MakeRow<T, built_maker<F, Rules>>;
+    using Row = std::invoke_result_t<const Maker&, const T&>;
+    return erased(bind::Each<Key, T, Row, scene::Group<>, Maker>(Maker{built_maker<F, Rules>{std::move(make), rules}}, scene::Group<>()));
+  });
+}
+// Sections with a strip of tabs over their parts, each made by its maker
+// (built under the same rules). Concrete in every build.
+template <class Element, class MakeTab, class MakePart, class MakeStrip, class OnTab = OnlyBrings>
+auto sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip& makeStrip, OnTab onTab = {}) {
+  return make_builder([look = std::move(look), parts = std::move(parts), makeTab = std::move(makeTab), makePart = std::move(makePart),
+                       makeStrip, onTab = std::move(onTab)]<class Rules>(const Rules& rules) mutable {
+    using Tab = built_maker<MakeTab, Rules>;
+    using Part = built_maker<MakePart, Rules>;
+    using Strip = built_maker<MakeStrip, Rules>;
+    return Sections<Element, Tab, Part, Strip, OnTab>(std::move(look), std::move(parts), Tab{std::move(makeTab), rules},
+                                                      Part{std::move(makePart), rules}, Strip{makeStrip, rules}, std::move(onTab));
+  });
+}
+template <class Element, class MakeTab, class MakePart, class MakeStrip, class OnTab, class Height>
+  requires std::invocable<const Height&, const Element&, float>
+auto sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip& makeStrip, OnTab onTab, Height height) {
+  return make_builder([look = std::move(look), parts = std::move(parts), makeTab = std::move(makeTab), makePart = std::move(makePart),
+                       makeStrip, onTab = std::move(onTab), height = std::move(height)]<class Rules>(const Rules& rules) mutable {
+    using Tab = built_maker<MakeTab, Rules>;
+    using Part = built_maker<MakePart, Rules>;
+    using Strip = built_maker<MakeStrip, Rules>;
+    return Sections<Element, Tab, Part, Strip, OnTab, Height>(std::move(look), std::move(parts), Tab{std::move(makeTab), rules},
+                                                              Part{std::move(makePart), rules}, Strip{makeStrip, rules}, std::move(onTab),
+                                                              std::move(height));
+  });
+}
+// A picture, a loader over it while it comes.
+template <class Picture, class Loader>
+auto while_coming(Look look, Picture picture, Loader loader) {
+  return lifted([](Look l, auto p, auto ld) { return erased(WhileComing<decltype(p), decltype(ld)>(std::move(l), std::move(p), std::move(ld))); },
+                std::move(look), std::move(picture), std::move(loader));
+}
+// A picture that zooms, as Compute says of the part Want.
+template <class Want, class Tag, class Compute, class Off, class On, class Picture>
+auto zoomable_for(Compute compute, float margin, Off off, On on, Picture picture, scene::Spec spec = {}) {
+  return lifted([compute = std::move(compute), margin, off = std::move(off), on = std::move(on), spec](auto p) mutable {
+    return detail::projecting<Want>(std::move(compute), Zoomable<Tag, Off, On, decltype(p)>(margin, std::move(off), std::move(on), std::move(p), std::move(spec)));
+  }, std::move(picture));
+}
+// Parts placed in a box of one look, each where its own spec puts it.
+template <class... Parts>
+auto place(Look look, Par<Parts...> parts) {
+  return lifted([](Look l, auto ps) {
+    return erased(std::apply([&](auto&... e) { return Box(std::move(l), as_part(std::move(e))...); }, ps));
+  }, std::move(look), std::move(parts.fParts));
+}
+
 // ---- the rest of the combinators, lifted ----------------------------------------------
 
 // A node marked where it is made, found by its mark (scene::findNode).
@@ -968,7 +1037,7 @@ struct built_view<void, Rules> {
 // Over a builder: the view it scrolls named as built under the same rules
 // -- a View that is itself a builder (a marked part of what it holds) is
 // found as what that builds.
-template <class Key, class View = void, a_builder B>
+template <class Key, class View = void, a_part B>
 auto remembered_scroll(B node) {
   return make_builder([node = std::move(node)]<class Rules>(const Rules& rules) mutable {
     auto n = built(std::move(node), rules);
@@ -1061,14 +1130,9 @@ auto side_scroll(B line, bool verticalWheel = false) {
 // every build (marked() erases it outside a release one), so that what
 // names it -- a scroll kept for it -- finds it as the type it names. Over a
 // builder, a builder of it.
-template <class Tag, class N>
-  requires(!a_builder<N>)
-Marked<Tag, N> marked_as(N node) {
-  return Marked<Tag, N>(std::move(node));
-}
-template <class Tag, a_builder B>
+template <class Tag, a_part B>
 auto marked_as(B node) {
-  return lifted([](auto n) { return marked_as<Tag>(std::move(n)); }, std::move(node));
+  return lifted([](auto n) { return Marked<Tag, decltype(n)>(std::move(n)); }, std::move(node));
 }
 template <class Lanes, class Rules>
 struct lanes_under {

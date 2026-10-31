@@ -922,22 +922,9 @@ template <class T, class F> struct MakeRow {
 template <class T, class F>
 using RowOf = std::invoke_result_t<const MakeRow<T, F> &, const T &>;
 
-template <class Key, class T, class F>
-auto each(F make, Look look = vbox()) {
-  using Row = RowOf<T, F>;
-  using Container = Box<>;
-  return erased(bind::Each<Key, T, Row, Container, MakeRow<T, F>>(
-      MakeRow<T, F>{std::move(make)}, Container(std::move(look))));
-}
 // The rows of a list each in the container's box, over one another: the
 // shapes of a figure (nodes::Figure), as many as the model has. The page
 // has the same (skiff.web's group), as an SVG group.
-template <class Key, class T, class F>
-auto group(F make) {
-  using Row = RowOf<T, F>;
-  using Container = scene::Group<>;
-  return erased(bind::Each<Key, T, Row, Container, MakeRow<T, F>>(MakeRow<T, F>{std::move(make)}, Container()));
-}
 
 // Handlers written where they are used: handle<Removed>([](auto &here) { ... })
 // -- given the place (or the event and the place) -- and several put
@@ -1864,21 +1851,8 @@ template <class Element, class MakeTab, class MakePart, class MakeStrip, class O
 struct OnlyBrings {
   scene::Taken operator()(std::size_t) const { return {}; }
 };
-template <class Element, class MakeTab, class MakePart, class MakeStrip, class OnTab = OnlyBrings>
-auto sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip &makeStrip, OnTab onTab = {}) {
-  // Concrete in every build: what reads the model for it reads it as itself.
-  return Sections<Element, MakeTab, MakePart, MakeStrip, OnTab>(std::move(look), std::move(parts), std::move(makeTab),
-                                                                std::move(makePart), makeStrip, std::move(onTab));
-}
 // The same, each section's height known before it is made -- Height(element,
 // width) -- and only those near the view made.
-template <class Element, class MakeTab, class MakePart, class MakeStrip, class OnTab, class Height>
-  requires std::invocable<const Height &, const Element &, float>
-auto sections(Look look, Look parts, MakeTab makeTab, MakePart makePart, const MakeStrip &makeStrip, OnTab onTab, Height height) {
-  return Sections<Element, MakeTab, MakePart, MakeStrip, OnTab, Height>(std::move(look), std::move(parts), std::move(makeTab),
-                                                                        std::move(makePart), makeStrip, std::move(onTab),
-                                                                        std::move(height));
-}
 
 // A picture sized as a chat sizes one: its own size, or its picture's own
 // proportions once that has come (`ratio` of the node), fitted into `most`
@@ -1941,9 +1915,6 @@ template <class Picture, class Loader> struct WhileComing : Box<Picture, Loader>
       loader.setVisible(coming);
   }
 };
-template <class Picture, class Loader> auto while_coming(Look look, Picture picture, Loader loader) {
-  return erased(WhileComing<Picture, Loader>(std::move(look), std::move(picture), std::move(loader)));
-}
 
 // Laid out at most as wide as its room, its natural width `wide`: narrower,
 // the share it is laid out at told to `fit(node, share)` -- an album's cells
