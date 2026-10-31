@@ -352,17 +352,29 @@ private:
     bool shown = false;
     bool on = false;
   };
+  // A card is what is shown under the layer and does not cover it: what
+  // covers the whole layer -- a popup over the window, a wrapper filling it
+  // -- is looked through, however deep. Taken as two levels exactly (the
+  // layer, its popups, their cards), a card put straight in the layer was
+  // no card: the layer took no press, and a tap off the menu pressed the
+  // room under it.
   seen cards(float x = -1.0f, float y = -1.0f) {
     seen out;
-    scene::eachChild(static_cast<N &>(*this), [&](auto &popup) {
-      if (!scene::stateOf(popup).fVisible)
-        return;
-      scene::eachChild(popup, [&](auto &card) {
-        const scene::State &state = scene::stateOf(card);
-        out.shown = out.shown || state.fVisible;
-        out.on = out.on || (state.fVisible && state.fBounds.contains(x, y));
+    const skia::SkRect whole = this->fState.fBounds;
+    const auto look = [&](this const auto &self, auto &node) -> void {
+      scene::eachChild(node, [&](auto &part) {
+        const scene::State &state = scene::stateOf(part);
+        if (!state.fVisible)
+          return;
+        if (state.fBounds.contains(whole)) {
+          self(part);
+          return;
+        }
+        out.shown = true;
+        out.on = out.on || state.fBounds.contains(x, y);
       });
-    });
+    };
+    look(static_cast<N &>(*this));
     return out;
   }
 };
