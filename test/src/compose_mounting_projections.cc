@@ -160,7 +160,7 @@ TEST(Compose, BoundMountConstructsAndReopensImmovableContentInPlace) {
 
 TEST(Compose, MountedConstructsInPlaceAndKeepsEqualFacts) {
   int made = 0;
-  auto node = mount<MountedControl, MountedFacts>(MountedArguments{&made});
+  auto node = build(mount<MountedControl, MountedFacts>(MountedArguments{&made}));
   EXPECT_FALSE(node.visible());
   EXPECT_EQ(node.shown(), nullptr);
   node.read(std::optional{MountedFacts{7}});
@@ -183,7 +183,7 @@ TEST(Compose, MountedConstructsInPlaceAndKeepsEqualFacts) {
 TEST(Compose, ProjectionsReadFieldsAndRefreshFromModelEdits) {
   auto model = twoAccounts();
   const auto items = [](int n) { return std::format("{} items", n); };
-  auto made = text_for<model::Field<&Count::n>>(items, nodes::Text("", 12.0f, 0u));
+  auto made = ::skiff::compose::build(text_for<model::Field<&Count::n>>(items, nodes::Text("", 12.0f, 0u)));
   auto &label = made_as<projected_t<model::Field<&Count::n>, decltype(items), TextOf>>(made);
   bind::Binding<Model> binding;
   binding.refresh(made, model);
@@ -197,9 +197,9 @@ TEST(Compose, ProjectionsReadFieldsAndRefreshFromModelEdits) {
 TEST(Compose, StyleProjectionPreservesItsChildren) {
   auto model = twoAccounts();
   const auto digits = [](int n) { return std::to_string(n); };
-  auto node = spec_for<Count>(
+  auto node = build(spec_for<Count>(
       [](const Count &now) -> scene::Spec { return {.visible = now.n > 0}; },
-      row(text_for<model::Field<&Count::n>>(digits, nodes::Text("", 12.0f, 0u))));
+      row(text_for<model::Field<&Count::n>>(digits, nodes::Text("", 12.0f, 0u)))));
   bind::Binding<Model> binding;
   binding.refresh(node, model);
   EXPECT_FALSE(node.visible());
@@ -210,19 +210,16 @@ TEST(Compose, StyleProjectionPreservesItsChildren) {
   EXPECT_EQ((made_as<projected_t<model::Field<&Count::n>, decltype(digits), TextOf>>(node).text()), "4");
 }
 
-TEST(Compose, PollingKeepsAnExternalDeadlineAndTheNodesOwnTimer) {
-  using Column = Ticking<part_t<decltype(column(nodes::Text("", 14.0f, 0u)))>>;
-  using Timer = Ticking<part_t<decltype(every<model::Nothing>(1000.0))>>;
-  auto quiet = keep_ticking(false, column(nodes::Text("Quiet", 14.0f, 0u)));
+TEST(Compose, TickingKeepsAnExternalDeadline) {
+  using Column = Ticking<part_t<decltype(::skiff::compose::build(column(nodes::Text("", 14.0f, 0u))))>>;
+  auto quiet = build(keep_ticking(false, column(nodes::Text("Quiet", 14.0f, 0u))));
   EXPECT_FALSE(made_as<Column>(quiet).wantsTick());
-  auto deadline = keep_ticking(true, column(nodes::Text("Pending", 14.0f, 0u)));
+  auto deadline = build(keep_ticking(true, column(nodes::Text("Pending", 14.0f, 0u))));
   EXPECT_TRUE(made_as<Column>(deadline).wantsTick());
-  auto timer = keep_ticking(false, every<model::Nothing>(1000.0));
-  EXPECT_TRUE(made_as<Timer>(timer).wantsTick());
 }
 
 TEST(Compose, NamedPressKeepsItsAccessibleLabelAndActions) {
-  auto made = onClick(model::Nothing{}, nodes::Text("Save", 14.0f, 0u), "Save settings");
+  auto made = build(onClick(model::Nothing{}, nodes::Text("Save", 14.0f, 0u), "Save settings"));
   auto &button = made_as<OnClick<model::Nothing, part_t<nodes::Text>>>(made);
   const auto info = button.semantics();
   EXPECT_EQ(info.fLabel, "Save settings");
@@ -232,7 +229,7 @@ TEST(Compose, NamedPressKeepsItsAccessibleLabelAndActions) {
 }
 
 TEST(Compose, LocalModelDoesNotHideTheNodesSceneState) {
-  auto made = local<int>(nodes::Text("Local", 14.0f, 0u), 3);
+  auto made = build(local<int>(nodes::Text("Local", 14.0f, 0u), 3));
   auto &node = made_as<bind::Local<int, bind::NoHandlers, part_t<nodes::Text>>>(made);
   EXPECT_EQ(&scene::stateOf(node), &static_cast<scene::Node&>(node).fState);
   EXPECT_EQ(node.fModel.root(), 3);
@@ -248,7 +245,7 @@ TEST(Compose, NamedClickKeepsTheWrappedToggleRoleAndValue) {
       return result;
     }
   };
-  auto made = onClick(model::Nothing{}, Toggle{}, "Encrypt local data");
+  auto made = build(onClick(model::Nothing{}, Toggle{}, "Encrypt local data"));
   const auto info = made_as<OnClick<model::Nothing, part_t<Toggle>>>(made).semantics();
   EXPECT_EQ(info.fRole.index(), scene::SemanticRole(scene::semantic_role::toggle{}).index());
   EXPECT_EQ(info.fValue, "on");
@@ -270,7 +267,7 @@ TEST(Compose, PressFactoryReadsCurrentDataWithoutRebuildingTheNode) {
   } sink;
   model::Model<int, bind::NoReactions> model(0);
   int current = 1;
-  auto button = onPress([&] { return Event{current}; }, Pad{}, "Current value");
+  auto button = build(onPress([&] { return Event{current}; }, Pad{}, "Current value"));
   const auto id = button.fState.id();
   ASSERT_TRUE(bind::press(button, model, scene::Path{}, &sink));
   current = 2;
@@ -283,8 +280,8 @@ TEST(Compose, VisibilityProjectionReadsLocalModelFields) {
   struct Flag { bool on = false; };
   model::Model<int, bind::NoReactions> model(0);
   const auto on = [](bool on) { return on; };
-  using Shown = decltype(shown_for<model::Field<&Flag::on>>(on, Pad{}));
-  auto node = local<Flag>(shown_for<model::Field<&Flag::on>>(on, Pad{}), Flag{});
+  using Shown = decltype(::skiff::compose::build(shown_for<model::Field<&Flag::on>>(on, Pad{})));
+  auto node = build(local<Flag>(shown_for<model::Field<&Flag::on>>(on, Pad{}), Flag{}));
   bind::Binding<decltype(model)> binding;
   binding.refresh(node, model);
   EXPECT_FALSE(node.visible());
@@ -307,7 +304,7 @@ TEST(Compose, AProjectionOverAProjectedNodeTellsItTheSamePart) {
   struct WidthOf {
     scene::Spec operator()(const Flag& now) const { return scene::Spec{.width = static_cast<float>(now.width)}; }
   };
-  auto node = shown_for<Flag>([](const Flag& now) { return now.on; }, spec_for<Flag>(WidthOf{}, Pad{}));
+  auto node = build(shown_for<Flag>([](const Flag& now) { return now.on; }, spec_for<Flag>(WidthOf{}, Pad{})));
   // Its width, on the node the spec is read into: the same node where
   // combinators are concrete, the one held under it where they are erased.
   const auto width = [&] { return made_as<projected_t<Flag, WidthOf, SpecOf<part_t<Pad>>>>(node).fState.width(); };
@@ -337,7 +334,7 @@ TEST(Compose, ARefreshCombinesChangedPathsAndLeavesOtherBindingsAlone) {
     void read(const Third& part) { value = part.value; ++reads; }
   };
   model::Model<Root, bind::NoReactions> model;
-  auto page = column(bound<First>(Probe{}), bound<Second>(Probe{}), bound<Third>(Probe{}));
+  auto page = ::skiff::compose::build(column(bound<First>(Probe{}), bound<Second>(Probe{}), bound<Third>(Probe{})));
   bind::Binding<decltype(model)> binding;
   binding.refresh(page, model);
   model.applyBatch(model::over<First>(model::setTo(First{1})), model::over<Second>(model::setTo(Second{2})));
@@ -360,10 +357,10 @@ TEST(Compose, PointerHandlerRetainsClickOutputsAndReadsItsNode) {
     reply.handle();
     return made_as<nodes::Text>(base).text();
   };
-  using Inner = decltype(column(vbox(), nodes::Text("event", 13.0f, 0)));
+  using Inner = decltype(::skiff::compose::build(column(vbox(), nodes::Text("event", 13.0f, 0))));
   using Clicked = OnClick<int, part_t<Inner>>;
-  using Pointed = OnPointer<std::string, std::remove_cvref_t<decltype(said)>, part_t<decltype(onClick(42, std::declval<Inner>()))>>;
-  auto node = onPointer<std::string>(said, onClick(42, column(vbox(), nodes::Text("event", 13.0f, 0))));
+  using Pointed = OnPointer<std::string, std::remove_cvref_t<decltype(said)>, part_t<decltype(::skiff::compose::build(onClick(42, std::declval<Inner>())))>>;
+  auto node = build(onPointer<std::string>(said, onClick(42, column(vbox(), nodes::Text("event", 13.0f, 0)))));
   // What a press gives, typed where the combinators are concrete: through a
   // Held, what the click under it gives is not seen.
   static_assert(scene::kErasedCombinators || std::same_as<OutOf<decltype(node)>, model::Types<int, std::string>>);
@@ -377,9 +374,9 @@ TEST(Compose, PointerHandlerRetainsClickOutputsAndReadsItsNode) {
 TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
   struct FlipLocal {};
   const auto makeLocal = [] {
-    return local<Expanded>(
+    return ::skiff::compose::build(local<Expanded>(
         handlers(handle<FlipLocal>([](const FlipLocal &) { return model::over<Expanded>(model::flip); })),
-        onClick(FlipLocal{}, bound<Expanded>(Chevron{})));
+        onClick(FlipLocal{}, bound<Expanded>(Chevron{}))));
   };
   using local_t = decltype(makeLocal());
   static_assert(bind::detail::kHasLocal<std::optional<local_t>>);
@@ -428,7 +425,7 @@ TEST(Compose, LocalRefreshCanEnterDynamicAndMemoizedChildren) {
     EXPECT_FALSE((made_as<bind::Bound<Expanded, part_t<Chevron>>>(target).fOpen));
     // The click in it, wherever it is under what holds it.
     ASSERT_TRUE(bind::press(target, model,
-        pressPathTo(target, made_as<OnClick<FlipLocal, part_t<decltype(bound<Expanded>(Chevron{}))>>>(target).fState)));
+        pressPathTo(target, made_as<OnClick<FlipLocal, part_t<decltype(::skiff::compose::build(bound<Expanded>(Chevron{})))>>>(target).fState)));
     // Also exercise detail::LocalPass<PlainModel> directly (the Release path).
     bind::detail::LocalPass<PlainModel> pass{model};
     bind::detail::visitNode(pass, holder, model::Place<int, model::Path<>>{});

@@ -48,7 +48,7 @@ struct LeadReads : scene::Node {
 }  // namespace scope_leads
 TEST(Compose, AScopeIsOfTheModelItsKeysLeadInNotOneHoldingItsPartAnotherWay) {
   using namespace scope_leads;
-  auto node = c::scoped<LeadAccount>(c::handlers(), c::bound<model::Field<&LeadAccount::n>>(LeadReads{}), std::string("a"));
+  auto node = ::skiff::compose::build(c::scoped<LeadAccount>(c::handlers(), c::bound<model::Field<&LeadAccount::n>>(LeadReads{}), std::string("a")));
   model::Model<LeadSettings, bind::NoReactions> settings{LeadSettings{}};
   (void)settings.apply(model::put<LeadAccount>(std::string("a"), LeadAccount{7}));
   model::Model<LeadShown, bind::NoReactions> shown{LeadShown{.page = {LeadPage{LeadAccount{3}}}}};
@@ -260,18 +260,18 @@ struct TallyText : nodes::Text {
   }
 };
 inline auto tally() {
-  return c::state<Tally>(c::handlers(c::handle<Pressed>([] {
+  return ::skiff::compose::build(c::state<Tally>(c::handlers(c::handle<Pressed>([] {
                            return model::over<Tally>([](Tally t) {
                              ++t.n;
                              return t;
                            });
                          })),
                          c::row(c::hbox(0.0f, {.width = 200.0f, .height = 40.0f}), c::bound<Tally>(TallyText()),
-                                c::onClick(Pressed{}, nodes::Text("+", 13.0f, 0u))));
+                                c::onClick(Pressed{}, nodes::Text("+", 13.0f, 0u)))));
 }
 inline auto page() {
-  return c::column(c::vbox(0.0f, {.fill = true}), tally(), c::state<Seen>(nodes::Text("seen", 13.0f, 0u)),
-                   c::row(c::hbox(0.0f), c::state<Tasks>(nodes::Text("tasks", 13.0f, 0u))), tally());
+  return ::skiff::compose::build(c::column(c::vbox(0.0f, {.fill = true}), tally(), c::state<Seen>(nodes::Text("seen", 13.0f, 0u)),
+                   c::row(c::hbox(0.0f), c::state<Tasks>(nodes::Text("tasks", 13.0f, 0u))), tally()));
 }
 }  // namespace stated_model
 

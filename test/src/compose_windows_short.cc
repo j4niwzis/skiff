@@ -102,15 +102,15 @@ struct Mark : scene::Node {
   Mark() { this->apply({.width = 20.0f, .height = 20.0f}); }
 };
 inline auto tab_row() {
-  return SKIFF_NAMED(manage_tab_row, c::spec_for<FeedTold>([](const FeedTold &) { return scene::Spec{.selected = false}; },
+  return ::skiff::compose::build(SKIFF_NAMED(manage_tab_row, c::spec_for<FeedTold>([](const FeedTold &) { return scene::Spec{.selected = false}; },
+      c::onPress(Tap{}, c::row(c::hbox(8.0f, {.fillX = true, .height = 40.0f}), Mark{})))));
+}
+inline auto no_spec() { return ::skiff::compose::build(SKIFF_NAMED(manage_tab_row, c::onPress(Tap{}, c::row(c::hbox(8.0f, {.fillX = true, .height = 40.0f}), Mark{})))); }
+inline auto no_name() {
+  return ::skiff::compose::build(c::spec_for<FeedTold>([](const FeedTold &) { return scene::Spec{.selected = false}; },
       c::onPress(Tap{}, c::row(c::hbox(8.0f, {.fillX = true, .height = 40.0f}), Mark{}))));
 }
-inline auto no_spec() { return SKIFF_NAMED(manage_tab_row, c::onPress(Tap{}, c::row(c::hbox(8.0f, {.fillX = true, .height = 40.0f}), Mark{}))); }
-inline auto no_name() {
-  return c::spec_for<FeedTold>([](const FeedTold &) { return scene::Spec{.selected = false}; },
-      c::onPress(Tap{}, c::row(c::hbox(8.0f, {.fillX = true, .height = 40.0f}), Mark{})));
-}
-inline auto only_row() { return c::row(c::hbox(8.0f, {.fillX = true, .height = 40.0f}), Mark{}); }
+inline auto only_row() { return ::skiff::compose::build(c::row(c::hbox(8.0f, {.fillX = true, .height = 40.0f}), Mark{})); }
 template <class Row> int shown_of(Row hidden) {
   scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), c::visible(false, std::move(hidden))));
   FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{}}}};
@@ -191,15 +191,15 @@ struct Area : scene::Node {
 // The area above as mux's chat_area: a named column growing on its own
 // account, a backdrop filling it, under styled's grow and a wrapper.
 inline auto area_like() {
-  return SKIFF_NAMED(area_like, c::column(c::vbox(0.0f, {.fillX = true, .grow = scene::axes::kY}), c::styled({.fill = true}, Area{})));
+  return ::skiff::compose::build(SKIFF_NAMED(area_like, c::column(c::vbox(0.0f, {.fillX = true, .grow = scene::axes::kY}), c::styled({.fill = true}, Area{}))));
 }
 template <class Above, class Field> auto screen_with(Above above, Field field) {
-  return c::column(c::vbox(0.0f, {.fill = true}),
+  return ::skiff::compose::build(c::column(c::vbox(0.0f, {.fill = true}),
       c::styled({.fillX = true, .grow = scene::axes::kY}, std::move(above)),
       SKIFF_NAMED(composer_like, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
           c::styled({.fillX = true, .height = 1.0f}, nodes::Box<>(0xff000000u)),
           c::row(c::hbox(6.0f, {.fillX = true, .autoSize = scene::axes::kY, .minHeight = 54.0f, .padding = {9.0f, 8.0f, 9.0f, 8.0f}}),
-              c::styled({.grow = scene::axes::kX, .alignSelf = scene::align::kMiddle}, std::move(field))))));
+              c::styled({.grow = scene::axes::kX, .alignSelf = scene::align::kMiddle}, std::move(field)))))));
 }
 template <class Field> auto screen(Field field) { return screen_with(Area{}, std::move(field)); }
 template <class Tree> std::pair<float, float> typed(Tree &tree, int extra) {

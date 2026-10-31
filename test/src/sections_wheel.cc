@@ -38,9 +38,9 @@ struct wheeled {
 };
 wheeled wheel_down(float reckoned) {
   const auto tab = [](int n) { return nodes::Text(std::to_string(n), 13.0f, 0); };
-  auto made = sections<int>(vbox(4.0f, {.fill = true}), vbox(0.0f), tab, [](int n) { return Block(n); },
+  auto made = ::skiff::compose::build(sections<int>(vbox(4.0f, {.fill = true}), vbox(0.0f), tab, [](int n) { return Block(n); },
                             wrapped<int>(vbox(0.0f), hbox(4.0f)), [](std::size_t) { return scene::Taken{}; },
-                            [reckoned](int, float) { return reckoned; });
+                            [reckoned](int, float) { return reckoned; }));
   using List = decltype(made);
   scene::Scene tree(column(vbox(0.0f, {.fill = true}), std::move(made)));
   List *found = nullptr;
@@ -107,27 +107,27 @@ TEST(SectionsWheel, AWheelDownGoesDownThroughSectionsReckonedLong) {
 // the scene, at a pointer resting over the cells, as a window gives it.
 inline constexpr float kCell = 37.0f;
 inline auto cell() {
-  return onClick(scene::Taken{}, styled({.width = kCell, .height = kCell, .hoverBackground = 1u}, nodes::Text("x", 13.0f, 0)));
+  return ::skiff::compose::build(onClick(scene::Taken{}, styled({.width = kCell, .height = kCell, .hoverBackground = 1u}, nodes::Text("x", 13.0f, 0))));
 }
 using Cell = decltype(cell());
 inline auto group(int count) {
-  return column(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+  return ::skiff::compose::build(column(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
                 row(hbox(8.0f, {.fillX = true, .height = 32.0f, .padding = {0.0f, 7.0f, 0.0f, 7.0f}}),
                     styled({.grow = scene::axes::kX}, nodes::Text(std::to_string(count), 13.0f, 0))),
                 styled({.fillX = true, .autoSize = scene::axes::kY},
                        nodes::Flow<std::vector<Cell>>({.direction = nodes::direction::horizontal{}, .spacingX = 0.0f, .spacingY = 0.0f, .wrap = true},
                                                       std::views::iota(0, count) | std::views::transform([](int) { return cell(); }) |
-                                                          std::ranges::to<std::vector>())));
+                                                          std::ranges::to<std::vector>()))));
 }
 TEST(SectionsWheel, AnEmojiPanelsGroupsGoDownUnderAWheelThroughTheScene) {
   const auto tab = [](int n) { return nodes::Text(std::to_string(n), 13.0f, 0); };
-  auto made = sections<int>(vbox(4.0f, {.fill = true}), vbox(0.0f), tab, [](int n) { return group(n); },
+  auto made = ::skiff::compose::build(sections<int>(vbox(4.0f, {.fill = true}), vbox(0.0f), tab, [](int n) { return ::skiff::compose::build(group(n)); },
                             wrapped<int>(vbox(0.0f), hbox(4.0f)), [](std::size_t) { return scene::Taken{}; },
                             [](int count, float width) {
                               const auto across = std::max<std::size_t>(1, static_cast<std::size_t>(width / kCell));
                               const std::size_t rows = (static_cast<std::size_t>(count) + across - 1) / across;
                               return 32.0f + static_cast<float>(rows) * kCell;
-                            });
+                            }));
   using List = decltype(made);
   scene::Scene tree(column(vbox(0.0f, {.fill = true}), std::move(made)));
   List *found = nullptr;
@@ -192,32 +192,32 @@ struct RestsOn {
   PreviewRested operator()(bool on) const { return {what, on}; }
 };
 inline auto resting_cell(int n) {
-  return resting(450.0, RestsOn{{n}}, onClick(scene::Taken{}, styled({.width = kCell, .height = kCell, .hoverBackground = 1u}, nodes::Text("x", 13.0f, 0))));
+  return ::skiff::compose::build(resting(450.0, RestsOn{{n}}, onClick(scene::Taken{}, styled({.width = kCell, .height = kCell, .hoverBackground = 1u}, nodes::Text("x", 13.0f, 0)))));
 }
 using RestingCell = decltype(resting_cell(0));
 inline auto resting_group(int count) {
-  return column(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+  return ::skiff::compose::build(column(vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
                 row(hbox(8.0f, {.fillX = true, .height = 32.0f, .padding = {0.0f, 7.0f, 0.0f, 7.0f}}),
                     styled({.grow = scene::axes::kX}, nodes::Text(std::to_string(count), 13.0f, 0))),
                 styled({.fillX = true, .autoSize = scene::axes::kY},
                        nodes::Flow<std::vector<RestingCell>>({.direction = nodes::direction::horizontal{}, .spacingX = 0.0f, .spacingY = 0.0f, .wrap = true},
                                                              std::views::iota(0, count) | std::views::transform([](int at) { return resting_cell(at); }) |
-                                                                 std::ranges::to<std::vector>())));
+                                                                 std::ranges::to<std::vector>()))));
 }
 inline auto preview_of(const Previewed &one) {
-  return column(vbox(0.0f, {.place = scene::anchor::kCentre, .autoSize = scene::axes::kBoth, .padding = {16.0f, 16.0f, 16.0f, 16.0f}}),
-                nodes::Text(std::to_string(one.what), 120.0f, 0));
+  return ::skiff::compose::build(column(vbox(0.0f, {.place = scene::anchor::kCentre, .autoSize = scene::axes::kBoth, .padding = {16.0f, 16.0f, 16.0f, 16.0f}}),
+                nodes::Text(std::to_string(one.what), 120.0f, 0)));
 }
 using PreviewOf = decltype(preview_of(Previewed{}));
 TEST(SectionsWheel, AnEmojiPanelWithItsPreviewGoesDownUnderAWheel) {
   const auto tab = [](int n) { return nodes::Text(std::to_string(n), 13.0f, 0); };
-  auto made = sections<int>(vbox(4.0f, {.fill = true}), vbox(0.0f), tab, [](int n) { return resting_group(n); },
+  auto made = ::skiff::compose::build(sections<int>(vbox(4.0f, {.fill = true}), vbox(0.0f), tab, [](int n) { return resting_group(n); },
                             wrapped<int>(vbox(0.0f), hbox(4.0f)), [](std::size_t) { return scene::Taken{}; },
                             [](int count, float width) {
                               const auto across = std::max<std::size_t>(1, static_cast<std::size_t>(width / kCell));
                               const std::size_t rows = (static_cast<std::size_t>(count) + across - 1) / across;
                               return 32.0f + static_cast<float>(rows) * kCell;
-                            });
+                            }));
   using List = decltype(made);
   scene::Scene tree(local<PreviewShown>(PreviewEvents{},
       column(vbox(0.0f, {.fill = true}),
@@ -264,13 +264,13 @@ TEST(SectionsWheel, AnEmojiPanelWithItsPreviewGoesDownUnderAWheel) {
 // where the reader has it, not glided back to the top.
 TEST(SectionsWheel, ReadAgainWithAGroupChangedWhileBrowsingKeepsTheViewGoingDown) {
   const auto tab = [](int n) { return nodes::Text(std::to_string(n), 13.0f, 0); };
-  auto made = sections<int>(vbox(4.0f, {.fill = true}), vbox(0.0f), tab, [](int n) { return group(n); },
+  auto made = ::skiff::compose::build(sections<int>(vbox(4.0f, {.fill = true}), vbox(0.0f), tab, [](int n) { return ::skiff::compose::build(group(n)); },
                             wrapped<int>(vbox(0.0f), hbox(4.0f)), [](std::size_t) { return scene::Taken{}; },
                             [](int count, float width) {
                               const auto across = std::max<std::size_t>(1, static_cast<std::size_t>(width / kCell));
                               const std::size_t rows = (static_cast<std::size_t>(count) + across - 1) / across;
                               return 32.0f + static_cast<float>(rows) * kCell;
-                            });
+                            }));
   using List = decltype(made);
   scene::Scene tree(column(vbox(0.0f, {.fill = true}), std::move(made)));
   List *found = nullptr;
@@ -314,8 +314,8 @@ TEST(SectionsWheel, ReadAgainWithAGroupChangedWhileBrowsingKeepsTheViewGoingDown
 // same, not made again (put again, their strip went back to its start).
 TEST(SectionsWheel, ReadAgainTheSameMakesNothingAndTheTabsStay) {
   int parts = 0, tabs = 0;
-  auto whole = sections<int>(vbox(4.0f, {.fill = true}), vbox(0.0f), [&tabs](int n) { ++tabs; return nodes::Text(std::to_string(n), 13.0f, 0); },
-                             [&parts](int n) { ++parts; return Block(n); }, wrapped<int>(vbox(0.0f), hbox(4.0f)));
+  auto whole = build(sections<int>(vbox(4.0f, {.fill = true}), vbox(0.0f), [&tabs](int n) { ++tabs; return nodes::Text(std::to_string(n), 13.0f, 0); },
+                             [&parts](int n) { ++parts; return Block(n); }, wrapped<int>(vbox(0.0f), hbox(4.0f))));
   const std::vector<int> groups{1, 2, 3, 4};
   whole.read(SectionsShown<int>{groups, groups, true});
   EXPECT_EQ(parts, 4);

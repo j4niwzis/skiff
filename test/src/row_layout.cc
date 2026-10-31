@@ -12,7 +12,7 @@ namespace c = skiff::compose;
 namespace scene = skiff::scene;
 using entry = std::pair<int, int>;
 inline constexpr auto make = [](const entry& item) {
-  return c::column(c::vbox(0.0f, {.width = static_cast<float>(item.second), .height = 30.0f}));
+  return ::skiff::compose::build(c::column(c::vbox(0.0f, {.width = static_cast<float>(item.second), .height = 30.0f})));
 };
 using rows = skiff::nodes::MemoRows<int, int, std::invoke_result_t<decltype(make), const entry&>, std::remove_cv_t<decltype(make)>>;
 }
@@ -66,7 +66,7 @@ TEST(MemoRowsLayout, ExistingDefaultRowsStillFillAcross) {
 // growing children share it -- two sides beside each other where there is
 // room, one over the other, each the whole width, where there is not.
 TEST(FlowLayout, WrappedChildrenThatGrowShareTheirLine) {
-  const auto side = [] { return c::column(c::vbox(0.0f, {.height = 20.0f, .grow = scene::axes::kX, .minWidth = 100.0f})); };
+  const auto side = [] { return ::skiff::compose::build(c::column(c::vbox(0.0f, {.height = 20.0f, .grow = scene::axes::kX, .minWidth = 100.0f}))); };
   skiff::nodes::Flow flow(skiff::nodes::FlowOptions{.direction = skiff::nodes::direction::horizontal{}, .spacingX = 10.0f,
                                                     .spacingY = 5.0f, .wrap = true},
                           side(), side());

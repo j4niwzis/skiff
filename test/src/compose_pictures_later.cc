@@ -186,14 +186,14 @@ struct NoRules {
 TEST(Compose, ARightPressOnARowsPictureAsksItsMenu) {
   using namespace waiting_picture_box;
   using row_menu::Ask;
-  auto picture = SKIFF_NAMED(picture_view, c::onClick(Open{}, fitted_t(c::Fit{.width = 200.0f, .height = 100.0f, .most = 430.0f, .least = 100.0f}, NoRatio{}, box()), "Open picture"));
+  auto picture = c::build(SKIFF_NAMED(picture_view, c::onClick(Open{}, fitted_t(c::Fit{.width = 200.0f, .height = 100.0f, .most = 430.0f, .least = 100.0f}, NoRatio{}, box()), "Open picture")));
   picture.apply({.alpha = 0.9f});
   const auto answered = row_menu_parts::rightPressed(c::onRightPressAt(Ask{}, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
       c::swiped(48.0f, 120.0f, [] { return row_menu::Reply{}; }, row_menu::Show{}, nodes::Text("", 12.0f, 0u),
                 c::onClickAt([](auto &, float, float) { return std::optional<int>(); },
                              c::row(c::hbox(8.0f, {.fillX = true, .autoSize = scene::axes::kY}),
                                     // The bubble, held as mux holds it (made in its own unit).
-                                    compose::Held(c::arranged<NoRules>(NoRules::State{}, c::column(c::vbox(2.0f, {.autoSize = scene::axes::kBoth}), std::move(picture))))))))));
+                                    compose::Held(c::build(c::arranged<NoRules>(NoRules::State{}, c::column(c::vbox(2.0f, {.autoSize = scene::axes::kBoth}), std::move(picture)))))))))));
   std::println("right press on a picture answered: {}", answered);
   if constexpr (scene::kErasedWalks)
     EXPECT_EQ(answered, 1u);

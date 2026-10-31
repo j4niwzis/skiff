@@ -15,7 +15,7 @@ namespace {
 namespace c = skiff::compose;
 namespace scene = skiff::scene;
 auto scroll_view() {
-  auto view = skiff::nodes::ScrollContainer(c::column(c::vbox(0.0f, {.fillX = true, .height = 1000.0f})));
+  auto view = skiff::nodes::ScrollContainer(::skiff::compose::build(c::column(c::vbox(0.0f, {.fillX = true, .height = 1000.0f}))));
   view.apply({.fillX = true, .height = 100.0f});
   view.setHoldsInView(false);
   return view;
@@ -65,7 +65,7 @@ TEST(Views, EachListRestoresItsOffsetAfterShorterContentsWereShown) {
 }
 
 TEST(Views, NewSearchResultsRestartButUnchangedResultsKeepTheirOffset) {
-  auto node = c::restarted_scroll<int>(scroll_view());
+  auto node = c::build(c::restarted_scroll<int>(scroll_view()));
   node.read(1);
   scene::layout(node, viewport);
   node.setCurrent(300.0f);
@@ -79,7 +79,7 @@ TEST(Views, NewSearchResultsRestartButUnchangedResultsKeepTheirOffset) {
 }
 
 TEST(Views, WidthTracksTheBoundRequestAndWindowLimits) {
-  auto node = c::clamped_width({}, c::column(c::vbox()));
+  auto node = c::build(c::clamped_width({}, c::column(c::vbox())));
   const auto wide = skia::SkRect::MakeXYWH(0.0f, 0.0f, 1000.0f, 600.0f);
   node.read({.wanted = 900.0f});
   node.measure(wide);
@@ -100,18 +100,18 @@ TEST(Views, CaptureObserverLeavesTheTargetsNormalClickAvailable) {
   auto& work = scene::hostWork();
   work.answers.clear();
   work.pressed.clear();
-  auto node = c::onCapture<int>([&](const auto&, const scene::pointer::down&, scene::PointerReply&) {
+  auto node = ::skiff::compose::build(c::onCapture<int>([&](const auto&, const scene::pointer::down&, scene::PointerReply&) {
     ++observed;
     return std::optional<int>(7);
   }, c::column(c::vbox(0.0f, {.fill = true}),
-      c::onClick(9, c::column(c::vbox(0.0f, {.fillX = true, .height = 50.0f})), "Choose item")));
+      c::onClick(9, c::column(c::vbox(0.0f, {.fillX = true, .height = 50.0f})), "Choose item"))));
   scene::Scene tree(std::move(node));
   tree.layoutIfNeeded(viewport);
   tree.dispatchPointer(scene::pointer::down{20.0f, 20.0f, 1});
   tree.dispatchPointer(scene::pointer::up{20.0f, 20.0f, 1});
   EXPECT_EQ(observed, 1);
   EXPECT_FALSE(work.pressed.empty());
-  using Item = c::OnClick<int, c::part_t<decltype(c::column(c::vbox(0.0f, {.fillX = true, .height = 50.0f})))>>;
+  using Item = c::OnClick<int, c::part_t<decltype(::skiff::compose::build(c::column(c::vbox(0.0f, {.fillX = true, .height = 50.0f}))))>>;
   EXPECT_EQ(made_as<Item>(tree.root()).onPress(), 9);
   work.answers.clear();
   work.pressed.clear();
@@ -123,10 +123,10 @@ TEST(Views, CaptureObserverLeavesTheTargetsNormalClickAvailable) {
 }
 
 TEST(Views, AFieldsFrameTracksFocusWithoutChangingItsGeometry) {
-  auto field = c::onClick(1, c::column(c::vbox(0.0f, {.fillX = true, .height = 28.0f,
-      .margin = {2.0f, 14.0f, 0.0f, 14.0f}})), "Search");
+  auto field = ::skiff::compose::build(c::onClick(1, c::column(c::vbox(0.0f, {.fillX = true, .height = 28.0f,
+      .margin = {2.0f, 14.0f, 0.0f, 14.0f}})), "Search"));
   using Frame = c::FocusFrame<decltype(field)>;
-  auto node = c::focus_frame(c::vbox(0.0f, {.fillX = true, .height = 36.0f}), std::move(field));
+  auto node = c::build(c::focus_frame(c::vbox(0.0f, {.fillX = true, .height = 36.0f}), std::move(field)));
   scene::Scene tree(std::move(node));
   tree.layoutIfNeeded(viewport);
   auto &frame = made_as<Frame>(tree.root());
@@ -152,13 +152,13 @@ TEST(Views, ArrangementParametersReadFromTheModelChangeTheRealLayout) {
     // Made as the box it is, in either build: the policy sets the gap of
     // the column it arranges, which a Held -- what column() makes where
     // combinators are erased -- does not lay out by.
-    return c::arranged<gap_policy>({}, c::Box<c::Box<>, c::Box<>>(
+    return ::skiff::compose::build(c::arranged<gap_policy>({}, c::Box<c::Box<>, c::Box<>>(
         c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
         c::Box<>(c::vbox(0.0f, {.width = 40.0f, .height = 30.0f})),
-        c::Box<>(c::vbox(0.0f, {.width = 40.0f, .height = 30.0f}))));
+        c::Box<>(c::vbox(0.0f, {.width = 40.0f, .height = 30.0f})))));
   };
   using Bound = skiff::bind::Bound<arrangement_gap, c::part_t<decltype(arrangement())>>;
-  auto node = c::bound<arrangement_gap>(arrangement());
+  auto node = c::build(c::bound<arrangement_gap>(arrangement()));
   // The second of the two columns arranged, found as it is.
   const auto second = [&] { return all_made_as<c::Box<>>(node).at(1)->bounds(); };
   binding.refresh(node, model);
@@ -190,7 +190,7 @@ TEST(Views, ModelAndViewFactsCanArriveInEitherOrderAndBothRefreshTheProjection) 
     }
   };
   using Probe = skiff::bind::Bound<projection_hint, c::part_t<c::WithModel<source_type, projection_hint, Summed, projection_probe>>>;
-  const auto make = [&] { return c::bound<projection_hint>(c::with_model<source_type, projection_hint>(Summed{&computed}, projection_probe{})); };
+  const auto make = [&] { return ::skiff::compose::build(c::bound<projection_hint>(c::with_model<source_type, projection_hint>(Summed{&computed}, projection_probe{}))); };
   auto source_made = make();
   auto &source_first = made_as<Probe>(source_made);
   source_binding.refresh(source_made, source);
@@ -218,7 +218,7 @@ TEST(Views, ModelAndViewFactsCanArriveInEitherOrderAndBothRefreshTheProjection) 
 namespace {
 using virtual_item = std::pair<int, int>;
 inline constexpr auto virtual_make = [](const virtual_item& item) {
-  return c::column(c::vbox(0.0f, {.fillX = true, .height = static_cast<float>(item.second)}));
+  return ::skiff::compose::build(c::column(c::vbox(0.0f, {.fillX = true, .height = static_cast<float>(item.second)})));
 };
 auto virtual_view() {
   using rows = skiff::nodes::MemoRows<int, int,
@@ -228,7 +228,7 @@ auto virtual_view() {
   contents.apply({.fillX = true, .autoSize = scene::axes::kY});
   auto scroll = skiff::nodes::ScrollContainer(std::move(contents));
   scroll.apply({.fillX = true, .height = 100.0f});
-  return c::virtual_rows<virtual_item>([](const virtual_item& item) { return item.second; }, std::move(scroll));
+  return ::skiff::compose::build(c::virtual_rows<virtual_item>([](const virtual_item& item) { return item.second; }, std::move(scroll)));
 }
 std::vector<virtual_item> virtual_items(int count) {
   std::vector<virtual_item> out;
@@ -318,12 +318,12 @@ TEST(Views, RememberedViewportKeepsItsIdentityAndContentsInDistinctBindingNodes)
   // As the walks find it: under the projection that reads its items, which
   // derives from it -- a node of its own type where combinators are erased.
   using View = projected_t<projection_amount, Items, decltype(virtual_view())>;
-  using Remembered = decltype(c::remembered_scroll<int, View>(c::projected<projection_amount>(Items{}, virtual_view())));
+  using Remembered = decltype(::skiff::compose::build(c::remembered_scroll<int, View>(c::projected<projection_amount>(Items{}, virtual_view()))));
   struct HintValue {
     int operator()(const projection_hint& hint) const { return hint.value; }
   };
-  auto expression = c::projected<projection_hint>(HintValue{},
-      c::remembered_scroll<int, View>(c::projected<projection_amount>(Items{}, virtual_view())));
+  auto expression = ::skiff::compose::build(c::projected<projection_hint>(HintValue{},
+      c::remembered_scroll<int, View>(c::projected<projection_amount>(Items{}, virtual_view()))));
   scene::Scene tree(std::move(expression));
   auto& root = tree.root();
   // The remembered view as the walks find it: under the projection read
@@ -351,7 +351,7 @@ TEST(Views, RememberedViewportKeepsItsIdentityAndContentsInDistinctBindingNodes)
 }
 
 TEST(Views, ClampedWidthUsesPixelsInsideAFormerlyFillingRoot) {
-  auto node = c::clamped_width({}, c::column(c::vbox(0.0f, {.fill = true})));
+  auto node = c::build(c::clamped_width({}, c::column(c::vbox(0.0f, {.fill = true}))));
   scene::layout(node, skia::SkRect::MakeXYWH(0.0f, 0.0f, 1000.0f, 600.0f));
   EXPECT_FLOAT_EQ(node.bounds().width(), 300.0f);
   EXPECT_FLOAT_EQ(node.bounds().height(), 600.0f);

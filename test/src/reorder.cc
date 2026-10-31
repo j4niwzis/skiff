@@ -26,7 +26,7 @@ template <class T> std::optional<T> event_as(const auto& event) {
       [](const auto&) { return std::optional<T>{}; }}, *event);
 }
 inline auto make_icon(int, int, bool) {
-  return c::column(c::vbox(0.0f, {.width = 40.0f, .height = 40.0f}));
+  return c::build(c::column(c::vbox(0.0f, {.width = 40.0f, .height = 40.0f})));
 }
 inline constexpr auto make_row = [](const std::pair<int, int>& one) { return make_icon(one.first, one.second, false); };
 using rows = skiff::nodes::MemoRows<int, int, decltype(make_icon(0, 0, false)), std::remove_cv_t<decltype(make_row)>>;
@@ -37,10 +37,10 @@ struct SideShown {
   bool operator()(const bar_visibility& now) const { return now.side; }
 };
 auto surface_of(rows across, rows down) {
-  return c::column(c::vbox(), c::side_scroll(std::move(across), true),
-      c::shown_for<bar_visibility>(SideShown{}, skiff::nodes::ScrollContainer<rows>(std::move(down))));
+  return ::skiff::compose::build(c::column(c::vbox(), c::side_scroll(std::move(across), true),
+      c::shown_for<bar_visibility>(SideShown{}, skiff::nodes::ScrollContainer<rows>(std::move(down)))));
 }
-using Surface = decltype(surface_of(rows(make_row), rows(make_row)));
+using Surface = decltype(c::build(surface_of(rows(make_row), rows(make_row))));
 // Its two bars, as they were made -- found by the walks under the Held each
 // is erased into where combinators are.
 using Top = c::SideScroll<rows>;
@@ -55,14 +55,12 @@ struct Lanes {
                       std::optional{c::ReorderLane{side, std::get<0>(side.fChildren), side.bounds(), 8.0f}}};
   }
 };
-using Bars = c::ReorderBars<int, int, decltype(&make_icon), Surface, Lanes>;
-Bars& bars(auto& node) { return made_as<Bars>(node); }
 
 auto fixture() {
   rows across(make_row), down(make_row);
   across.read(std::vector<std::pair<int, int>>{{1, 1}, {2, 2}, {3, 3}});
   down.read(std::vector<std::pair<int, int>>{{4, 4}, {5, 5}});
-  auto surface = surface_of(std::move(across), std::move(down));
+  auto surface = c::build(surface_of(std::move(across), std::move(down)));
   auto& top = made_as<Top>(surface);
   auto& side = made_as<Side>(surface);
   top.fState.fBounds = skia::SkRect::MakeXYWH(0.0f, 0.0f, 100.0f, 40.0f);
@@ -75,8 +73,10 @@ auto fixture() {
   std::ranges::for_each(std::views::iota(0, 2), [&](int i) {
     c::state_of(vertical.fRows[i].fRow).fBounds = skia::SkRect::MakeXYWH(200.0f, 100.0f + i * 48.0f, 40.0f, 40.0f);
   });
-  return c::reorder_bars<int, int>(std::move(surface), make_icon, Lanes{}, 0xff123456u);
+  return c::build(c::reorder_bars<int, int>(std::move(surface), make_icon, Lanes{}, 0xff123456u));
 }
+using Bars = decltype(fixture());
+Bars& bars(auto& node) { return made_as<Bars>(node); }
 }
 
 TEST(ReorderBars, HeldCrossBarDropAnswersKeysAndRestoresTheGhost) {

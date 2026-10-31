@@ -24,7 +24,7 @@ namespace {
 
 
 TEST(Compose, ListedIsMadeAgainFromWhatItReads) {
-  auto list = listed<int>(vbox(2.0f), [](int n) { return nodes::Text(std::to_string(n), 13.0f, 0); });
+  auto list = build(listed<int>(vbox(2.0f), [](int n) { return nodes::Text(std::to_string(n), 13.0f, 0); }));
   EXPECT_TRUE(list.fParts.empty());
   list.read(std::vector<int>{1, 2, 3});
   ASSERT_EQ(list.fParts.size(), 3u);
@@ -36,7 +36,7 @@ TEST(Compose, ListedIsMadeAgainFromWhatItReads) {
 
 TEST(Compose, SectionsMakeATabAndAPartForEachAndLightTheFirst) {
   const auto text = [](std::string what) { return [what](int n) { return nodes::Text(what + std::to_string(n), 13.0f, 0); }; };
-  auto list = sections<int>(vbox(4.0f), vbox(0.0f), text("tab "), text("part "), wrapped<int>(vbox(0.0f), hbox(4.0f)));
+  auto list = build(sections<int>(vbox(4.0f), vbox(0.0f), text("tab "), text("part "), wrapped<int>(vbox(0.0f), hbox(4.0f))));
   list.read(SectionsShown<int>{{1, 2, 3}, {1, 2, 3}, true});
   ASSERT_EQ(list.parts().size(), 3u);
   ASSERT_EQ(list.fStrip.buttons().size(), 3u);
@@ -58,9 +58,9 @@ TEST(Compose, SectionsMakeATabAndAPartForEachAndLightTheFirst) {
 TEST(Compose, SplitStripsPutEachTabWhereItsElementSaysAndPagedOnesPage) {
   const auto text = [](std::string what) { return [what](int n) { return nodes::Text(what + std::to_string(n), 13.0f, 0); }; };
   const auto arrow = [](bool next) { return nodes::Text(next ? ">" : "<", 13.0f, 0); };
-  auto list = sections<int>(vbox(4.0f), vbox(0.0f), text("tab "), text("part "),
+  auto list = build(sections<int>(vbox(4.0f), vbox(0.0f), text("tab "), text("part "),
       split<int>(vbox(0.0f), [](int n) { return n >= 10; }, in_row<int>(hbox(0.0f)),
-                 paged<int>(hbox(0.0f), hbox(0.0f), 30.0f, 60.0f, arrow)));
+                 paged<int>(hbox(0.0f), hbox(0.0f), 30.0f, 60.0f, arrow))));
   list.read(SectionsShown<int>{{1, 2, 10, 11, 12}, {1, 2, 10, 11, 12}, true});
   ASSERT_EQ(list.fStrip.fFirst.fParts.size(), 2u);
   ASSERT_EQ(list.fStrip.fThen.buttons().size(), 3u);
@@ -101,7 +101,7 @@ TEST(Compose, PlacedAtIsShownWhereThereIsAPoint) {
 TEST(Compose, RestingSaysWhenThePointerHasRestedAndWhenItLeaves) {
   std::vector<bool> said;
   const auto rest = [&](bool on) { said.push_back(on); };
-  auto made = resting(300.0, rest, nodes::Text("x", 13.0f, 0));
+  auto made = ::skiff::compose::build(resting(300.0, rest, nodes::Text("x", 13.0f, 0)));
   auto &node = made_as<Resting<std::remove_cvref_t<decltype(rest)>, part_t<nodes::Text>>>(made);
   node.fState.fHovered = true;
   node.update(1000.0);
@@ -128,8 +128,8 @@ TEST(Compose, AShownIfHidesWhereItsReadSaysSo) {
   struct Root { model::Tracked<Count> count; };
   model::Model<Root, bind::NoReactions> model{Root{}};
   const auto digits = [](const Count &now) { return std::to_string(now.n); };
-  auto node = shown_if<Count>([](const Count &now) { return now.n > 0; },
-                              row(text_of<Count>(digits, nodes::Text("", 12.0f, 0u))));
+  auto node = build(shown_if<Count>([](const Count &now) { return now.n > 0; },
+                              row(text_of<Count>(digits, nodes::Text("", 12.0f, 0u)))));
   bind::Binding<decltype(model)> binding;
   binding.refresh(node, model);
   EXPECT_FALSE(node.visible());
@@ -201,7 +201,7 @@ TEST(Compose, AnOverloadedReaderIsRefreshedAsRootAndAsAPart) {
   second.refresh(root, other);
   EXPECT_EQ(root.fByModel, 1);
   EXPECT_EQ(root.fByRoot, 1);
-  auto tree = column(row(OverloadedReading{}), nodes::Box<>(0u));
+  auto tree = ::skiff::compose::build(column(row(OverloadedReading{}), nodes::Box<>(0u)));
   auto moved = std::move(tree);
   bind::Binding<ItsModel> third;
   bind::Binding<OtherModel> fourth;
@@ -251,8 +251,8 @@ auto keptPages(int *shown) {
   auto same = [](const int &a, const int &b) { return a == b; };
   auto side = [](const int &) { return 1.0f; };
   auto pin = [](const int &) { return std::optional<skiff::scene::Spec>(); };
-  return skiff::compose::kept_scroll<skiff::model::Field<&KeptScrolled::at>>(KeptSaidAt{},
-      skiff::compose::page_view<int, page_t>(show, same, side, pin, page_t(std::in_place_index<0>), {.fill = true}));
+  return ::skiff::compose::build(skiff::compose::kept_scroll<skiff::model::Field<&KeptScrolled::at>>(KeptSaidAt{},
+      skiff::compose::page_view<int, page_t>(show, same, side, pin, page_t(std::in_place_index<0>), {.fill = true})));
 }
 } // namespace
 
@@ -304,12 +304,12 @@ TEST(Compose, AColumnSlidingInKeepsItsFill) {
   namespace c = skiff::compose;
   namespace scene = skiff::scene;
   float icon = 0.0f, text = 0.0f;
-  auto row = c::row(c::hbox(16.0f, {.fillX = true, .height = 46.0f, .padding = {0.0f, 20.0f, 0.0f, 20.0f}}),
+  auto row = ::skiff::compose::build(c::row(c::hbox(16.0f, {.fillX = true, .height = 46.0f, .padding = {0.0f, 20.0f, 0.0f, 20.0f}}),
       MeasuredWidth(&icon, {.width = 24.0f, .height = 24.0f}),
-      c::styled({.grow = scene::axes::kX, .alignSelf = scene::align::kMiddle}, MeasuredWidth(&text, {.height = 20.0f})));
-  auto sliding = c::appearing_across(true,
+      c::styled({.grow = scene::axes::kX, .alignSelf = scene::align::kMiddle}, MeasuredWidth(&text, {.height = 20.0f}))));
+  auto sliding = ::skiff::compose::build(c::appearing_across(true,
       c::column(c::vbox(0.0f, {.fill = true}), c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(row))),
-      36.0f, 220.0f);
+      36.0f, 220.0f));
   scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(sliding)));
   const auto view = skia::SkRect::MakeXYWH(0.0f, 0.0f, 280.0f, 600.0f);
   for (double at : {0.0, 300.0, 600.0}) {
@@ -329,15 +329,15 @@ TEST(Compose, AClampedColumnsRowsAreAsWideAsTheClamp) {
   namespace c = skiff::compose;
   namespace scene = skiff::scene;
   float icon = 0.0f, text = 0.0f;
-  auto row = c::row(c::hbox(16.0f, {.fillX = true, .height = 46.0f, .padding = {0.0f, 20.0f, 0.0f, 20.0f}}),
+  auto row = ::skiff::compose::build(c::row(c::hbox(16.0f, {.fillX = true, .height = 46.0f, .padding = {0.0f, 20.0f, 0.0f, 20.0f}}),
       MeasuredWidth(&icon, {.width = 24.0f, .height = 24.0f}),
-      c::styled({.grow = scene::axes::kX, .alignSelf = scene::align::kMiddle}, MeasuredWidth(&text, {.height = 20.0f})));
+      c::styled({.grow = scene::axes::kX, .alignSelf = scene::align::kMiddle}, MeasuredWidth(&text, {.height = 20.0f}))));
   struct Open {
     bool on = false;
   };
-  auto side = c::clamped_width(c::WidthLimit{.wanted = 300.0f},
+  auto side = ::skiff::compose::build(c::clamped_width(c::WidthLimit{.wanted = 300.0f},
       c::local<Open>(c::column(c::vbox(0.0f, {.fill = true}),
-          c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(row)))));
+          c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(row))))));
   scene::Scene tree(c::row(c::hbox(0.0f, {.fill = true}), std::move(side),
                            c::column(c::vbox(0.0f, {.fillY = true, .grow = scene::axes::kX}))));
   tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 900.0f, 600.0f));
@@ -373,7 +373,7 @@ TEST(Compose, NamesAreShortAndNeedNoRtti) {
 // answers as what it names does.
 TEST(Compose, ANamedViewAnswersWhatItsContentDoes) {
   namespace c = skiff::compose;
-  auto shown = SKIFF_NAMED(shown_row, c::row(c::hbox(0.0f, {.width = 10.0f, .height = 10.0f}), WideNode()));
+  auto shown = c::build(SKIFF_NAMED(shown_row, c::row(c::hbox(0.0f, {.width = 10.0f, .height = 10.0f}), WideNode())));
   shown.setVisible(false);
   shown.setPosition(1.0f, 2.0f);
   EXPECT_FALSE(shown.visible());
@@ -391,8 +391,8 @@ TEST(Compose, ABoxSizedByItsContentToldToGrowGrows) {
     void layoutChildren() { *fHeight = this->fState.bounds().height(); }
   };
   float height = 0.0f;
-  auto grown = c::styled({.fillX = true, .grow = scene::axes::kY},
-      c::hovering([](bool, const skia::SkRect &) { return 1; }, c::column(c::vbox(0.0f, {.fill = true}), Tall(&height))));
+  auto grown = ::skiff::compose::build(c::styled({.fillX = true, .grow = scene::axes::kY},
+      c::hovering([](bool, const skia::SkRect &) { return 1; }, c::column(c::vbox(0.0f, {.fill = true}), Tall(&height)))));
   scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}),
       c::column(c::vbox(0.0f, {.fillX = true, .height = 100.0f})), std::move(grown)));
   tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 600.0f));

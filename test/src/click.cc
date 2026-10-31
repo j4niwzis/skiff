@@ -31,12 +31,12 @@ TEST(Compose, ClickAndComputedPressOnPlainTextReceivePointerClicks) {
       EXPECT_TRUE(bind::press(tree.root(), state, path, &heard));
     EXPECT_EQ(heard.value, 42);
   };
-  clicked(onClick(42, nodes::Text("Open thread", 13.0f, 0u)));
-  clicked(onPress([] { return 42; }, nodes::Text("Open emoji", 13.0f, 0u)));
+  clicked(build(onClick(42, nodes::Text("Open thread", 13.0f, 0u))));
+  clicked(build(onPress([] { return 42; }, nodes::Text("Open emoji", 13.0f, 0u))));
 }
 
 TEST(Compose, PlainTextClickHonoursDeferredReleaseOutsideReleaseAndCancellation) {
-  auto button = onClick(42, nodes::Text("Open thread", 13.0f, 0u));
+  auto button = build(onClick(42, nodes::Text("Open thread", 13.0f, 0u)));
   button.fState.fBounds = skia::SkRect::MakeXYWH(0, 0, 120, 32);
   scene::hostWork().pressedNow = nullptr;
   scene::PointerReply down;
@@ -75,7 +75,7 @@ TEST(Compose, ClickWrapperPreservesAContentHandlersTypedAnswer) {
       return 7;
     }
   };
-  auto button = onClick(42, Content{});
+  auto button = build(onClick(42, Content{}));
   scene::hostWork().pressedNow = nullptr;
   scene::PointerReply reply;
   EXPECT_EQ(button.onPointer(scene::phase::target{}, scene::pointer::down{20, 16, 1}, reply), 7);
@@ -90,7 +90,7 @@ TEST(Compose, ClickWrapperLeavesInputOwningGesturesWithTheContent) {
     bool acceptsInput() const { return true; }
     void onPointer(scene::phase::target, const scene::pointer::down&, scene::PointerReply&) { ++downs; }
   };
-  auto button = onClick(42, Content{});
+  auto button = build(onClick(42, Content{}));
   scene::hostWork().pressedNow = nullptr;
   scene::PointerReply reply;
   button.onPointer(scene::phase::target{}, scene::pointer::down{20, 16, 1}, reply);
@@ -100,8 +100,7 @@ TEST(Compose, ClickWrapperLeavesInputOwningGesturesWithTheContent) {
 }
 
 TEST(Compose, PassiveContentDoesNotAlsoClickTheButtonsParent) {
-  auto child = onClick(42, nodes::Box<>(0u));
-  child.apply({.width = 120.0f, .height = 32.0f});
+  auto child = ::skiff::compose::build(onClick(42, styled({.width = 120.0f, .height = 32.0f}, nodes::Box<>(0u))));
   scene::Scene tree(onClick(7, column(vbox(0.0f, {.fill = true}), std::move(child))));
   tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0, 0, 200, 100));
   scene::hostWork().pressed.clear();
@@ -123,13 +122,13 @@ struct Flicks {
   int outer = 0, inner = 0;
 };
 inline auto flicking() {
-  return state<Flicks>(handlers(handle<OuterFlick>([] { return model::over<Flicks>([](Flicks now) { ++now.outer; return now; }); }),
+  return ::skiff::compose::build(state<Flicks>(handlers(handle<OuterFlick>([] { return model::over<Flicks>([](Flicks now) { ++now.outer; return now; }); }),
                                 handle<InnerFlick>([] { return model::over<Flicks>([](Flicks now) { ++now.inner; return now; }); })),
                        flicked(60.0f, [](bool) { return std::optional<OuterFlick>(OuterFlick{}); },
                                column(vbox(0.0f, {.fill = true}),
                                       flicked_holding(60.0f, [](bool) { return std::optional<InnerFlick>(InnerFlick{}); },
                                                       styled({.fillX = true, .height = 40.0f}, nodes::Text("pins", 13.0f, 0xff000000u))),
-                                      styled({.fillX = true, .height = 200.0f}, nodes::Text("chat", 13.0f, 0xff000000u)))));
+                                      styled({.fillX = true, .height = 200.0f}, nodes::Text("chat", 13.0f, 0xff000000u))))));
 }
 }  // namespace
 
@@ -181,14 +180,14 @@ struct MenuFacts {
   int closed = 0, pressed = 0;
 };
 inline auto menuOverList() {
-  return state<MenuFacts>(handlers(handle<CloseMenu>([] { return model::over<MenuFacts>([](MenuFacts now) { ++now.closed; return now; }); }),
+  return ::skiff::compose::build(state<MenuFacts>(handlers(handle<CloseMenu>([] { return model::over<MenuFacts>([](MenuFacts now) { ++now.closed; return now; }); }),
                                    handle<RowPressed>([] { return model::over<MenuFacts>([](MenuFacts now) { ++now.pressed; return now; }); })),
                           column(vbox(0.0f, {.fill = true}),
                                  onClick(RowPressed{}, styled({.fillX = true, .height = 40.0f}, nodes::Text("room", 13.0f, 0xff000000u))),
                                  tapped_off([] { return CloseMenu{}; },
-                                            Box<nodes::Box<>>(vbox(0.0f, {.place = scene::anchor::kTopLeft, .fill = true}),
+                                            column(vbox(0.0f, {.place = scene::anchor::kTopLeft, .fill = true}),
                                                               styled({.place = scene::anchor::kTopLeft, .x = 200.0f, .y = 100.0f,
-                                                                      .width = 100.0f, .height = 50.0f}, nodes::Box<>(0xff202020u))))));
+                                                                      .width = 100.0f, .height = 50.0f}, nodes::Box<>(0xff202020u)))))));
 }
 }  // namespace
 // A menu over a list, its tap-off beside the list: a tap on a room under it

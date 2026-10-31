@@ -98,16 +98,16 @@ TEST(Compose, AButtonWhoseTextIsReadIsPressedWhereItIsDrawn) {
 namespace said_card {
 namespace c = skiff::compose;
 using namespace window_edge;
-using row_t = decltype(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), shown_later::Probe()));
+using row_t = decltype(::skiff::compose::build(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), shown_later::Probe())));
 inline auto rows() {
-  return c::projected<Feed>([](const Feed &now) { return std::optional<int>(now.count); },
+  return ::skiff::compose::build(c::projected<Feed>([](const Feed &now) { return std::optional<int>(now.count); },
                             c::mount<row_t, int>([](int) { return std::tuple{c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), shown_later::Probe())}; },
-                                                 {.fillX = true, .autoSize = scene::axes::kY}));
+                                                 {.fillX = true, .autoSize = scene::axes::kY})));
 }
 inline auto card() {
-  return c::column(c::vbox(16.0f, {.fillX = true, .autoSize = scene::axes::kY, .padding = {12.0f, 12.0f, 12.0f, 12.0f}, .cornerRadius = 10.0f,
+  return ::skiff::compose::build(c::column(c::vbox(16.0f, {.fillX = true, .autoSize = scene::axes::kY, .padding = {12.0f, 12.0f, 12.0f, 12.0f}, .cornerRadius = 10.0f,
                                    .background = 0xffeeeeeeu, .masking = true}),
-                   said_text::tile(), c::shown_for<Feed>([](const Feed &now) { return now.first != 0; }, rows()));
+                   said_text::tile(), c::shown_for<Feed>([](const Feed &now) { return now.first != 0; }, rows())));
 }
 }  // namespace said_card
 TEST(Compose, AButtonWhoseTextIsReadInACardIsPressedWhereItIsDrawn) {

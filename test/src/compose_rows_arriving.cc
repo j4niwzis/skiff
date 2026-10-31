@@ -92,11 +92,11 @@ struct OpenFace {
   int operator()() const { return 1; }
 };
 inline auto row() {
-  auto face = c::visible(true, c::styled({.place = scene::anchor::kBottomLeft, .x = -48.0f, .y = -1.0f, .alpha = 1.0f},
-                                         c::onPress(OpenFace{}, Face(), "name")));
-  return c::row(c::justified(c::hbox(8.0f, {.fillX = true, .autoSize = scene::axes::kY, .padding = {1.0f, 0.0f, 1.0f, 48.0f}}),
+  auto face = c::build(c::visible(true, c::styled({.place = scene::anchor::kBottomLeft, .x = -48.0f, .y = -1.0f, .alpha = 1.0f},
+                                         c::onPress(OpenFace{}, Face(), "name"))));
+  return ::skiff::compose::build(c::row(c::justified(c::hbox(8.0f, {.fillX = true, .autoSize = scene::axes::kY, .padding = {1.0f, 0.0f, 1.0f, 48.0f}}),
                              nodes::justify::start{}),
-                std::move(face), compose::Held(Bubble()));
+                std::move(face), compose::Held(Bubble())));
 }
 }  // namespace face_row
 TEST(Compose, AFaceOutOfARowsFlowLeavesItAsTallAsItsBubble) {
@@ -136,7 +136,7 @@ namespace c = skiff::compose;
 using namespace window_edge;
 struct MakeArrivingHeld {
   compose::Held operator()(const Item &) const {
-    return compose::Held(c::appearing(true, compose::Held(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), RowNode{}))));
+    return compose::Held(c::build(c::appearing(true, compose::Held(c::build(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), RowNode{}))))));
   }
 };
 using ArrivingHeldWindow = c::WindowFrom<Src, FeedModel, std::string, int, compose::Held, MakeArrivingHeld, c::NoLocate, Tag>;
@@ -180,9 +180,9 @@ namespace window_arrive_mux {
 namespace c = skiff::compose;
 using namespace window_edge;
 inline auto mux_row(bool arrives) {
-  auto row = compose::Held(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), RowNode{}));
-  return SKIFF_NAMED(message_row, c::washed_for<FeedTold>(0xff3080ffu, 56.0f, 80.0f, [](const FeedTold &) { return c::Wash{}; },
-      c::appearing(arrives, c::held_off_for<FeedTold>([](const FeedTold &) { return false; }, std::move(row)))));
+  auto row = compose::Held(c::build(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), RowNode{})));
+  return ::skiff::compose::build(SKIFF_NAMED(message_row, c::washed_for<FeedTold>(0xff3080ffu, 56.0f, 80.0f, [](const FeedTold &) { return c::Wash{}; },
+      c::appearing(arrives, c::held_off_for<FeedTold>([](const FeedTold &) { return false; }, std::move(row))))));
 }
 using mux_row_t = decltype(mux_row(false));
 struct MakeMuxRow {

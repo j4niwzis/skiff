@@ -16,7 +16,7 @@ struct Offset {
 struct Widen {
   void operator()(auto& node, int value) const { node.apply({.width = static_cast<float>(value)}); }
 };
-using Applied = decltype(c::applied<int>(Offset{}, Widen{}, c::column(c::vbox())));
+using Applied = decltype(::skiff::compose::build(c::applied<int>(Offset{}, Widen{}, c::column(c::vbox()))));
 using Click = c::OnClick<int, c::part_t<Applied>>;
 // The click a row is, as it was made: the row itself where combinators are
 // concrete, found under the Held it is erased into where they are not. (The
@@ -35,7 +35,7 @@ TEST(Flow, ReconcileKeepsRowsWithCapturedTransforms) {
   int made = 0;
   const auto make = [&](const item& one) {
     ++made;
-    return c::onClick(one.first, c::applied<int>(Offset{one.second}, Widen{}, c::column(c::vbox())), std::to_string(one.second));
+    return ::skiff::compose::build(c::onClick(one.first, c::applied<int>(Offset{one.second}, Widen{}, c::column(c::vbox())), std::to_string(one.second)));
   };
   using row = decltype(make(std::declval<const item&>()));
   static_assert(std::move_constructible<row>);

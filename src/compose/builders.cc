@@ -77,6 +77,12 @@ struct holds_builder<std::tuple<T...>> : std::bool_constant<(holds_builder<T>::v
 template <class... T>
 concept any_builder = (holds_builder<std::remove_cvref_t<T>>::value || ...);
 
+// The type a part becomes under some rules, found without making one
+// (a node that cannot be moved is named, not passed).
+template <class T, class Rules> struct built_type { using type = T; };
+template <class T, class Rules> requires a_builder<T>
+struct built_type<T, Rules> { using type = decltype(std::declval<T>().build(std::declval<const Rules&>())); };
+template <class T, class Rules> using built_t = typename built_type<T, Rules>::type;
 // A part as the eager combinator takes it, under these rules: a builder
 // built, an optional or a list of them each built; anything else as it is.
 template <class T, class Rules>
@@ -290,6 +296,19 @@ auto make_builder(F f) {
 }
 template <class T>
 concept the_program_rules = requires { typename T::is_program_rules; };
+// What a view builds, as a node, under no rules: for what holds a node of
+// its own outside a scene -- a test poking a node's handlers, a host.
+template <class B>
+  requires a_builder<std::remove_cvref_t<B>>
+auto build(B &&view) {
+  return std::remove_cvref_t<B>(std::forward<B>(view)).build(program_rules{no_rules});
+}
+// A node already: itself.
+template <class N>
+  requires std::derived_from<std::remove_cvref_t<N>, scene::NodeBase>
+std::remove_cvref_t<N> build(N &&node) {
+  return std::forward<N>(node);
+}
 // A builder as a scene's root (scene::Scene's buildRoot): built there, once,
 // under no rules -- a program with rules builds its root itself, under its
 // own (as mux's window is), and gives the scene what that made.
@@ -488,8 +507,10 @@ template <class... T>
 struct part_like<spl::variant<T...>> : std::bool_constant<(part_like<T>::value && ...)> {};
 template <class... T>
 struct part_like<std::tuple<T...>> : std::bool_constant<(part_like<T>::value && ...)> {};
+// Something a combinator takes as a part, by value: a node or a builder
+// (or optionals, lists, variants, tuples of them) that can be moved in.
 template <class T>
-concept a_part = part_like<std::remove_cvref_t<T>>::value;
+concept a_part = part_like<std::remove_cvref_t<T>>::value && std::move_constructible<std::remove_cvref_t<T>>;
 
 // A column or a row: what it is built into is a stack (Box) of its parts as
 // built -- nodes as they are, builders under the same rules -- made there,
@@ -647,18 +668,18 @@ auto with_way_down(Look look, List list, Corner corner, Tell tell) {
 template <class Key, class T, class F>
 auto each(F make, Look look = vbox()) {
   return make_builder([make = std::move(make), look = std::move(look)]<class Rules>(const Rules& rules) mutable {
-    using Maker = MakeRow<T, built_maker<F, Rules>>;
+    using Maker = built_maker<MakeRow<T, F>, Rules>;
     using Row = std::invoke_result_t<const Maker&, const T&>;
-    return erased(bind::Each<Key, T, Row, Box<>, Maker>(Maker{built_maker<F, Rules>{std::move(make), rules}}, Box<>(std::move(look))));
+    return erased(bind::Each<Key, T, Row, Box<>, Maker>(Maker{MakeRow<T, F>{std::move(make)}, rules}, Box<>(std::move(look))));
   });
 }
 // The same over one another: the shapes of a figure.
 template <class Key, class T, class F>
 auto group(F make) {
   return make_builder([make = std::move(make)]<class Rules>(const Rules& rules) mutable {
-    using Maker = MakeRow<T, built_maker<F, Rules>>;
+    using Maker = built_maker<MakeRow<T, F>, Rules>;
     using Row = std::invoke_result_t<const Maker&, const T&>;
-    return erased(bind::Each<Key, T, Row, scene::Group<>, Maker>(Maker{built_maker<F, Rules>{std::move(make), rules}}, scene::Group<>()));
+    return erased(bind::Each<Key, T, Row, scene::Group<>, Maker>(Maker{MakeRow<T, F>{std::move(make)}, rules}, scene::Group<>()));
   });
 }
 // Sections with a strip of tabs over their parts, each made by its maker
@@ -850,15 +871,15 @@ auto shown_if(Compute compute, N node) {
   }, std::move(node));
 }
 // A text that reads what Compute makes of the parts it reads.
-template <class... Reads, class Compute>
-auto text_of(Compute compute, nodes::Text text) {
+template <class... Reads, class Compute, a_part T>
+auto text_of(Compute compute, T text) {
   return lifted([compute = std::move(compute)](nodes::Text t) mutable {
     return erased(bind::Derived<Compute, TextOf, Reads...>(TextOf(std::move(t)), std::move(compute)));
   }, std::move(text));
 }
 // And of the one part Want.
-template <class Want, class Compute>
-auto text_for(Compute compute, nodes::Text text) {
+template <class Want, class Compute, a_part T>
+auto text_for(Compute compute, T text) {
   return lifted([compute = std::move(compute)](nodes::Text t) mutable { return detail::projecting<Want>(std::move(compute), TextOf(std::move(t))); },
                 std::move(text));
 }
@@ -1076,7 +1097,7 @@ struct built_arguments {
 template <class Content, class Facts, class Make>
 auto mount(Make make, scene::Spec spec = {}, bool floats = false) {
   return make_builder([make = std::move(make), spec, floats]<class Rules>(const Rules& rules) mutable {
-    using made_t = decltype(built(std::declval<Content>(), rules));
+    using made_t = built_t<Content, Rules>;
     return Mounted<made_t, Facts, built_arguments<Make, Rules>>(built_arguments<Make, Rules>{std::move(make), rules}, spec, floats);
   });
 }
@@ -1084,7 +1105,7 @@ auto mount(Make make, scene::Spec spec = {}, bool floats = false) {
 template <class Content, class Facts, class Make>
 auto mount_now(Make make, const Facts& first, scene::Spec spec = {}) {
   return make_builder([make = std::move(make), first, spec]<class Rules>(const Rules& rules) mutable {
-    using made_t = decltype(built(std::declval<Content>(), rules));
+    using made_t = built_t<Content, Rules>;
     return Mounted<made_t, Facts, built_arguments<Make, Rules>>(built_arguments<Make, Rules>{std::move(make), rules}, first, spec);
   });
 }
@@ -1139,11 +1160,13 @@ struct lanes_under {
   Lanes lanes;
   template <class Found>
   auto operator()(const Found& found) const {
-    return lanes.template operator()<Rules>(found);
+    if constexpr (requires { lanes.template operator()<Rules>(found); })
+      return lanes.template operator()<Rules>(found);
+    else
+      return lanes(found);
   }
 };
 template <class Key, class View, class Make, class Surface, class Lanes>
-  requires(a_builder<std::invoke_result_t<Make&, const Key&, const View&, bool>> || holds_builder<Surface>::value)
 auto reorder_bars(Surface surface, Make make, Lanes lanes, skia::SkColor highlight = 0) {
   return make_builder([surface = std::move(surface), make = std::move(make), lanes = std::move(lanes), highlight]<class Rules>(const Rules& rules) mutable {
     auto made = built(std::move(surface), rules);

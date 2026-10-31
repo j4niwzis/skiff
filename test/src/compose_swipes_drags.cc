@@ -33,7 +33,7 @@ struct Flick {
 }  // namespace swipe_under_flick
 TEST(Compose, ARowSwipedFarUnderAFlickIsLetGo) {
   using namespace swipe_follow;
-  auto row = c::swiped(48.0f, 120.0f, [] { return Answered{}; }, [](nodes::Text &, float) {}, nodes::Text("", 12.0f, 0u), ShiftProbe());
+  auto row = ::skiff::compose::build(c::swiped(48.0f, 120.0f, [] { return Answered{}; }, [](nodes::Text &, float) {}, nodes::Text("", 12.0f, 0u), ShiftProbe()));
   scene::Scene tree(c::flicked(90.0f, swipe_under_flick::Flick{}, c::column(c::vbox(0.0f, {.fill = true}), std::move(row))));
   const auto view = skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 200.0f);
   const auto frame = [&](double at) {
@@ -68,9 +68,9 @@ TEST(Compose, ARowSwipedFarUnderAFlickIsLetGo) {
 // (Taken for one, the row followed the pointer, stuck, until a click.)
 TEST(Compose, ARowUnderAListDraggedIsNotSwipedOnceLetGo) {
   using namespace swipe_follow;
-  auto row = c::swiped(48.0f, 120.0f, [] { return Answered{}; }, [](nodes::Text &, float) {}, nodes::Text("", 12.0f, 0u), ShiftProbe());
-  auto view = nodes::ScrollContainer(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(row),
-                                               c::column(c::vbox(0.0f, {.fillX = true, .height = 1000.0f}))));
+  auto row = ::skiff::compose::build(c::swiped(48.0f, 120.0f, [] { return Answered{}; }, [](nodes::Text &, float) {}, nodes::Text("", 12.0f, 0u), ShiftProbe()));
+  auto view = nodes::ScrollContainer(::skiff::compose::build(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), std::move(row),
+                                               c::column(c::vbox(0.0f, {.fillX = true, .height = 1000.0f})))));
   view.apply({.fill = true});
   view.setHoldsInView(false);
   scene::Scene tree(std::move(view));

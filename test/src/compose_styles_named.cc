@@ -29,8 +29,8 @@ TEST(Compose, APlainPressInABoundNamedViewChangesTheBoundPart) {
   const std::array paths{scene::Path{1}, scene::Path{1, 0}, scene::Path{0, 1}, scene::Path{0, 1, 0}, scene::Path{0, 1, 0, 0}};
   const auto themes = paths | std::views::transform([](const scene::Path &path) {
     model::Model<theme_tests::Root, bind::NoReactions> m;
-    auto page = c::scoped<theme_tests::Look>(c::handlers(), c::row(c::hbox(0.0f, {.width = 40.0f, .height = 10.0f}),
-                                                                   theme_tests::card(1), theme_tests::card(2)));
+    auto page = ::skiff::compose::build(c::scoped<theme_tests::Look>(c::handlers(), c::row(c::hbox(0.0f, {.width = 40.0f, .height = 10.0f}),
+                                                                   theme_tests::card(1), theme_tests::card(2))));
     bind::refresh(page, m);
     (void)bind::press(page, m, path);
     return m.root().look.fValue.theme;
@@ -42,7 +42,7 @@ TEST(Compose, AStylesTextFieldsAreAsWideAsTheirColumn) {
   using namespace style_tests;
   float width = 0;
   auto page = c::Box(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
-      std::make_unique<decltype(c::scoped<style_tests::Look>(c::handlers(), controls(&width)))>(c::scoped<style_tests::Look>(c::handlers(), controls(&width))));
+      std::make_unique<decltype(::skiff::compose::build(c::scoped<style_tests::Look>(c::handlers(), controls(&width))))>(::skiff::compose::build(c::scoped<style_tests::Look>(c::handlers(), controls(&width)))));
   scene::Scene tree(std::move(page));
   model::Model<style_tests::Root, bind::NoReactions> m;
   bind::Binding<decltype(m)> binding;
@@ -101,8 +101,8 @@ TEST(Compose, AClampedSideIsAsWideAsItsColumn) {
 namespace typed_part {
 namespace c = skiff::compose;
 inline auto piece(float *wide) {
-  return SKIFF_NAMED(code_piece, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
-                                           c::styled({.fillX = true}, MeasuredWidth(wide, {.height = 10.0f}))));
+  return ::skiff::compose::build(SKIFF_NAMED(code_piece, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+                                           c::styled({.fillX = true}, MeasuredWidth(wide, {.height = 10.0f})))));
 }
 }  // namespace typed_part
 TEST(Compose, ANamedViewInATypedPartIsMeasuredByItsContent) {

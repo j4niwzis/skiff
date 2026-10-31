@@ -18,6 +18,6 @@ struct Count {
 // A node's table made in a unit that does not see skiff.bind has its
 // binding entry all the same: the same table every unit makes.
 TEST(Hook, ATableMadeWhereTheBindingLayerIsOnlyReachableHasItsBinding) {
-  auto node = skiff::compose::bound<Count>(skiff::nodes::Text("", 12.0f, 0u));
+  auto node = skiff::compose::build(skiff::compose::bound<Count>(skiff::nodes::Text("", 12.0f, 0u)));
   EXPECT_NE(skiff::scene::AnyNodeRef::of(node).bindTable(), nullptr);
 }

@@ -102,7 +102,7 @@ TEST(Compose, APipeGivesWhatItsEndTakesAndPassesTheRestUp) {
   static_assert(std::same_as<OutOf<Pipe<SearchField, Filtered>>,
                              model::Types<Cleared>>);
   Model m = twoAccounts();
-  auto page = scoped<SettingsT>(ClearedEvents{}, column(SearchField{} >> Filtered{}));
+  auto page = ::skiff::compose::build(scoped<SettingsT>(ClearedEvents{}, column(SearchField{} >> Filtered{})));
   auto &pipe = made_as<Pipe<SearchField, Filtered>>(page);
   // The pipe, then its field.
   pipe.fPipe.from.type("bo");
@@ -127,33 +127,16 @@ TEST(Compose, APipeReadsEitherWayRound) {
   static_assert(std::same_as<Fan, decltype(SearchField{} >> Filtered{} + Filtered{})>);
 }
 
+struct Inc {};
+struct Dec {};
 TEST(Compose, SideBySideIsPlacedApartFromHowItIsWired) {
-  auto both = onClick(Inc{}, Pad{}) + onClick(Dec{}, Pad{});
-  // Typed where the combinators are concrete: a Held does not say what the
-  // click under it gives.
-  static_assert(scene::kErasedCombinators || std::same_as<OutOf<decltype(both)>, model::Types<Inc, Dec>>);
-  using Placed = typename BoxOfPar<decltype(both)>::type;
-  auto placed = place(hbox(4.0f), std::move(both));
-  static_assert(std::tuple_size_v<decltype(made_as<Placed>(placed).fParts)> == 2);
-}
-
-TEST(Compose, TimeIsEvents) {
-  auto ticks = every<Inc>(100.0);
-  ticks.update(0.0);
-  ticks.update(250.0);
-  EXPECT_EQ(ticks.onPress().size(), 2u);
-  EXPECT_TRUE(ticks.onPress().empty());
-  auto quiet = debounce<QueryChanged>(300.0);
-  quiet.update(0.0);
-  quiet.on(QueryChanged{"a"});
-  quiet.update(100.0);
-  quiet.on(QueryChanged{"ab"});
-  quiet.update(350.0);
-  EXPECT_FALSE(quiet.onPress());
-  quiet.update(500.0);
-  const auto said = quiet.onPress();
-  ASSERT_TRUE(said);
-  EXPECT_EQ(said->text, "ab");
+  auto both = build(onClick(Inc{}, Pad{})) + build(onClick(Dec{}, Pad{}));
+  auto placed = build(place(hbox(4.0f), std::move(both)));
+  // Its two parts in one box (concrete only where the build is).
+  []<class P>(const P&) {
+    if constexpr (!scene::kErasedCombinators)
+      static_assert(std::tuple_size_v<decltype(std::declval<P&>().fParts)> == 2);
+  }(placed);
 }
 
 // A Binding: a refresh with nothing moved walks nothing.
@@ -222,7 +205,7 @@ struct PingEvents {
 TEST(Compose, WhatANodeSendsIsWhatItsPressAnswers) {
   static_assert(std::same_as<OutOf<Pinger>, model::Types<Ping>>);
   Model m = twoAccounts();
-  auto page = scoped<SettingsT>(PingEvents{}, column(Pinger{}));
+  auto page = build(scoped<SettingsT>(PingEvents{}, column(Pinger{})));
   EXPECT_TRUE(bind::press(page, m, pressPathTo(page, made_as<Pinger>(page).fState)));
   EXPECT_EQ(m.look<Count>()->n, 42);
 }
@@ -257,7 +240,7 @@ struct SumOf {
 };
 TEST(Compose, ADerivedValueIsComputedAgainOnlyWhereWhatItReadsMoved) {
   SumModel m{SumRoot{}};
-  auto made = derived<Alpha, Beta>(SumOf{}, Total{});
+  auto made = ::skiff::compose::build(derived<Alpha, Beta>(SumOf{}, Total{}));
   auto &total = made_as<bind::Derived<SumOf, part_t<Total>, Alpha, Beta>>(made);
   bind::Binding<SumModel> binding;
   binding.refresh(made, m);

@@ -186,7 +186,7 @@ TEST(Compose, AFrameAfterARowIsMadeAsksForAnother) {
 }
 TEST(Compose, ASwipedRowFollowsTheFinger) {
   using namespace swipe_follow;
-  auto row = c::swiped(48.0f, 72.0f, [] { return Answered{}; }, [](nodes::Text &, float) {}, nodes::Text("", 12.0f, 0u), ShiftProbe());
+  auto row = ::skiff::compose::build(c::swiped(48.0f, 72.0f, [] { return Answered{}; }, [](nodes::Text &, float) {}, nodes::Text("", 12.0f, 0u), ShiftProbe()));
   scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(row)));
   const auto view = skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 200.0f);
   const auto frame = [&](double at) {
@@ -253,7 +253,7 @@ inline auto timeline() {
   FeedWindow window(MakeFeedRow{});
   window.setCopiesOnScroll(false);
   window.apply({.fill = true});
-  return SKIFF_NAMED(timeline_list, c::spanned_for<FeedTold>([](const FeedTold &) { return false; }, bind::Bound<FeedTold, FeedWindow>(std::move(window))));
+  return ::skiff::compose::build(SKIFF_NAMED(timeline_list, c::spanned_for<FeedTold>([](const FeedTold &) { return false; }, bind::Bound<FeedTold, FeedWindow>(std::move(window)))));
 }
 }  // namespace timeline_like
 struct HeardAll : window_edge::Heard {

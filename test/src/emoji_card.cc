@@ -71,9 +71,9 @@ struct Rest {
   PreviewRested operator()(bool on) const { return {what, on}; }
 };
 inline auto preview_of(const Previewed &one) {
-  return c::column(c::vbox(8.0f, {.place = scene::anchor::kCentre, .autoSize = scene::axes::kBoth, .padding = {16.0f, 16.0f, 16.0f, 16.0f},
+  return ::skiff::compose::build(c::column(c::vbox(8.0f, {.place = scene::anchor::kCentre, .autoSize = scene::axes::kBoth, .padding = {16.0f, 16.0f, 16.0f, 16.0f},
                                   .cornerRadius = 14.0f, .background = 0xf0202020u}),
-                   nodes::Text(std::to_string(one.what), 120.0f, 0xffffffffu));
+                   nodes::Text(std::to_string(one.what), 120.0f, 0xffffffffu)));
 }
 using PreviewOf = decltype(preview_of(Previewed{}));
 struct Flick {
@@ -89,32 +89,32 @@ struct Preview {
 };
 
 inline auto cell(int n) {
-  return SKIFF_NAMED(emoji_cell, c::resting(450.0, Rest{{n}},
+  return ::skiff::compose::build(SKIFF_NAMED(emoji_cell, c::resting(450.0, Rest{{n}},
       c::onPress(Pressed{},
           c::row(c::justified(c::hbox(0.0f, {.width = 37.0f, .height = 37.0f, .cornerRadius = 6.0f, .hoverBackground = 0xffeeeeeeu}),
                               nodes::justify::middle{}),
-                 c::styled({.alignSelf = scene::align::kMiddle}, nodes::Text("x", 22.0f, 0xff000000u))), "e")));
+                 c::styled({.alignSelf = scene::align::kMiddle}, nodes::Text("x", 22.0f, 0xff000000u))), "e"))));
 }
 using Cell = decltype(cell(0));
 inline auto section(const Group &one) {
-  return SKIFF_NAMED(cell_section, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+  return ::skiff::compose::build(SKIFF_NAMED(cell_section, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
       c::styled({.fillX = true, .height = 32.0f}, nodes::Text(one.name, 13.0f, 0xff000000u)),
       c::styled({.fillX = true, .autoSize = scene::axes::kY},
           nodes::Flow<std::vector<Cell>>({.direction = nodes::direction::horizontal{}, .spacingX = 0.0f, .spacingY = 0.0f, .wrap = true},
-                                         std::views::iota(0, one.count) | std::views::transform(cell) | std::ranges::to<std::vector>()))));
+                                         std::views::iota(0, one.count) | std::views::transform(cell) | std::ranges::to<std::vector>())))));
 }
 inline auto tab(const Group &one) {
-  auto made = SKIFF_NAMED(emoji_tab, c::row(c::justified(c::hbox(0.0f, {.width = 30.0f, .height = 30.0f, .minWidth = 24.0f,
+  auto made = c::build(SKIFF_NAMED(emoji_tab, c::row(c::justified(c::hbox(0.0f, {.width = 30.0f, .height = 30.0f, .minWidth = 24.0f,
                                                                       .alignSelf = scene::align::kMiddle, .cornerRadius = 6.0f}),
                                                          nodes::justify::middle{}),
-      c::visible(true, c::styled({.alignSelf = scene::align::kMiddle}, nodes::Text(one.name.substr(0, 1), 16.0f, 0xff000000u)))));
+      c::visible(true, c::styled({.alignSelf = scene::align::kMiddle}, nodes::Text(one.name.substr(0, 1), 16.0f, 0xff000000u))))));
   if (!one.name.starts_with("Pack"))
     made.apply({.grow = scene::axes::kX, .shrink = scene::axes::kX, .minWidth = 0.0f});
   return made;
 }
-inline auto arrow(bool next) { return c::styled({.width = 30.0f, .height = 30.0f}, nodes::Text(next ? ">" : "<", 20.0f, 0xff000000u)); }
+inline auto arrow(bool next) { return ::skiff::compose::build(c::styled({.width = 30.0f, .height = 30.0f}, nodes::Text(next ? ">" : "<", 20.0f, 0xff000000u))); }
 inline auto groups() {
-  return c::sections<Group>(c::vbox(4.0f, {.fill = true}), c::vbox(0.0f), tab, section,
+  return ::skiff::compose::build(c::sections<Group>(c::vbox(4.0f, {.fill = true}), c::vbox(0.0f), tab, section,
       c::split<Group>(c::vbox(4.0f, {.fillX = true, .autoSize = scene::axes::kY}),
           [](const Group &one) { return one.name.starts_with("Pack"); },
           c::in_row<Group>(c::hbox(0.0f, {.fillX = true, .height = 36.0f})),
@@ -126,42 +126,42 @@ inline auto groups() {
         const auto across = std::max<std::size_t>(1, static_cast<std::size_t>(width / 37.0f));
         const std::size_t rows = (static_cast<std::size_t>(one.count) + across - 1) / across;
         return 32.0f + static_cast<float>(rows) * 37.0f;
-      });
+      }));
 }
 // The groups as the page reads them: projected from its search -- a node of
 // its own type, the Sections it is made over (found as it is).
 inline auto read_groups() {
-  return c::projected<model::Field<&Query::text>>([](const std::string &) {
+  return ::skiff::compose::build(c::projected<model::Field<&Query::text>>([](const std::string &) {
     std::vector<Group> all = std::views::iota(0, 4) | std::views::transform([](int g) { return Group{std::format("Pack {}", g), 30}; }) |
                              std::ranges::to<std::vector>();
     all.append_range(std::views::iota(0, 9) | std::views::transform([](int g) { return Group{std::format("Group {}", g), 190}; }));
     return c::SectionsShown<Group>{all, all, true};
-  }, groups());
+  }, groups()));
 }
 using Groups = decltype(read_groups());
 // The list that scrolls: the Sections' own child, found as it is in every
 // build (the projection over the Sections is held, erased, outside one).
 using Scroll = typename decltype(groups())::List;
 inline auto page() {
-  return SKIFF_NAMED(with_preview, c::local<PreviewShown>(PreviewEvents{}, c::column(c::vbox(0.0f, {.fill = true}),
+  return ::skiff::compose::build(SKIFF_NAMED(with_preview, c::local<PreviewShown>(PreviewEvents{}, c::column(c::vbox(0.0f, {.fill = true}),
       c::styled({.fill = true}, c::local<Query>(c::column(c::vbox(4.0f, {.fill = true, .padding = {7.0f, 0.0f, 4.0f, 7.0f}}),
           c::styled({.fillX = true, .height = 32.0f, .margin = {0.0f, 7.0f, 0.0f, 0.0f}}, nodes::Text("Search emoji", 13.0f, 0xff000000u)),
           c::styled({.fillX = true, .grow = scene::axes::kY}, read_groups())))),
       c::bound<model::Field<&PreviewShown::now>>(c::mount<PreviewOf, Previewed>(
-          [](const Previewed &one) { return std::tuple{preview_of(one)}; }, {.place = scene::anchor::kTopLeft, .fill = true})))));
+          [](const Previewed &one) { return std::tuple{preview_of(one)}; }, {.place = scene::anchor::kTopLeft, .fill = true}))))));
 }
 inline auto inside() {
-  return c::column(c::vbox(0.0f, {}),
+  return ::skiff::compose::build(c::column(c::vbox(0.0f, {}),
       c::row(c::hbox(4.0f, {.fillX = true, .height = 36.0f, .depth = 1.0f, .padding = {4.0f, 8.0f, 4.0f, 8.0f}}),
              c::styled({.width = 60.0f, .height = 28.0f}, nodes::Text("Emoji", 13.0f, 0xff000000u))),
       c::column(c::vbox(0.0f, {.fillX = true, .grow = scene::axes::kY, .masking = true}), page()),
-      c::column(c::vbox(0.0f, {.fillX = true, .grow = scene::axes::kY, .visible = false}), nodes::Text("pages", 13.0f, 0xff000000u)));
+      c::column(c::vbox(0.0f, {.fillX = true, .grow = scene::axes::kY, .visible = false}), nodes::Text("pages", 13.0f, 0xff000000u))));
 }
 inline scene::Spec card_spec() {
   return scene::Spec{.place = scene::anchor::kTopLeft, .x = 400.0f, .y = 100.0f, .width = 345.0f, .height = 400.0f, .cornerRadius = 8.0f,
                      .background = 0xff202020u, .border = scene::Border{0xff404040u, 1.0f}, .shadow = scene::Shadow{0x46000000u, 3.0f}};
 }
-inline auto card() { return c::spec_for<Told>([](const Told &) { return card_spec(); }, c::flicked(90.0f, Flick{}, inside())); }
+inline auto card() { return ::skiff::compose::build(c::spec_for<Told>([](const Told &) { return card_spec(); }, c::flicked(90.0f, Flick{}, inside()))); }
 
 inline auto floating_card() {
   auto made = card();
@@ -171,7 +171,7 @@ inline auto floating_card() {
 // A window with the card in it, ticked as a program's: the model changed
 // at every frame (the sync, pictures come), the binding refreshed.
 struct Window {
-  scene::Scene<decltype(c::column(c::vbox(0.0f, {.fill = true}), floating_card()))> tree;
+  scene::Scene<decltype(::skiff::compose::build(c::column(c::vbox(0.0f, {.fill = true}), floating_card())))> tree;
   Model m{Root{}};
   bind::Binding<Model> binding;
   double at = 0.0;
@@ -247,13 +247,13 @@ TEST(EmojiCard, ItsVirtualSectionsStayWhereADragLetsThemGo) {
 // column as high as they are, and the panel over them -- placed, filling
 // that column, its own height none.
 inline auto menu_card() {
-  return c::column(c::vbox(0.0f, {.autoSize = scene::axes::kBoth, .minWidth = 220.0f, .padding = {6.0f, 0.0f, 6.0f, 0.0f}}),
+  return ::skiff::compose::build(c::column(c::vbox(0.0f, {.autoSize = scene::axes::kBoth, .minWidth = 220.0f, .padding = {6.0f, 0.0f, 6.0f, 0.0f}}),
       c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY, .minHeight = 220.0f}),
                 c::styled({.width = 260.0f, .height = 380.0f}, nodes::Text("items", 13.0f, 0xff000000u)),
-                c::styled({.place = scene::anchor::kTopLeft, .fill = true, .masking = true}, page())));
+                c::styled({.place = scene::anchor::kTopLeft, .fill = true, .masking = true}, page()))));
 }
 inline auto placed_menu() {
-  return c::styled({.place = scene::anchor::kTopLeft, .x = 300.0f, .y = 100.0f}, menu_card());
+  return ::skiff::compose::build(c::styled({.place = scene::anchor::kTopLeft, .x = 300.0f, .y = 100.0f}, menu_card()));
 }
 // As mux opens it: popped at the press, in the menu's own local state --
 // low in the window, so it opens up and to the left of the press.
@@ -263,8 +263,8 @@ struct MenuSt {
 };
 inline auto popped_menu() {
   const c::PopAt at{.from = skia::SkRect::MakeXYWH(820.0f, 640.0f, 0.0f, 0.0f)};
-  return c::local<MenuSt>(c::column(c::vbox(0.0f, {.fill = true}),
-      c::popped_at<MenuSt>([at](const MenuSt &) { return std::optional(at); }, 8.0f, c::styled({}, menu_card()))));
+  return ::skiff::compose::build(c::local<MenuSt>(c::column(c::vbox(0.0f, {.fill = true}),
+      c::popped_at<MenuSt>([at](const MenuSt &) { return std::optional(at); }, 8.0f, c::styled({}, menu_card())))));
 }
 struct Placed {
   auto operator()() const { return placed_menu(); }
@@ -273,7 +273,7 @@ struct PoppedAtPress {
   auto operator()() const { return popped_menu(); }
 };
 template <class Make> struct MenuWindowOf {
-  scene::Scene<decltype(c::column(c::vbox(0.0f, {.fill = true}), Make{}()))> tree;
+  scene::Scene<decltype(::skiff::compose::build(c::column(c::vbox(0.0f, {.fill = true}), Make{}())))> tree;
   Model m{Root{}};
   bind::Binding<Model> binding;
   double at = 0.0;
@@ -372,12 +372,12 @@ struct Tall : scene::Node {
   Tall() { this->apply({.fillX = true, .height = 3000.0f}); }
 };
 inline auto sized_list() {
-  return c::column(c::vbox(0.0f, {.place = scene::anchor::kTopLeft, .x = 100.0f, .y = 100.0f, .autoSize = scene::axes::kBoth}),
-                   c::styled({.width = 300.0f, .height = 300.0f}, nodes::ScrollContainer(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), Tall{}))));
+  return ::skiff::compose::build(c::column(c::vbox(0.0f, {.place = scene::anchor::kTopLeft, .x = 100.0f, .y = 100.0f, .autoSize = scene::axes::kBoth}),
+                   c::styled({.width = 300.0f, .height = 300.0f}, nodes::ScrollContainer(::skiff::compose::build(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), Tall{}))))));
 }
 TEST(EmojiCard, AViewOnlyEverLaidOutProvisionallyStillScrolls) {
   scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), sized_list()));
-  using View = decltype(nodes::ScrollContainer(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), Tall{})));
+  using View = decltype(nodes::ScrollContainer(::skiff::compose::build(c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), Tall{}))));
   double at = 0.0;
   const auto frame = [&] {
     tree.update(at);

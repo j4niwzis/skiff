@@ -29,7 +29,7 @@ struct CountText : nodes::Text {
   void read(const Count &now) { setText(std::to_string(now.n)); }
 };
 inline auto page() {
-  return c::state<Count>(c::handlers(c::handle<Pressed>([] {
+  return ::skiff::compose::build(c::state<Count>(c::handlers(c::handle<Pressed>([] {
                            return model::over<Count>([](Count now) {
                              ++now.n;
                              return now;
@@ -38,7 +38,7 @@ inline auto page() {
                          c::column(c::vbox(8.0f, {.fill = true, .padding = scene::Margin::all(4.0f), .background = 0xffeeeeeeu}),
                                    c::bound<Count>(CountText()),
                                    c::row(c::hbox(4.0f, {.autoSize = scene::axes::kBoth}),
-                                          c::onClick(Pressed{}, nodes::Text("+", 13.0f, 0xff0000ffu)))));
+                                          c::onClick(Pressed{}, nodes::Text("+", 13.0f, 0xff0000ffu))))));
 }
 
 // The "+" as the tree has it: the first node of its type.
@@ -209,8 +209,8 @@ TEST(Mirror, APartInAFlowIsNotMovedAgain) {
 
 TEST(Mirror, AScrollViewportStaysScrollableAndMovesItsContentsOnce) {
   dom::reset();
-  scene::Scene tree(nodes::ScrollContainer(
-      c::column(c::vbox(4.0f, {.fillX = true, .autoSize = scene::axes::kY}), Plate{}, Plate{}, Plate{}, Plate{})));
+  scene::Scene tree(nodes::ScrollContainer(::skiff::compose::build(
+      c::column(c::vbox(4.0f, {.fillX = true, .autoSize = scene::axes::kY}), Plate{}, Plate{}, Plate{}, Plate{}))));
   (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 60.0f));
   tree.root().setCurrent(30.0f);
   (void)tree.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 60.0f));
@@ -235,8 +235,8 @@ TEST(Mirror, AScrollViewportStaysScrollableAndMovesItsContentsOnce) {
 
 TEST(Mirror, AScrollInsideHeldContentIsReadBackToo) {
   dom::reset();
-  auto scroll = c::styled({.fillX = true, .height = 60.0f}, nodes::ScrollContainer(
-      c::column(c::vbox(4.0f, {.fillX = true, .autoSize = scene::axes::kY}), Plate{}, Plate{}, Plate{}, Plate{})));
+  auto scroll = ::skiff::compose::build(c::styled({.fillX = true, .height = 60.0f}, nodes::ScrollContainer(::skiff::compose::build(
+      c::column(c::vbox(4.0f, {.fillX = true, .autoSize = scene::axes::kY}), Plate{}, Plate{}, Plate{}, Plate{})))));
   using Scroll = decltype(scroll);
   scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(scroll), Plate{}));
   Scroll *view = nullptr;
