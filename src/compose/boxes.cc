@@ -115,8 +115,18 @@ template <class Out_> struct Erased : Stacked {
 // The view itself (the type SKIFF_NAMED makes, Self), not a wrapper made
 // over one: a scope over a named view inherits its NamedOver, and taken for
 // the Held it names would lose the scope.
+// Or the named view a builder's build made (builders' Named<Self, B>): no
+// type the macro wrote, but Named<Self, its content> itself -- seen as the
+// Held it names too. Taken for a wrapper, it was never adopted: laid out 0
+// by 0, nothing in it laid out (a tester's: the composer's suggestions and
+// a room's Members page, named views over builders, empty in a debug
+// build). A wrapper derived from either is neither.
+template <class Self, class Base> struct Named;
 template <class N>
-concept NamedOverHeld = requires { typename N::NamedOver; } && std::same_as<typename N::NamedSelf, N> &&
+concept NamedOverHeld = requires {
+  typename N::NamedOver;
+  typename N::NamedBase;
+} && (std::same_as<typename N::NamedSelf, N> || std::same_as<N, Named<typename N::NamedSelf, typename N::NamedBase>>) &&
                         std::derived_from<N, Stacked>;
 template <class Self>
 concept HeldWrapper = !NamedOverHeld<Self>;
@@ -648,6 +658,7 @@ template <class Self, class Base> struct Named : Base {
 template <class Self> struct Named<Self, Held> : Held {
   using NamedOver = Held;
   using NamedSelf = Self;
+  using NamedBase = Held;
   using SeenAs = Held;
   explicit Named(Held made) : Held(std::move(made)) { scene::stateOf(this->held()).fViewName = Self::viewName(); }
 };
@@ -660,6 +671,7 @@ template <class Self, class Base>
 struct Named<Self, Base> : Held {
   using NamedOver = Held;
   using NamedSelf = Self;
+  using NamedBase = Base;
   using SeenAs = Held;
   explicit Named(Base made) : Held(static_cast<Held &&>(made)) { scene::stateOf(this->held()).fViewName = Self::viewName(); }
 };

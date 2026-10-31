@@ -152,6 +152,56 @@ TEST(Builders, AMountOfABuilderIsOne) {
   node.read(std::optional<some_facts>(some_facts{"joy"}));
   EXPECT_TRUE(node.shown() != nullptr);
 }
+// A view named over a builder (SKIFF_NAMED), as a plugin's list over a
+// field is -- shown while a part says so, its rows pieces -- bound to a
+// model: built, it is laid out with its rows. Outside a release build the
+// named view a builder made was taken for a wrapper of its own, never
+// adopted: 0 by 0, no row of it ever laid out.
+struct Listed {
+  std::vector<std::string> items;
+  friend bool operator==(const Listed&, const Listed&) = default;
+};
+struct ListedRoot {
+  model::Tracked<Listed> listed;
+};
+using ListedModel = model::Model<ListedRoot, bind::NoReactions>;
+int& rows_laid() {
+  static int n = 0;
+  return n;
+}
+struct RowProbe : scene::Node {
+  RowProbe() { this->apply({.width = 50.0f, .height = 20.0f}); }
+  void layoutChildren() { ++rows_laid(); }
+};
+auto named_list() {
+  return SKIFF_NAMED(named_list, c::shown_for<Listed>([](const Listed& now) { return !now.items.empty(); },
+      c::projected<Listed>([](const Listed& now) { return now.items; },
+          c::listed<std::string>(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+              [](const std::string& one) { return c::row(c::hbox(0.0f, {.height = 20.0f}), name_piece(one), RowProbe()); }))));
+}
+TEST(Builders, ANamedViewOverABuilderIsLaidOutWithItsRows) {
+  constexpr auto rules = c::program_rules{c::no_rules};
+  if constexpr (scene::kErasedCombinators)
+    c::register_rules(rules.rules);
+  auto view = named_list();
+  static_assert(c::a_builder<decltype(view)>);
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(view).build(rules)));
+  ListedModel m{ListedRoot{.listed = {Listed{}}}};
+  bind::Binding<ListedModel> binding;
+  const auto frame = [&] {
+    binding.refresh(tree.root(), m);
+    tree.update(0.0);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 300.0f));
+    (void)tree.finishFrame();
+  };
+  frame();
+  rows_laid() = 0;
+  (void)m.apply(model::edit(model::placeOf<Listed, ListedRoot>(), model::setTo(Listed{{"ann", "bob", "cy"}})));
+  frame();
+  frame();
+  EXPECT_GE(rows_laid(), 3);
+}
+
 // derived and state over a builder: theirs chosen, not ambiguous with the
 // eager ones (constraints said as concepts).
 static_assert(requires(decltype(name_piece(std::string())) b) { c::derived<>([](auto&) { return 0; }, std::move(b)); });

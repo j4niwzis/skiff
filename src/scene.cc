@@ -5337,6 +5337,10 @@ public:
 
   void update(double nowMs) {
     fNowMs = nowMs;
+    // What the host's keyboard made of the field typed into: that field
+    // ticked now to take it (followKeyboard), not at its caret's next blink.
+    if (hostWork().edited && fFocus != 0)
+      work::mark(fFocus);
     // Only where something ticks or changed -- a node made under a list that
     // changed is come to there -- and everywhere only where one made is still
     // not found: a new row made the whole tree ticked.
