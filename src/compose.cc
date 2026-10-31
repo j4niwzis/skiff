@@ -8,17 +8,12 @@
 //   each<K, T>(make), local<T>(node), hidden<T>(handlers, node)
 //       skiff.bind's kinds, made around a node.
 //   onClick(event, node)  sends a copy of the event when pressed.
-//   a >> b  what a sends goes to b first (b's on(), or a processor's step);
+//   a >> b  what a sends goes to b first (b's on());
 //       what b does not take goes on up, as from the pipe itself.
 //   b << a  the same, written Fudgets' way round: the receiver first.
 //       (+ binds tighter than >> and <<: a >> b + c is a >> (b + c).)
 //   a + b  side by side, with nothing said of where: place(look, a + b)
 //       says that. What each sends is its own; who takes it is by type.
-//   process<P>()  a component as a pure processor: P::State, hidden, and
-//       its steps, P::step(State, E) giving a new State, or a pair of it and
-//       an event sent on, or -- the imperative way -- changing it in place,
-//       step(State &, E); P::view() its picture, built once, its parts bound
-//       to the state.
 //   every<E>(ms), debounce<M>(ms)  components with no picture: time, as
 //       events.
 //
@@ -30,7 +25,6 @@ export module skiff.compose;
 
 export import :boxes;
 export import :wiring;
-export import :processes;
 export import :reorder;
 export import :views;
 export import :builders;

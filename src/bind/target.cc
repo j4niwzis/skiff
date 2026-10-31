@@ -342,8 +342,7 @@ template <class M, class N> void refresh(N &node, const M &model) {
 }
 
 // A message given to a component from outside it -- send<Clear>(field),
-// Fudgets' high-level input -- taken as from a pipe: its on(), or a
-// processor's step.
+// Fudgets' high-level input -- taken as from a pipe: its on().
 template <class M, class To, class E> void send(M &model, To &to, const E &event) {
   model.beginBatch();
   detail::Draining<M> op{model};

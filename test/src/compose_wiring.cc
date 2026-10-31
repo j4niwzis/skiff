@@ -1,4 +1,4 @@
-// Scopes, locals, pipes and processors: how a page is wired to its model, and how a refresh goes only where a change is.
+// Scopes, locals and pipes: how a page is wired to its model, and how a refresh goes only where a change is.
 #include "skiff/named.h"
 import std;
 import skia;
@@ -14,7 +14,7 @@ import skiff.paint;
 #include "gtest/gtest-macros.h"
 
 // Screens as combinator expressions, bound to a model; local and hidden
-// state; components wired by what they send (>>, +); a processor; time; a
+// state; components wired by what they send (>>, +); time; a
 // Binding doing only what can have happened; events whose types are
 // deduced.
 
@@ -70,66 +70,6 @@ TEST(Compose, ARowsEventIsTakenByItsScopeAndItsLocalStateGoesWithIt) {
   bind::refresh(page, m);
   ASSERT_EQ(rowsOf(page).size(), 1u);
   EXPECT_EQ(nameOf(rowsOf(page)[0]).fText, "B");
-}
-
-// A processor: its state hidden, its steps pure or in place, what it sends
-// taken by the scope around it.
-struct Inc {};
-struct Dec {};
-struct Reset {};
-struct Changed {
-  int n;
-};
-struct Stepper {
-  struct State {
-    int n = 0;
-  };
-  static auto step(State s, Inc) {
-    ++s.n;
-    return std::pair{s, Changed{s.n}};
-  }
-  static auto step(State s, Dec) {
-    --s.n;
-    return std::pair{s, Changed{s.n}};
-  }
-  static void step(State &s, const Reset &) { s.n = 0; }  // in place
-  static auto view() {
-    return row(onClick(Dec{}, Pad{}), bound<State>(Number{}),
-               onClick(Inc{}, Pad{}), onClick(Reset{}, Pad{}));
-  }
-};
-struct CountEvents {
-  auto on(const Changed &c) const { return model::over<Count>(model::setTo(Count{c.n})); }
-};
-auto counterPage() {
-  return scoped<SettingsT>(CountEvents{}, column(process<Stepper>()));
-}
-using CounterPage = decltype(counterPage());
-auto &numberOf(CounterPage &page) { return made_as<bind::Bound<Stepper::State, part_t<Number>>>(page); }
-
-TEST(Compose, AProcessorStepsItsHiddenStateAndSendsWhatChanged) {
-  Model m = twoAccounts();
-  CounterPage page = counterPage();
-  bind::refresh(page, m);
-  // The process, its view, then the button in it.
-  // The view's buttons, by where they are in it: -, the count, +, reset.
-  const auto button = [&](std::uint32_t at) -> scene::Path {
-    switch (at) {
-      case 0: return pressPathTo(page, made_as<OnClick<Dec, part_t<Pad>>>(page).fState);
-      case 2: return pressPathTo(page, made_as<OnClick<Inc, part_t<Pad>>>(page).fState);
-      default: return pressPathTo(page, made_as<OnClick<Reset, part_t<Pad>>>(page).fState);
-    }
-  };
-  EXPECT_TRUE(bind::press(page, m, button(2)));  // +
-  EXPECT_TRUE(bind::press(page, m, button(2)));  // +
-  EXPECT_TRUE(bind::press(page, m, button(0)));  // -
-  bind::refresh(page, m);
-  EXPECT_EQ(numberOf(page).fValue, 1);
-  EXPECT_EQ(m.look<Count>()->n, 1);  // Changed, taken by the scope around it
-  EXPECT_TRUE(bind::press(page, m, button(3)));  // reset, in place: nothing sent
-  bind::refresh(page, m);
-  EXPECT_EQ(numberOf(page).fValue, 0);
-  EXPECT_EQ(m.look<Count>()->n, 1);
 }
 
 // Wiring by type: a field's queries go to the list after it; what the list
