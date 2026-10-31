@@ -837,19 +837,4 @@ public:
   skiff::scene::Spec fRowSpec{.fillX = true, .autoSize = skiff::scene::axes::kY};
 };
 
-// A vertical flow and a horizontal one, as they are usually written.
-template <class... Children>
-[[nodiscard]] Flow<Children...> column(float spacing, Children... children) {
-  return Flow<Children...>(
-      {.direction = direction::vertical{}, .spacingY = spacing},
-      std::move(children)...);
-}
-template <class... Children>
-[[nodiscard]] Flow<Children...> row(float spacing, Children... children) {
-  return Flow<Children...>({.direction = direction::horizontal{},
-                            .spacingX = spacing,
-                            .wrap = false},
-                           std::move(children)...);
-}
-
 } // namespace skiff::nodes
