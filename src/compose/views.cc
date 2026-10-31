@@ -47,12 +47,6 @@ template <class M, class Told, class Compute, class N> struct WithModel : N {
     fDirty = false;
   }
 };
-template <class M, class Told, class Compute, class N> auto with_model(Compute compute, N node) {
-  // Concrete in every build: what reads the model for it reads it as itself.
-  WithModel<M, Told, Compute, N> made(std::move(compute), std::move(node));
-  over_held(made);
-  return made;
-}
 
 // The plate around a focusable field follows that field's focus. The
 // field keeps its own geometry and input region inside the frame.
@@ -66,9 +60,6 @@ template <class N> struct FocusFrame : Box<N> {
     if (focused != this->selected()) this->apply({.selected = focused});
   }
 };
-template <class N> auto focus_frame(Look look, N field) {
-  return erased(FocusFrame<N>(std::move(look), std::move(field)));
-}
 
 // Observe a press before its target handles it, for example to dismiss a
 // popover when the press is outside it. The answer can edit the local model
@@ -96,15 +87,6 @@ template <class E, class Ask, class N> struct OnCapture : N {
     return std::invoke(fAsk, std::as_const(static_cast<N&>(*this)), press, reply);
   }
 };
-template <class E, class Ask, class N>
-  requires requires(N& node, const scene::pointer::down& press, scene::PointerReply& reply) {
-    { node.onPointer(scene::phase::capture{}, press, reply) } -> std::same_as<void>;
-    { node.onPointer(scene::phase::target{}, press, reply) } -> std::same_as<void>;
-  }
-auto onCapture(Ask ask, N node) {
-  return erased(OnCapture<E, Ask, N>(std::move(ask), std::move(node)));
-}
-
 // Known-height rows retain the full scroll extent while only the viewport
 // and its neighbouring screens have scene nodes. Direct jumps, wheel
 // movement and restored offsets all select rows before their next layout.
@@ -182,13 +164,6 @@ template <class Item, class Height, class N> struct VirtualRows : N {
     showRows(false);
   }
 };
-template <class Item, class Height, class N>
-auto virtual_rows(Height height, N node, VirtualRowsOptions options = {}) {
-  // Concrete in every build: what reads the model for it reads it as itself.
-  VirtualRows<Item, Height, N> made(std::move(height), options, std::move(node));
-  over_held(made);
-  return made;
-}
 
 // One pane at a time, as a phone shows them: which is up, and whether the
 // window is one pane at a time at all (Paned). As it moves on, the node
@@ -238,9 +213,6 @@ template <class N> struct Slid : N {
     this->markDamaged();
   }
 };
-template <class Want, class Compute, class N> auto slid_for(Compute compute, N node) {
-  return detail::projecting<Want>(std::move(compute), Slid<part_t<N>>(as_part(std::move(node))));
-}
 
 // What lies under some layers drawn once, while anything over it moves (a
 // dialog fading in or out), into pixels kept: each frame of the fade puts
@@ -299,9 +271,6 @@ private:
     }
   }
 };
-template <class Under, class Over> auto frozen_under(Look look, Under under, Over over) {
-  return erased(FrozenUnder<Under, Over>(std::move(look), std::move(under), std::move(over)));
-}
 
 // A tap off a popup -- pressed and let go a few pixels apart at most, off
 // its cards -- answered with `make()`: the popup closed by a tap, a drag
@@ -378,9 +347,6 @@ private:
     return out;
   }
 };
-template <class Make, class N> auto tapped_off(Make make, N node) {
-  return erased(TappedOff<Make, part_t<N>>(std::move(make), as_part(std::move(node))));
-}
 
 // A view's offset kept by the model: what it reads is where it is scrolled
 // to (told again only where it moved there itself, a view made again --
@@ -428,11 +394,6 @@ template <class Tell, class N> struct KeptScroll : N {
   }
   Answer onPress() { return std::invoke(fTell, fTold); }
 };
-template <class Want, class Tell, class N> auto kept_scroll(Tell tell, N node) {
-  // Concrete in every build: what holds the view tells it what it shows
-  // (a dialog its page view's facts), and reads it as itself.
-  return bind::Bound<Want, KeptScroll<Tell, N>>(KeptScroll<Tell, N>(std::move(tell), std::move(node)));
-}
 
 // Each list has its own offset. setCurrent retains the requested offset
 // until the new contents are laid out, even when the old list was shorter.
@@ -469,11 +430,6 @@ template <class Key, class N, class View = N> struct RememberedScroll : Box<N> {
     this->setCurrent(saved == fPositions.end() ? 0.0f : saved->second);
   }
 };
-template <class Key, class View = void, class N> auto remembered_scroll(N node) {
-  // Concrete in every build: what reads the model for it reads it as itself.
-  using seen = std::conditional_t<std::is_void_v<View>, N, View>;
-  return RememberedScroll<Key, N, seen>(std::move(node));
-}
 
 // Search results start at their top for each new result generation. A
 // refresh of the same generation preserves the reader's offset.
@@ -492,10 +448,6 @@ template <class Key, class N> struct RestartedScroll : N {
     this->scrollToStart();
   }
 };
-template <class Key, class N> auto restarted_scroll(N node) {
-  // Concrete in every build: what reads the model for it reads it as itself.
-  return RestartedScroll<Key, part_t<N>>(as_part(std::move(node)));
-}
 
 // A column can fill a narrow window or retain its requested width within
 // the limits of a wider one. This is geometry; the requested values are
@@ -551,8 +503,4 @@ template <class N> struct ClampedWidth : N {
   std::uint64_t fPass = 0;
   float fRoom = 0.0f;
 };
-template <class N> auto clamped_width(WidthLimit limit, N node) {
-  // Concrete in every build: what reads the model for it reads it as itself.
-  return ClampedWidth<part_t<N>>(limit, as_part(std::move(node)));
-}
 } // namespace skiff::compose

@@ -775,10 +775,6 @@ template <class Make, class N> struct Listed : Many<N> {
     this->markDamaged();
   }
 };
-template <class Element, class Make> auto listed(Look look, Make make) {
-  // Concrete in every build: what reads its elements for it reads it as itself.
-  return Listed<Make, std::invoke_result_t<Make &, const Element &>>(std::move(look), std::move(make));
-}
 
 
 // Keep a subtree polling while an external deadline is pending. The
@@ -889,17 +885,6 @@ template <class Content, class Facts, class Make> struct Mounted : Specced {
   Content *shown() { return fContent ? &*fContent : nullptr; }
   const Content *shown() const { return fContent ? &*fContent : nullptr; }
 };
-template <class Content, class Facts, class Make>
-Mounted<Content, Facts, Make> mount(Make make, scene::Spec spec = {},
-                                    bool floats = false) {
-  // Concrete in every build: what reads the model for it (bound, derived,
-  // projected) reads it as itself.
-  return Mounted<Content, Facts, Make>(std::move(make), std::move(spec), floats);
-}
-template <class Content, class Facts, class Make>
-Mounted<Content, Facts, Make> mount_now(Make make, const Facts &first, scene::Spec spec = {}) {
-  return Mounted<Content, Facts, Make>(std::move(make), first, std::move(spec));
-}
 
 // ---- the model's kinds, around a node ------------------------------------
 

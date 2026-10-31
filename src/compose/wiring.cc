@@ -339,9 +339,6 @@ private:
 };
 // Concrete in every build: what goes down it (with_way_down) asks it how
 // far from its end the reader is.
-template <class Want, class On, class List> auto spanned_for(On on, List list) {
-  return bind::Bound<Want, Projected<On, Spanned<List>>>(Projected<On, Spanned<List>>(std::move(on), Spanned<List>(std::move(list))));
-}
 
 // A scroll over what is made a part at a time, as Qt's fetchMore: what
 // reads the model says whose list it is, how many are made, and whether
@@ -386,10 +383,6 @@ template <class Key, class Ask, class Contents> struct Fetching : nodes::ScrollC
   }
   std::optional<Answer> onPress() { return std::exchange(fDue, std::nullopt); }
 };
-template <class Want, class Key, class Compute, class Ask, class Contents>
-auto fetching_for(Compute compute, Ask ask, nodes::ScrollContainer<Contents> scroll) {
-  return detail::projecting<Want>(std::move(compute), Fetching<Key, Ask, Contents>(std::move(ask), std::move(scroll)));
-}
 
 // A picture seen whole -- a viewer's: fitted in its room less a margin
 // (never larger than itself), zoomed and moved as what it reads says
@@ -855,10 +848,6 @@ template <class Act, class Mark, class Show, class N> struct Swiped : Box<N, Mar
     std::invoke(fShow, mark, std::clamp(-fDrawn / fReach, 0.0f, 1.0f));
   }
 };
-template <class Act, class Mark, class Show, class N>
-auto swiped(float reach, float most, Act act, Show show, Mark mark, N node) {
-  return erased(Swiped<Act, Mark, Show, part_t<N>>(reach, most, std::move(act), std::move(show), std::move(mark), as_part(std::move(node))));
-}
 
 // A wash over a node in a colour, as the model says: held while it is said
 // to be (a message selected), and a flash that fades -- each time it is
@@ -1012,14 +1001,6 @@ template <class Policy, class N> struct Arranged : N {
 // Not over a builder: Policy is named only where it cannot be deduced
 // (Policy::State), so the builder's overload cannot be ordered over this
 // one -- the two told apart by this constraint instead.
-template <class Policy, class N>
-  requires(!a_builder<N>)
-auto arranged(typename Policy::State rules, N node) {
-  // Concrete in every build: what reads the model for it reads it as itself.
-  Arranged<Policy, N> made(std::move(rules), std::move(node));
-  over_held(made);
-  return made;
-}
 
 // A press at a place in a node, asked of it there -- a quote in a text,
 // pressed, the message it quotes: `ask(node, x, y)` answers, or says
@@ -1676,10 +1657,6 @@ template <class List, class Corner, class Tell> struct WithWayDown : Box<List, C
     scene::pressLater(this->fState);
   }
 };
-template <class List, class Corner, class Tell> auto with_way_down(Look look, List list, Corner corner, Tell tell) {
-  // Concrete in every build: what reads the model for it reads it as itself.
-  return WithWayDown<List, Corner, Tell>(std::move(look), std::move(list), std::move(corner), std::move(tell));
-}
 
 // A row longer than its room, moved sideways -- by a finger or a mouse
 // dragged along it, flicked to glide on, or a sideways wheel -- and cut to
@@ -1803,9 +1780,6 @@ private:
   double fLastMs = 0.0;
   bool fVerticalWheel = false;
 };
-template <class Line> auto side_scroll(Line line, bool verticalWheel = false) {
-  return erased(SideScroll<Line>(std::move(line), verticalWheel));
-}
 
 // ---- a >> b, a + b ----------------------------------------------------------
 

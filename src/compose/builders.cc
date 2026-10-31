@@ -585,16 +585,21 @@ auto washed_for(skia::SkColor colour, float held, float flash, Compute compute, 
     return detail::projecting<Want>(std::move(compute), Washed<part_t<decltype(n)>>(colour, held, flash, as_part(std::move(n))));
   }, std::move(node));
 }
-template <class Act, class Mark, class Show, class N>
-  requires any_builder<Mark, N>
+// A row swiped across, past `reach` (at most `most`): `act` answered, its
+// mark shown under it as `show` says.
+template <class Act, class Mark, class Show, a_part N>
 auto swiped(float reach, float most, Act act, Show show, Mark mark, N node) {
   return lifted([reach, most, act = std::move(act), show = std::move(show)](auto m, auto n) mutable {
-    return swiped(reach, most, std::move(act), std::move(show), std::move(m), std::move(n));
+    return erased(Swiped<Act, decltype(m), Show, part_t<decltype(n)>>(reach, most, std::move(act), std::move(show), std::move(m), as_part(std::move(n))));
   }, std::move(mark), std::move(node));
 }
-template <class Want, class On, a_builder B>
+// A list whose rows a drag across selects, as what `on` makes of the part Want.
+template <class Want, class On, a_part B>
 auto spanned_for(On on, B list) {
-  return lifted([on = std::move(on)](auto l) mutable { return spanned_for<Want>(std::move(on), std::move(l)); }, std::move(list));
+  return lifted([on = std::move(on)](auto l) mutable {
+    using List = decltype(l);
+    return bind::Bound<Want, Projected<On, Spanned<List>>>(Projected<On, Spanned<List>>(std::move(on), Spanned<List>(std::move(l))));
+  }, std::move(list));
 }
 
 // A stack of a list of parts, as many as there are, in their order.
@@ -625,11 +630,12 @@ auto projected(Compute compute, N node) {
   return lifted([compute = std::move(compute)](auto n) mutable { return detail::projecting<Want>(std::move(compute), std::move(n)); },
                 std::move(node));
 }
+// A list with its corner over it, told when the way down is wanted.
+// Concrete in every build: what reads the model for it reads it as itself.
 template <class List, class Corner, class Tell>
-  requires any_builder<List, Corner>
 auto with_way_down(Look look, List list, Corner corner, Tell tell) {
   return lifted([tell = std::move(tell)](Look l, auto li, auto co) mutable {
-    return with_way_down(std::move(l), std::move(li), std::move(co), std::move(tell));
+    return WithWayDown<decltype(li), decltype(co), Tell>(std::move(l), std::move(li), std::move(co), std::move(tell));
   }, std::move(look), std::move(list), std::move(corner));
 }
 
@@ -741,15 +747,24 @@ auto onKey(K key, E event, N node) {
 }
 // A list that asks for more near its end, over a scroll that is a builder
 // (c::scrolled of what holds pieces): a builder of it.
-template <class Want, class Key, class Compute, class Ask, a_builder B>
+template <class S> struct scrolls;
+template <class C> struct scrolls<nodes::ScrollContainer<C>> { using type = C; };
+// A scroll that asks for more as it nears its end, as Compute says of the
+// part Want.
+template <class Want, class Key, class Compute, class Ask, a_part B>
 auto fetching_for(Compute compute, Ask ask, B scroll) {
   return lifted([compute = std::move(compute), ask = std::move(ask)](auto s) mutable {
-    return fetching_for<Want, Key>(std::move(compute), std::move(ask), std::move(s));
+    using Contents = typename scrolls<decltype(s)>::type;
+    return detail::projecting<Want>(std::move(compute), Fetching<Key, Ask, Contents>(std::move(ask), std::move(s)));
   }, std::move(scroll));
 }
-template <class E, class Ask, a_builder B>
+template <class E, class Ask, a_part B>
 auto onCapture(Ask ask, B node) {
-  return lifted([ask = std::move(ask)](auto n) mutable { return onCapture<E>(std::move(ask), std::move(n)); }, std::move(node));
+  return lifted([ask = std::move(ask)](auto n) mutable { static_assert(requires(decltype(n) &node, const scene::pointer::down &press, scene::PointerReply &reply) {
+      { node.onPointer(scene::phase::capture{}, press, reply) } -> std::same_as<void>;
+      { node.onPointer(scene::phase::target{}, press, reply) } -> std::same_as<void>;
+    }, "onCapture over a node whose own press handlers answer something: they would be lost");
+    return erased(OnCapture<E, Ask, decltype(n)>(std::move(ask), std::move(n))); }, std::move(node));
 }
 // Keys answered as `ask(press)` says.
 template <class Ask, a_part N>
@@ -886,44 +901,59 @@ template <a_part B>
 auto appearing_across(bool now, B node, float from, float duration = 220.0f) {
   return lifted([now, from, duration](auto n) { return erased(Appearing<part_t<decltype(n)>, appear::across>(now, from, as_part(std::move(n)), duration)); }, std::move(node));
 }
-template <class Policy, a_builder B>
+// A part laid out by Policy, its state kept. Concrete in every build: what
+// reads the model for it reads it as itself.
+template <class Policy, a_part B>
 auto arranged(typename Policy::State state, B node) {
-  return lifted([state = std::move(state)](auto n) mutable { return arranged<Policy>(std::move(state), std::move(n)); }, std::move(node));
+  return lifted([state = std::move(state)](auto n) mutable {
+    Arranged<Policy, decltype(n)> made(std::move(state), std::move(n));
+    over_held(made);
+    return made;
+  }, std::move(node));
 }
-template <a_builder B>
+// A part placed in a box of its own look.
+template <a_part B>
 auto place(Look look, B node) {
-  return lifted([](Look l, auto n) { return place(std::move(l), std::move(n)); }, std::move(look), std::move(node));
+  return lifted([](Look l, auto n) { return erased(Box<part_t<decltype(n)>>(std::move(l), as_part(std::move(n)))); }, std::move(look), std::move(node));
 }
-template <class M, class Told, class Compute, a_builder B>
+// A part bound to a model of its own (M), told as Compute says.
+template <class M, class Told, class Compute, a_part B>
 auto with_model(Compute compute, B node) {
-  return lifted([compute = std::move(compute)](auto n) mutable { return with_model<M, Told>(std::move(compute), std::move(n)); }, std::move(node));
+  return lifted([compute = std::move(compute)](auto n) mutable {
+    WithModel<M, Told, Compute, decltype(n)> made(std::move(compute), std::move(n));
+    over_held(made);
+    return made;
+  }, std::move(node));
 }
-template <a_builder B>
+template <a_part B>
 auto focus_frame(Look look, B field) {
-  return lifted([](Look l, auto f) { return focus_frame(std::move(l), std::move(f)); }, std::move(look), std::move(field));
+  return lifted([](Look l, auto f) { return erased(FocusFrame<decltype(f)>(std::move(l), std::move(f))); }, std::move(look), std::move(field));
 }
-template <class Item, class Height, a_builder B>
+// Rows of known heights: only those near the view made.
+template <class Item, class Height, a_part B>
 auto virtual_rows(Height height, B node, VirtualRowsOptions options = {}) {
-  return lifted([height = std::move(height), options](auto n) mutable { return virtual_rows<Item>(std::move(height), std::move(n), options); },
-                std::move(node));
+  return lifted([height = std::move(height), options](auto n) mutable {
+    VirtualRows<Item, Height, decltype(n)> made(std::move(height), options, std::move(n));
+    over_held(made);
+    return made;
+  }, std::move(node));
 }
-template <class Want, class Compute, a_builder B>
+template <class Want, class Compute, a_part B>
 auto slid_for(Compute compute, B node) {
-  return lifted([compute = std::move(compute)](auto n) mutable { return slid_for<Want>(std::move(compute), std::move(n)); }, std::move(node));
+  return lifted([compute = std::move(compute)](auto n) mutable { return detail::projecting<Want>(std::move(compute), Slid<part_t<decltype(n)>>(as_part(std::move(n)))); }, std::move(node));
 }
 template <class Under, class Over>
-  requires any_builder<Under, Over>
 auto frozen_under(Look look, Under under, Over over) {
-  return lifted([](Look l, auto u, auto o) { return frozen_under(std::move(l), std::move(u), std::move(o)); }, std::move(look), std::move(under),
+  return lifted([](Look l, auto u, auto o) { return erased(FrozenUnder<decltype(u), decltype(o)>(std::move(l), std::move(u), std::move(o))); }, std::move(look), std::move(under),
                 std::move(over));
 }
-template <class Make, a_builder B>
+template <class Make, a_part B>
 auto tapped_off(Make make, B node) {
-  return lifted([make = std::move(make)](auto n) mutable { return tapped_off(std::move(make), std::move(n)); }, std::move(node));
+  return lifted([make = std::move(make)](auto n) mutable { return erased(TappedOff<Make, part_t<decltype(n)>>(std::move(make), as_part(std::move(n)))); }, std::move(node));
 }
-template <class Want, class Tell, a_builder B>
+template <class Want, class Tell, a_part B>
 auto kept_scroll(Tell tell, B node) {
-  return lifted([tell = std::move(tell)](auto n) mutable { return kept_scroll<Want>(std::move(tell), std::move(n)); }, std::move(node));
+  return lifted([tell = std::move(tell)](auto n) mutable { return bind::Bound<Want, KeptScroll<Tell, decltype(n)>>(KeptScroll<Tell, decltype(n)>(std::move(tell), std::move(n))); }, std::move(node));
 }
 // What a view named by its type is, built: a builder's what it builds
 // under the rules; a node's itself; void, none named.
@@ -941,20 +971,23 @@ struct built_view<void, Rules> {
 template <class Key, class View = void, a_builder B>
 auto remembered_scroll(B node) {
   return make_builder([node = std::move(node)]<class Rules>(const Rules& rules) mutable {
-    return remembered_scroll<Key, typename built_view<View, Rules>::type>(built(std::move(node), rules));
+    auto n = built(std::move(node), rules);
+    using N = decltype(n);
+    using Seen = typename built_view<View, Rules>::type;
+    return RememberedScroll<Key, N, std::conditional_t<std::is_void_v<Seen>, N, Seen>>(std::move(n));
   });
 }
-template <class Key, a_builder B>
+template <class Key, a_part B>
 auto restarted_scroll(B node) {
-  return lifted([](auto n) { return restarted_scroll<Key>(std::move(n)); }, std::move(node));
+  return lifted([](auto n) { return RestartedScroll<Key, part_t<decltype(n)>>(as_part(std::move(n))); }, std::move(node));
 }
-template <a_builder B>
+template <a_part B>
 auto clamped_width(WidthLimit limit, B node) {
-  return lifted([limit](auto n) { return clamped_width(limit, std::move(n)); }, std::move(node));
+  return lifted([limit](auto n) { return ClampedWidth<part_t<decltype(n)>>(limit, as_part(std::move(n))); }, std::move(node));
 }
-template <class Tag, a_builder B>
+template <class Tag, a_part B>
 auto reorder_lane(B node) {
-  return lifted([](auto n) { return reorder_lane<Tag>(std::move(n)); }, std::move(node));
+  return lifted([](auto n) { return erased(LaneMark<Tag, part_t<decltype(n)>>(as_part(std::move(n)))); }, std::move(node));
 }
 // A mount whose content is a builder: built when the mount is; its maker's
 // arguments built under the same rules as it makes them, the content then
@@ -968,28 +1001,35 @@ struct built_arguments {
     return std::apply([&](auto&&... made) { return std::tuple{built(std::forward<decltype(made)>(made), rules)...}; }, make(now));
   }
 };
-template <a_builder Content, class Facts, class Make>
+// A subtree made from the model's facts as they come, its content's
+// arguments built under the same rules (Content as described). Made in
+// place: controls may refer to themselves. Concrete in every build.
+template <class Content, class Facts, class Make>
 auto mount(Make make, scene::Spec spec = {}, bool floats = false) {
   return make_builder([make = std::move(make), spec, floats]<class Rules>(const Rules& rules) mutable {
     using made_t = decltype(built(std::declval<Content>(), rules));
-    return mount<made_t, Facts>(built_arguments<Make, Rules>{std::move(make), rules}, spec, floats);
+    return Mounted<made_t, Facts, built_arguments<Make, Rules>>(built_arguments<Make, Rules>{std::move(make), rules}, spec, floats);
   });
 }
-template <a_builder Content, class Facts, class Make>
+// The same, made at once from its first facts.
+template <class Content, class Facts, class Make>
 auto mount_now(Make make, const Facts& first, scene::Spec spec = {}) {
   return make_builder([make = std::move(make), first, spec]<class Rules>(const Rules& rules) mutable {
     using made_t = decltype(built(std::declval<Content>(), rules));
-    return mount_now<made_t, Facts>(built_arguments<Make, Rules>{std::move(make), rules}, first, spec);
+    return Mounted<made_t, Facts, built_arguments<Make, Rules>>(built_arguments<Make, Rules>{std::move(make), rules}, first, spec);
   });
 }
 
 // A list whose maker makes builders: built when the list is, its maker one
 // of built rows under the same rules.
+// A stack of a list's parts made from what it reads, each element made into
+// a part by `make` (its rows built under the same rules), all made again at
+// each read. Concrete in every build: what reads its elements reads it as itself.
 template <class Element, class Make>
-  requires a_builder<std::invoke_result_t<Make&, const Element&>>
 auto listed(Look look, Make make) {
   return make_builder([look = std::move(look), make = std::move(make)]<class Rules>(const Rules& rules) mutable {
-    return listed<Element>(std::move(look), built_maker<Make, Rules>{std::move(make), rules});
+    using Maker = built_maker<Make, Rules>;
+    return Listed<Maker, std::invoke_result_t<Maker &, const Element &>>(std::move(look), Maker{std::move(make), rules});
   });
 }
 
@@ -1001,12 +1041,6 @@ auto listed(Look look, Make make) {
 // builder of the rows: their maker made one of built rows (built_maker)
 // under the rules the rows are built under.
 template <class Key, class View, class Item, class Make, class Holder>
-  requires(!a_builder<std::invoke_result_t<Make&, const Item&>>)
-auto memo_rows(Make make, Holder holder, scene::Spec spec = {.fillX = true, .autoSize = scene::axes::kY}) {
-  return nodes::MemoRows<Key, View, std::invoke_result_t<Make&, const Item&>, Make, Holder>(std::move(make), std::move(holder), std::move(spec));
-}
-template <class Key, class View, class Item, class Make, class Holder>
-  requires a_builder<std::invoke_result_t<Make&, const Item&>>
 auto memo_rows(Make make, Holder holder, scene::Spec spec = {.fillX = true, .autoSize = scene::axes::kY}) {
   return make_builder([make = std::move(make), holder = std::move(holder), spec = std::move(spec)]<class Rules>(const Rules& rules) mutable {
     using maker = built_maker<Make, Rules>;
@@ -1014,9 +1048,10 @@ auto memo_rows(Make make, Holder holder, scene::Spec spec = {.fillX = true, .aut
                                                                                                std::move(spec));
   });
 }
-template <a_builder B>
+// A line that scrolls sideways (the wheel's vertical turns too, where asked).
+template <a_part B>
 auto side_scroll(B line, bool verticalWheel = false) {
-  return lifted([verticalWheel](auto l) { return side_scroll(std::move(l), verticalWheel); }, std::move(line));
+  return lifted([verticalWheel](auto l) { return erased(SideScroll<decltype(l)>(std::move(l), verticalWheel)); }, std::move(line));
 }
 // A drag between bars whose rows are builders (its maker's): built under
 // the rules, its maker made one of built rows. Its lanes function is asked
@@ -1047,8 +1082,11 @@ template <class Key, class View, class Make, class Surface, class Lanes>
   requires(a_builder<std::invoke_result_t<Make&, const Key&, const View&, bool>> || holds_builder<Surface>::value)
 auto reorder_bars(Surface surface, Make make, Lanes lanes, skia::SkColor highlight = 0) {
   return make_builder([surface = std::move(surface), make = std::move(make), lanes = std::move(lanes), highlight]<class Rules>(const Rules& rules) mutable {
-    return reorder_bars<Key, View>(built(std::move(surface), rules), built_maker<Make, Rules>{std::move(make), rules},
-                                   lanes_under<Lanes, Rules>{std::move(lanes)}, highlight);
+    auto made = built(std::move(surface), rules);
+    using Maker = built_maker<Make, Rules>;
+    using LanesOf = lanes_under<Lanes, Rules>;
+    return erased(ReorderBars<Key, View, Maker, decltype(made), LanesOf>(std::move(made), Maker{std::move(make), rules}, LanesOf{std::move(lanes)},
+                                                                         highlight));
   });
 }
 
