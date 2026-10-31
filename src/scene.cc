@@ -1640,8 +1640,6 @@ public:
       here->shiftY = y;
     }
   }
-  // setShift's other name, kept for what says it so.
-  void shiftTo(float x, float y) { this->setShift(x, y); }
   // Out of its parent's flow, placed by its anchor, or back in it: the
   // parent laid out again either way -- written to fOutOfFlow alone, the
   // parent kept its layout.
