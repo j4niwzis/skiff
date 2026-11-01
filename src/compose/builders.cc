@@ -128,6 +128,15 @@ auto built(std::vector<T> parts, const Rules& rules) {
          std::ranges::to<std::vector>();
 }
 
+// And anything else that holds one -- a variant of them (a form per
+// protocol), an optional, a list, a tuple of parts -- what built() makes of
+// it: said after built()'s overloads, which name it.
+template <class T, class Rules>
+  requires(holds_builder<T>::value && !a_builder<T>)
+struct built_type<T, Rules> {
+  using type = decltype(built(std::declval<T>(), std::declval<const Rules&>()));
+};
+
 // A view named where it is written (SKIFF_NAMED) over a builder: a builder,
 // built, of the view named so -- its name the macro's, on what was built.
 // The handlers the macro brings to its level are none here: it is no node.
