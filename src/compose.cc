@@ -14,6 +14,8 @@
 //       (+ binds tighter than >> and <<: a >> b + c is a >> (b + c).)
 //   a + b  side by side, with nothing said of where: place(look, a + b)
 //       says that. What each sends is its own; who takes it is by type.
+//   every<E>(ms), debounce<M>(ms)  components with no picture: time, as
+//       events (compose:time).
 //
 // What a component takes and sends -- In and Out -- is what it declares
 // (using In = model::Types<...>, using Out = ...); a composite's is made of
@@ -23,6 +25,7 @@ export module skiff.compose;
 
 export import :boxes;
 export import :wiring;
+export import :time;
 export import :reorder;
 export import :views;
 export import :builders;
