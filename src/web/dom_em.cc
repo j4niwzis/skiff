@@ -78,8 +78,40 @@ EM_JS(void, skiffDomDropAttr, (int h, const char *n, int nl), {
 EM_JS(void, skiffDomStyle, (int h, const char *p, int pl, const char *v, int vl), {
   Module.skiffDom.els[h].style.setProperty(UTF8ToString(p, pl), UTF8ToString(v, vl));
 });
+// A field's value as the program says it. What the page typed and sent is
+// kept (skiffSent) until the program says it back: a value said that the
+// page has typed past since -- an echo the typing outran -- is not written
+// over the newer text, and an echo of what the field holds writes nothing
+// (the caret stays where the hand left it). Only a value of the program's
+// own is written, its caret then put where the program says
+// (data-skiff-anchor and data-skiff-caret, UTF-8 offsets, written before
+// the value).
 EM_JS(void, skiffDomValue, (int h, const char *v, int vl), {
-  Module.skiffDom.els[h].value = UTF8ToString(v, vl);
+  const el = Module.skiffDom.els[h];
+  const now = UTF8ToString(v, vl);
+  const sent = el.skiffSent || [];
+  const echoed = sent.lastIndexOf(now);
+  if (echoed >= 0) {
+    el.skiffSent = sent.slice(echoed + 1);
+    if (el.skiffSent.length > 0 || el.value === now) return;
+  }
+  el.skiffSent = [];
+  if (el.value === now) return;
+  el.value = now;
+  const anchor = el.getAttribute('data-skiff-anchor'), caret = el.getAttribute('data-skiff-caret');
+  if (caret === null || document.activeElement !== el || typeof el.setSelectionRange !== 'function') return;
+  const units = (bytes) => {
+    let b = 0, i = 0;
+    for (const ch of now) {
+      if (b >= bytes) break;
+      const cp = ch.codePointAt(0);
+      b += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+      i += ch.length;
+    }
+    return i;
+  };
+  const a = units(Number(anchor === null ? caret : anchor)), c = units(Number(caret));
+  el.setSelectionRange(Math.min(a, c), Math.max(a, c), c < a ? 'backward' : 'forward');
 });
 EM_JS(void, skiffDomChecked, (int h, int on), {
   Module.skiffDom.els[h].checked = !!on;
@@ -98,7 +130,13 @@ EM_JS(void, skiffDomListen, (int h, const char *e, int el), {
     } else if (name === 'scroll') value = String(t.scrollTop || t.scrollLeft || 0);
     else if (name === 'keydown' || name === 'keyup') value = ev.key + '|' + (ev.shiftKey ? 1 : 0) + ((ev.ctrlKey || ev.metaKey) ? 1 : 0);
     else if (t.tagName === 'SELECT') value = String(t.selectedIndex);
-    else if ('value' in t) value = String(t.value);
+    else if ('value' in t) {
+      value = String(t.value);
+      // Typed: kept until the program says it back (skiffDomValue).
+      if (name === 'input' || name === 'change') {
+        t.skiffSent = (t.skiffSent || []).concat([value]).slice(-64);
+      }
+    }
     Module.ccall('skiff_web_event', null, ['number', 'string', 'string'], [h, name, value]);
   });
 });
