@@ -551,6 +551,8 @@ inline std::vector<Dirtier> &dirtiers() {
   return kept;
 }
 inline void tellOverflow(Overflow one) {
+  if constexpr (!kLayoutReports)
+    return;
   if (overflows().size() < 256) {
     overflows().push_back(std::move(one));
   }
@@ -1546,13 +1548,15 @@ public:
     // Sizing an axis both from the parent and from the children asks for two
     // numbers at once: say which, and keep the relative one.
     if (fRelativeSizeAxes.any(fAutoSizeAxes)) {
-      fSizingConflict = "relative and automatic sizing on the same axis";
+      if constexpr (kLayoutReports)
+        fSizingConflict = "relative and automatic sizing on the same axis";
       fAutoSizeAxes = axes::kNone;
     }
     // A flow writes a grown child's size; anything else claiming the axis
     // would be overwritten every frame.
     if (fGrowAxes.any(fRelativeSizeAxes | fAutoSizeAxes)) {
-      fSizingConflict = "growing and sized another way on the same axis";
+      if constexpr (kLayoutReports)
+        fSizingConflict = "growing and sized another way on the same axis";
       fGrowAxes = axes::kNone;
     }
     const auto after = this->commonValues();
@@ -2635,7 +2639,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   state.fLastConstraint = parent;
   work::reach(state.fId);
   ++walkCounts().laidOut;
-  if (!state.fSizingConflict.empty()) {
+  if (kLayoutReports && !state.fSizingConflict.empty()) {
     std::println(std::cerr, "[scene] {}: {}{}{}", std::exchange(state.fSizingConflict, {}), typeOf(node).name,
                  viewsLaidOut().empty() ? "" : " in ", viewsLaidOut().empty() ? std::string_view() : std::string_view(viewsLaidOut().back()));
   }

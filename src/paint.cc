@@ -1459,10 +1459,16 @@ public:
       return lines;
     }
 #endif
-    const auto next = [&](std::size_t at) {
+    // The start of the character after the one at `at`, in `text`: the
+    // word being cut, not the whole string -- read in the whole one, its
+    // indices were another place's, a word was cut inside a character
+    // (× − √ π: two and three bytes), and Skia, measuring the invalid
+    // UTF-8, counted -1 glyphs and wrote past them (a long formula in a
+    // window made 20 pixels wide).
+    const auto next = [](std::string_view text, std::size_t at) {
       ++at;
-      while (at < str.size() &&
-             (static_cast<unsigned char>(str[at]) & 0xC0u) == 0x80u) {
+      while (at < text.size() &&
+             (static_cast<unsigned char>(text[at]) & 0xC0u) == 0x80u) {
         ++at;
       }
       return at;
@@ -1492,11 +1498,11 @@ public:
             }
             // Too wide alone: as much of it to a line as fits.
             while (this->measure(word, size, bold) > width) {
-              std::size_t cut = next(0);
-              for (std::size_t end = next(cut);
+              std::size_t cut = next(word, 0);
+              for (std::size_t end = next(word, cut);
                    cut < word.size() &&
                    this->measure(word.substr(0, end), size, bold) <= width;
-                   end = next(end)) {
+                   end = next(word, end)) {
                 cut = end;
                 if (end >= word.size()) {
                   break;

@@ -391,7 +391,12 @@ template <class N> struct Flowing {
   // from what it holds, where it does not clip what it holds. A menu of a
   // set width whose row of buttons was wider than it put its last button
   // past its edge, and nothing said so.
+  // Not made at all without the layout's reports (SKIFF_LAYOUT_REPORTS).
   void told(const skia::SkRect &box) {
+    if constexpr (skiff::scene::kLayoutReports)
+      toldNow(box);
+  }
+  void toldNow(const skia::SkRect &box) {
     if (skiff::scene::stateOf(fNode).fMasking) {
       return;
     }

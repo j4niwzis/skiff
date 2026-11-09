@@ -1821,7 +1821,7 @@ template <class N, class F> bool childAt(N &node, std::uint32_t place, F &&f) {
 template <class N> [[nodiscard]] Markup markupOf(N &node) {
   Markup m;
   // A named view is named in the document too: the page reads as the source does.
-  if constexpr (requires { std::string_view(std::remove_cvref_t<N>::viewName()); })
+  if constexpr (requires { std::string_view(std::remove_cvref_t<N>::viewName()); } && kLayoutReports)
     m.attr("data-view", std::string_view(std::remove_cvref_t<N>::viewName()));
   // Shown or not first, as the browser reads an element's style: what the
   // node says after it, then the rest of its Spec.

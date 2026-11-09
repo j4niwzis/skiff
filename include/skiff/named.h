@@ -30,6 +30,15 @@
 // what the expression made, named, with the hooks declared again at its
 // level.
 #ifndef SKIFF_NAMED_BASE
+// A named view's name, as its viewName() says it: none where skiff is built
+// without its layout reports (SKIFF_LAYOUT_REPORTS off) -- the names are
+// only told with them, and are then not in the binary.
+#ifdef SKIFF_NO_LAYOUT_REPORTS
+#define SKIFF_NAMED_VIEW_NAME(name) ""
+#else
+#define SKIFF_NAMED_VIEW_NAME(name) #name
+#endif
+
 #define SKIFF_NAMED_BASE ::skiff::compose::Named
 #endif
 
@@ -42,7 +51,7 @@
       using SKIFF_NAMED_BASE<name, decltype(skiff_named_made())>::onPointer;                                    \
       using SKIFF_NAMED_BASE<name, decltype(skiff_named_made())>::onText;                                       \
       using SKIFF_NAMED_BASE<name, decltype(skiff_named_made())>::onSemantic;                                   \
-      static constexpr const char *viewName() { return #name; }                                                        \
+      static constexpr const char *viewName() { return SKIFF_NAMED_VIEW_NAME(name); }                                   \
     };                                                                                                                 \
     return name(skiff_named_made());                                                                                   \
   }()

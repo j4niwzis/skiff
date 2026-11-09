@@ -330,6 +330,14 @@ endif()
 option(SKIFF_ERASE_WALKS "Outside a release build, walk every child through an AnyNode" ON)
 target_compile_definitions(skiff_core PUBLIC
   $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<NOT:$<CONFIG:Release>>>:SKIFF_ERASED_WALKS>)
+# The layout's reports -- what it put past the edge of its parent, two ways
+# of sizing one axis -- and the names of the views SKIFF_NAMED names, which
+# they are told with. Off, none of it is in the binary: no reports, no
+# names (a view's viewName() is empty, and the page writes no data-view).
+option(SKIFF_LAYOUT_REPORTS "Report the layout's overflows and sizing conflicts, and keep SKIFF_NAMED views' names" ON)
+if(NOT SKIFF_LAYOUT_REPORTS)
+  target_compile_definitions(skiff_core PUBLIC SKIFF_NO_LAYOUT_REPORTS)
+endif()
 # And outside a release build, the model's edits and looks go through its
 # runtime layer (skiff.model:schema): nothing made for each place's path.
 # Outside a release build every combinator erases what it returns

@@ -30,6 +30,14 @@ inline constexpr bool kErasedWalks = true;
 #else
 inline constexpr bool kErasedWalks = false;
 #endif
+// Whether the layout tells what it put out of place (overflows, sizing
+// conflicts), and named views keep their names: SKIFF_LAYOUT_REPORTS, in
+// skiff's CMake. Off, none of it is in the binary.
+#ifdef SKIFF_NO_LAYOUT_REPORTS
+inline constexpr bool kLayoutReports = false;
+#else
+inline constexpr bool kLayoutReports = true;
+#endif
 // Whether what each combinator returns is erased (compose::Held): where the
 // walks are, unless a build keeps them concrete -- skiff's own tests of each
 // widget's behaviour, which call its members on what its combinator made.
