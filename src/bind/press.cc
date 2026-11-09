@@ -371,6 +371,8 @@ template <class M, class S = detail::NoSink> CarryRoot<M, S> carryFrom(M *model,
 
 namespace detail {
 struct NoPart {};
+// The parent of the tree's root: none (no row of a list).
+struct NoParent {};
 // An Each's row: its element's place.
 template <class Place> struct RowPart {
   Place fPlace;
@@ -507,6 +509,24 @@ detail::StepOf<P, N, C> carryInto(P &parent, N &child, const C &carried) {
 template <class P, class N, class C>
   requires(detail::IsCarry<C> && detail::kBindsNothing<detail::StepOf<P, N, C>>)
 const C &carryInto(P &, N &, const C &carried) {
+  return carried;
+}
+
+// Where a routing starts: what the tree's root binds itself -- a scope, a
+// Local -- as the first step, below what the program carries. A step is
+// made where the routing goes into a node (carryInto), and the root is gone
+// into by none: a tree that is one state<T> (skiff.app's scene root, which
+// derives from the tree's top) carried no frame, and what was pressed in it
+// reached no handler -- a release build's static routing did not compile.
+template <class N, class C>
+  requires(detail::IsCarry<C> && !detail::kBindsNothing<detail::StepOf<detail::NoParent, N, C>>)
+detail::StepOf<detail::NoParent, N, C> carryAtRoot(N &root, const C &carried) {
+  detail::NoParent none;
+  return detail::StepOf<detail::NoParent, N, C>(carried, none, root);
+}
+template <class N, class C>
+  requires(detail::IsCarry<C> && detail::kBindsNothing<detail::StepOf<detail::NoParent, N, C>>)
+const C &carryAtRoot(N &, const C &carried) {
   return carried;
 }
 

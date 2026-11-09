@@ -5543,7 +5543,9 @@ public:
     reply.fTarget = target;
     reply.fCaptured = fCapture != 0;
     Routed routed;
-    const auto carried = startCarry(fRoot);
+    // What the program carries, and what the root binds itself first.
+    const auto start = startCarry(fRoot);
+    decltype(auto) carried = carryAtRoot(fRoot, start);
     walk::routePointer(this->walked(), path, 0, input, reply, routed, false, carried);
     // A click the target did not take: to the nodes above it, in turn.
     if (reply.fClickAbove) {
@@ -5621,7 +5623,8 @@ public:
     if (!walk::hitPath(this->walked(), x, y, path)) {
       return false;
     }
-    const bool taken = walk::clickPath(this->walked(), path, 0, x, y, startCarry(fRoot));
+    const auto start = startCarry(fRoot);
+    const bool taken = walk::clickPath(this->walked(), path, 0, x, y, carryAtRoot(fRoot, start));
     this->notePress(path);
     this->restyleDirty();
     return taken;
@@ -5634,7 +5637,8 @@ public:
   // where the tree is laid out elsewhere (HostWork::laidOutElsewhere), the
   // engine that laid it out saying which node was pressed.
   bool clickAlong(const Path &path) {
-    const bool taken = walk::clickPath(this->walked(), path, 0, 0.0f, 0.0f, startCarry(fRoot));
+    const auto start = startCarry(fRoot);
+    const bool taken = walk::clickPath(this->walked(), path, 0, 0.0f, 0.0f, carryAtRoot(fRoot, start));
     this->notePress(path);
     this->restyleDirty();
     return taken;
@@ -5665,7 +5669,8 @@ public:
     }
     Reply reply;
     reply.fTarget = fFocus;
-    walk::routeKey(this->walked(), path, 0, input, reply, startCarry(fRoot));
+    const auto start = startCarry(fRoot);
+    walk::routeKey(this->walked(), path, 0, input, reply, carryAtRoot(fRoot, start));
     if (reply.fMoveFocus) {
       focusVisible() = true;
       this->focusNextWithin(reply.fFocusScope, *reply.fMoveFocus);
@@ -5682,7 +5687,8 @@ public:
     }
     Reply reply;
     reply.fTarget = fFocus;
-    walk::routeText(this->walked(), path, 0, input, reply, startCarry(fRoot));
+    const auto start = startCarry(fRoot);
+    walk::routeText(this->walked(), path, 0, input, reply, carryAtRoot(fRoot, start));
     this->notePress(path);
     this->restyleDirty();
     return reply.fHandled;
@@ -5697,7 +5703,8 @@ public:
     }
     Reply reply;
     reply.fTarget = id;
-    walk::routeSemantic(this->walked(), path, 0, action, reply, startCarry(fRoot));
+    const auto start = startCarry(fRoot);
+    walk::routeSemantic(this->walked(), path, 0, action, reply, carryAtRoot(fRoot, start));
     if (reply.fRequestFocus) {
       this->focus(id);
     }

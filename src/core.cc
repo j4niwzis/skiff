@@ -1593,6 +1593,9 @@ template <class R>
 [[nodiscard]] NoCarry startCarry(R &) {
   return {};
 }
+// What the root binds itself, carried first (skiff.bind's carryAtRoot, found
+// by the carry's type); with nothing carried, nothing.
+template <class R> [[nodiscard]] const NoCarry &carryAtRoot(R &, const NoCarry &carried) { return carried; }
 // The system's clipboard as the host last read it: what a paste puts in.
 inline std::string &clipboardContents() {
   static std::string kept;

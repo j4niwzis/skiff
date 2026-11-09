@@ -275,6 +275,31 @@ inline auto page() {
 }
 }  // namespace stated_model
 
+// A tree that is one state<T> -- its root the scope -- pressed where the
+// routing goes: the press reaches that scope's handlers (carryAtRoot: the
+// root's own step carried first).
+TEST(Compose, APressInATreeThatIsOneStateIsTakenByItsHandlers) {
+  using namespace stated_model;
+  using Tree = decltype(tally());
+  bind::ModelOf<Tree> m;
+  auto root = tally();
+  bind::Binding<bind::ModelOf<Tree>> binding;
+  binding.refresh(root, m);
+  using Plus = OnClick<Pressed, part_t<nodes::Text>>;
+  const scene::Path path = pressPathTo(root, all_made_as<Plus>(root).at(0)->fState);
+  const auto start = bind::carryFrom(&m);
+  decltype(auto) carried = carryAtRoot(root, start);
+  (void)scene::walk::clickPath(root, path, 0, 1.0f, 1.0f, carried);
+  if constexpr (scene::kErasedWalks) {
+    // Erased walks carry nothing: the press is kept, delivered along its path.
+    if (scene::hostWork().pressedNow != nullptr) {
+      scene::hostWork().pressedNow = nullptr;
+      EXPECT_TRUE(bind::press(root, m, path));
+    }
+  }
+  EXPECT_EQ(m.look<Tally>()->n, 1);
+}
+
 TEST(Compose, AModelIsThePartsItsTreesViewsSayTheyKeep) {
   using namespace stated_model;
   using Tree = decltype(page());
