@@ -30,6 +30,9 @@
 // what the expression made, named, with the hooks declared again at its
 // level.
 #ifndef SKIFF_NAMED_BASE
+#define SKIFF_NAMED_BASE ::skiff::compose::Named
+#endif
+
 // A named view's name, as its viewName() says it: none where skiff is built
 // without its layout reports (SKIFF_LAYOUT_REPORTS off) -- the names are
 // only told with them, and are then not in the binary.
@@ -37,9 +40,6 @@
 #define SKIFF_NAMED_VIEW_NAME(name) ""
 #else
 #define SKIFF_NAMED_VIEW_NAME(name) #name
-#endif
-
-#define SKIFF_NAMED_BASE ::skiff::compose::Named
 #endif
 
 #define SKIFF_NAMED(name, ...)                                                                                          \
