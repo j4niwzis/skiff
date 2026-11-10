@@ -120,17 +120,6 @@ void visitRows(Op &op, N &node, const Here &here, const Frames &...frames) {
   visitChildren(op, node, here, frames...);
 }
 
-// A scope of a part this walk's model does not hold (the walk of what is
-// shown passing through a scope over what is kept): what is bound within it
-// to a part of the scope's own type is that scope's model's, not this one's
-// -- looked up in this model from where the walk stands, it was found in
-// several places, or the wrong one (mux's chat notification rows, a
-// release build).
-template <class Within> struct ForeignFrame {};
-template <class N, class F> inline constexpr bool kInForeign = false;
-template <class N, class W>
-  requires requires { typename N::BoundTo; }
-inline constexpr bool kInForeign<N, ForeignFrame<W>> = model::kFound<typename N::BoundTo, W> > 0;
 
 template <class Op, class N, class Here, class... Frames>
 void visitBody(Op &op, N &node, const Here &here, const Frames &...frames) {

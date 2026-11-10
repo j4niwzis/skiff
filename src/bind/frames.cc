@@ -49,6 +49,18 @@ template <class F> inline constexpr bool kHiddenFrame = false;
 template <class L>
 inline constexpr bool kHiddenFrame<LocalFrame<L>> = L::kHidden;
 
+// A scope of a part a walk's model does not hold (the walk of what is shown
+// passing through a scope over what is kept, refreshing or pressing): what is bound within it
+// to a part of the scope's own type is that scope's model's, not this one's
+// -- looked up in this model from where the walk stands, it was found in
+// several places, or the wrong one (mux's chat notification rows, a
+// release build).
+template <class Within> struct ForeignFrame {};
+template <class N, class F> inline constexpr bool kInForeign = false;
+template <class N, class W>
+  requires requires { typename N::BoundTo; }
+inline constexpr bool kInForeign<N, ForeignFrame<W>> = model::kFound<typename N::BoundTo, W> > 0;
+
 // Where a part is found: in a Local's state, or in the model.
 template <class Place> struct InModel {
   Place fPlace;

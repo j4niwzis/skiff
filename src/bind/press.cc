@@ -166,7 +166,7 @@ template <class Op, class N, class Here, class... Frames>
   requires IsScoped<N>
 void pressScoped(Op &op, N &node, const scene::Path &path, std::size_t at, const Here &here, const Frames &...frames) {
   ++op.fForeign;
-  pressLocal(op, node, path, at, here, frames...);
+  pressLocal(op, node, path, at, here, ForeignFrame<decltype(scopeOfOf(asScoped(node)))>{}, frames...);
   --op.fForeign;
 }
 template <class Op, class N, class Here, class... Frames>
@@ -211,7 +211,8 @@ template <class M, class Sink> struct Pressing : Draining<M, Sink> {
   // An answer at its node: a change of the node's own part made where the
   // part is found; else sent up the frames.
   template <class N, class Here, class C, class... Frames>
-    requires(IsBound<N> && (kOfModel<typename M::RootType, N> || (kInLocal<N, Frames> || ...)))
+    requires(IsBound<N> && (kOfModel<typename M::RootType, N> || (kInLocal<N, Frames> || ...)) &&
+             !(kInForeign<N, Frames> || ...))
   void answerAt(N &node, const Here &here, const Own<C> &own, const Frames &...frames) {
     using Want = decltype(boundToOf(asBound(node)));
     this->change(where<Want>(here, frames...), own.fChange);
