@@ -1974,6 +1974,14 @@ public:
   // children it laid out.
   bool fFlowOrdered = false;
   std::uint32_t fFlowCount = 0;
+  // What the compiled layout's passes know of it while they run (scene's
+  // compiled): its kind there and its flow's options, the width it was
+  // given, its height, and its natural width where it was asked (for the
+  // layout pass that asked).
+  std::uint8_t fRegionKind = 0;
+  FlowOptions fRegionOptions{};
+  float fRegionWidth = 0.0f, fRegionHeight = 0.0f, fRegionPref = 0.0f;
+  std::uint64_t fRegionPrefPass = 0;
   // The children, as they were last time: a variant that switched, a row
   // added to a vector. Compared each frame; a different set is laid out and
   // repainted.
@@ -6509,50 +6517,43 @@ private:
 };
 
 
+namespace compiled {
 // ---- the compiled layout traversal ----------------------------------------------------
 //
 // skiff.layout says what each kind of node computes and checks the four
-// passes against it while compiling; this runs them. A region is a flow
-// laid out with the flows below it that the rules cover -- columns down from
-// their start and rows not wrapped, none of their children sized as a share
-// of their height, anchored or shrinking -- and the nodes at its edge (a
-// text, a picture, a scroll view, a widget, a compose wrapper) laid out whole
-// by their own hooks, as a nested region. Collected once into flat arrays
-// in preorder, then: widths down (pass 2, with the natural widths a
-// container reads of its children asked of them only where it reads them,
-// pass 1), heights up (pass 3: an edge node laid out at its width, a
-// container summing or taking the most of its children), places down (pass
-// 4: each container's children placed in its box, an edge node moved there
-// as it is). Code over the arrays, not a template for each kind of node: a
-// Debug build makes it once.
-namespace compiled {
+// passes against it while compiling; these are the passes. A region is a
+// flow the rules cover with the covered flows below it -- columns down from
+// their start, rows not wrapped, none of their children sized as a share of
+// their height, anchored, giving way, hidden, of a depth or scaled -- and
+// the nodes at its edge (a text, a picture, a scroll view, a widget, a
+// compose wrapper) laid out whole by their own hooks, as a nested region.
+// Widths go down (pass 2: a column gives its content width, a row its fixed
+// and natural children their own and those that grow an equal share of the
+// rest, the natural widths it reads asked of them only there -- pass 1);
+// heights up (pass 3: an edge node laid out at its width, a column its
+// children stacked, a row its tallest); places down (pass 4: each child put
+// in its container's content box, an edge node moved there as it is).
+//
+// Each pass a template over the tree's own types: in a release build every
+// child is gone into with its type, each kind's code chosen by the node it
+// is -- the traversal made for the tree while compiling, nothing erased.
+// Outside one, the same passes over the erased walks' table (AnyNodeRef),
+// made once for every tree.
 enum class kind : std::uint8_t { column, row, edge };
-struct entry {
-  AnyNodeRef node;
-  State *state = nullptr;
-  kind of = kind::edge;
-  FlowOptions options{};
-  std::uint32_t first = 0, count = 0;  // its children, in kids
-  float width = 0.0f, height = 0.0f;
-  std::optional<float> pref;
-};
-struct region {
-  std::vector<entry> nodes;
-  std::vector<std::uint32_t> kids;
-};
-[[nodiscard]] inline AnyNodeRef refOf(AnyNodeRef &ref) { return ref; }
-template <class N> [[nodiscard]] AnyNodeRef refOf(N &node) { return AnyNodeRef::of(node); }
-// The kind a node is laid out as: a flow the rules cover, else an edge.
-[[nodiscard]] inline kind kindOf(AnyNodeRef &ref, FlowOptions &options) {
+template <class N> [[nodiscard]] Look lookOf(N &node) { return node.look(); }
+[[nodiscard]] inline Look lookOf(AnyNodeRef &ref) {
   ErasedNode seen(ref);
-  const Look look = seen.look();
+  return seen.look();
+}
+// The kind a node is laid out as: a flow the rules cover, else an edge.
+template <class N> [[nodiscard]] kind kindOf(N &node, FlowOptions &options) {
   bool flow = false;
   spl::visit(spl::overloaded{[&](const look::flow &one) {
                                options = one.options;
                                flow = true;
                              },
                              [](const auto &) {}},
-             look);
+             lookOf(node));
   if (!flow || options.wrap)
     return kind::edge;
   const bool vertical = spl::visit(spl::overloaded{[](direction::vertical) { return true; }, [](direction::horizontal) { return false; }},
@@ -6560,209 +6561,206 @@ template <class N> [[nodiscard]] AnyNodeRef refOf(N &node) { return AnyNodeRef::
   const bool fromStart = spl::visit(spl::overloaded{[](justify::start) { return true; }, [](const auto &) { return false; }}, options.justify);
   if (!fromStart)
     return kind::edge;
-  // Children the rules do not cover: sized or grown as a share of its
-  // height, anchored in it, giving way, hidden, of a depth.
   bool covered = true;
-  ref.forEachChild([&](AnyNodeRef &child) {
+  eachChild(node, [&](auto &child) {
     const State &one = stateOf(child);
     covered = covered && one.fVisible && !one.fOutOfFlow && !one.fRelativeSizeAxes.has<axis::y>() && !one.fGrowAxes.has<axis::y>() &&
               !one.fShrinkAxes.has<axis::x>() && one.fDepth == 0.0f && one.fFollow == nullptr && one.fScale == 1.0f &&
-              (vertical || !one.fGrowAxes.has<axis::x>() || !one.fAutoSizeAxes.has<axis::x>());
+              (vertical || !(one.fGrowAxes.has<axis::x>() && one.fAutoSizeAxes.has<axis::x>()));
   });
   if (!covered)
     return kind::edge;
   return vertical ? kind::column : kind::row;
 }
-// The region under `root`, in preorder: its flows the rules cover, and the
-// nodes at its edge.
-inline void collect(region &into, AnyNodeRef ref) {
-  const auto at = static_cast<std::uint32_t>(into.nodes.size());
+// What a pass knows of a node, kept on it for the pass that reads it: its
+// kind and options, the width it was given, its height, its natural width
+// where asked (State::fRegion*).
+template <class N> void enter(N &node) {
+  State &s = stateOf(node);
   FlowOptions options{};
-  const kind of = kindOf(ref, options);
-  into.nodes.push_back({ref, &stateOf(ref), of, options});
-  if (of == kind::edge)
-    return;
-  detail::settle(ref);
-  std::vector<AnyNodeRef> children;
-  ref.forEachChild([&](AnyNodeRef &child) { children.push_back(child); });
-  into.nodes[at].first = static_cast<std::uint32_t>(into.kids.size());
-  into.nodes[at].count = static_cast<std::uint32_t>(children.size());
-  into.kids.resize(into.kids.size() + children.size());
-  for (std::size_t i = 0; i < children.size(); ++i) {
-    into.kids[into.nodes[at].first + i] = static_cast<std::uint32_t>(into.nodes.size());
-    collect(into, children[i]);
+  s.fRegionKind = static_cast<std::uint8_t>(kindOf(node, options));
+  s.fRegionOptions = options;
+  s.fRegionPrefPass = 0;
+  if (static_cast<kind>(s.fRegionKind) != kind::edge) {
+    detail::settle(node);
+    eachChild(node, [](auto &child) { enter(child); });
   }
 }
 // Pass 1, where it is read: a node's natural width -- an edge node's what it
-// comes to laid out with room enough (on one line, a text); a column's its
-// widest child's, a row's its children's side by side; padding added.
-inline float prefOf(region &r, std::uint32_t at) {
-  entry &one = r.nodes[at];
-  if (one.pref)
-    return *one.pref;
-  const State &s = *one.state;
+// comes to laid out with room enough (on one line, a text), a column's its
+// widest child's, a row's its children's side by side; padding added, held
+// to its least and most.
+template <class N> float prefOf(N &node) {
+  State &s = stateOf(node);
+  if (s.fRegionPrefPass == work::layoutPass())
+    return s.fRegionPref;
+  const auto of = static_cast<kind>(s.fRegionKind);
   float out = 0.0f;
   if (!s.fAutoSizeAxes.has<axis::x>() && !s.fRelativeSizeAxes.has<axis::x>() && !s.fGrowAxes.has<axis::x>()) {
     out = s.fWidth;
-  } else if (one.of == kind::edge) {
+  } else if (of == kind::edge) {
     constexpr float kRoom = 1.0e7f;
-    layout(one.node, skia::SkRect::MakeXYWH(0.0f, 0.0f, kRoom, kRoom));
-    out = one.state->fBounds.width();
+    layout(node, skia::SkRect::MakeXYWH(0.0f, 0.0f, kRoom, kRoom));
+    out = s.fBounds.width();
   } else {
-    const std::span<const std::uint32_t> kids(r.kids.data() + one.first, one.count);
-    for (const std::uint32_t kid : kids) {
-      const float w = prefOf(r, kid) + r.nodes[kid].state->fMargin.totalX();
-      out = one.of == kind::column ? std::max(out, w) : out + w;
-    }
-    if (one.of == kind::row && one.count > 1)
-      out += one.options.spacingX * static_cast<float>(one.count - 1);
+    std::uint32_t count = 0;
+    eachChild(node, [&](auto &child) {
+      const float w = prefOf(child) + stateOf(child).fMargin.totalX();
+      out = of == kind::column ? std::max(out, w) : out + w;
+      ++count;
+    });
+    if (of == kind::row && count > 1)
+      out += s.fRegionOptions.spacingX * static_cast<float>(count - 1);
     out += s.fPadding.totalX();
   }
   out = std::max(out, s.fMinWidth);
   if (s.fMaxWidth > 0.0f)
     out = std::min(out, s.fMaxWidth);
-  one.pref = out;
+  s.fRegionPref = out;
+  s.fRegionPrefPass = work::layoutPass();
   return out;
 }
 // A node's width in the room its parent gives it (its margin taken out): a
 // share, its natural width within the room, or its own; held to its least
 // and most.
-inline float widthIn(region &r, std::uint32_t at, float room) {
-  const State &s = *r.nodes[at].state;
-  float w = s.fRelativeSizeAxes.has<axis::x>() ? room * s.fWidth
-            : s.fAutoSizeAxes.has<axis::x>()   ? std::min(prefOf(r, at), room)
-                                               : s.fWidth;
+template <class N> [[nodiscard]] float widthIn(N &node, float room) {
+  const State &s = stateOf(node);
+  float w = s.fRelativeSizeAxes.has<axis::x>() ? room * s.fWidth : s.fAutoSizeAxes.has<axis::x>() ? std::min(prefOf(node), room) : s.fWidth;
   w = std::max(w, s.fAutoSizeAxes.has<axis::x>() && room > 0.0f ? std::min(s.fMinWidth, room) : s.fMinWidth);
   if (s.fMaxWidth > 0.0f)
     w = std::min(w, s.fMaxWidth);
   return w;
 }
-// Pass 2: what a container gives its children -- a column its content
-// width, each taking its width in it; a row, its fixed and natural children
-// their own, those that grow an equal share of what is left.
-inline void giveWidths(region &r, std::uint32_t at) {
-  entry &one = r.nodes[at];
-  const float inner = std::max(0.0f, one.width - one.state->fPadding.totalX());
-  const std::span<const std::uint32_t> kids(r.kids.data() + one.first, one.count);
-  if (one.of == kind::column) {
-    for (const std::uint32_t kid : kids)
-      r.nodes[kid].width = widthIn(r, kid, std::max(0.0f, inner - r.nodes[kid].state->fMargin.totalX()));
+// Pass 2: what a container gives its children.
+template <class N> void giveWidths(N &node) {
+  State &s = stateOf(node);
+  const auto of = static_cast<kind>(s.fRegionKind);
+  const float inner = std::max(0.0f, s.fRegionWidth - s.fPadding.totalX());
+  if (of == kind::column) {
+    eachChild(node, [&](auto &child) {
+      State &one = stateOf(child);
+      one.fRegionWidth = widthIn(child, std::max(0.0f, inner - one.fMargin.totalX()));
+    });
   } else {
-    float taken = one.count > 1 ? one.options.spacingX * static_cast<float>(one.count - 1) : 0.0f;
+    float taken = 0.0f;
+    std::uint32_t count = 0;
     int growers = 0;
-    for (const std::uint32_t kid : kids) {
-      const State &s = *r.nodes[kid].state;
-      if (s.fGrowAxes.has<axis::x>()) {
+    eachChild(node, [&](auto &child) {
+      State &one = stateOf(child);
+      ++count;
+      if (one.fGrowAxes.has<axis::x>()) {
         ++growers;
-        taken += s.fMargin.totalX();
-        continue;
+        taken += one.fMargin.totalX();
+        return;
       }
-      r.nodes[kid].width = widthIn(r, kid, std::max(0.0f, inner - s.fMargin.totalX()));
-      taken += r.nodes[kid].width + s.fMargin.totalX();
-    }
+      one.fRegionWidth = widthIn(child, std::max(0.0f, inner - one.fMargin.totalX()));
+      taken += one.fRegionWidth + one.fMargin.totalX();
+    });
+    if (count > 1)
+      taken += s.fRegionOptions.spacingX * static_cast<float>(count - 1);
     const float share = growers > 0 ? std::max(0.0f, (inner - taken) / static_cast<float>(growers)) : 0.0f;
-    for (const std::uint32_t kid : kids)
-      if (r.nodes[kid].state->fGrowAxes.has<axis::x>())
-        r.nodes[kid].width = share;
+    eachChild(node, [&](auto &child) {
+      if (stateOf(child).fGrowAxes.has<axis::x>())
+        stateOf(child).fRegionWidth = share;
+    });
   }
-  for (const std::uint32_t kid : kids)
-    if (r.nodes[kid].of != kind::edge)
-      giveWidths(r, kid);
+  eachChild(node, [](auto &child) {
+    if (static_cast<kind>(stateOf(child).fRegionKind) != kind::edge)
+      giveWidths(child);
+  });
 }
-// Pass 3: heights, children before their parent: an edge node laid out at
-// its width (where it is, for now), a column its children stacked, a row
-// its tallest -- padding added, held to its least and most, or its own
-// height where it is not sized by its children.
-inline void heights(region &r, std::uint32_t at) {
-  entry &one = r.nodes[at];
-  State &s = *one.state;
-  if (one.of == kind::edge) {
-    layout(one.node, skia::SkRect::MakeXYWH(s.fBounds.fLeft, s.fBounds.fTop, one.width + s.fMargin.totalX(), 0.0f));
-    one.height = s.fBounds.height();
-    one.width = s.fBounds.width();
+// Pass 3: heights, children before their parent.
+template <class N> void heights(N &node) {
+  State &s = stateOf(node);
+  const auto of = static_cast<kind>(s.fRegionKind);
+  if (of == kind::edge) {
+    layout(node, skia::SkRect::MakeXYWH(s.fBounds.fLeft, s.fBounds.fTop, s.fRegionWidth + s.fMargin.totalX(), 0.0f));
+    s.fRegionHeight = s.fBounds.height();
+    s.fRegionWidth = s.fBounds.width();
     return;
   }
-  const std::span<const std::uint32_t> kids(r.kids.data() + one.first, one.count);
   float h = 0.0f;
-  for (const std::uint32_t kid : kids) {
-    heights(r, kid);
-    const float k = r.nodes[kid].height + r.nodes[kid].state->fMargin.totalY();
-    h = one.of == kind::column ? h + k : std::max(h, k);
-  }
-  if (one.of == kind::column && one.count > 1)
-    h += one.options.spacingY * static_cast<float>(one.count - 1);
+  std::uint32_t count = 0;
+  eachChild(node, [&](auto &child) {
+    heights(child);
+    const State &one = stateOf(child);
+    const float k = one.fRegionHeight + one.fMargin.totalY();
+    h = of == kind::column ? h + k : std::max(h, k);
+    ++count;
+  });
+  if (of == kind::column && count > 1)
+    h += s.fRegionOptions.spacingY * static_cast<float>(count - 1);
   h += s.fPadding.totalY();
   if (!s.fAutoSizeAxes.has<axis::y>())
     h = s.fHeight;
   h = std::max(h, s.fMinHeight);
   if (s.fMaxHeight > 0.0f)
     h = std::min(h, s.fMaxHeight);
-  one.height = h;
+  s.fRegionHeight = h;
 }
-// Pass 4: places, a container before its children: its box where its
-// parent put it, its children placed in its content box -- stacked down a
-// column or along a row, aligned across -- an edge node moved there as it
-// is, a container laid out.
-inline void place(region &r, std::uint32_t at, const skia::SkRect &box) {
-  entry &one = r.nodes[at];
-  State &s = *one.state;
-  if (one.of == kind::edge) {
+// Pass 4: places, a container before its children.
+template <class N> void place(N &node, const skia::SkRect &box) {
+  State &s = stateOf(node);
+  const auto of = static_cast<kind>(s.fRegionKind);
+  if (of == kind::edge) {
     const float dx = box.fLeft - s.fBounds.fLeft, dy = box.fTop - s.fBounds.fTop;
     if (dx != 0.0f || dy != 0.0f)
-      detail::moveLaidOut(one.node, dx, dy);
+      detail::moveLaidOut(node, dx, dy);
     return;
   }
   detail::notePass(s);
   s.fBounds = box;
-  s.fLastConstraint = box;
   detail::noteMoved(s);
   s.fLayoutValid = true;
   s.fSubtreeDirty = false;
   s.fPlacementDirty = false;
   work::reach(s.fId);
   const skia::SkRect content = s.contentBox();
-  const std::span<const std::uint32_t> kids(r.kids.data() + one.first, one.count);
   float along = 0.0f;
-  for (const std::uint32_t kid : kids) {
-    const entry &k = r.nodes[kid];
-    const Margin &m = k.state->fMargin;
-    const float line = one.of == kind::column ? content.width() : content.height();
-    const float own = one.of == kind::column ? k.width + m.totalX() : k.height + m.totalY();
-    const float cross = (line - own) * k.state->fAlignSelf.value_or(one.options.crossAlign).at;
-    const float x = one.of == kind::column ? cross : along;
-    const float y = one.of == kind::column ? along : cross;
-    k.state->fX = x;
-    k.state->fY = y;
-    place(r, kid, skia::SkRect::MakeXYWH(content.fLeft + x + m.fLeft, content.fTop + y + m.fTop, k.width, k.height));
-    along += (one.of == kind::column ? k.height + m.totalY() + one.options.spacingY : k.width + m.totalX() + one.options.spacingX);
-  }
+  eachChild(node, [&](auto &child) {
+    State &one = stateOf(child);
+    const Margin &m = one.fMargin;
+    const float line = of == kind::column ? content.width() : content.height();
+    const float own = of == kind::column ? one.fRegionWidth + m.totalX() : one.fRegionHeight + m.totalY();
+    const float cross = (line - own) * one.fAlignSelf.value_or(s.fRegionOptions.crossAlign).at;
+    one.fX = of == kind::column ? cross : along;
+    one.fY = of == kind::column ? along : cross;
+    // The box it would have been laid out in, as a flow gives it.
+    one.fLastConstraint = skia::SkRect::MakeXYWH(content.fLeft, content.fTop, content.width(), 0.0f);
+    place(child, skia::SkRect::MakeXYWH(content.fLeft + one.fX + m.fLeft, content.fTop + one.fY + m.fTop, one.fRegionWidth, one.fRegionHeight));
+    along += of == kind::column ? one.fRegionHeight + m.totalY() + s.fRegionOptions.spacingY
+                                : one.fRegionWidth + m.totalX() + s.fRegionOptions.spacingX;
+  });
+}
+template <class N> bool run(N &node, const skia::SkRect &parent) {
+  FlowOptions options{};
+  if (kindOf(node, options) == kind::edge)
+    return false;
+  State &s = stateOf(node);
+  if (s.fAutoSizeAxes.has<axis::x>() || s.fScale != 1.0f || s.fFollow != nullptr)
+    return false;
+  enter(node);
+  const skia::SkRect room = inset(parent, s.fMargin);
+  s.fRegionWidth = widthIn(node, room.width());
+  giveWidths(node);
+  heights(node);
+  if (!s.fAutoSizeAxes.has<axis::y>())
+    s.fRegionHeight = s.fRelativeSizeAxes.has<axis::y>() ? room.height() * s.fHeight : s.fHeight;
+  place(node, anchoredBox(room, s.fRegionWidth, s.fRegionHeight, s.fAnchor, s.fOrigin, s.fX, s.fY));
+  s.fLastConstraint = parent;
+  return true;
 }
 // A flow laid out by the compiled passes where the rules cover it: whether
 // it was. Its own width from the box it is given, as layoutNode works it
-// out; its height what its children came to (sized by them) or its own.
+// out; its height what its children came to, or its own.
 template <class T> bool layOut(T &node, const skia::SkRect &parent) {
-  if (!on()) {
+  if (!on())
     return false;
+  if constexpr (kErasedWalks && std::derived_from<T, Node>) {
+    AnyNodeRef ref = AnyNodeRef::of(node);
+    return run(ref, parent);
   } else {
-    AnyNodeRef ref = refOf(node);
-    FlowOptions options{};
-    if (kindOf(ref, options) == kind::edge)
-      return false;
-    State &s = stateOf(ref);
-    if (s.fAutoSizeAxes.has<axis::x>() || s.fScale != 1.0f || s.fFollow != nullptr)
-      return false;
-    region r;
-    collect(r, ref);
-    const skia::SkRect room = inset(parent, s.fMargin);
-    r.nodes[0].width = widthIn(r, 0, room.width());
-    giveWidths(r, 0);
-    heights(r, 0);
-    if (!s.fAutoSizeAxes.has<axis::y>())
-      r.nodes[0].height = s.fRelativeSizeAxes.has<axis::y>() ? room.height() * s.fHeight : s.fHeight;
-    const skia::SkRect box = anchoredBox(room, r.nodes[0].width, r.nodes[0].height, s.fAnchor, s.fOrigin, s.fX, s.fY);
-    place(r, 0, box);
-    s.fLastConstraint = parent;
-    return true;
+    return run(node, parent);
   }
 }
 }  // namespace compiled
