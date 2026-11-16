@@ -76,7 +76,7 @@ template <class Axis, sizing How> void sizeAlong(Look &look, sized_piece<Axis, H
   // unsaid, as a spec leaves it -- what the node has there stays.
   const auto without = [](std::optional<scene::Axes> &axes) {
     if (axes)
-      axes = axes->template except<Axis>();
+      axes = axes->template without<Axis>();
   };
   without(spec.relativeSize);
   without(spec.autoSize);
