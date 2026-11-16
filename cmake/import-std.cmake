@@ -26,7 +26,7 @@ elseif(CMAKE_VERSION VERSION_GREATER_EQUAL 4.2)
       "d0edc3af-4c50-42ea-a356-e2862fe7a444")
 else()
   message(FATAL_ERROR
-    "osu-cpp is built as C++23 modules against `import std`, which needs "
+    "skiff is built as C++23 modules against `import std`, which needs "
     "CMake 4.2 or newer (found ${CMAKE_VERSION}).")
 endif()
 

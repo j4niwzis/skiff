@@ -73,7 +73,7 @@ static_assert(stack<3>({10.0f, 20.0f, 30.0f}, 4.0f, {}) ==
               std::array<float, 3>{0.0f, 14.0f, 38.0f});
 
 // FillFlowContainer: children laid end to end, wrapping when they run out of
-// room, which is how lazer builds every list and row of filters.
+// room: every list, every row of filters.
 namespace detail {
 // How a flow lays out a node's children -- the ones its forEachChild names --
 // with its options: Flow's own, and any node's that says it is laid out so.
