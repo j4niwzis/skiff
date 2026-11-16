@@ -47,17 +47,18 @@ template <class Engine>
 void apply(new_message, chat& c, Engine& engine, std::size_t) {
   const auto before = static_cast<node_id>(c.nodes.size());
   c.add(1);
-  engine.grow(c.nodes.size());
+  engine.grow(c.nodes);
+  engine.added_child(c.nodes, c.list);
   for (node_id n = before; n < c.nodes.size(); ++n) {
-    engine.mark(pass_id::pref, n, c.nodes);
-    engine.mark(pass_id::height, n, c.nodes);
+    engine.mark_whole(pass_id::pref, n, c.nodes);
+    engine.mark_whole(pass_id::height, n, c.nodes);
     if (!c.nodes.children[n].empty()) {
       engine.mark(pass_id::width, n, c.nodes);
-      engine.mark(pass_id::place, n, c.nodes);
+      engine.mark_place(n, 0, c.nodes);
     }
   }
   engine.mark(pass_id::width, c.list, c.nodes);
-  engine.mark(pass_id::place, c.list, c.nodes);
+  engine.mark_place(c.list, c.nodes.places[before], c.nodes);
 }
 
 // The same tree laid out from nothing.
@@ -65,7 +66,10 @@ void apply(new_message, chat& c, Engine& engine, std::size_t) {
   tree fresh = c.nodes;
   for (auto& each : fresh.values) std::ranges::fill(each, 0.0f);
   full{}.run(fresh);
-  return fresh.values == c.nodes.values;
+  // Sums kept by delta round differently from sums made again: equal to
+  // within a hundredth of a pixel.
+  return std::ranges::equal(fresh.values | std::views::join, c.nodes.values | std::views::join,
+                            [](float a, float b) { return std::abs(a - b) <= 0.01f + 1e-6f * std::abs(b); });
 }
 
 struct result {
@@ -78,7 +82,7 @@ result measure(edit_t edit, std::size_t messages, std::size_t edits) {
   chat c = make_chat(messages, 640.0f, 42);
   full{}.run(c.nodes);
   Engine engine;
-  engine.grow(c.nodes.size());
+  engine.grow(c.nodes);
   const auto start = std::chrono::steady_clock::now();
   for (std::size_t step = 0; step < edits; ++step) {
     spl::visit([&](auto one) { apply(one, c, engine, step); }, edit);

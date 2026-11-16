@@ -65,56 +65,55 @@ struct verdict {
   friend constexpr bool operator==(const verdict&, const verdict&) = default;
 };
 
-// The pass that computes an attribute, where one does.
-template <auto& Schedule>
-[[nodiscard]] consteval std::optional<std::size_t> pass_of(attribute what) {
-  const auto found = std::ranges::find_if(Schedule, [&](const pass& one) { return one.computes[std::to_underlying(what)]; });
-  return found == Schedule.end() ? std::nullopt : std::optional<std::size_t>(found - Schedule.begin());
-}
-// Whether a rule may read what it reads in the pass that runs it: anything
-// an earlier pass computed; in the same pass, only what that pass's order
-// has computed already -- in a postorder pass, the node's children's, in a
-// preorder one, its own (given it by its parent) or its parent's. Never a
-// sibling's of the same pass: siblings go side by side.
-template <auto& Schedule>
-[[nodiscard]] consteval bool may_read(const rule& one, const reads& read) {
-  const auto at = pass_of<Schedule>(one.target);
-  const auto then = pass_of<Schedule>(read.what);
-  if (!at || !then || *then > *at)
-    return false;
-  if (*then < *at)
-    return true;
-  switch (Schedule[*at].walk) {
-    case order::post: return one.of == place::self && read.where == place::children;
-    case order::pre:
-      return (one.of == place::children && read.where == place::self) || (one.of == place::self && read.where == place::parent);
-  }
-  return false;
-}
 // A kind's rules, checked against the schedule: each in a pass that may
 // write it (up a postorder pass, down a preorder one), reading only what it
 // may; and every attribute there is computed for the kind -- its own
-// synthesized ones, and, where it has children, theirs.
-template <class Kind, auto& Schedule = kSchedule>
-[[nodiscard]] consteval verdict check() {
-  constexpr auto& rules = Kind::rules;
+// synthesized ones, and, where it has children, theirs. One function over
+// the rules as data, made once: a template on the kind made its ranges
+// algorithms once for every kind.
+[[nodiscard]] consteval verdict check_rules(std::span<const rule> rules, bool holds, std::span<const pass> schedule) {
+  const auto pass_of = [&](attribute what) -> std::optional<std::size_t> {
+    const auto found = std::ranges::find_if(schedule, [&](const pass& one) { return one.computes[std::to_underlying(what)]; });
+    return found == schedule.end() ? std::nullopt : std::optional<std::size_t>(found - schedule.begin());
+  };
+  // Whether a rule may read what it reads in the pass that runs it: anything
+  // an earlier pass computed; in the same pass, only what that pass's order
+  // has computed already -- in a postorder pass, the node's children's, in
+  // a preorder one, its own (given it by its parent) or its parent's. Never
+  // a sibling's of the same pass: siblings go side by side.
+  const auto may_read = [&](const rule& one, const reads& read) {
+    const auto at = pass_of(one.target);
+    const auto then = pass_of(read.what);
+    if (!at || !then || *then > *at) return false;
+    if (*then < *at) return true;
+    switch (schedule[*at].walk) {
+      case order::post: return one.of == place::self && read.where == place::children;
+      case order::pre:
+        return (one.of == place::children && read.where == place::self) || (one.of == place::self && read.where == place::parent);
+    }
+    return false;
+  };
   for (const auto [index, one] : std::views::enumerate(rules)) {
-    const auto at = pass_of<Schedule>(one.target);
+    const auto at = pass_of(one.target);
     if (!at)
       return {false, "no pass computes the attribute", static_cast<std::size_t>(index)};
-    const bool upward = one.of == place::self && Schedule[*at].walk == order::post;
-    const bool downward = Schedule[*at].walk == order::pre;
+    const bool upward = one.of == place::self && schedule[*at].walk == order::post;
+    const bool downward = schedule[*at].walk == order::pre;
     if (!upward && !downward)
       return {false, "a postorder pass cannot give children an attribute", static_cast<std::size_t>(index)};
-    if (!std::ranges::all_of(one.from | std::views::take(one.count), [&](const reads& read) { return may_read<Schedule>(one, read); }))
+    if (!std::ranges::all_of(one.from | std::views::take(one.count), [&](const reads& read) { return may_read(one, read); }))
       return {false, "a rule reads what its pass has not computed yet", static_cast<std::size_t>(index)};
   }
   const auto has = [&](attribute what, place of) { return std::ranges::any_of(rules, [&](const rule& one) { return one.target == what && one.of == of; }); };
   if (!has(attribute::pref, place::self) || !has(attribute::height, place::self))
     return {false, "a kind leaves its own pref or height uncomputed", 0};
-  if (Kind::holds && !(has(attribute::width, place::children) && has(attribute::x, place::children) && has(attribute::y, place::children)))
+  if (holds && !(has(attribute::width, place::children) && has(attribute::x, place::children) && has(attribute::y, place::children)))
     return {false, "a container leaves its children's width or place uncomputed", 0};
   return {};
+}
+template <class Kind, auto& Schedule = kSchedule>
+[[nodiscard]] consteval verdict check() {
+  return check_rules(Kind::rules, Kind::holds, Schedule);
 }
 
 }  // namespace layout_bench

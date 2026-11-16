@@ -73,6 +73,7 @@ struct tree {
   std::vector<kind_t> kinds;
   std::vector<node_id> parents;
   std::vector<std::vector<node_id>> children;
+  std::vector<std::uint32_t> places;  // where among its parent's children each is
   std::array<std::vector<float>, kAttributes> values;
   float window = 0.0f;
 
@@ -85,6 +86,7 @@ struct tree {
     parents.push_back(parent);
     children.emplace_back();
     for (auto& each : values) each.push_back(0.0f);
+    places.push_back(parent != kNone ? static_cast<std::uint32_t>(children[parent].size()) : 0);
     if (parent != kNone)
       children[parent].push_back(id);
     return id;
