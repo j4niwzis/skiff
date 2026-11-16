@@ -144,6 +144,7 @@ public:
         list.fMovedDamage = skia::SkRect::MakeEmpty();
       }
       list.fLayoutMoved = skia::SkRect::MakeEmpty();
+      scene::detail::settle(contents);
       scene::eachChild(contents, [&](auto &item) {
         scene::State &one = scene::stateOf(item);
         const bool laid = !one.fLayoutMoved.isEmpty();
@@ -463,6 +464,8 @@ public:
   // The items of the list: the children of what this scrolls.
   template <class F> void eachItem(F &&f) {
     skiff::scene::eachChild(*this, [&](auto &child) {
+      // Where they are: what a move of the contents still owes them, paid.
+      skiff::scene::detail::settle(child);
       skiff::scene::eachChild(child, [&](auto &item) { f(skiff::scene::stateOf(item)); });
     });
   }

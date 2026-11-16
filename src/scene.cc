@@ -1011,6 +1011,16 @@ inline void record(NodeId child, NodeId parent, std::uint32_t place) {
     places().insert(child, place);
   }
 }
+// A child's share of its parent's signature (State::fChildSignature): its
+// id at its place, mixed. Summed over the children, the signature says
+// which node is at which place -- and, a sum, can be kept by what replaces
+// one child where it is (a list's row made again), without passing the rest.
+[[nodiscard]] constexpr std::size_t childShare(std::uint32_t place, NodeId id) noexcept {
+  std::uint64_t x = id ^ (static_cast<std::uint64_t>(place) * 0x9e3779b97f4a7c15ull);
+  x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ull;
+  x = (x ^ (x >> 27)) * 0x94d049bb133111ebull;
+  return static_cast<std::size_t>(x ^ (x >> 31));
+}
 // Its parent's children changed: that parent, walked whole and marked.
 inline void reshape(NodeId id) {
   if (const NodeId *above = parents().find(id)) {
@@ -1931,6 +1941,39 @@ public:
   // out twice -- in the provisional box and again in its own, the second
   // the same work -- but laid out once and moved.
   bool fHeightFree = false;
+  // How far its children are still to be moved: a subtree moved as it is
+  // (shiftSubtree, a flow's rows below one that grew, a placement) moves
+  // this node at once, and its children only when something goes into them
+  // -- a walk, a layout (settle) -- each then owing its own children as
+  // much. A list's 9,000 rows below a row that grew were each moved node by
+  // node through all they hold (~320 ns a node); now one write a row, and
+  // what holds them is moved only if it is ever gone into.
+  float fPendingX = 0.0f, fPendingY = 0.0f;
+  // Laid out again only because something under it changed -- its own
+  // place, size and box as they were (said by layoutNode before its
+  // layoutChildren): what lays out its children may redo only what changed.
+  bool fBelowOnly = false;
+  // A flow's memory of its last whole layout of its children: the box it
+  // laid them out in, and whether that layout can be redone in part -- down
+  // a column from its start, nothing grown, nothing anchored, nothing sized
+  // by its height (nodes' Flowing).
+  skia::SkRect fFlowBox = skia::SkRect::MakeEmpty();
+  bool fFlowSimple = false;
+  // Whether it was in its parent's flow at the parent's last layout: shown
+  // and not placed by its anchor. A row shown or hidden since is laid out
+  // with all of its siblings again, not in part.
+  bool fInFlowAtLayout = false;
+  // The height of what a flow's children came to, said by the flow as it
+  // lays them out (fContentKnown): what a node sized by them takes, not found
+  // again by passing over every child (flowBounds).
+  float fContentHeight = 0.0f;
+  bool fContentKnown = false;
+  // A flow down a column whose children are all in it, shown and of no
+  // depth: placed top to bottom in their order, so those in view are found
+  // by halving (eachChildInOrderedView), not by passing every one. How many
+  // children it laid out.
+  bool fFlowOrdered = false;
+  std::uint32_t fFlowCount = 0;
   // The children, as they were last time: a variant that switched, a row
   // added to a vector. Compared each frame; a different set is laid out and
   // repainted.
@@ -2485,11 +2528,18 @@ struct NodeInfo {
   TextKind fTextKind = text_kind::plain{};
 };
 
+namespace detail {
+// What a node owes its children's places, paid before anything goes into
+// them (State::fPendingX/Y): defined with the layout, below.
+template <class N> void settle(N &node);
+}  // namespace detail
+
 // The children a frame's walks visit: all of them -- or, below a node told
 // what of it is in view (a scrolled list's content), those that reach into
 // it, and those not laid out yet. What a frame costs is then what is on the
 // screen, not what the list holds.
 template <class T, class F> void eachChildInView(T &node, F &&f) {
+  ::skiff::scene::detail::settle(node);
   const std::optional<skia::SkRect> &view = stateOf(node).fInView;
   if (!view) {
     eachChild(node, f);
@@ -2507,9 +2557,64 @@ template <class T, class F> void eachChildInView(T &node, F &&f) {
   });
 }
 
+// The children of an ordered flow (State::fFlowOrdered) that reach into
+// `view`, in their order: the first whose bottom is past the view's top
+// found by halving, then each on while its top is above the view's bottom
+// -- and before it, those whose reach still comes into the view. A list of
+// 10,000 rows visited the 30 in view by passing all 10,000. Whether it
+// could: not where the node is not such a flow.
+template <class T, class F> bool eachChildInOrderedView(T &node, const skia::SkRect &view, F &&f) {
+  ::skiff::scene::detail::settle(node);
+  const State &self = stateOf(node);
+  if (!self.fFlowOrdered)
+    return false;
+  const std::uint32_t count = self.fFlowCount;
+  const auto bottomOf = [&](std::uint32_t at) {
+    float bottom = 0.0f;
+    childAt(node, at, [&](auto &each) { bottom = stateOf(each).fBounds.fBottom + stateOf(each).fShiftY; });
+    return bottom;
+  };
+  std::uint32_t lo = 0, hi = count;
+  while (lo < hi) {
+    const std::uint32_t mid = lo + (hi - lo) / 2;
+    if (bottomOf(mid) < view.fTop)
+      lo = mid + 1;
+    else
+      hi = mid;
+  }
+  const auto reaches = [&](const State &one) {
+    return one.fBounds.isEmpty() ||
+           skia::SkRect::Intersects(joined(one.fBounds, one.fReach).makeOffset(one.fShiftX, one.fShiftY), view);
+  };
+  std::uint32_t first = lo;
+  while (first > 0) {
+    bool in = false;
+    childAt(node, first - 1, [&](auto &each) { in = reaches(stateOf(each)); });
+    if (!in)
+      break;
+    --first;
+  }
+  for (std::uint32_t at = first; at < count; ++at) {
+    bool past = false;
+    childAt(node, at, [&](auto &each) {
+      const State &one = stateOf(each);
+      if (at >= lo && one.fBounds.fTop + one.fShiftY > view.fBottom && !reaches(one)) {
+        past = true;
+        return;
+      }
+      if (reaches(one))
+        f(each, at);
+    });
+    if (past)
+      break;
+  }
+  return true;
+}
+
 // The children in the order they are drawn: eachChild's order, unless one of
 // them has a depth. `f` gets the child and its position in eachChild order.
 template <class T, class F> void eachChildInDrawOrder(T &node, F &&f) {
+  ::skiff::scene::detail::settle(node);
   bool sorted = true;
   std::uint32_t count = 0;
   // A raised one, or one on the way to it, after all the others.
@@ -2546,6 +2651,7 @@ template <class T, class F> void eachChildInDrawOrder(T &node, F &&f) {
 
 // The union of the visible children's boxes.
 template <class T> [[nodiscard]] skia::SkRect childBounds(T &node) {
+  ::skiff::scene::detail::settle(node);
   skia::SkRect content = skia::SkRect::MakeEmpty();
   eachChild(node, [&](auto &child) {
     const State &state = stateOf(child);
@@ -2564,6 +2670,7 @@ template <class T> [[nodiscard]] skia::SkRect childBounds(T &node) {
 // node as wide: a quote filling its bubble made every bubble with one the
 // widest there is.
 template <class Axis, class T> [[nodiscard]] skia::SkRect flowBounds(T &node) {
+  ::skiff::scene::detail::settle(node);
   std::optional<skia::SkRect> content;
   eachChild(node, [&](auto &child) {
     const State &state = stateOf(child);
@@ -2595,6 +2702,7 @@ void draw(AnyNodeRef &child, Painting &painting, skia::SkCanvas *canvas, float a
 // Lays every child out in the content box: what a node without its own
 // layoutChildren does.
 template <class T> void layoutChildrenInContentBox(T &node) {
+  ::skiff::scene::detail::settle(node);
   const skia::SkRect box = node.fState.contentBox();
   eachChild(node, [&](auto &child) { layout(child, box); });
 }
@@ -2612,21 +2720,42 @@ inline void noteMoved(State &state) {
   state.fLayoutMoved = state.fBounds != state.fBoundsAtPass ? joined(state.fBoundsAtPass, state.fBounds)
                                                             : skia::SkRect::MakeEmpty();
 }
-// A laid-out subtree moved as it is, within a layout pass: its bounds and
-// the boxes it was laid out in, and what each moved over in the pass noted,
-// as laying it out in the moved box would have -- so that it is repainted
-// where it was and where it is. A recording made where it was is let go.
+// A node moved as it is: its bounds, the box it was laid out in and its
+// reach where it is now, its recording (made where it was) let go, and its
+// children owing as much (fPendingX/Y) -- moved when gone into.
+inline void moveOwn(State &state, float dx, float dy) {
+  state.fBounds.offset(dx, dy);
+  state.fLastConstraint.offset(dx, dy);
+  state.fReach.offset(dx, dy);
+  state.fPicture = nullptr;
+  state.fPendingX += dx;
+  state.fPendingY += dy;
+}
+// What a node owes its children, paid before anything goes into them: each
+// moved as it is, owing its own children as much in turn.
+template <class N> void settle(N &node) {
+  State &state = stateOf(node);
+  if (state.fPendingX == 0.0f && state.fPendingY == 0.0f)
+    return;
+  const float dx = std::exchange(state.fPendingX, 0.0f);
+  const float dy = std::exchange(state.fPendingY, 0.0f);
+  eachChild(node, [&](auto &child) { moveOwn(stateOf(child), dx, dy); });
+}
+// A laid-out subtree moved as it is, within a layout pass: the node moved
+// (its children when gone into), what the pass moved it over noted, and
+// where all it reaches was and is repainted -- what it holds is not noted
+// node by node, so its reach stands for them.
 template <class N> void moveLaidOut(N &node, float dx, float dy) {
   State &state = stateOf(node);
   notePass(state);
-  state.fBounds.offset(dx, dy);
-  state.fLastConstraint.offset(dx, dy);
-  state.fPicture = nullptr;
+  const skia::SkRect reached = state.fReach;
+  moveOwn(state, dx, dy);
   noteMoved(state);
-  eachChild(node, [&](auto &child) { moveLaidOut(child, dx, dy); });
+  state.fMovedDamage = joined(joined(state.fMovedDamage, reached), state.fReach);
 }
 
 template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
+  ::skiff::scene::detail::settle(node);
   State &state = node.fState;
   const ViewLaidOut inView{state.fViewName};
   ++walkCounts().layout;
@@ -2657,6 +2786,9 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
     }
     return;
   }
+  // Its own layout as it was, in the same box: laid out again only for what
+  // changed under it.
+  state.fBelowOnly = state.fLayoutValid && parent == state.fLastConstraint;
   state.fPlacementDirty = false;
   state.fLastConstraint = parent;
   work::reach(state.fId);
@@ -2699,6 +2831,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
                                            autoY ? provisionalH : height);
     provisional = state.fBounds;
     state.fHeightFree = false;
+    state.fContentKnown = false;
     ++work::provisionalDepth();
     node.layoutChildren();
     --work::provisionalDepth();
@@ -2706,7 +2839,9 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
       width = flowBounds<axis::x>(node).width() + state.fPadding.totalX();
     }
     if (autoY) {
-      height = flowBounds<axis::y>(node).height() + state.fPadding.totalY();
+      // As the flow said, where it did: a list's every row passed over
+      // otherwise, at every change in one of them.
+      height = (state.fContentKnown ? state.fContentHeight : flowBounds<axis::y>(node).height()) + state.fPadding.totalY();
     }
   }
 
@@ -2742,6 +2877,8 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
     const float dy = state.fBounds.fTop - provisional->fTop;
     if (dx != 0.0f || dy != 0.0f)
       eachChild(node, [&](auto &child) { moveLaidOut(child, dx, dy); });
+    // Its children are where its box is: a later layout in part starts there.
+    state.fFlowBox.offset(dx, dy);
     state.fLayoutValid = true;
     state.fSubtreeDirty = false;
     return;
@@ -2991,6 +3128,7 @@ void drawSelfOf(T &node, Hooks &, skia::SkCanvas *canvas, float alpha) {
 
 template <class T>
 void drawNode(T &node, Painting &painting, skia::SkCanvas *canvas, float inheritedAlpha) {
+  ::skiff::scene::detail::settle(node);
   State &state = node.fState;
   if (!state.fVisible || state.fAlpha <= 0.001f) {
     return;
@@ -3088,13 +3226,10 @@ void drawNode(T &node, Painting &painting, skia::SkCanvas *canvas, float inherit
 // An erased node in it is laid out again instead.
 inline void shiftSubtree(AnyNodeRef &node, float dx, float dy);
 template <class N> void shiftSubtree(N &node, float dx, float dy) {
-  State &state = stateOf(node);
-  state.fBounds.offset(dx, dy);
-  state.fLastConstraint.offset(dx, dy);
-  // A recording made where it was: let go, drawn again where it is -- kept,
-  // it played the subtree back where it had been (a list pushed down).
-  state.fPicture = nullptr;
-  eachChild(node, [&](auto &child) { shiftSubtree(child, dx, dy); });
+  // A recording made where it was is let go, drawn again where it is --
+  // kept, it played the subtree back where it had been (a list pushed
+  // down). What it holds is moved when gone into (State::fPendingX/Y).
+  detail::moveOwn(stateOf(node), dx, dy);
 }
 template <class N> void shiftSubtree(N &node, float dy) { shiftSubtree(node, 0.0f, dy); }
 
@@ -3222,6 +3357,7 @@ template <class N> constexpr bool pollsEachFrame(const N &) { return false; }
 template <class N>
 void update(N &child, UpdateContext &context, StyleResolver resolver,
             const Style *inherited, bool restyleAll) {
+  ::skiff::scene::detail::settle(child);
   State &state = child.fState;
   ++(context.fTick ? walkCounts().tick : walkCounts().restyle);
   if (context.fTick) {
@@ -3291,8 +3427,8 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
     std::uint32_t place = 0;
     eachChild(child, [&](auto &each) {
       const NodeId id = stateOf(each).fId;
+      signature += work::childShare(place, id);
       work::record(id, state.fId, place++);
-      signature = signature * 1099511628211ull ^ static_cast<std::size_t>(id);
     });
     if (signature != state.fChildSignature) {
       work::reshaped().insert(state.fId);
@@ -3301,6 +3437,17 @@ void update(N &child, UpdateContext &context, StyleResolver resolver,
   }
   if (restyle) {
     eachChild(child, visit);
+  } else if (context.fTick && !work::tickingFull() && state.fInView && state.fFlowOrdered &&
+             walk::viaHints(child, [&](auto &each) { visit(each); })) {
+    // A column told what of it is in view, its children ordered: the marked
+    // (and the new, which are marked) straight by the hints -- done above --
+    // and of those in view, found by halving, the ones that tick. Every one
+    // of a long list's rows was passed at every frame to find these.
+    (void)eachChildInOrderedView(child, *state.fInView, [&](auto &each, std::uint32_t) {
+      const State &one = stateOf(each);
+      if (!work::pending().contains(one.fId) && work::ticking().contains(one.fId))
+        visit(each);
+    });
   } else if (context.fTick) {
     // Only where something ticks, changed, or is new -- everywhere, where the
     // tick has to find what was made. A new child wherever it is, in view or
@@ -3386,6 +3533,7 @@ template <class N, class F> bool viaHints(N &node, F &&f) {
 }
 
 template <class N> bool markDirty(N &child) {
+  ::skiff::scene::detail::settle(child);
   State &state = child.fState;
   ++walkCounts().dirty;
   bool below = false;
@@ -3417,9 +3565,9 @@ template <class N> bool markDirty(N &child) {
     // Every child placed, in view or not: one out of view that marks itself
     // -- a loader turning at the far end of a list -- with no parent known
     // had every frame walk the whole tree. Only read where nothing changed.
+    signature += work::childShare(place, one.fId);
     work::record(one.fId, state.fId, place++);
     into(each);
-    signature = signature * 1099511628211ull ^ static_cast<std::size_t>(one.fId);
   });
   if (signature != state.fChildSignature) {
     state.fChildSignature = signature;
@@ -3451,6 +3599,7 @@ template <class N> bool markDirty(N &child) {
 // What has to be repainted, and forgets it. A masking node clips what its
 // subtree reports; a hidden one drops it, though its own change counts.
 template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
+  ::skiff::scene::detail::settle(child);
   State &state = child.fState;
   ++walkCounts().damage;
   skia::SkRect damage = skia::SkRect::MakeEmpty();
@@ -3548,7 +3697,35 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
       state.fDrawnChildren.push_back({one.fId, area});
     }
   });
-  if (!hinted) {
+  // Laid out or moved itself, a column told what of it is in view, its
+  // children ordered and none gone or come: those in view found by halving,
+  // the marked ones out of view straight by the hints -- not every row
+  // passed to find them.
+  const bool ordered = !hinted && view && state.fFlowOrdered && !work::walkingFull() && !work::disabled() &&
+                       !work::reshaped().contains(state.fId) && [&] {
+                         std::vector<State::DrawnChild> drawn;
+                         const auto keep = [&](auto &each) {
+                           const State &one = stateOf(each);
+                           into(each);
+                           drawn.push_back({one.fId, joined(joined(one.fBounds, one.fDrawnBounds),
+                                                            one.fReach.makeOffset(one.fShiftX, one.fShiftY))});
+                         };
+                         // Marked and reaching into the view: the halving finds it.
+                         const auto reaches = [&](const State &one) {
+                           return one.fBounds.isEmpty() ||
+                                  skia::SkRect::Intersects(joined(one.fBounds, one.fReach).makeOffset(one.fShiftX, one.fShiftY), *view);
+                         };
+                         if (!walk::viaHints(child, [&](auto &each) {
+                               if (!inView(stateOf(each)) || reaches(stateOf(each)))
+                                 return;
+                               keep(each);  // marked, out of view
+                             }))
+                           return false;
+                         (void)eachChildInOrderedView(child, *view, [&](auto &each, std::uint32_t) { keep(each); });
+                         state.fDrawnChildren = std::move(drawn);
+                         return true;
+                       }();
+  if (!hinted && !ordered) {
     state.fDrawnChildren.clear();
     std::uint32_t place = 0;
     eachChild(child, [&](auto &each) {
@@ -3589,6 +3766,7 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
 }
 
 template <class N> bool hasDamage(N &child) {
+  ::skiff::scene::detail::settle(child);
   const State &state = child.fState;
   if (state.fDamaged || !state.fMovedDamage.isEmpty() || !state.fLayoutMoved.isEmpty()) {
     return true;
@@ -3710,6 +3888,7 @@ void hover(N &child, float x, float y, bool visibleAbove,
 // The front-most node under a point that takes input: what is drawn last is
 // hit first.
 template <class N> bool hitPath(N &child, float x, float y, Path &path) {
+  ::skiff::scene::detail::settle(child);
   State &state = child.fState;
   if (!state.fVisible || state.fAlpha <= 0.001f || state.fDisabled) {
     return false;
@@ -3751,6 +3930,7 @@ template <class N> bool hitPath(N &child, float x, float y, Path &path) {
 }
 
 template <class N> bool findPath(N &child, NodeId id, Path &path) {
+  ::skiff::scene::detail::settle(child);
   if (child.fState.fId == id) {
     return true;
   }
@@ -3792,6 +3972,7 @@ template <class N> bool findPath(N &child, NodeId id, Path &path) {
 // its own. One walk down the path, not a search of the tree for each node
 // on it.
 template <class N> std::optional<Cursor> cursorOnPath(N &child, const Path &path, std::size_t at) {
+  ::skiff::scene::detail::settle(child);
   std::optional<Cursor> below;
   if (at < path.size()) {
     childAt(child, path[at], [&](auto &each) { below = walk::cursorOnPath(each, path, at + 1); });
@@ -3807,6 +3988,7 @@ template <class N> std::optional<Cursor> cursorOnPath(N &child, const Path &path
 }
 
 template <class N> NodeId idAt(N &child, const Path &path, std::size_t at) {
+  ::skiff::scene::detail::settle(child);
   if (at == path.size()) {
     return child.fState.fId;
   }
@@ -3860,6 +4042,7 @@ template <class N, class C>
 void routePointer(N &child, const Path &path, std::size_t at,
                   const PointerEvent &given, PointerReply &reply, Routed &routed,
                   bool targetOnly, const C &carried) {
+  ::skiff::scene::detail::settle(child);
   State &state = child.fState;
   // In the space this is laid out in: moved back by its shift. Most nodes
   // have none, and are given the event as it is.
@@ -3908,6 +4091,7 @@ void routePointer(N &child, const Path &path, std::size_t at,
 template <class N, class Input, class Deliver, class C>
 void route(N &child, const Path &path, std::size_t at, const Input &input,
            Reply &reply, Deliver deliver, const C &carried) {
+  ::skiff::scene::detail::settle(child);
   const auto phaseOf = [&](const auto &when) {
     reply.fCurrent = child.fState.fId;
     deliver(child, when, input, reply, carried);
@@ -4045,6 +4229,7 @@ void SemanticDelivery::next(P &, AnyNodeRef &child, const Path &path, std::size_
 }
 
 template <class N> std::optional<NodeInfo> info(N &child, NodeId id) {
+  ::skiff::scene::detail::settle(child);
   const State &state = child.fState;
   if (state.fId == id) {
     const Semantics said = child.semantics();
@@ -4082,6 +4267,7 @@ template <class N> std::optional<NodeInfo> info(N &child, NodeId id) {
 template <class N>
 bool focusChanged(N &child, NodeId id, bool focused, StyleResolver resolver,
                   float viewportWidth) {
+  ::skiff::scene::detail::settle(child);
   State &state = child.fState;
   const StyleResolver own = state.fStyleResolver ? state.fStyleResolver
                                                  : resolver;
@@ -4108,6 +4294,7 @@ bool focusChanged(N &child, NodeId id, bool focused, StyleResolver resolver,
 template <class N>
 void collectSemantics(N &child, std::vector<Semantics> &out, int parent,
                       NodeId focused) {
+  ::skiff::scene::detail::settle(child);
   const State &state = child.fState;
   if (!state.fVisible || state.fAlpha <= 0.001f) {
     return;
@@ -4130,6 +4317,7 @@ void collectSemantics(N &child, std::vector<Semantics> &out, int parent,
 }
 
 template <class N> void collectFocusable(N &child, std::vector<NodeId> &out) {
+  ::skiff::scene::detail::settle(child);
   const State &state = child.fState;
   if (!state.fVisible || state.fDisabled || state.fAlpha <= 0.001f) {
     return;
@@ -4148,6 +4336,7 @@ template <class N> void collectFocusable(N &child, std::vector<NodeId> &out) {
 // through -- a layer of the window over everything would repaint it all.
 template <class N>
 void damageOver(N &child, NodeId below, const skia::SkRect &rect, bool &passed, skia::SkRect &damage) {
+  ::skiff::scene::detail::settle(child);
   State &state = child.fState;
   if (state.fId == below) {
     passed = true;
@@ -4193,6 +4382,7 @@ template <class N> double ownWakeAt(const N &) {
   return std::numeric_limits<double>::infinity();
 }
 template <class N> double wakeAt(N &child) {
+  ::skiff::scene::detail::settle(child);
   if (!child.fState.fVisible) {
     return std::numeric_limits<double>::infinity();
   }
@@ -4207,6 +4397,7 @@ template <class N> double wakeAt(N &child) {
 }
 
 template <class N> bool animating(N &child) {
+  ::skiff::scene::detail::settle(child);
   ++walkCounts().animating;
   const bool transform = !child.fState.fTransforms.empty();
   if (transform || child.settling()) {
@@ -4259,6 +4450,7 @@ bool clickPath(N &child, const Path &path, std::size_t at, float x, float y) {
 }
 template <class N, class C>
 bool clickPath(N &child, const Path &path, std::size_t at, float x, float y, const C &carried) {
+  ::skiff::scene::detail::settle(child);
   x -= child.fState.fShiftX;
   y -= child.fState.fShiftY;
   bool taken = false;
@@ -5109,11 +5301,7 @@ template <class T, class F> decltype(auto) walkOn(void *node, F &&f) {
 // new layout instead stayed where it was for a frame while the list went on
 // as if it had moved, and every list outside a release build jumped.
 inline void shiftSubtree(AnyNodeRef &node, float dx, float dy) {
-  State &state = stateOf(node);
-  state.fBounds.offset(dx, dy);
-  state.fLastConstraint.offset(dx, dy);
-  state.fPicture = nullptr;  // as above: made where it was
-  node.forEachChild([&](AnyNodeRef &child) { shiftSubtree(child, dx, dy); });
+  detail::moveOwn(stateOf(node), dx, dy);  // as above: what it holds, when gone into
 }
 // Outside a release build, a node laid out by what holds it -- a dialog its
 // content, a slide-over its pages -- goes through its table too, as a walk's
@@ -5182,6 +5370,7 @@ template <class N>
   requires(kSeenThrough<N> || kSeenAsBase<N>)
 void laidOutRows(N &node, std::size_t depth, std::string_view view, std::vector<LaidOutNode> &rows);
 template <class N> void laidOutRows(N &node, std::size_t depth, std::string_view view, std::vector<LaidOutNode> &rows) {
+  ::skiff::scene::detail::settle(node);
   const State &state = stateOf(node);
   const bool names = state.fViewName != nullptr;
   const std::string_view in = names ? std::string_view(state.fViewName) : view;

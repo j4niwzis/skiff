@@ -163,13 +163,20 @@ template <class N> struct Flowing {
   // Whether a child shown reads the box's height: sized or grown as a share
   // of it, or placed by its anchor in it -- found as measured() passes them.
   bool fReadsHeight = false;
+  // How many children it has, and whether all are in the flow, shown, of no
+  // depth (State::fFlowOrdered) -- found as measured() passes them.
+  std::uint32_t fCount = 0;
+  bool fAllInFlow = true;
   std::vector<skiff::scene::State *> measured(const skia::SkRect &box) {
     std::vector<skiff::scene::State *> shown;
     skiff::scene::eachChild(fNode, [&](auto &child) {
       skiff::scene::State &state = skiff::scene::stateOf(child);
+      ++fCount;
+      fAllInFlow = fAllInFlow && inFlow(state) && state.fDepth == 0.0f;
       if (state.fVisible && (state.fOutOfFlow || state.fRelativeSizeAxes.template has<skiff::scene::axis::y>() ||
                              state.fGrowAxes.template has<skiff::scene::axis::y>()))
         fReadsHeight = true;
+      state.fInFlowAtLayout = inFlow(state);
       if (inFlow(state)) {
         if (const skia::SkRect childBox = boxFor(state, box); this->waits(state, childBox))
           fWaiting.push_back(&state);
@@ -232,6 +239,8 @@ template <class N> struct Flowing {
 
   void lay(direction::vertical) {
     const skia::SkRect box = skiff::scene::stateOf(fNode).contentBox();
+    if (this->redoChanged(box))
+      return;
     grow<skiff::scene::axis::y>(box, fOptions.spacingY);
     skiff::scene::State &self = skiff::scene::stateOf(fNode);
     if (self.fFlowPass != skiff::scene::work::layoutPass()) {
@@ -275,6 +284,99 @@ template <class N> struct Flowing {
     place(box, places);
     told(box);
     self.fHeightFree = this->freeOfHeight(true);
+    // What a later layout of only what changed starts from: this box, and
+    // whether this one can be redone in part; the height the rows came to.
+    self.fFlowBox = box;
+    self.fFlowSimple = self.fHeightFree && !fAnyGrows;
+    self.fFlowOrdered = fAllInFlow;
+    self.fFlowCount = fCount;
+    if (self.fFlowSimple) {
+      self.fContentHeight = shown.empty() ? 0.0f : y - fOptions.spacingY - gaps.fBetween;
+      self.fContentKnown = true;
+    }
+  }
+
+  // Laid out again only for what changed under it (State::fBelowOnly), in
+  // the box of its last whole layout, that one simple (fFlowSimple): only
+  // the children the frame marked are laid out again -- found by the hints
+  // to them, as the walks find them -- and those after the first whose
+  // height changed moved by as much, one write each (moveLaidOut); none of
+  // the others gone into. A word typed into one row of 10,000 laid out and
+  // placed all 10,000, twice. Whether it did: else the whole is laid out.
+  bool redoChanged(const skia::SkRect &box) {
+    namespace scene = skiff::scene;
+    scene::State &self = scene::stateOf(fNode);
+    if (!self.fBelowOnly || !self.fFlowSimple || self.fFlowBox != box || self.fAutoSizeAxes.template has<scene::axis::x>())
+      return false;
+    if (scene::work::walkingFull() || scene::work::disabled() || scene::work::reshaped().contains(self.fId))
+      return false;
+    const scene::NodeId *head = scene::work::hintHeads().find(self.fId);
+    if (head == nullptr)
+      return false;
+    // The marked children, by their places -- each still there, still in
+    // the flow as it was at the last layout (not shown or hidden since).
+    std::array<std::pair<std::uint32_t, scene::NodeId>, scene::work::kFewHints> marked{};
+    std::size_t count = 0;
+    for (std::uint32_t at = static_cast<std::uint32_t>(*head); at != 0;) {
+      const scene::work::Hint hint = scene::work::hints()[at - 1];
+      at = hint.fNext;
+      if (count == marked.size())
+        return false;
+      marked[count++] = {hint.fPlace, hint.fChild};
+    }
+    std::ranges::sort(marked.begin(), marked.begin() + static_cast<std::ptrdiff_t>(count));
+    bool still = true;
+    for (const auto &[place, id] : std::span(marked).first(count)) {
+      const bool found = scene::childAt(fNode, place, [&](auto &child) {
+        const scene::State &state = scene::stateOf(child);
+        still = still && state.fId == id && inFlow(state) == state.fInFlowAtLayout && !state.fOutOfFlow;
+      });
+      still = still && found;
+    }
+    if (!still)
+      return false;
+    // From the first marked on: each marked one moved by what changed above
+    // it and laid out again; each after, moved by what changed above it.
+    const std::optional<skia::SkRect> &view = self.fInView;
+    std::size_t next = 0;
+    std::uint32_t at = 0;
+    float delta = 0.0f;
+    scene::eachChild(fNode, [&](auto &child) {
+      const std::uint32_t place = at++;
+      if (place < marked[0].first || (next == count && delta == 0.0f))
+        return;
+      scene::State &state = scene::stateOf(child);
+      if (next < count && place == marked[next].first) {
+        ++next;
+        if (!inFlow(state))
+          return;
+        const float before = state.fBounds.height() + state.fMargin.totalY();
+        const float beforeWidth = state.fBounds.width() + state.fMargin.totalX();
+        state.arrange(state.fX, state.fY + delta);
+        scene::layout(child, boxFor(state, box));
+        // Across, as a whole layout places it: where its width changed.
+        const float width = state.fBounds.width() + state.fMargin.totalX();
+        if (width != beforeWidth) {
+          state.arrange(crossOffset(state, box.width(), width), state.fY);
+          scene::layout(child, boxFor(state, box));
+        }
+        delta += state.fBounds.height() + state.fMargin.totalY() - before;
+        return;
+      }
+      if (delta == 0.0f || !inFlow(state))
+        return;
+      // Moved as it is: placed where a whole layout would put it, its
+      // subtree moved when gone into; reached by the damage walk where it
+      // is in view, to be repainted where it was and is.
+      state.fY += delta;
+      scene::detail::moveLaidOut(child, 0.0f, delta);
+      if (!view || skia::SkRect::Intersects(scene::joined(state.fBounds, state.fReach), *view))
+        scene::work::reach(state.fId);
+    });
+    self.fContentHeight += delta;
+    self.fContentKnown = true;
+    self.fHeightFree = true;
+    return true;
   }
 
   // Whether this layout was free of the box's height (State::fHeightFree):
@@ -353,6 +455,8 @@ template <class N> struct Flowing {
     place(box, places);
     told(box);
     skiff::scene::stateOf(fNode).fHeightFree = this->freeOfHeight(false);
+    skiff::scene::stateOf(fNode).fFlowSimple = false;
+    skiff::scene::stateOf(fNode).fFlowOrdered = false;
   }
 
   // What a child takes on its line, wrapped: what it is -- or, where it
@@ -544,6 +648,8 @@ template <class N> struct Flowing {
     }
   }
 
+  // Whether a child grows along the flow: found by grow().
+  bool fAnyGrows = false;
   // Children that grow take an equal share of what the rest leave along the
   // axis, written before anything is placed.
   template <class Axis> void grow(const skia::SkRect &box, float spacing) {
@@ -556,6 +662,7 @@ template <class N> struct Flowing {
       const skiff::scene::State &state = skiff::scene::stateOf(child);
       any = any || (inFlow(state) && state.fGrowAxes.template has<Axis>());
     });
+    fAnyGrows = any;
     if (!any) {
       return;
     }
@@ -701,10 +808,15 @@ public:
 //             [](auto& row, auto& c) { return row.shown == view(c); });
 //
 // Keys may repeat (a message not yet given an id): each row is taken once.
+// What reconcile tells of a row it makes again where it was, before it goes:
+// its place and the row as it was. Nothing, unless asked.
+struct NoRemade {
+  template <class Row> void operator()(std::size_t, const Row &) const {}
+};
 template <class Row, std::ranges::input_range Items, class KeyOf, class RowKey,
-          class Make, class Shows>
+          class Make, class Shows, class Remade = NoRemade>
 bool reconcile(std::vector<Row> &rows, Items &&items, KeyOf keyOf,
-               RowKey rowKey, Make make, Shows shows) {
+               RowKey rowKey, Make make, Shows shows, Remade remade = {}) {
   using Key = std::remove_cvref_t<std::invoke_result_t<RowKey, const Row &>>;
   // The same rows in the same order -- the usual change, one or two of them
   // shown otherwise (someone's presence): those made again where they are,
@@ -727,6 +839,7 @@ bool reconcile(std::vector<Row> &rows, Items &&items, KeyOf keyOf,
           i = 0;
           for (auto &&item : items) {
             if (!std::invoke(shows, std::as_const(rows[i]), item)) {
+              std::invoke(remade, i, std::as_const(rows[i]));
               rows[i] = std::invoke(make, item);
               changed = true;
             }
@@ -764,6 +877,7 @@ bool reconcile(std::vector<Row> &rows, Items &&items, KeyOf keyOf,
         if (i >= kept) {
           rows.push_back(std::invoke(make, item));
         } else if (!std::invoke(shows, std::as_const(rows[i]), item)) {
+          std::invoke(remade, i, std::as_const(rows[i]));
           std::destroy_at(&rows[i]);
           std::construct_at(&rows[i], std::invoke(make, item));
           changed = true;
@@ -897,16 +1011,55 @@ public:
       : Container(std::move(container)), fMake(std::move(make)), fRowSpec(std::move(rowSpec)) {}
   // Items: a key, its view, and the rest, in the order they are listed.
   template <std::ranges::input_range Items> bool read(Items &&items) {
+    namespace scene = skiff::scene;
+    // A row made again where it was: what it was, for the one in its place.
+    struct Was {
+      std::size_t place;
+      scene::NodeId id;
+      skia::SkRect bounds;
+      float x, y;
+      bool inFlow;
+    };
+    std::vector<Was> remade;
+    const std::size_t before = fRows.size();
     const bool changed = reconcile(
         fRows, std::forward<Items>(items),
         [](const auto &item) -> const Key & { return std::get<0>(item); },
         [](const Kept &row) -> const Key & { return row.fKey; },
         [this](const auto &item) { return Kept(item, fMake, fRowSpec); },
-        [](const Kept &row, const auto &item) { return row.fView == std::get<1>(item); });
-    if (changed) {
+        [](const Kept &row, const auto &item) { return row.fView == std::get<1>(item); },
+        [&](std::size_t place, const Kept &row) {
+          const scene::State &was = row.fState;
+          remade.push_back({place, was.fId, was.fBounds, was.fX, was.fY, was.fInFlowAtLayout});
+        });
+    if (!changed)
+      return false;
+    if (fRows.size() != before || remade.empty()) {
       this->invalidateLayout();
+      return true;
     }
-    return changed;
+    // Only rows made again where they were -- a message edited, a reaction
+    // come: each new one put where its row was, as its row was placed and
+    // laid out, so that the list lays out only it and moves those below it
+    // by what it grew; told to the work tables where it is, its share of the
+    // list's signature in place of the old row's, and marked. The old row's
+    // going said the list's children changed, and they did, where it knows:
+    // not reshaped, and not laid out whole. Every row was laid out, placed
+    // and walked again for one of them.
+    scene::State &self = this->fState;
+    for (const Was &was : remade) {
+      scene::State &now = fRows[was.place].fState;
+      now.fBounds = was.bounds;
+      now.fX = was.x;
+      now.fY = was.y;
+      now.fInFlowAtLayout = was.inFlow;
+      self.fChildSignature += scene::work::childShare(static_cast<std::uint32_t>(was.place), now.fId);
+      self.fChildSignature -= scene::work::childShare(static_cast<std::uint32_t>(was.place), was.id);
+      scene::work::record(now.fId, self.fId, static_cast<std::uint32_t>(was.place));
+      scene::work::mark(now.fId);
+    }
+    scene::work::reshaped().erase(self.fId);
+    return true;
   }
   template <class Self, class F> void forEachChild(this Self &self, F &&f) { f(self.fRows); }
   [[nodiscard]] std::size_t size() const noexcept { return fRows.size(); }

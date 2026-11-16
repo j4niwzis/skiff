@@ -331,6 +331,7 @@ private:
     seen out;
     const skia::SkRect whole = this->fState.fBounds;
     const auto look = [&](this const auto &self, auto &node) -> void {
+      scene::detail::settle(node);  // its parts where they are
       scene::eachChild(node, [&](auto &part) {
         const scene::State &state = scene::stateOf(part);
         if (!state.fVisible)
