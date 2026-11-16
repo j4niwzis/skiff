@@ -601,6 +601,9 @@ struct Entry {
   NodeId place = 0;
   NodeId hintHead = 0;
   float shiftX = 0.0f, shiftY = 0.0f;  // the node's fShiftX and fShiftY
+  // What its children still owe of a move (its State's fPendingX/Y): what a
+  // node's bounds are short of where it is, summed over its ancestors.
+  float pendingX = 0.0f, pendingY = 0.0f;
   std::uint32_t generation = 0;
   bool pending = false, ticking = false, root = false, hinted = false, reshaped = false;
   bool unseen = false;  // made, and no tick has come to it yet
@@ -985,6 +988,22 @@ struct Offset {
   }
   return sum;
 }
+// How far a node still is from where it is: what its ancestors owe their
+// children of a move (State::fPendingX/Y), as the work tables have it --
+// what its bounds are short of until something goes into it.
+[[nodiscard]] inline Offset owedTo(NodeId id) {
+  Offset sum;
+  const NodeId *up = parents().find(id);
+  for (int depth = 0; depth < 512 && up != nullptr; ++depth) {
+    const Entry *here = entry(*up);
+    if (here == nullptr)
+      break;
+    sum.x += here->pendingX;
+    sum.y += here->pendingY;
+    up = parents().find(*up);
+  }
+  return sum;
+}
 // The damage walk's way down: the shifts of the nodes above where it is, to
 // say what it finds where it is on the screen.
 inline Offset &damageOffset() {
@@ -1220,11 +1239,16 @@ public:
   }
   [[nodiscard]] const Margin &margin() const noexcept { return fMargin; }
   [[nodiscard]] const Margin &padding() const noexcept { return fPadding; }
-  [[nodiscard]] const skia::SkRect &bounds() const noexcept { return fBounds; }
+  // Where it is: its bounds, and what its ancestors still owe it of a move
+  // (paid as soon as anything goes into them; until then, said here).
+  [[nodiscard]] skia::SkRect bounds() const noexcept {
+    const work::Offset owed = work::owedTo(fId);
+    return fBounds.makeOffset(owed.x, owed.y);
+  }
   // Where it is shown and pressed, in the space its parent lays it out in:
   // its bounds moved by its own shift. A part moved apart from its layout --
   // beside a sticker -- is pressed there, not where it was laid out.
-  [[nodiscard]] skia::SkRect shownBounds() const noexcept { return fBounds.makeOffset(fShiftX, fShiftY); }
+  [[nodiscard]] skia::SkRect shownBounds() const noexcept { return this->bounds().makeOffset(fShiftX, fShiftY); }
   // The box children are laid out in: this node, less its padding.
   [[nodiscard]] skia::SkRect contentBox() const {
     return inset(fBounds, fPadding);
@@ -2409,9 +2433,7 @@ struct Node : NodeBase {
 
   // -- the common state, reached from the node
   [[nodiscard]] NodeId id() const noexcept { return fState.id(); }
-  [[nodiscard]] const skia::SkRect &bounds() const noexcept {
-    return fState.bounds();
-  }
+  [[nodiscard]] skia::SkRect bounds() const noexcept { return fState.bounds(); }
   [[nodiscard]] skia::SkRect shownBounds() const noexcept { return fState.shownBounds(); }
   [[nodiscard]] bool visible() const noexcept { return fState.visible(); }
   [[nodiscard]] bool hovered() const noexcept { return fState.hovered(); }
@@ -2471,6 +2493,15 @@ struct Node : NodeBase {
   void markDamaged() { fState.markDamaged(); }
   void setRaised(bool raised) { fState.setRaised(raised); }
 };
+
+// A node laid out by hooks of its own -- a measure or a layoutChildren
+// declared by its type (or a base of it other than Node), not a flow's: the
+// compiled layout takes it whole, at its edge, by those hooks. (A flow's own
+// layoutChildren -- Flow's, Stack's -- says it is one: FlowLaidOut.)
+template <class N>
+concept ownsItsLayout =
+    (requires { &N::measure; } && !requires { requires std::same_as<decltype(&N::measure), void (Node::*)(const skia::SkRect &)>; }) ||
+    (requires { &N::layoutChildren; } && !requires { typename N::FlowLaidOut; });
 
 // A node with no picture of its own that lays its children out in its box.
 template <class... Children> struct Group : Node {
@@ -2711,7 +2742,12 @@ void draw(AnyNodeRef &child, Painting &painting, skia::SkCanvas *canvas, float a
 template <class T> void layoutChildrenInContentBox(T &node) {
   ::skiff::scene::detail::settle(node);
   const skia::SkRect box = node.fState.contentBox();
-  eachChild(node, [&](auto &child) { layout(child, box); });
+  eachChild(node, [&](auto &child) {
+    // Under it, as the work tables say (what it may owe a child of a move
+    // is found through them).
+    work::record(stateOf(child).fId, node.fState.fId);
+    layout(child, box);
+  });
 }
 
 namespace detail {
@@ -2737,6 +2773,10 @@ inline void moveOwn(State &state, float dx, float dy) {
   state.fPicture = nullptr;
   state.fPendingX += dx;
   state.fPendingY += dy;
+  if (work::Entry *here = work::entry(state.fId)) {
+    here->pendingX = state.fPendingX;
+    here->pendingY = state.fPendingY;
+  }
 }
 // What a node owes its children, paid before anything goes into them: each
 // moved as it is, owing its own children as much in turn.
@@ -2746,7 +2786,16 @@ template <class N> void settle(N &node) {
     return;
   const float dx = std::exchange(state.fPendingX, 0.0f);
   const float dy = std::exchange(state.fPendingY, 0.0f);
-  eachChild(node, [&](auto &child) { moveOwn(stateOf(child), dx, dy); });
+  if (work::Entry *here = work::entry(state.fId)) {
+    here->pendingX = 0.0f;
+    here->pendingY = 0.0f;
+  }
+  eachChild(node, [&](auto &child) {
+    // Under it, as the work tables say: what a child of it owes is found
+    // through them (work::owedTo).
+    work::record(stateOf(child).fId, state.fId);
+    moveOwn(stateOf(child), dx, dy);
+  });
 }
 // A laid-out subtree moved as it is, within a layout pass: the node moved
 // (its children when gone into), what the pass moved it over noted, and
@@ -2804,7 +2853,10 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
       if (dx != 0.0f || dy != 0.0f) {
         state.fBounds = moved;
         noteMoved(state);
-        eachChild(node, [&](auto &child) { shiftSubtree(child, dx, dy); });
+        eachChild(node, [&](auto &child) {
+          work::record(stateOf(child).fId, state.fId);
+          shiftSubtree(child, dx, dy);
+        });
       }
     }
     return;
@@ -2905,7 +2957,10 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
     const float dx = state.fBounds.fLeft - provisional->fLeft;
     const float dy = state.fBounds.fTop - provisional->fTop;
     if (dx != 0.0f || dy != 0.0f)
-      eachChild(node, [&](auto &child) { moveLaidOut(child, dx, dy); });
+      eachChild(node, [&](auto &child) {
+        work::record(stateOf(child).fId, state.fId);
+        moveLaidOut(child, dx, dy);
+      });
     // Its children are where its box is: a later layout in part starts there.
     state.fFlowBox.offset(dx, dy);
     state.fLayoutValid = true;
@@ -4897,6 +4952,9 @@ struct NodeOps {
   EventEntries<KeyHandler, KeyEvent, Reply> fKey;
   EventEntries<TextHandler, TextEvent, Reply> fText;
   EventEntries<SemanticHandler, SemanticAction, Reply> fSemantic;
+  // Whether its type lays it out by hooks of its own (ownsItsLayout): what
+  // the compiled layout takes whole, seen through the table.
+  bool fOwnsLayout;
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
   // Layout and the default draw algorithm need only these typed hooks;
   // the surrounding algorithms do not depend on the node's subtree type.
@@ -5103,6 +5161,7 @@ inline constexpr NodeOps kNodeOps{
     EventEntries<KeyHandler, KeyEvent, Reply>::of<T>(),
     EventEntries<TextHandler, TextEvent, Reply>::of<T>(),
     EventEntries<SemanticHandler, SemanticAction, Reply>::of<T>(),
+    ownsItsLayout<T>,
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
     +[](void *n, const skia::SkRect &box) { nodeAs<T>(n).measure(box); },
     +[](void *n) { nodeAs<T>(n).layoutChildren(); },
@@ -6569,6 +6628,8 @@ concept kindByType = requires { N::layoutKind; };
 template <class N>
   requires kindByType<N>
 [[nodiscard]] kind kindOf(N &node, FlowOptions &options) {
+  if constexpr (ownsItsLayout<N>)
+    return kind::edge;
   constexpr kind fixed = N::layoutKind == ::skiff::layout::kind_of::column ? kind::column
                          : N::layoutKind == ::skiff::layout::kind_of::row  ? kind::row
                                                                            : kind::edge;
@@ -6579,8 +6640,14 @@ template <class N>
     return fromStart(options) && covers(node, fixed == kind::column) ? fixed : kind::edge;
   }
 }
+// Whether a node lays itself out by hooks of its own: by its type, or
+// through its table.
+template <class N> [[nodiscard]] constexpr bool ownsLayout(N &) { return ownsItsLayout<N>; }
+[[nodiscard]] inline bool ownsLayout(AnyNodeRef &ref) { return sceneOps(ref).fOwnsLayout; }
 // Else by its look, at run time: a flow the rules cover, or an edge.
 template <class N> [[nodiscard]] kind kindOf(N &node, FlowOptions &options) {
+  if (ownsLayout(node))
+    return kind::edge;
   bool flow = false;
   spl::visit(spl::overloaded{[&](const look::flow &one) {
                                options = one.options;
@@ -6631,7 +6698,10 @@ template <class N> void enter(region &r, N &node) {
   if (of == kind::edge)
     return;
   detail::settle(node);
-  eachChild(node, [&](auto &child) { enter(r, child); });
+  eachChild(node, [&](auto &child) {
+    work::record(stateOf(child).fId, stateOf(node).fId);
+    enter(r, child);
+  });
   r.sizes[at] = static_cast<std::uint32_t>(r.kinds.size()) - at;
 }
 // Pass 1, where it is read: a node's natural width -- an edge node's what it
@@ -6781,6 +6851,7 @@ template <class N> void heights(region &r, std::uint32_t at, N &node) {
     r.widths[at] = s.fBounds.width();
     return;
   }
+  const ViewLaidOut inView{s.fViewName};
   // A scrolled column's rows out of view while its width moves -- a column
   // dragged wider, at every frame of the drag: not laid out again at each
   // width, every bubble's text wrapped again, but kept as they were and
@@ -6830,6 +6901,15 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
       detail::moveLaidOut(node, dx, dy);
     return;
   }
+  // Laid out within the view it names, where it names one, as layoutNode
+  // has it: what is told of its parts says the view.
+  const ViewLaidOut inView{s.fViewName};
+  if (kLayoutReports && !s.fSizingConflict.empty()) {
+    std::println(std::cerr, "[scene] {}: {}{}{}", std::exchange(s.fSizingConflict, {}), typeOf(node).name,
+                 viewsLaidOut().empty() ? "" : " in ", viewsLaidOut().empty() ? std::string_view() : std::string_view(viewsLaidOut().back()));
+  }
+  ++walkCounts().layout;
+  ++walkCounts().laidOut;
   detail::notePass(s);
   s.fBounds = box;
   detail::noteMoved(s);
@@ -6849,11 +6929,36 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
     const float cross = (line - own) * one.fAlignSelf.value_or(r.options[at].crossAlign).at;
     one.fX = column ? cross : along;
     one.fY = column ? along : cross;
+    work::record(one.fId, s.fId);
     place(r, child, each,
           skia::SkRect::MakeXYWH(content.fLeft + one.fX + m.fLeft, content.fTop + one.fY + m.fTop, r.widths[child], r.heights[child]));
     along += column ? r.heights[child] + m.totalY() + r.options[at].spacingY : r.widths[child] + m.totalX() + r.options[at].spacingX;
     child += r.sizes[child];
   });
+  // What sticks out of its box, told, as a flow tells it: along an axis it
+  // does not take from what it holds, where it does not clip; once, until it
+  // fits. Not made at all without the layout's reports.
+  if constexpr (kLayoutReports) {
+    if (!s.fMasking) {
+      const bool freeX = !s.fAutoSizeAxes.template has<axis::x>();
+      const bool freeY = !s.fAutoSizeAxes.template has<axis::y>();
+      eachChild(node, [&](auto &each) {
+        State &one = stateOf(each);
+        const skia::SkRect &b = one.fBounds;
+        const float x = freeX ? std::max({0.0f, b.fRight - content.fRight - 1.0f, content.fLeft - b.fLeft - 1.0f}) : 0.0f;
+        const float y = freeY ? std::max({0.0f, b.fBottom - content.fBottom - 1.0f, content.fTop - b.fTop - 1.0f}) : 0.0f;
+        if (x <= 0.0f && y <= 0.0f) {
+          one.fOverflowTold = false;
+          return;
+        }
+        if (one.fOverflowTold)
+          return;
+        one.fOverflowTold = true;
+        tellOverflow(Overflow{std::string(typeOf(each).name), std::string(typeOf(node).name), x, y,
+                              viewsLaidOut().empty() ? std::string() : std::string(viewsLaidOut().back())});
+      });
+    }
+  }
 }
 // Laid out again only for what changed under it (State::fBelowOnly), in the
 // same box as its last layout by these passes, a column of edge nodes: only
@@ -6904,6 +7009,7 @@ template <class N> bool redoMarked(N &node) {
       ++next;
       const float before = one.fBounds.height() + one.fMargin.totalY();
       const float width = one.fBounds.width();
+      work::record(one.fId, s.fId);
       if (delta != 0.0f) {
         one.fY += delta;
         detail::moveLaidOut(each, 0.0f, delta);
@@ -6923,6 +7029,7 @@ template <class N> bool redoMarked(N &node) {
     if (delta == 0.0f)
       return;
     one.fY += delta;
+    work::record(one.fId, s.fId);
     detail::moveLaidOut(each, 0.0f, delta);
     if (!view || skia::SkRect::Intersects(joined(one.fBounds, one.fReach), *view))
       work::reach(one.fId);

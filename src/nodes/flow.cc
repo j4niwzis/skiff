@@ -177,6 +177,7 @@ template <class N> struct Flowing {
                              state.fGrowAxes.template has<skiff::scene::axis::y>()))
         fReadsHeight = true;
       state.fInFlowAtLayout = inFlow(state);
+      skiff::scene::work::record(state.fId, skiff::scene::stateOf(fNode).fId);
       if (inFlow(state)) {
         if (const skia::SkRect childBox = boxFor(state, box); this->waits(state, childBox))
           fWaiting.push_back(&state);
@@ -222,8 +223,10 @@ template <class N> struct Flowing {
         // provisional pass of a list sized by its rows: nothing to move. Its
         // whole subtree was walked for nothing, and every recording in it
         // let go.
-        if (dx != 0.0f || dy != 0.0f)
+        if (dx != 0.0f || dy != 0.0f) {
+          skiff::scene::work::record(state.fId, skiff::scene::stateOf(fNode).fId);
           skiff::scene::shiftSubtree(child, dx, dy);
+        }
         ++at;
         return;
       }
@@ -369,6 +372,7 @@ template <class N> struct Flowing {
       // subtree moved when gone into; reached by the damage walk where it
       // is in view, to be repainted where it was and is.
       state.fY += delta;
+      scene::work::record(state.fId, self.fId);
       scene::detail::moveLaidOut(child, 0.0f, delta);
       if (!view || skia::SkRect::Intersects(scene::joined(state.fBounds, state.fReach), *view))
         scene::work::reach(state.fId);
@@ -745,6 +749,9 @@ public:
     this->invalidateLayout();
   }
 
+  // Its layoutChildren is a flow's (the compiled layout lays it out by its
+  // rules, not by this).
+  using FlowLaidOut = void;
   // Outside a release build, laid out by the one flow every stack is (see
   // Stack::layoutChildren), through its table: a flow of a row type is not a
   // layout algorithm made again for that type.
