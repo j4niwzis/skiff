@@ -145,7 +145,18 @@ template <class N> struct Flowing {
     return fMayWait && self.fInView && child.fLayoutValid && !child.fSubtreeDirty && !child.fBounds.isEmpty() &&
            child.fLastConstraint.width() != childBox.width() && !skia::SkRect::Intersects(child.fBounds, *self.fInView);
   }
-  [[nodiscard]] bool waiting(const skiff::scene::State &child) const { return std::ranges::contains(fWaiting, &child); }
+  // Whether a child is one of those waiting: asked by place() of the
+  // children in their order, as measured() listed them -- the next one
+  // listed, or none. A search of the whole list for each child made a
+  // width change of a 10,000-row list 10,000 x 9,000 compares (43 ms).
+  std::size_t fWaitingAt = 0;
+  [[nodiscard]] bool waiting(const skiff::scene::State &child) {
+    if (fWaitingAt < fWaiting.size() && fWaiting[fWaitingAt] == &child) {
+      ++fWaitingAt;
+      return true;
+    }
+    return false;
+  }
 
   // The children that show, laid out at their own size in the box; what the
   // placing is worked out from.
@@ -169,6 +180,7 @@ template <class N> struct Flowing {
   void place(const skia::SkRect &box,
              const std::vector<std::pair<float, float>> &places) {
     std::size_t at = 0;
+    fWaitingAt = 0;
     skiff::scene::eachChild(fNode, [&](auto &child) {
       skiff::scene::State &state = skiff::scene::stateOf(child);
       if (state.fVisible && state.fOutOfFlow) {
@@ -193,7 +205,12 @@ template <class N> struct Flowing {
         const float dx = to.fLeft + state.fMargin.fLeft + places[at].first - state.fBounds.fLeft;
         const float dy = to.fTop + state.fMargin.fTop + places[at].second - state.fBounds.fTop;
         state.fPlacementDirty = false;
-        skiff::scene::shiftSubtree(child, dx, dy);
+        // Where it was already -- above what changed, or placed so by the
+        // provisional pass of a list sized by its rows: nothing to move. Its
+        // whole subtree was walked for nothing, and every recording in it
+        // let go.
+        if (dx != 0.0f || dy != 0.0f)
+          skiff::scene::shiftSubtree(child, dx, dy);
         ++at;
         return;
       }
