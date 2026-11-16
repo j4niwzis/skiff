@@ -3,8 +3,9 @@ cmake_minimum_required(VERSION 4.1.1 FATAL_ERROR)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/import-std.cmake)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# skiff -- a small retained-mode UI framework on Skia, sized for software
-# rasterisation; screens written as reacl-c writes them.
+# skiff -- a small retained-mode UI framework on Skia, drawing on the CPU
+# (software rasterisation) or the GPU (Ganesh on GL); screens written as
+# reacl-c writes them.
 #
 #   skiff.web    the HTML backend: nodes that are the page's elements, laid
 #                out by the browser and bound to a model as the scene's are
