@@ -289,17 +289,17 @@ TEST(Compose, APressInATreeThatIsOneStateIsTakenByItsHandlers) {
   // where it is -- the tree never laid out, every node had empty bounds,
   // and a release build's routing passed the press over (the test failed
   // in every release build since it was written).
-  scene::layout(root, skia::SkRect::MakeXYWH(0.0f, 0.0f, 200.0f, 40.0f));
   using Plus = OnClick<Pressed, part_t<nodes::Text>>;
-  const auto &plus = all_made_as<Plus>(root).at(0)->fState;
+  auto &plus = all_made_as<Plus>(root).at(0)->fState;
+  // A size of its own: where no font is there to measure its "+" by (the
+  // tests' stand-in), a text comes to nothing, and a click finds no bounds.
+  plus.apply({.width = 20.0f, .height = 20.0f});
+  scene::layout(root, skia::SkRect::MakeXYWH(0.0f, 0.0f, 200.0f, 40.0f));
   const scene::Path path = pressPathTo(root, plus);
   const auto start = bind::carryFrom(&m);
   decltype(auto) carried = carryAtRoot(root, start);
   const bool taken = scene::walk::clickPath(root, path, 0, plus.fBounds.centerX(), plus.fBounds.centerY(), carried);
-  // Said where it fails: whether the click was taken, the press left
-  // waiting, and where the button was.
-  std::println("click taken {}, press waiting {}, button at {} {} {} {}, path {}", taken, scene::hostWork().pressedNow != nullptr,
-               plus.fBounds.fLeft, plus.fBounds.fTop, plus.fBounds.fRight, plus.fBounds.fBottom, path.size());
+  EXPECT_TRUE(taken);
   if constexpr (scene::kErasedWalks) {
     // Erased walks carry nothing: the press is kept, delivered along its path.
     if (scene::hostWork().pressedNow != nullptr) {
