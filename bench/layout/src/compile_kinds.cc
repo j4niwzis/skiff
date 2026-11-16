@@ -32,11 +32,21 @@ struct synthetic {
       return std::array{computes(pref, self, {}), computes(height, self, {{width, self}})};
   }();
 };
+// Checked only where asked: `!kChecked || all_checked(...)` still
+// instantiated and evaluated every kind's check -- the build without the
+// check paid for it too (6.2 of its 20 s at 256 kinds).
 template <std::size_t... I>
 consteval bool all_checked(std::index_sequence<I...>) {
   return (check<synthetic<I>>().ok && ...);
 }
-static_assert(!kChecked || all_checked(std::make_index_sequence<kKinds>{}));
+template <bool Checked>
+consteval bool checked_if() {
+  if constexpr (Checked)
+    return all_checked(std::make_index_sequence<kKinds>{});
+  else
+    return true;
+}
+static_assert(checked_if<kChecked>());
 
 template <class Seq> struct kinds_of;
 template <std::size_t... I> struct kinds_of<std::index_sequence<I...>> {

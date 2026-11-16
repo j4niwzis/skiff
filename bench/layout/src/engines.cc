@@ -84,21 +84,24 @@ void give_widths(tree& t, node_id n, Set& set) {
       },
       [](const text&) {}, [](const fixed&) {}});
 }
-// And their places, from the sizes they came to.
+// And their places, from the sizes they came to: from the child `from`
+// on -- those before it are where they were.
 template <class Set>
-void give_places(tree& t, node_id n, Set& set) {
+void give_places(tree& t, node_id n, Set& set, std::size_t from = 0) {
+  const auto& kids = t.children[n];
+  if (from >= kids.size()) return;
   on_kind(t.kinds[n], spl::overloaded{
       [&](const column& k) {
-        float at = k.pad;
-        for (node_id c : t.children[n]) {
+        float at = from == 0 ? k.pad : t.at(y, kids[from - 1]) + t.at(height, kids[from - 1]) + k.gap;
+        for (node_id c : kids | std::views::drop(from)) {
           set(x, c, k.pad);
           set(y, c, at);
           at += t.at(height, c) + k.gap;
         }
       },
       [&](const row& k) {
-        float at = k.pad;
-        for (node_id c : t.children[n]) {
+        float at = from == 0 ? k.pad : t.at(x, kids[from - 1]) + t.at(width, kids[from - 1]) + k.gap;
+        for (node_id c : kids | std::views::drop(from)) {
           set(x, c, at);
           set(y, c, k.pad);
           at += t.at(width, c) + k.gap;
@@ -108,46 +111,112 @@ void give_places(tree& t, node_id n, Set& set) {
 }
 
 // ---- what a change makes dirty, as the rules read ---------------------------------
+// Which of its children's attributes a kind reads to give them another:
+// read off its rules while compiling, so that a change marks only the
+// passes of the parents whose rules read it -- a column's widths do not
+// read its children's prefs, a row's places do not read their heights.
+template <class Kind>
+inline constexpr auto kGivesFrom = [] {
+  std::array<std::array<bool, kAttributes>, kAttributes> out{};
+  for (const rule& one : Kind::rules)
+    if (one.of == place::children)
+      for (const reads& read : one.from | std::views::take(one.count))
+        if (read.where == place::children) out[std::to_underlying(one.target)][std::to_underlying(read.what)] = true;
+  return out;
+}();
+[[nodiscard]] inline bool gives_from(const tree& t, node_id n, attribute target, attribute what) {
+  return spl::visit([&]<class Kind>(const Kind&) { return kGivesFrom<Kind>[std::to_underlying(target)][std::to_underlying(what)]; }, t.kinds[n]);
+}
 // A node's pref changed: its parent's pref, and the widths its parent gives
-// (a row's read its children's prefs). A child's width changed: the widths
-// it gives, its own height (text wraps at it), and the places its parent
-// gives (a row's read its children's widths). A height changed: its
-// parent's height, and the places its parent gives.
+// where they read it. A child's width changed: the widths it gives, its own
+// height (text wraps at it), and the places its parent gives where they
+// read it. A height changed: its parent's height, and its parent's places
+// where they read it.
 template <class Engine>
 void pref_changed(Engine& engine, const tree& t, node_id n) {
   if (const node_id p = t.parents[n]; p != kNone) {
     engine.mark_up(pass_id::pref, p);
-    engine.mark(pass_id::width, p, t);
+    if (gives_from(t, p, width, pref)) engine.mark(pass_id::width, p, t);
   }
 }
 template <class Engine>
 void width_changed(Engine& engine, const tree& t, node_id parent, node_id child) {
   engine.mark_down(pass_id::width, parent, child);
   engine.mark(pass_id::height, child, t);
-  engine.mark(pass_id::place, parent, t);
+  if (gives_from(t, parent, x, width) || gives_from(t, parent, y, width)) engine.mark_place(parent, t.places[child], t);
 }
 template <class Engine>
 void height_changed(Engine& engine, const tree& t, node_id n) {
   if (const node_id p = t.parents[n]; p != kNone) {
     engine.mark_up(pass_id::height, p);
-    engine.mark(pass_id::place, p, t);
+    if (gives_from(t, p, x, height) || gives_from(t, p, y, height)) engine.mark_place(p, t.places[n], t);
   }
 }
-// One node's visit in a pass, the changes it makes told the engine.
+// ---- a container's aggregate kept by delta -----------------------------------------
+// A column's height is the sum of its children's, its pref their max; a
+// row's the other way round. Recomputed, each costs as many children as
+// the container has -- a list of 10,000 messages, at every word typed. Kept
+// by delta, a child's change is folded into its parent where it happens: a
+// sum moved by the difference, a max raised, or recomputed only where the
+// child that was the max went down.
+inline void fold_max(tree& t, node_id p, attribute what, float pad, float before, float now) {
+  const float inner = t.at(what, p) - 2.0f * pad;
+  if (now >= inner)
+    t.at(what, p) = now + 2.0f * pad;
+  else if (before >= inner)
+    t.at(what, p) = what == pref ? pref_of(t, p) : height_of(t, p);
+}
+inline void fold(tree& t, node_id p, attribute what, float before, float now) {
+  on_kind(t.kinds[p], spl::overloaded{
+      [&](const column& k) {
+        if (what == height) t.at(what, p) += now - before;
+        else fold_max(t, p, what, k.pad, before, now);
+      },
+      [&](const row& k) {
+        if (what == pref) t.at(what, p) += now - before;
+        else fold_max(t, p, what, k.pad, before, now);
+      },
+      [](const text&) {}, [](const fixed&) {}});
+}
+// A child added: the sum gains a gap (its value comes in by delta, from 0).
+inline void child_added(tree& t, node_id p) {
+  on_kind(t.kinds[p], spl::overloaded{
+      [&](const column& k) { if (t.children[p].size() > 1) t.at(height, p) += k.gap; },
+      [&](const row& k) { if (t.children[p].size() > 1) t.at(pref, p) += k.gap; },
+      [](const text&) {}, [](const fixed&) {}});
+}
+[[nodiscard]] inline bool holds_children(const tree& t, node_id n) {
+  return spl::visit([]<class Kind>(const Kind&) { return Kind::holds; }, t.kinds[n]);
+}
+
+// One node's visit in a pass, the changes it makes told the engine. Where
+// the engine keeps aggregates by delta, a container's value is already
+// what its children made it (unless it is to be computed whole: new, or
+// its inputs changed), and what changed is told against what its parent
+// last folded in.
+template <class Engine>
+void synthesize(Engine& engine, tree& t, pass_id pass, attribute what, node_id n) {
+  const auto compute = [&] { return what == pref ? pref_of(t, n) : height_of(t, n); };
+  if constexpr (Engine::kDelta) {
+    const float now = holds_children(t, n) && !engine.take_whole(pass, n) ? t.at(what, n) : compute();
+    t.at(what, n) = now;
+    float& told = engine.told(what, n);
+    if (told == now) return;
+    const float before = std::exchange(told, now);
+    if (const node_id p = t.parents[n]; p != kNone) fold(t, p, what, before, now);
+  } else {
+    const float now = compute();
+    if (std::exchange(t.at(what, n), now) == now) return;
+  }
+  if (what == pref) pref_changed(engine, t, n);
+  else height_changed(engine, t, n);
+}
 template <class Engine>
 void visit(Engine& engine, tree& t, pass_id pass, node_id n) {
   ++engine.visits;
   switch (pass) {
-    case pass_id::pref: {
-      const float now = pref_of(t, n);
-      if (std::exchange(t.at(pref, n), now) != now) pref_changed(engine, t, n);
-      break;
-    }
-    case pass_id::height: {
-      const float now = height_of(t, n);
-      if (std::exchange(t.at(height, n), now) != now) height_changed(engine, t, n);
-      break;
-    }
+    case pass_id::pref: synthesize(engine, t, pass, pref, n); break;
+    case pass_id::height: synthesize(engine, t, pass, height, n); break;
     case pass_id::width: {
       auto set = [&](attribute what, node_id c, float value) {
         if (std::exchange(t.at(what, c), value) != value) width_changed(engine, t, n, c);
@@ -157,7 +226,7 @@ void visit(Engine& engine, tree& t, pass_id pass, node_id n) {
     }
     case pass_id::place: {
       auto set = [&](attribute what, node_id c, float value) { t.at(what, c) = value; };
-      give_places(t, n, set);
+      give_places(t, n, set, engine.take_place_from(n));
       break;
     }
   }
@@ -168,11 +237,16 @@ void visit(Engine& engine, tree& t, pass_id pass, node_id n) {
 // The tree in preorder: a postorder pass is it read from the end, a
 // preorder one from the start.
 struct full {
+  static constexpr bool kDelta = false;
   std::size_t visits = 0;
+  void mark_whole(pass_id, node_id, const tree&) {}
+  void added_child(tree&, node_id) {}
+  void mark_place(node_id, std::size_t, const tree&) {}
+  [[nodiscard]] std::size_t take_place_from(node_id) const { return 0; }
   void mark(pass_id, node_id, const tree&) {}
   void mark_up(pass_id, node_id) {}
   void mark_down(pass_id, node_id, node_id) {}
-  void grow(std::size_t) {}
+  void grow(const tree&) {}
   void run(tree& t) {
     t.at(width, 0) = t.window;
     for (std::size_t p = 0; p < kPasses; ++p) {
@@ -186,13 +260,61 @@ struct full {
   }
 };
 
+// What both incremental engines keep besides their marks: each node's pref
+// and height as its parent last folded them in, and which containers are
+// to be computed whole.
+struct delta_state {
+  static constexpr bool kDelta = true;
+  std::array<std::vector<float>, 2> folded;
+  std::array<std::vector<std::uint8_t>, 2> whole;
+  [[nodiscard]] static constexpr std::size_t slot(attribute what) { return what == pref ? 0 : 1; }
+  [[nodiscard]] static constexpr std::size_t slot(pass_id pass) { return pass == pass_id::pref ? 0 : 1; }
+  float& told(attribute what, node_id n) { return folded[slot(what)][n]; }
+  bool take_whole(pass_id pass, node_id n) { return std::exchange(whole[slot(pass)][n], 0) != 0; }
+  // The first of a container's children whose place may have moved: its
+  // places are given again from there on (none marked: from the start).
+  std::vector<std::uint32_t> place_from;
+  [[nodiscard]] std::size_t take_place_from(node_id n) {
+    const std::uint32_t from = std::exchange(place_from[n], kUnmarked);
+    return from == kUnmarked ? 0 : from;
+  }
+  void grow_delta(const tree& t) {
+    for (const attribute what : {pref, height}) {
+      auto& kept = folded[slot(what)];
+      const auto had = kept.size();
+      kept.resize(t.size());
+      std::ranges::copy(t.values[std::to_underlying(what)] | std::views::drop(had), kept.begin() + static_cast<std::ptrdiff_t>(had));
+      whole[slot(what)].resize(t.size(), 0);
+    }
+    place_from.resize(t.size(), kUnmarked);
+  }
+  static constexpr std::uint32_t kUnmarked = std::numeric_limits<std::uint32_t>::max();
+  void note_place(node_id parent, std::size_t from) {
+    place_from[parent] = std::min(place_from[parent], static_cast<std::uint32_t>(from));
+  }
+};
+
 // ---- two dirty bits: the node's, and "something under it" ---------------------------
-struct double_dirty {
+struct double_dirty : delta_state {
   std::size_t visits = 0;
   std::array<std::vector<std::uint8_t>, kPasses> dirty, below;
-  void grow(std::size_t size) {
-    for (auto& each : dirty) each.resize(size, 0);
-    for (auto& each : below) each.resize(size, 0);
+  void grow(const tree& t) {
+    grow_delta(t);
+    for (auto& each : dirty) each.resize(t.size(), 0);
+    for (auto& each : below) each.resize(t.size(), 0);
+  }
+  void mark_whole(pass_id pass, node_id n, const tree& t) {
+    whole[slot(pass)][n] = 1;
+    mark(pass, n, t);
+  }
+  void added_child(tree& t, node_id p) {
+    child_added(t, p);
+    mark(pass_id::pref, p, t);
+    mark(pass_id::height, p, t);
+  }
+  void mark_place(node_id parent, std::size_t from, const tree& t) {
+    note_place(parent, from);
+    mark(pass_id::place, parent, t);
   }
   // Dirty, from outside the pass: the spine above it marked to the root,
   // or as far as it is marked already.
@@ -229,16 +351,44 @@ struct double_dirty {
 // ---- a queue in the tree's order: no spine walked ----------------------------------
 // A postorder pass takes the latest node in preorder first (all under a
 // node come after it), a preorder one the earliest.
-struct spineless {
+struct spineless : delta_state {
+  // The queue's share of the tree past which a flat pass is taken.
+  static constexpr std::size_t kFlatBeyond = 8;
   std::size_t visits = 0;
   std::array<std::vector<std::uint8_t>, kPasses> queued;
   std::array<std::vector<node_id>, kPasses> heaps;
-  void grow(std::size_t size) {
-    for (auto& each : queued) each.resize(size, 0);
+  void grow(const tree& t) {
+    grow_delta(t);
+    size = t.size();
+    for (auto& each : queued) each.resize(t.size(), 0);
   }
+  void mark_whole(pass_id pass, node_id n, const tree& t) {
+    whole[slot(pass)][n] = 1;
+    mark(pass, n, t);
+  }
+  void added_child(tree& t, node_id p) {
+    child_added(t, p);
+    mark(pass_id::pref, p, t);
+    mark(pass_id::height, p, t);
+  }
+  void mark_place(node_id parent, std::size_t from, const tree& t) {
+    note_place(parent, from);
+    mark(pass_id::place, parent, t);
+  }
+  // Passes to be run flat: decided while marking, once the queue passes
+  // its share -- the queue then grows no more.
+  std::array<bool, kPasses> flat{};
+  std::size_t size = 0;
   void push(pass_id pass, node_id n) {
-    if (std::exchange(queued[index(pass)][n], 1)) return;
+    if (flat[index(pass)] || std::exchange(queued[index(pass)][n], 1)) return;
     auto& heap = heaps[index(pass)];
+    if ((heap.size() + 1) * kFlatBeyond > size) {
+      flat[index(pass)] = true;
+      for (node_id each : heap) queued[index(pass)][each] = 0;
+      queued[index(pass)][n] = 0;
+      heap.clear();
+      return;
+    }
     heap.push_back(n);
     if (upward(pass)) std::ranges::push_heap(heap, std::less{});
     else std::ranges::push_heap(heap, std::greater{});
@@ -250,7 +400,22 @@ struct spineless {
     for (std::size_t p = 0; p < kPasses; ++p) {
       const auto pass = static_cast<pass_id>(p);
       auto& heap = heaps[p];
-      while (!heap.empty()) {
+      // The queue taken in order -- until it passes its share, before the
+      // pass or while it runs (a preorder pass marking every child): then
+      // the rest of the pass is one flat pass over the arrays, the marks
+      // for it dropped meanwhile, since it reaches every node anyway.
+      while (true) {
+        if (flat[p]) {
+          const auto n = static_cast<node_id>(t.size());
+          if (upward(pass))
+            for (node_id i = n; i-- > 0;) visit(*this, t, pass, i);
+          else
+            for (node_id i = 0; i < n; ++i) visit(*this, t, pass, i);
+          flat[p] = false;
+          break;
+        }
+        if (heap.empty())
+          break;
         if (upward(pass)) std::ranges::pop_heap(heap, std::less{});
         else std::ranges::pop_heap(heap, std::greater{});
         const node_id n = heap.back();
