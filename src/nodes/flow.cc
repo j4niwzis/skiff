@@ -179,6 +179,14 @@ template <class N> struct Flowing {
         return;
       }
       state.arrange(places[at].first, places[at].second);
+      // Where it was, as it was, in the same box: measured() has just laid
+      // it out, and laying it out again only finds that -- once for each of
+      // a long list's rows, at every keystroke in one of them.
+      if (!state.fPlacementDirty && state.fLayoutValid && !state.fSubtreeDirty && state.fFollow == nullptr &&
+          boxFor(state, box) == state.fLastConstraint) {
+        ++at;
+        return;
+      }
       if (this->waiting(state)) {
         // Moved where it goes, as it is: laid out at the width later.
         const skia::SkRect to = boxFor(state, box);
