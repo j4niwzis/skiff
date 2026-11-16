@@ -139,6 +139,10 @@ template <class Kind, auto& Schedule = kSchedule>
   return check_rules(Kind::rules, Kind::holds, Schedule);
 }
 
+// The kind a node type says it is laid out as, where its type fixes it (a
+// column type, a row type): the compiled passes then take it from the type.
+enum class kind_of : std::uint8_t { column, row, edge };
+
 // ---- the kinds of skiff's nodes, and their rules ---------------------------------------
 using enum attribute;
 using enum place;

@@ -5,6 +5,7 @@ import splice;
 import skia;
 import skiff.paint;
 import skiff.aggregate;
+import skiff.layout;
 export import skiff.core;
 
 // A retained scene whose type is its tree.
@@ -6544,6 +6545,31 @@ template <class N> [[nodiscard]] Look lookOf(N &node) { return node.look(); }
 [[nodiscard]] inline Look lookOf(AnyNodeRef &ref) {
   ErasedNode seen(ref);
   return seen.look();
+}
+// A node's kind fixed by its type, where the type says it
+// (`static constexpr skiff::layout::kind_of layoutKind`): no look read, no
+// options branched on at run time -- a column's passes are a column's.
+template <class N>
+concept kindByType = requires { N::layoutKind; };
+template <class N>
+  requires kindByType<N>
+[[nodiscard]] kind kindOf(N &node, FlowOptions &options) {
+  options = node.flowOptions();
+  constexpr kind fixed = N::layoutKind == ::skiff::layout::kind_of::column ? kind::column
+                         : N::layoutKind == ::skiff::layout::kind_of::row  ? kind::row
+                                                                  : kind::edge;
+  if constexpr (fixed == kind::edge) {
+    return kind::edge;
+  } else {
+    bool covered = true;
+    eachChild(node, [&](auto &child) {
+      const State &one = stateOf(child);
+      covered = covered && one.fVisible && !one.fOutOfFlow && !one.fRelativeSizeAxes.has<axis::y>() && !one.fGrowAxes.has<axis::y>() &&
+                !one.fShrinkAxes.has<axis::x>() && one.fDepth == 0.0f && one.fFollow == nullptr && one.fScale == 1.0f &&
+                (fixed == kind::column || !(one.fGrowAxes.has<axis::x>() && one.fAutoSizeAxes.has<axis::x>()));
+    });
+    return covered ? fixed : kind::edge;
+  }
 }
 // The kind a node is laid out as: a flow the rules cover, else an edge.
 template <class N> [[nodiscard]] kind kindOf(N &node, FlowOptions &options) {
