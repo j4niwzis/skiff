@@ -15,7 +15,7 @@ struct type_word {};
 struct widen_tick {};
 struct resize {};
 struct new_message {};
-using edit_t = std::variant<type_word, widen_tick, resize, new_message>;
+using edit_t = spl::variant<type_word, widen_tick, resize, new_message>;
 constexpr std::string_view name_of(type_word) { return "type a word"; }
 constexpr std::string_view name_of(widen_tick) { return "widen a tick"; }
 constexpr std::string_view name_of(resize) { return "resize"; }
@@ -26,14 +26,14 @@ constexpr std::string_view name_of(new_message) { return "add a message"; }
 template <class Engine>
 void apply(type_word, chat& c, Engine& engine, std::size_t step) {
   const node_id body = c.bodies[(step * 7919) % c.bodies.size()];
-  std::get<text>(c.nodes.kinds[body]).words.push_back(31.0f);
+  spl::get<text>(c.nodes.kinds[body]).words.push_back(31.0f);
   engine.mark(pass_id::pref, body, c.nodes);
   engine.mark(pass_id::height, body, c.nodes);
 }
 template <class Engine>
 void apply(widen_tick, chat& c, Engine& engine, std::size_t step) {
   const node_id tick = c.ticks[(step * 7919) % c.ticks.size()];
-  auto& box = std::get<fixed>(c.nodes.kinds[tick]);
+  auto& box = spl::get<fixed>(c.nodes.kinds[tick]);
   box.w = box.w == 12.0f ? 16.0f : 12.0f;
   engine.mark(pass_id::pref, tick, c.nodes);
 }
@@ -81,7 +81,7 @@ result measure(edit_t edit, std::size_t messages, std::size_t edits) {
   engine.grow(c.nodes.size());
   const auto start = std::chrono::steady_clock::now();
   for (std::size_t step = 0; step < edits; ++step) {
-    std::visit([&](auto one) { apply(one, c, engine, step); }, edit);
+    spl::visit([&](auto one) { apply(one, c, engine, step); }, edit);
     engine.run(c.nodes);
   }
   const std::chrono::duration<double, std::micro> took = std::chrono::steady_clock::now() - start;
@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
     for (const edit_t edit : {edit_t{type_word{}}, edit_t{widen_tick{}}, edit_t{resize{}}, edit_t{new_message{}}}) {
       const std::size_t edits = 200;
       const auto row = [&](std::string_view engine, result r) {
-        std::println("{:<14} {:>8} {:>8}  {:<12} {:>12.2f} {:>14.1f}  {}", std::visit([](auto one) { return name_of(one); }, edit), messages, nodes,
+        std::println("{:<14} {:>8} {:>8}  {:<12} {:>12.2f} {:>14.1f}  {}", spl::visit([](auto one) { return name_of(one); }, edit), messages, nodes,
                      engine, r.us_per_edit, r.visits_per_edit, r.right ? "ok" : "WRONG");
       };
       row("full", measure<full>(edit, messages, edits));

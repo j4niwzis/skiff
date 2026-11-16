@@ -5,6 +5,7 @@
 export module layout_bench.tree;
 
 import std;
+export import splice;
 export import layout_bench.grammar;
 
 export namespace layout_bench {
@@ -57,7 +58,7 @@ struct fixed {
       computes(height, self, {}),
   };
 };
-using kind_t = std::variant<column, row, text, fixed>;
+using kind_t = spl::variant<column, row, text, fixed>;
 
 // Every kind checked while compiling: the grammar holds for all of them.
 static_assert(check<column>().ok && check<row>().ok && check<text>().ok && check<fixed>().ok);

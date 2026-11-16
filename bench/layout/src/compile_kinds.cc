@@ -5,6 +5,7 @@
 // same file built with the check and without says what it adds; built with
 // 16, 64 and 256 kinds, how that grows.
 import std;
+import splice;
 import layout_bench.grammar;
 
 using namespace layout_bench;
@@ -13,7 +14,6 @@ using enum place;
 
 namespace {
 
-inline constexpr bool kErased = LAYOUT_BENCH_ERASED != 0;
 inline constexpr bool kChecked = LAYOUT_BENCH_CHECK != 0;
 inline constexpr std::size_t kKinds = LAYOUT_BENCH_KINDS;
 
@@ -40,7 +40,7 @@ static_assert(!kChecked || all_checked(std::make_index_sequence<kKinds>{}));
 
 template <class Seq> struct kinds_of;
 template <std::size_t... I> struct kinds_of<std::index_sequence<I...>> {
-  using type = std::variant<synthetic<I>...>;
+  using type = spl::variant<synthetic<I>...>;
 };
 using kind_t = kinds_of<std::make_index_sequence<kKinds>>::type;
 
@@ -50,20 +50,6 @@ struct flat {
   std::array<std::vector<float>, kAttributes> values;
   float& at(attribute what, std::uint32_t n) { return values[std::to_underlying(what)][n]; }
 };
-
-template <class Visit>
-decltype(auto) on_kind(const kind_t& kind, Visit&& visit) {
-  if constexpr (kErased) {
-    using result = decltype(std::visit(visit, kind));
-    using entry = result (*)(const kind_t&, Visit&);
-    static constexpr auto table = []<std::size_t... I>(std::index_sequence<I...>) {
-      return std::array<entry, sizeof...(I)>{+[](const kind_t& k, Visit& v) -> result { return v(std::get<I>(k)); }...};
-    }(std::make_index_sequence<kKinds>{});
-    return table[kind.index()](kind, visit);
-  } else {
-    return std::visit(std::forward<Visit>(visit), kind);
-  }
-}
 
 // Every pass's code, for each kind: what a container and what a leaf
 // compute, with the kind's own numbers.
@@ -99,13 +85,14 @@ void visit_one(flat& t, std::uint32_t n, std::size_t pass, const synthetic<I>& k
 int main(int argc, char**) {
   flat t;
   const std::size_t size = 1000 + static_cast<std::size_t>(argc);
-  t.kinds = std::views::iota(std::size_t{0}, size) | std::views::transform([](std::size_t i) {
-              return [&]<std::size_t... I>(std::index_sequence<I...>) {
-                kind_t out;
-                ((i % kKinds == I ? (out = synthetic<I>{}, 0) : 0), ...);
-                return out;
-              }(std::make_index_sequence<kKinds>{});
-            }) | std::ranges::to<std::vector>();
+  // One of each kind, made in place by its index -- no converting
+  // assignment, whose overload resolution over every alternative would
+  // cost kinds * kinds -- and the tree's nodes copied from them.
+  static const auto one_of_each = []<std::size_t... I>(std::index_sequence<I...>) {
+    return std::array<kind_t, kKinds>{kind_t(std::in_place_index<I>)...};
+  }(std::make_index_sequence<kKinds>{});
+  t.kinds = std::views::iota(std::size_t{0}, size) | std::views::transform([](std::size_t i) { return one_of_each[i % kKinds]; }) |
+            std::ranges::to<std::vector>();
   t.children.resize(size);
   for (std::uint32_t n = 1; n < size; ++n) t.children[(n - 1) / 4].push_back(n);
   for (auto& each : t.values) each.assign(size, 0.0f);
@@ -114,7 +101,7 @@ int main(int argc, char**) {
     const bool up = kSchedule[pass].walk == order::post;
     for (std::size_t i = 0; i < size; ++i) {
       const auto n = static_cast<std::uint32_t>(up ? size - 1 - i : i);
-      on_kind(t.kinds[n], [&](const auto& k) { visit_one(t, n, pass, k); });
+      spl::visit([&](const auto& k) { visit_one(t, n, pass, k); }, t.kinds[n]);
     }
   }
   std::println("{}", t.at(height, 0));
