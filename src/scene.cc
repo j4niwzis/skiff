@@ -2809,15 +2809,15 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
     }
     return;
   }
+  // Its own layout as it was, in the same box: laid out again only for what
+  // changed under it.
+  state.fBelowOnly = state.fLayoutValid && parent == state.fLastConstraint;
   // A flow the compiled traversal covers: laid out by its passes.
   if (state.fFollow == nullptr && compiled::layOut(node, parent)) {
     state.fLayoutValid = true;
     state.fSubtreeDirty = false;
     return;
   }
-  // Its own layout as it was, in the same box: laid out again only for what
-  // changed under it.
-  state.fBelowOnly = state.fLayoutValid && parent == state.fLastConstraint;
   state.fPlacementDirty = false;
   state.fLastConstraint = parent;
   work::reach(state.fId);
@@ -6781,11 +6781,31 @@ template <class N> void heights(region &r, std::uint32_t at, N &node) {
     r.widths[at] = s.fBounds.width();
     return;
   }
+  // A scrolled column's rows out of view while its width moves -- a column
+  // dragged wider, at every frame of the drag: not laid out again at each
+  // width, every bubble's text wrapped again, but kept as they were and
+  // only moved; laid out at the width once it holds (its scroll view asks
+  // for that frame). As the hand-written flow has it.
+  if (s.fFlowPass != work::layoutPass()) {
+    s.fFlowPass = work::layoutPass();
+    s.fFlowMoved = s.fInView.has_value() && s.fFlowWidth >= 0.0f && s.fFlowWidth != r.widths[at];
+    s.fFlowWidth = r.widths[at];
+  }
+  const bool mayWait = r.kinds[at] == kind::column && s.fFlowMoved;
+  s.fChildrenWaiting = false;
   float h = 0.0f;
   std::uint32_t count = 0;
   std::uint32_t child = at + 1;
   eachChild(node, [&](auto &each) {
-    heights(r, child, each);
+    const State &one = stateOf(each);
+    if (mayWait && r.kinds[child] == kind::edge && one.fLayoutValid && !one.fSubtreeDirty && !one.fBounds.isEmpty() &&
+        one.fLastConstraint.width() != r.rooms[child] && !skia::SkRect::Intersects(one.fBounds, *s.fInView)) {
+      r.heights[child] = one.fBounds.height();
+      r.widths[child] = one.fBounds.width();
+      s.fChildrenWaiting = true;
+    } else {
+      heights(r, child, each);
+    }
     const float k = r.heights[child] + stateOf(each).fMargin.totalY();
     h = r.kinds[at] == kind::column ? h + k : std::max(h, k);
     child += r.sizes[child];
@@ -6829,8 +6849,6 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
     const float cross = (line - own) * one.fAlignSelf.value_or(r.options[at].crossAlign).at;
     one.fX = column ? cross : along;
     one.fY = column ? along : cross;
-    // The box it would have been laid out in, as a flow gives it.
-    one.fLastConstraint = skia::SkRect::MakeXYWH(content.fLeft, content.fTop, content.width(), 0.0f);
     place(r, child, each,
           skia::SkRect::MakeXYWH(content.fLeft + one.fX + m.fLeft, content.fTop + one.fY + m.fTop, r.widths[child], r.heights[child]));
     along += column ? r.heights[child] + m.totalY() + r.options[at].spacingY : r.widths[child] + m.totalX() + r.options[at].spacingX;
