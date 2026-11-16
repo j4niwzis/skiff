@@ -39,6 +39,8 @@ decltype(auto) on_kind(const kind_t& kind, Visit&& visit) {
 [[nodiscard]] inline float gaps(float gap, std::size_t count) { return count > 1 ? gap * static_cast<float>(count - 1) : 0.0f; }
 // Text wrapped at a width: its lines, as many as its words need.
 [[nodiscard]] inline float wrapped_height(const text& k, float width) {
+  // On one line where it fits: no words walked.
+  if (k.total <= width) return k.line;
   struct line_so_far {
     float used = 0.0f;
     int lines = 0;
@@ -54,7 +56,7 @@ decltype(auto) on_kind(const kind_t& kind, Visit&& visit) {
   return on_kind(t.kinds[n], spl::overloaded{
       [&](const column& k) { return std::ranges::max(values_of(t, pref, n), {}, std::identity{}) + 2.0f * k.pad; },
       [&](const row& k) { return std::ranges::fold_left(values_of(t, pref, n), 0.0f, std::plus{}) + gaps(k.gap, t.children[n].size()) + 2.0f * k.pad; },
-      [&](const text& k) { return std::ranges::fold_left(k.words, 0.0f, std::plus{}) + gaps(k.space, k.words.size()); },
+      [&](const text& k) { return k.total; },
       [&](const fixed& k) { return k.w; }});
 }
 [[nodiscard]] inline float height_of(const tree& t, node_id n) {
@@ -211,24 +213,51 @@ void synthesize(Engine& engine, tree& t, pass_id pass, attribute what, node_id n
   if (what == pref) pref_changed(engine, t, n);
   else height_changed(engine, t, n);
 }
+// The pass known while compiling: a pass over every node is one loop of
+// that pass's code, not a switch at each node.
+template <pass_id Pass, class Engine>
+void visit(Engine& engine, tree& t, node_id n) {
+  ++engine.visits;
+  if constexpr (Pass == pass_id::pref) {
+    synthesize(engine, t, Pass, pref, n);
+  } else if constexpr (Pass == pass_id::height) {
+    synthesize(engine, t, Pass, height, n);
+  } else if constexpr (Pass == pass_id::width) {
+    auto set = [&](attribute what, node_id c, float value) {
+      if (std::exchange(t.at(what, c), value) != value) width_changed(engine, t, n, c);
+    };
+    give_widths(t, n, set);
+  } else {
+    auto set = [&](attribute what, node_id c, float value) { t.at(what, c) = value; };
+    give_places(t, n, set, engine.take_place_from(n));
+  }
+}
 template <class Engine>
 void visit(Engine& engine, tree& t, pass_id pass, node_id n) {
-  ++engine.visits;
   switch (pass) {
-    case pass_id::pref: synthesize(engine, t, pass, pref, n); break;
-    case pass_id::height: synthesize(engine, t, pass, height, n); break;
-    case pass_id::width: {
-      auto set = [&](attribute what, node_id c, float value) {
-        if (std::exchange(t.at(what, c), value) != value) width_changed(engine, t, n, c);
-      };
-      give_widths(t, n, set);
-      break;
-    }
-    case pass_id::place: {
-      auto set = [&](attribute what, node_id c, float value) { t.at(what, c) = value; };
-      give_places(t, n, set, engine.take_place_from(n));
-      break;
-    }
+    case pass_id::pref: visit<pass_id::pref>(engine, t, n); break;
+    case pass_id::width: visit<pass_id::width>(engine, t, n); break;
+    case pass_id::height: visit<pass_id::height>(engine, t, n); break;
+    case pass_id::place: visit<pass_id::place>(engine, t, n); break;
+  }
+}
+// Every node in a pass, in the arrays' order: from the end for a
+// postorder pass, from the start for a preorder one.
+template <pass_id Pass, class Engine>
+void flat_pass(Engine& engine, tree& t) {
+  const auto n = static_cast<node_id>(t.size());
+  if constexpr (kSchedule[index(Pass)].walk == order::post)
+    for (node_id i = n; i-- > 0;) visit<Pass>(engine, t, i);
+  else
+    for (node_id i = 0; i < n; ++i) visit<Pass>(engine, t, i);
+}
+template <class Engine>
+void flat_pass(Engine& engine, tree& t, pass_id pass) {
+  switch (pass) {
+    case pass_id::pref: flat_pass<pass_id::pref>(engine, t); break;
+    case pass_id::width: flat_pass<pass_id::width>(engine, t); break;
+    case pass_id::height: flat_pass<pass_id::height>(engine, t); break;
+    case pass_id::place: flat_pass<pass_id::place>(engine, t); break;
   }
 }
 [[nodiscard]] constexpr bool upward(pass_id pass) { return kSchedule[index(pass)].walk == order::post; }
@@ -249,14 +278,10 @@ struct full {
   void grow(const tree&) {}
   void run(tree& t) {
     t.at(width, 0) = t.window;
-    for (std::size_t p = 0; p < kPasses; ++p) {
-      const auto pass = static_cast<pass_id>(p);
-      const auto n = static_cast<node_id>(t.size());
-      if (upward(pass))
-        for (node_id i = n; i-- > 0;) visit(*this, t, pass, i);
-      else
-        for (node_id i = 0; i < n; ++i) visit(*this, t, pass, i);
-    }
+    flat_pass<pass_id::pref>(*this, t);
+    flat_pass<pass_id::width>(*this, t);
+    flat_pass<pass_id::height>(*this, t);
+    flat_pass<pass_id::place>(*this, t);
   }
 };
 
@@ -406,11 +431,7 @@ struct spineless : delta_state {
       // for it dropped meanwhile, since it reaches every node anyway.
       while (true) {
         if (flat[p]) {
-          const auto n = static_cast<node_id>(t.size());
-          if (upward(pass))
-            for (node_id i = n; i-- > 0;) visit(*this, t, pass, i);
-          else
-            for (node_id i = 0; i < n; ++i) visit(*this, t, pass, i);
+          flat_pass(*this, t, pass);
           flat[p] = false;
           break;
         }
