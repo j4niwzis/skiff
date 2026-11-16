@@ -6,6 +6,7 @@ import std;
 import splice;
 import skia;
 import skiff.scene;
+import skiff.layout;
 import skiff.nodes;
 import skiff.model;
 import skiff.bind;
@@ -742,6 +743,27 @@ template <class... Parts> struct Box : nodes::Stack {
     std::apply([&](auto &...each) { (f(each), ...); }, self.fParts);
   }
 
+};
+
+// A column or a row of parts: a Box whose way is its type's, fixed while
+// compiling -- what the compiled layout takes from the type
+// (skiff::layout::kind_of), not from its look read at run time.
+template <class... Parts> struct ColumnBox : Box<Parts...> {
+  static constexpr ::skiff::layout::kind_of layoutKind = ::skiff::layout::kind_of::column;
+  explicit ColumnBox(Look look, Parts... parts) : Box<Parts...>(along(std::move(look), false), std::move(parts)...) {}
+  [[nodiscard]] scene::FlowOptions flowOptions() const { return this->fStack; }
+  // Its way is its type: not turned across after it is made.
+  void setHorizontal() = delete;
+  [[nodiscard]] static Look along(Look look, bool horizontal) {
+    look.fHorizontal = horizontal;
+    return look;
+  }
+};
+template <class... Parts> struct RowBox : Box<Parts...> {
+  static constexpr ::skiff::layout::kind_of layoutKind = ::skiff::layout::kind_of::row;
+  explicit RowBox(Look look, Parts... parts) : Box<Parts...>(ColumnBox<Parts...>::along(std::move(look), true), std::move(parts)...) {}
+  [[nodiscard]] scene::FlowOptions flowOptions() const { return this->fStack; }
+  void setHorizontal() = delete;
 };
 
 // A stack of a list of parts, as many as there are: made from them, in

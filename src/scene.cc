@@ -6555,6 +6555,10 @@ template <class N>
   requires kindByType<N>
 [[nodiscard]] kind kindOf(N &node, FlowOptions &options) {
   options = node.flowOptions();
+  // Its way is its type's; what it lays out along it from, and whether it
+  // wraps, its options' -- a column from its start, a row not wrapped.
+  if (options.wrap || !spl::visit(spl::overloaded{[](justify::start) { return true; }, [](const auto &) { return false; }}, options.justify))
+    return kind::edge;
   constexpr kind fixed = N::layoutKind == ::skiff::layout::kind_of::column ? kind::column
                          : N::layoutKind == ::skiff::layout::kind_of::row  ? kind::row
                                                                   : kind::edge;

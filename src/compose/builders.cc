@@ -527,7 +527,7 @@ concept a_part = part_like<std::remove_cvref_t<T>>::value && std::move_construct
 template <class... Parts>
 auto column(Look look, Parts... parts) {
   look.fHorizontal = false;
-  return lifted([](Look l, auto... p) { return erased(Box(std::move(l), as_part(std::move(p))...)); }, std::move(look), std::move(parts)...);
+  return lifted([](Look l, auto... p) { return erased(ColumnBox(std::move(l), as_part(std::move(p))...)); }, std::move(look), std::move(parts)...);
 }
 template <class... Parts>
   requires(!std::same_as<Parts, Look> && ...)
@@ -537,7 +537,7 @@ auto column(Parts... parts) {
 template <class... Parts>
 auto row(Look look, Parts... parts) {
   look.fHorizontal = true;
-  return lifted([](Look l, auto... p) { return erased(Box(std::move(l), as_part(std::move(p))...)); }, std::move(look), std::move(parts)...);
+  return lifted([](Look l, auto... p) { return erased(RowBox(std::move(l), as_part(std::move(p))...)); }, std::move(look), std::move(parts)...);
 }
 template <class... Parts>
   requires(!std::same_as<Parts, Look> && ...)
