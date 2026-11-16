@@ -6669,6 +6669,28 @@ template <class N> float prefOf(region &r, std::uint32_t at, N &node) {
   r.asked[at] = 1;
   return out;
 }
+// The same where the node's type fixes how it is sized across
+// (layout::sized): that one case, chosen while compiling.
+template <class N>
+  requires requires { N::xSizing; }
+[[nodiscard]] float widthIn(region &r, std::uint32_t at, N &node, float room) {
+  using ::skiff::layout::sizing;
+  const State &s = stateOf(node);
+  float w = 0.0f;
+  if constexpr (N::xSizing == sizing::share)
+    w = room * s.fWidth;
+  else if constexpr (N::xSizing == sizing::content)
+    w = std::min(prefOf(r, at, node), room);
+  else
+    w = s.fWidth;
+  if constexpr (N::xSizing == sizing::content)
+    w = std::max(w, room > 0.0f ? std::min(s.fMinWidth, room) : s.fMinWidth);
+  else
+    w = std::max(w, s.fMinWidth);
+  if (s.fMaxWidth > 0.0f)
+    w = std::min(w, s.fMaxWidth);
+  return w;
+}
 // A node's width in the room its parent gives it (its margin taken out): a
 // share, its natural width within the room, or its own; held to its least
 // and most.
@@ -6742,6 +6764,14 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
     child += r.sizes[child];
   });
 }
+// Whether a container takes its height from what it holds: by its type
+// where the type says (layout::sized), else by its spec.
+template <class N>
+  requires requires { N::ySizing; }
+[[nodiscard]] constexpr bool sizedByContentDown(N &) {
+  return N::ySizing == ::skiff::layout::sizing::content;
+}
+template <class N> [[nodiscard]] bool sizedByContentDown(N &node) { return stateOf(node).fAutoSizeAxes.template has<axis::y>(); }
 // Pass 3: heights, children before their parent.
 template <class N> void heights(region &r, std::uint32_t at, N &node) {
   State &s = stateOf(node);
@@ -6764,7 +6794,7 @@ template <class N> void heights(region &r, std::uint32_t at, N &node) {
   if (r.kinds[at] == kind::column && count > 1)
     h += r.options[at].spacingY * static_cast<float>(count - 1);
   h += s.fPadding.totalY();
-  if (!s.fAutoSizeAxes.template has<axis::y>())
+  if (!sizedByContentDown(node))
     h = s.fHeight;
   h = std::max(h, s.fMinHeight);
   if (s.fMaxHeight > 0.0f)

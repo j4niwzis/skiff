@@ -1,6 +1,7 @@
 import std;
 import skia;
 import skiff.scene;
+import skiff.layout;
 import skiff.nodes.flow;
 import skiff.compose;
 import gtest;
@@ -170,7 +171,7 @@ TEST(CompiledLayout, LaysATreeOutAsTheHandWrittenLayoutDoes) {
     scene::compiled::on() = compiled;
     auto root = compiled_tree::tree();
     scene::layout(root, skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 600.0f));
-    scene::compiled::on() = false;
+    scene::compiled::on() = true;
     return scene::laidOutTree(root) | std::views::transform([](const scene::LaidOutNode &one) { return one.bounds; }) |
            std::ranges::to<std::vector>();
   };
@@ -181,4 +182,29 @@ TEST(CompiledLayout, LaysATreeOutAsTheHandWrittenLayoutDoes) {
     EXPECT_EQ(hand[i], compiled[i]) << "node " << i << ": " << hand[i].fLeft << "," << hand[i].fTop << " " << hand[i].width() << "x"
                                     << hand[i].height() << " laid out by hand, " << compiled[i].fLeft << "," << compiled[i].fTop << " "
                                     << compiled[i].width() << "x" << compiled[i].height() << " compiled";
+}
+
+// So with columns and rows whose sizing is their type's (layout::sized):
+// the compiled passes take each axis by that case, the hand-written layout
+// by the spec the type writes -- the same boxes.
+TEST(CompiledLayout, SizedColumnsAndRowsLayOutAsTheirSpecsWould) {
+  using skiff::layout::sized;
+  using skiff::layout::sizing;
+  const auto tree = [] {
+    return ::skiff::compose::build(c::column<sized<sizing::share, sizing::content>>(
+        c::vbox(5.0f, {.padding = {2.0f, 3.0f, 4.0f, 5.0f}}),
+        c::row<sized<sizing::share, sizing::content>>(c::hbox(6.0f), c::column(c::vbox(0.0f, {.width = 24.0f, .height = 24.0f})),
+                                                     c::column<sized<sizing::grown, sizing::content>>(
+                                                         c::vbox(1.0f), c::column(c::vbox(0.0f, {.fillX = true, .height = 11.0f})))),
+        c::column<sized<sizing::own, sizing::own>>(c::vbox(0.0f, {.width = 70.0f, .height = 30.0f}))));
+  };
+  const auto boxes = [&](bool compiled) {
+    scene::compiled::on() = compiled;
+    auto root = tree();
+    scene::layout(root, skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 500.0f));
+    scene::compiled::on() = true;
+    return scene::laidOutTree(root) | std::views::transform([](const scene::LaidOutNode &one) { return one.bounds; }) |
+           std::ranges::to<std::vector>();
+  };
+  EXPECT_EQ(boxes(false), boxes(true));
 }

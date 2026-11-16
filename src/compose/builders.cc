@@ -29,6 +29,7 @@ export module skiff.compose:builders;
 
 import std;
 import skia;
+import skiff.layout;
 import splice;
 import skiff.scene;
 import skiff.model;
@@ -543,6 +544,22 @@ template <class... Parts>
   requires(!std::same_as<Parts, Look> && ...)
 auto row(Parts... parts) {
   return row(hbox(), std::move(parts)...);
+}
+// A column or a row whose sizing is its type's (skiff::layout::sized): the
+// compiled layout works each axis out by that case alone.
+template <class Sized, class... Parts>
+  requires requires { Sized::x; Sized::y; }
+auto column(Look look, Parts... parts) {
+  look.fHorizontal = false;
+  return lifted([](Look l, auto... p) { return erased(SizedColumnBox<Sized, decltype(as_part(std::move(p)))...>(std::move(l), as_part(std::move(p))...)); },
+                std::move(look), std::move(parts)...);
+}
+template <class Sized, class... Parts>
+  requires requires { Sized::x; Sized::y; }
+auto row(Look look, Parts... parts) {
+  look.fHorizontal = true;
+  return lifted([](Look l, auto... p) { return erased(SizedRowBox<Sized, decltype(as_part(std::move(p)))...>(std::move(l), as_part(std::move(p))...)); },
+                std::move(look), std::move(parts)...);
 }
 // Its parts in a view that scrolls.
 template <class... Parts>
