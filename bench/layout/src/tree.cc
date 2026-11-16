@@ -43,6 +43,15 @@ struct row {
 struct text {
   std::vector<float> words;
   float space = 4.0f, line = 18.0f;
+  // Its words' widths on one line, kept with them: its natural width,
+  // read at every pass, summed only when they change.
+  float total = 0.0f;
+  explicit text(std::vector<float> said = {}) : words(std::move(said)) { measure(); }
+  void measure() { total = std::ranges::fold_left(words, 0.0f, std::plus{}) + (words.size() > 1 ? space * static_cast<float>(words.size() - 1) : 0.0f); }
+  void say(float word) {
+    words.push_back(word);
+    measure();
+  }
   static constexpr bool holds = false;
   static constexpr std::array rules{
       computes(pref, self, {}),

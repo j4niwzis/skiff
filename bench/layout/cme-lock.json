@@ -1,0 +1,14 @@
+{
+  "about": "Written by cmake-everywhere. Commit this file. Every value is a fact about something outside this project that has to stay true: the commit a library was fetched at, the digest of an archive, and the digest of a port file read from somewhere else. Configure with -DCME_LOCK_ALL=ON to write it again.",
+  "lock": 1,
+  "ports": {
+    "cmake-everywhere": {
+      "version": "v0.2.45"
+    },
+    "splice": {
+      "commit": "8a7755a335917daf3bbfc54ef8a3a160f8445d15",
+      "url": "https://github.com/j4niwzis/splice.git",
+      "version": "0.4"
+    }
+  }
+}
