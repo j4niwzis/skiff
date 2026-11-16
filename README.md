@@ -84,9 +84,20 @@ against every kind while compiling: a kind whose rule reads what its pass has
 not computed yet does not compile. The scene's layout runs those passes,
 generated for the tree's own types in a release build (nothing erased) and
 over one shared table outside one. A column's or a row's kind is fixed by its
-type (`c::column` builds a `ColumnBox`, `c::row` a `RowBox`), and its sizing
-along each axis may be too (`c::column<layout::sized<...>>`), so the passes
-take that one case while compiling.
+type (`c::column` builds a `ColumnBox`, `c::row` a `RowBox`, a list may be
+made on a `ColumnStack`), and so is its sizing along each axis where its look
+says it by pieces:
+
+```cpp
+c::column(c::vbox(8.0f) | c::fill_x | c::content_y | c::padding(4.0f, 6.0f), parts...)
+c::row(c::hbox(4.0f) | c::grow_x | c::with({.minHeight = 32.0f}), parts...)
+```
+
+In a release build each piece makes the look's type say that axis's sizing:
+the passes take that one case while compiling, and two sizings on one axis
+do not compile. Outside one the pieces only write the look's spec, read at
+run time, so a debug build makes no type for each look. A look given a whole
+`Spec` (`c::vbox(8.0f, {...})`) is read at run time in either.
 
 Layout is incremental: a region laid out again only for what changed under it
 lays out the rows the frame marked and moves those below them by what they

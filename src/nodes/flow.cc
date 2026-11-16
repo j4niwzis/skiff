@@ -5,6 +5,7 @@ import splice;
 import skia;
 import skiff.paint;
 import skiff.scene;
+import skiff.layout;
 
 
 
@@ -799,6 +800,17 @@ public:
       detail::Flowing<std::remove_reference_t<decltype(self)>>{self, self.fStack}.layout();
     }
   }
+};
+
+// A stack down a column whose way is its type's (skiff::layout::kind_of): a
+// list made on it -- MemoRows<Key, View, Row, Make, ColumnStack> -- is taken
+// by the compiled layout as a column from its type, while compiling. Not
+// turned across after it is made.
+class ColumnStack : public Stack {
+public:
+  static constexpr ::skiff::layout::kind_of layoutKind = ::skiff::layout::kind_of::column;
+  [[nodiscard]] skiff::scene::FlowOptions flowOptions() const { return fStack; }
+  void setHorizontal() = delete;
 };
 
 // Rows as a function of items, declared: the rows become one for each

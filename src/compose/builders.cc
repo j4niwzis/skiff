@@ -531,7 +531,7 @@ auto column(Look look, Parts... parts) {
   return lifted([](Look l, auto... p) { return erased(ColumnBox(std::move(l), as_part(std::move(p))...)); }, std::move(look), std::move(parts)...);
 }
 template <class... Parts>
-  requires(!std::same_as<Parts, Look> && ...)
+  requires(!std::derived_from<Parts, Look> && ...)
 auto column(Parts... parts) {
   return column(vbox(), std::move(parts)...);
 }
@@ -541,25 +541,25 @@ auto row(Look look, Parts... parts) {
   return lifted([](Look l, auto... p) { return erased(RowBox(std::move(l), as_part(std::move(p))...)); }, std::move(look), std::move(parts)...);
 }
 template <class... Parts>
-  requires(!std::same_as<Parts, Look> && ...)
+  requires(!std::derived_from<Parts, Look> && ...)
 auto row(Parts... parts) {
   return row(hbox(), std::move(parts)...);
 }
-// A column or a row whose sizing is its type's (skiff::layout::sized): the
-// compiled layout works each axis out by that case alone.
-template <class Sized, class... Parts>
-  requires requires { Sized::x; Sized::y; }
-auto column(Look look, Parts... parts) {
+// A column or a row whose look says its sizing by its type (Shaped, in a
+// release build): the compiled layout works each axis out by that case.
+template <sizing X, sizing Y, class... Parts>
+auto column(Shaped<X, Y> look, Parts... parts) {
   look.fHorizontal = false;
-  return lifted([](Look l, auto... p) { return erased(SizedColumnBox<Sized, decltype(as_part(std::move(p)))...>(std::move(l), as_part(std::move(p))...)); },
-                std::move(look), std::move(parts)...);
+  return lifted([](Shaped<X, Y> l, auto... p) {
+    return erased(SizedColumnBox<::skiff::layout::sized<X, Y>, decltype(as_part(std::move(p)))...>(std::move(l), as_part(std::move(p))...));
+  }, std::move(look), std::move(parts)...);
 }
-template <class Sized, class... Parts>
-  requires requires { Sized::x; Sized::y; }
-auto row(Look look, Parts... parts) {
+template <sizing X, sizing Y, class... Parts>
+auto row(Shaped<X, Y> look, Parts... parts) {
   look.fHorizontal = true;
-  return lifted([](Look l, auto... p) { return erased(SizedRowBox<Sized, decltype(as_part(std::move(p)))...>(std::move(l), as_part(std::move(p))...)); },
-                std::move(look), std::move(parts)...);
+  return lifted([](Shaped<X, Y> l, auto... p) {
+    return erased(SizedRowBox<::skiff::layout::sized<X, Y>, decltype(as_part(std::move(p)))...>(std::move(l), as_part(std::move(p))...));
+  }, std::move(look), std::move(parts)...);
 }
 // Its parts in a view that scrolls.
 template <class... Parts>

@@ -23,11 +23,123 @@ struct Look {
   // Where along its way its parts sit, together.
   nodes::Justify fJustify = nodes::justify::start{};
 };
-inline Look vbox(float gap = 0.0f, scene::Spec spec = {}) {
+inline Look vbox(float gap, scene::Spec spec) {
   return {false, gap, std::move(spec)};
 }
-inline Look hbox(float gap = 0.0f, scene::Spec spec = {}) {
+inline Look hbox(float gap, scene::Spec spec) {
   return {true, gap, std::move(spec)};
+}
+
+// ---- sizing said by the look ------------------------------------------------------------
+//
+// c::vbox(8.0f) | c::fill_x | c::content_y | c::padding(4.0f, 6.0f): how a
+// column or a row is sized along each axis said by pieces put on its look.
+// In a release build each piece makes a look whose type says the axis's
+// sizing (Shaped): c::column and c::row take it from the type, the compiled
+// layout works the axis out by that one case, and two sizings on one axis do
+// not compile. Outside one the pieces only set the look's spec, one type for
+// every look, read at run time -- as the erased combinators are.
+using ::skiff::layout::sizing;
+template <sizing X, sizing Y> struct Shaped : Look {
+  static constexpr sizing x = X;
+  static constexpr sizing y = Y;
+};
+template <sizing X, sizing Y>
+using shaped_t = std::conditional_t<scene::kErasedCombinators, Look, Shaped<X, Y>>;
+// A look whose sizing is still its own (unsaid): what pieces go on.
+[[nodiscard]] inline shaped_t<sizing::own, sizing::own> vbox(float gap = 0.0f) {
+  shaped_t<sizing::own, sizing::own> out;
+  out.fHorizontal = false;
+  out.fGap = gap;
+  return out;
+}
+[[nodiscard]] inline shaped_t<sizing::own, sizing::own> hbox(float gap = 0.0f) {
+  shaped_t<sizing::own, sizing::own> out;
+  out.fHorizontal = true;
+  out.fGap = gap;
+  return out;
+}
+// The pieces: an axis a share of the parent (fill), sized by what it holds
+// (content), a share of what its siblings leave along its flow (grow).
+template <class Axis, sizing How> struct sized_piece {};
+inline constexpr sized_piece<scene::axis::x, sizing::share> fill_x{};
+inline constexpr sized_piece<scene::axis::y, sizing::share> fill_y{};
+inline constexpr sized_piece<scene::axis::x, sizing::content> content_x{};
+inline constexpr sized_piece<scene::axis::y, sizing::content> content_y{};
+inline constexpr sized_piece<scene::axis::x, sizing::grown> grow_x{};
+inline constexpr sized_piece<scene::axis::y, sizing::grown> grow_y{};
+// What a piece writes on the look's spec: the axis's sizing, the others
+// on that axis taken away.
+template <class Axis, sizing How> void sizeAlong(Look &look, sized_piece<Axis, How>) {
+  scene::Spec &spec = look.fSpec;
+  const auto without = [](std::optional<scene::Axes> axes) { return axes.value_or(scene::axes::kNone).template except<Axis>(); };
+  spec.relativeSize = without(spec.relativeSize);
+  spec.autoSize = without(spec.autoSize);
+  spec.grow = without(spec.grow);
+  if constexpr (How == sizing::share) {
+    spec.relativeSize = spec.relativeSize->template with<Axis>();
+    if constexpr (std::same_as<Axis, scene::axis::x>)
+      spec.width = 1.0f;
+    else
+      spec.height = 1.0f;
+  } else if constexpr (How == sizing::content) {
+    spec.autoSize = spec.autoSize->template with<Axis>();
+  } else if constexpr (How == sizing::grown) {
+    spec.grow = spec.grow->template with<Axis>();
+  }
+}
+// On a look whose sizing is its type's: the axis not said yet -- saying it
+// twice does not compile.
+template <sizing X, sizing Y, class Axis, sizing How>
+[[nodiscard]] auto operator|(Shaped<X, Y> look, sized_piece<Axis, How> piece) {
+  constexpr bool across = std::same_as<Axis, scene::axis::x>;
+  static_assert((across ? X : Y) == sizing::own, "this look's sizing along that axis is said already");
+  sizeAlong(look, piece);
+  if constexpr (across)
+    return Shaped<How, Y>{look};
+  else
+    return Shaped<X, How>{look};
+}
+// On a look read at run time (a Debug build's, or one given a spec).
+template <class Axis, sizing How> [[nodiscard]] Look operator|(Look look, sized_piece<Axis, How> piece) {
+  sizeAlong(look, piece);
+  return look;
+}
+// The rest of a look said as values: padding, a margin, sizes, the rest of
+// a spec -- its sizing said by the pieces, not here.
+struct padding_piece {
+  scene::Margin margin;
+};
+[[nodiscard]] inline padding_piece padding(float all) { return {{all, all, all, all}}; }
+[[nodiscard]] inline padding_piece padding(float vertical, float horizontal) { return {{vertical, horizontal, vertical, horizontal}}; }
+[[nodiscard]] inline padding_piece padding(float top, float right, float bottom, float left) { return {{top, right, bottom, left}}; }
+struct spec_piece {
+  scene::Spec spec;
+};
+[[nodiscard]] inline spec_piece with(scene::Spec spec) { return {std::move(spec)}; }
+template <class L>
+  requires std::derived_from<L, Look>
+[[nodiscard]] L operator|(L look, padding_piece piece) {
+  look.fSpec.padding = piece.margin;
+  return look;
+}
+template <class L>
+  requires std::derived_from<L, Look> || std::same_as<L, Look>
+[[nodiscard]] L operator|(L look, spec_piece piece) {
+  // Its sizing is the pieces': a spec's said here would be a second way.
+  piece.spec.relativeSize.reset();
+  piece.spec.autoSize.reset();
+  piece.spec.grow.reset();
+  piece.spec.fill = piece.spec.fillX = piece.spec.fillY = false;
+  const scene::Spec sized = look.fSpec;
+  look.fSpec = std::move(piece.spec);
+  look.fSpec.relativeSize = sized.relativeSize;
+  look.fSpec.autoSize = sized.autoSize;
+  look.fSpec.grow = sized.grow;
+  if (sized.width) look.fSpec.width = look.fSpec.width.value_or(*sized.width);
+  if (sized.height) look.fSpec.height = look.fSpec.height.value_or(*sized.height);
+  if (sized.padding.given && !look.fSpec.padding.given) look.fSpec.padding = sized.padding;
+  return look;
 }
 // A look with its parts put along its way as said: in the middle, at the end.
 inline Look justified(Look look, nodes::Justify justify) {

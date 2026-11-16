@@ -184,19 +184,17 @@ TEST(CompiledLayout, LaysATreeOutAsTheHandWrittenLayoutDoes) {
                                     << compiled[i].width() << "x" << compiled[i].height() << " compiled";
 }
 
-// So with columns and rows whose sizing is their type's (layout::sized):
-// the compiled passes take each axis by that case, the hand-written layout
-// by the spec the type writes -- the same boxes.
-TEST(CompiledLayout, SizedColumnsAndRowsLayOutAsTheirSpecsWould) {
-  using skiff::layout::sized;
-  using skiff::layout::sizing;
+// So with columns and rows whose looks say their sizing by pieces (c::fill_x,
+// c::content_y, c::grow_x, c::padding): the compiled passes take each axis by
+// its case where the type says it (a release build), the hand-written layout
+// by the spec the pieces write -- the same boxes.
+TEST(CompiledLayout, ColumnsAndRowsSizedByPiecesLayOutAsTheirSpecsWould) {
   const auto tree = [] {
-    return ::skiff::compose::build(c::column<sized<sizing::share, sizing::content>>(
-        c::vbox(5.0f, {.padding = {2.0f, 3.0f, 4.0f, 5.0f}}),
-        c::row<sized<sizing::share, sizing::content>>(c::hbox(6.0f), c::column(c::vbox(0.0f, {.width = 24.0f, .height = 24.0f})),
-                                                     c::column<sized<sizing::grown, sizing::content>>(
-                                                         c::vbox(1.0f), c::column(c::vbox(0.0f, {.fillX = true, .height = 11.0f})))),
-        c::column<sized<sizing::own, sizing::own>>(c::vbox(0.0f, {.width = 70.0f, .height = 30.0f}))));
+    return ::skiff::compose::build(c::column(
+        c::vbox(5.0f) | c::fill_x | c::content_y | c::padding(2.0f, 3.0f, 4.0f, 5.0f),
+        c::row(c::hbox(6.0f) | c::fill_x | c::content_y, c::column(c::vbox(0.0f, {.width = 24.0f, .height = 24.0f})),
+               c::column(c::vbox(1.0f) | c::grow_x | c::content_y, c::column(c::vbox(0.0f, {.fillX = true, .height = 11.0f})))),
+        c::column(c::vbox() | c::with({.width = 70.0f, .height = 30.0f}))));
   };
   const auto boxes = [&](bool compiled) {
     scene::compiled::on() = compiled;

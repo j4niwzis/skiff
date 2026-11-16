@@ -41,14 +41,15 @@ inline constexpr skia::SkColor kInk = 0xff202020u;
 // reaches the row's width) and its time with the tick by it.
 inline constexpr auto make_row = [](const item& one) {
   const auto& [key, view] = one;
-  return c::build(c::row(c::hbox(8.0f, {.fillX = true, .autoSize = scene::axes::kY, .padding = {4.0f, 4.0f, 4.0f, 4.0f}}),
+  return c::build(c::row(c::hbox(8.0f) | c::fill_x | c::content_y | c::padding(4.0f),
       c::column(c::vbox(0.0f, {.width = 32.0f, .height = 32.0f})),
-      c::column(c::vbox(2.0f, {.relativeSize = scene::axes::kNone, .autoSize = scene::axes::kY, .grow = scene::axes::kX, .padding = {6.0f, 6.0f, 6.0f, 6.0f}}),
+      c::column(c::vbox(2.0f) | c::grow_x | c::content_y | c::padding(6.0f),
           skiff::nodes::Text(said(key + 1, 2), 13.0f, kInk), skiff::nodes::Text(said(key, view.words), 13.0f, kInk),
-          c::row(c::hbox(4.0f, {.autoSize = scene::axes::kBoth}), skiff::nodes::Text("12:34", 11.0f, kInk),
+          c::row(c::hbox(4.0f) | c::content_x | c::content_y, skiff::nodes::Text("12:34", 11.0f, kInk),
                  c::column(c::vbox(0.0f, {.width = view.wide ? 16.0f : 12.0f, .height = 12.0f}))))));
 };
-using rows_t = skiff::nodes::MemoRows<std::size_t, message_view, std::invoke_result_t<decltype(make_row), const item&>, std::remove_cv_t<decltype(make_row)>>;
+using rows_t = skiff::nodes::MemoRows<std::size_t, message_view, std::invoke_result_t<decltype(make_row), const item&>, std::remove_cv_t<decltype(make_row)>,
+                                      skiff::nodes::ColumnStack>;
 
 // The chat as a program shows it: its list in a scroll view 800 high --
 // what is out of view not walked by the frame -- the root of a scene, and each
