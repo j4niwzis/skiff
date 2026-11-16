@@ -160,10 +160,16 @@ template <class N> struct Flowing {
 
   // The children that show, laid out at their own size in the box; what the
   // placing is worked out from.
+  // Whether a child shown reads the box's height: sized or grown as a share
+  // of it, or placed by its anchor in it -- found as measured() passes them.
+  bool fReadsHeight = false;
   std::vector<skiff::scene::State *> measured(const skia::SkRect &box) {
     std::vector<skiff::scene::State *> shown;
     skiff::scene::eachChild(fNode, [&](auto &child) {
       skiff::scene::State &state = skiff::scene::stateOf(child);
+      if (state.fVisible && (state.fOutOfFlow || state.fRelativeSizeAxes.template has<skiff::scene::axis::y>() ||
+                             state.fGrowAxes.template has<skiff::scene::axis::y>()))
+        fReadsHeight = true;
       if (inFlow(state)) {
         if (const skia::SkRect childBox = boxFor(state, box); this->waits(state, childBox))
           fWaiting.push_back(&state);
@@ -268,6 +274,19 @@ template <class N> struct Flowing {
     }
     place(box, places);
     told(box);
+    self.fHeightFree = this->freeOfHeight(true);
+  }
+
+  // Whether this layout was free of the box's height (State::fHeightFree):
+  // down a column, from its start, or across a row sized by what it holds;
+  // no child sized or grown as a share of the height, none placed by its
+  // anchor in the box (as measured() found them).
+  [[nodiscard]] bool freeOfHeight(bool vertical) {
+    const skiff::scene::State &self = skiff::scene::stateOf(fNode);
+    const bool fromStart = spl::visit(spl::overloaded{[](justify::start) { return true; }, [](const auto &) { return false; }}, fOptions.justify);
+    if (vertical ? !fromStart : !fOptions.wrap && !self.fAutoSizeAxes.template has<skiff::scene::axis::y>())
+      return false;
+    return !fReadsHeight;
   }
 
   void lay(direction::horizontal) {
@@ -333,6 +352,7 @@ template <class N> struct Flowing {
     }
     place(box, places);
     told(box);
+    skiff::scene::stateOf(fNode).fHeightFree = this->freeOfHeight(false);
   }
 
   // What a child takes on its line, wrapped: what it is -- or, where it

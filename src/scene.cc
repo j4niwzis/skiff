@@ -1922,6 +1922,15 @@ public:
   // one, its width the same at the second: whether its width moved.
   std::uint64_t fFlowPass = 0;
   bool fFlowMoved = false;
+  // Whether what its last layoutChildren did was free of its height: its
+  // children laid out the same in a box of any height, only moved with the
+  // box's top -- a flow down a column, from its start, none of its children
+  // sized or grown as a share of its height, none placed by an anchor in
+  // it. Said by what lays its children out (a flow does); false unless it
+  // says so. A node sized by its children along y alone is then not laid
+  // out twice -- in the provisional box and again in its own, the second
+  // the same work -- but laid out once and moved.
+  bool fHeightFree = false;
   // The children, as they were last time: a variant that switched, a row
   // added to a vector. Compared each frame; a different set is laid out and
   // repainted.
@@ -2603,6 +2612,19 @@ inline void noteMoved(State &state) {
   state.fLayoutMoved = state.fBounds != state.fBoundsAtPass ? joined(state.fBoundsAtPass, state.fBounds)
                                                             : skia::SkRect::MakeEmpty();
 }
+// A laid-out subtree moved as it is, within a layout pass: its bounds and
+// the boxes it was laid out in, and what each moved over in the pass noted,
+// as laying it out in the moved box would have -- so that it is repainted
+// where it was and where it is. A recording made where it was is let go.
+template <class N> void moveLaidOut(N &node, float dx, float dy) {
+  State &state = stateOf(node);
+  notePass(state);
+  state.fBounds.offset(dx, dy);
+  state.fLastConstraint.offset(dx, dy);
+  state.fPicture = nullptr;
+  noteMoved(state);
+  eachChild(node, [&](auto &child) { moveLaidOut(child, dx, dy); });
+}
 
 template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   State &state = node.fState;
@@ -2663,6 +2685,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   float height = relativeY ? parentH * state.fHeight : state.fHeight;
 
   // Auto-sized axes need the children laid out first, in a provisional box.
+  std::optional<skia::SkRect> provisional;
   if (autoX || autoY) {
     // Within its largest size, where it has one: what wraps in it wraps
     // there, rather than at the parent's width it is then cut back from.
@@ -2674,6 +2697,8 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
     state.fBounds = skia::SkRect::MakeXYWH(room.fLeft, room.fTop,
                                            autoX ? provisionalW : width,
                                            autoY ? provisionalH : height);
+    provisional = state.fBounds;
+    state.fHeightFree = false;
     ++work::provisionalDepth();
     node.layoutChildren();
     --work::provisionalDepth();
@@ -2708,6 +2733,19 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   // Moved or resized, over the pass: repainted where it was and where it is.
   (void)previous;
   noteMoved(state);
+  // Sized by its children along y alone, as wide as its provisional box,
+  // and what they came to there free of its height: they come to the same
+  // in its own box, moved with its top. Moved, not laid out again -- a
+  // list of 10,000 rows sized by them reached every row twice a frame.
+  if (provisional && !autoX && provisional->width() == state.fBounds.width() && state.fHeightFree) {
+    const float dx = state.fBounds.fLeft - provisional->fLeft;
+    const float dy = state.fBounds.fTop - provisional->fTop;
+    if (dx != 0.0f || dy != 0.0f)
+      eachChild(node, [&](auto &child) { moveLaidOut(child, dx, dy); });
+    state.fLayoutValid = true;
+    state.fSubtreeDirty = false;
+    return;
+  }
   node.layoutChildren();
   // Auto-sized in height, and its children laid out again in the box it
   // ended in: one that wraps -- a block of code's text, filling a width the
