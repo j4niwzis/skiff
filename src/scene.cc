@@ -2766,9 +2766,10 @@ inline void noteMoved(State &state) {
 // A node moved as it is: its bounds, the box it was laid out in and its
 // reach where it is now, its recording (made where it was) let go, and its
 // children owing as much (fPendingX/Y) -- moved when gone into.
-inline void moveOwn(State &state, float dx, float dy) {
+inline void moveOwn(State &state, float dx, float dy, bool withItsBox = true) {
   state.fBounds.offset(dx, dy);
-  state.fLastConstraint.offset(dx, dy);
+  if (withItsBox)
+    state.fLastConstraint.offset(dx, dy);
   state.fReach.offset(dx, dy);
   state.fPicture = nullptr;
   state.fPendingX += dx;
@@ -2806,6 +2807,21 @@ template <class N> void moveLaidOut(N &node, float dx, float dy) {
   notePass(state);
   const skia::SkRect reached = state.fReach;
   moveOwn(state, dx, dy);
+  noteMoved(state);
+  state.fMovedDamage = joined(joined(state.fMovedDamage, reached), state.fReach);
+}
+// A laid-out child placed elsewhere in the same box its parent lays it out
+// in -- a row below one that grew: moved as moveLaidOut moves it, but the
+// box it was laid out in is still its parent's, unmoved, so that its next
+// layout there finds it as it was (as a flow's arrange and layoutNode's
+// placement have it).
+template <class N> void placedAgain(N &node, float dx, float dy) {
+  State &state = stateOf(node);
+  notePass(state);
+  const skia::SkRect reached = state.fReach;
+  state.fX += dx;
+  state.fY += dy;
+  moveOwn(state, dx, dy, false);
   noteMoved(state);
   state.fMovedDamage = joined(joined(state.fMovedDamage, reached), state.fReach);
 }
@@ -6677,6 +6693,9 @@ struct region {
   // room its fixed siblings leave.
   std::vector<float> rooms;
   std::vector<std::uint8_t> asked;
+  // Whether it waits, out of view while its scrolled column's width moves:
+  // moved only, laid out at the width once it holds.
+  std::vector<std::uint8_t> waits;
   [[nodiscard]] std::uint32_t add(kind of, const FlowOptions &with) {
     const auto at = static_cast<std::uint32_t>(kinds.size());
     kinds.push_back(of);
@@ -6687,6 +6706,7 @@ struct region {
     prefs.push_back(0.0f);
     rooms.push_back(0.0f);
     asked.push_back(0);
+    waits.push_back(0);
     return at;
   }
 };
@@ -6848,15 +6868,19 @@ template <class N>
   return N::ySizing == ::skiff::layout::sizing::content;
 }
 template <class N> [[nodiscard]] bool sizedByContentDown(N &node) { return stateOf(node).fAutoSizeAxes.template has<axis::y>(); }
-// Pass 3: heights, children before their parent.
-template <class N> void heights(region &r, std::uint32_t at, N &node) {
+// Pass 3: heights, children before their parent. An edge node is laid out
+// as a flow measures it: in the box its parent gives it -- its parent's
+// content box as it stands, its room -- at its place as it was; placed in
+// pass 4.
+template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPoint origin) {
   State &s = stateOf(node);
   if (r.kinds[at] == kind::edge) {
-    layout(node, skia::SkRect::MakeXYWH(s.fBounds.fLeft - s.fMargin.fLeft, s.fBounds.fTop - s.fMargin.fTop, r.rooms[at], 0.0f));
+    layout(node, skia::SkRect::MakeXYWH(origin.fX, origin.fY, r.rooms[at], 0.0f));
     r.heights[at] = s.fBounds.height();
     r.widths[at] = s.fBounds.width();
     return;
   }
+  const skia::SkRect inside = s.contentBox();
   const ViewLaidOut inView{s.fViewName};
   // A scrolled column's rows out of view while its width moves -- a column
   // dragged wider, at every frame of the drag: not laid out again at each
@@ -6879,9 +6903,10 @@ template <class N> void heights(region &r, std::uint32_t at, N &node) {
         one.fLastConstraint.width() != r.rooms[child] && !skia::SkRect::Intersects(one.fBounds, *s.fInView)) {
       r.heights[child] = one.fBounds.height();
       r.widths[child] = one.fBounds.width();
+      r.waits[child] = 1;
       s.fChildrenWaiting = true;
     } else {
-      heights(r, child, each);
+      heights(r, child, each, skia::SkPoint::Make(inside.fLeft, inside.fTop));
     }
     const float k = r.heights[child] + stateOf(each).fMargin.totalY();
     h = r.kinds[at] == kind::column ? h + k : std::max(h, k);
@@ -6933,11 +6958,24 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
     const float line = column ? content.width() : content.height();
     const float own = column ? r.widths[child] + m.totalX() : r.heights[child] + m.totalY();
     const float cross = (line - own) * one.fAlignSelf.value_or(r.options[at].crossAlign).at;
-    one.fX = column ? cross : along;
-    one.fY = column ? along : cross;
     work::record(one.fId, s.fId);
-    place(r, child, each,
-          skia::SkRect::MakeXYWH(content.fLeft + one.fX + m.fLeft, content.fTop + one.fY + m.fTop, r.widths[child], r.heights[child]));
+    if (r.waits[child]) {
+      // Waiting: moved where it goes, as it is.
+      const float x = column ? cross : along, y = column ? along : cross;
+      detail::placedAgain(each, content.fLeft + x + m.fLeft - one.fBounds.fLeft, content.fTop + y + m.fTop - one.fBounds.fTop);
+      one.fX = x;
+      one.fY = y;
+    } else if (r.kinds[child] == kind::edge) {
+      // Placed as a flow places it: arranged, and laid out in the box it
+      // was measured in -- moved as it is where that box stands.
+      one.arrange(column ? cross : along, column ? along : cross);
+      layout(each, skia::SkRect::MakeXYWH(content.fLeft, content.fTop, r.rooms[child], 0.0f));
+    } else {
+      one.fX = column ? cross : along;
+      one.fY = column ? along : cross;
+      place(r, child, each,
+            skia::SkRect::MakeXYWH(content.fLeft + one.fX + m.fLeft, content.fTop + one.fY + m.fTop, r.widths[child], r.heights[child]));
+    }
     along += column ? r.heights[child] + m.totalY() + r.options[at].spacingY : r.widths[child] + m.totalX() + r.options[at].spacingX;
     child += r.sizes[child];
   });
@@ -7016,27 +7054,23 @@ template <class N> bool redoMarked(N &node) {
       const float before = one.fBounds.height() + one.fMargin.totalY();
       const float width = one.fBounds.width();
       work::record(one.fId, s.fId);
-      if (delta != 0.0f) {
-        one.fY += delta;
-        detail::moveLaidOut(each, 0.0f, delta);
-      }
-      layout(each, skia::SkRect::MakeXYWH(one.fBounds.fLeft - one.fMargin.fLeft, one.fBounds.fTop - one.fMargin.fTop,
-                                          content.width(), 0.0f));
-      // Laid out where it was; its width the same, else across again.
+      // Laid out in the box a column gives it, at its place moved by what
+      // grew above it; across again where its width changed.
+      one.arrange(one.fX, one.fY + delta);
+      const skia::SkRect box = skia::SkRect::MakeXYWH(content.fLeft, content.fTop, content.width(), 0.0f);
+      layout(each, box);
       if (one.fBounds.width() != width) {
-        const float cross = (content.width() - one.fBounds.width() - one.fMargin.totalX()) *
-                            one.fAlignSelf.value_or(s.fRegionOptions.crossAlign).at;
-        detail::moveLaidOut(each, content.fLeft + cross + one.fMargin.fLeft - one.fBounds.fLeft, 0.0f);
-        one.fX = cross;
+        one.arrange((content.width() - one.fBounds.width() - one.fMargin.totalX()) * one.fAlignSelf.value_or(s.fRegionOptions.crossAlign).at,
+                    one.fY);
+        layout(each, box);
       }
       delta += one.fBounds.height() + one.fMargin.totalY() - before;
       return;
     }
     if (delta == 0.0f)
       return;
-    one.fY += delta;
     work::record(one.fId, s.fId);
-    detail::moveLaidOut(each, 0.0f, delta);
+    detail::placedAgain(each, 0.0f, delta);
     if (!view || skia::SkRect::Intersects(joined(one.fBounds, one.fReach), *view))
       work::reach(one.fId);
   });
@@ -7063,7 +7097,7 @@ template <class N> bool run(N &node, const skia::SkRect &parent) {
   const skia::SkRect room = inset(parent, s.fMargin);
   r.widths[0] = widthIn(r, 0, node, room.width());
   giveWidths(r, 0, node);
-  heights(r, 0, node);
+  heights(r, 0, node, skia::SkPoint::Make(0.0f, 0.0f));
   if (!s.fAutoSizeAxes.template has<axis::y>())
     r.heights[0] = s.fRelativeSizeAxes.template has<axis::y>() ? room.height() * s.fHeight : s.fHeight;
   place(r, 0, node, anchoredBox(room, r.widths[0], r.heights[0], s.fAnchor, s.fOrigin, s.fX, s.fY));
