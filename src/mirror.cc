@@ -963,6 +963,8 @@ private:
   // walks' table says; either way its state, its look, whether it takes a
   // press, and its children in their order.
   template <class N> dom::Handle visit(N &node, const detail::Holder &holder) {
+    // Its children where they are: what a move still owes them, paid.
+    scene::detail::settle(node);
     return this->write(node.fState, node.look(), node.acceptsInput(), holder, [&](auto &&each) { scene::eachChild(node, each); },
                        [&](Markup &into, Pictures &pictures) { return this->record(node, into, pictures); }, [&] { return scrolledOf(node); },
                        [&](const scene::TextLink &link) { return pictureOf(node, link); });
@@ -984,6 +986,7 @@ private:
   }
   dom::Handle visit(scene::AnyNodeRef &ref, const detail::Holder &holder) {
     scene::ErasedNode node(ref);
+    scene::detail::settle(node);
     return this->write(node.fState, node.look(), node.acceptsInput(), holder, [&](auto &&each) { node.forEachChild(each); },
                        [&](Markup &into, Pictures &pictures) { return this->recordErased(node, into, pictures); },
                        [&] { return node.scrollOffset(); }, [](const scene::TextLink &) -> const skia::SkImage * { return nullptr; });

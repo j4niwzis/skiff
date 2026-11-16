@@ -285,11 +285,17 @@ TEST(Compose, APressInATreeThatIsOneStateIsTakenByItsHandlers) {
   auto root = tally();
   bind::Binding<bind::ModelOf<Tree>> binding;
   binding.refresh(root, m);
+  // Laid out, and clicked on the button: a click is taken by a node only
+  // where it is -- the tree never laid out, every node had empty bounds,
+  // and a release build's routing passed the press over (the test failed
+  // in every release build since it was written).
+  scene::layout(root, skia::SkRect::MakeXYWH(0.0f, 0.0f, 200.0f, 40.0f));
   using Plus = OnClick<Pressed, part_t<nodes::Text>>;
-  const scene::Path path = pressPathTo(root, all_made_as<Plus>(root).at(0)->fState);
+  const auto &plus = all_made_as<Plus>(root).at(0)->fState;
+  const scene::Path path = pressPathTo(root, plus);
   const auto start = bind::carryFrom(&m);
   decltype(auto) carried = carryAtRoot(root, start);
-  (void)scene::walk::clickPath(root, path, 0, 1.0f, 1.0f, carried);
+  (void)scene::walk::clickPath(root, path, 0, plus.fBounds.centerX(), plus.fBounds.centerY(), carried);
   if constexpr (scene::kErasedWalks) {
     // Erased walks carry nothing: the press is kept, delivered along its path.
     if (scene::hostWork().pressedNow != nullptr) {

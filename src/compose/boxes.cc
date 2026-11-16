@@ -1991,6 +1991,7 @@ private:
   [[nodiscard]] skia::SkRect extent() const {
     skia::SkRect all = this->fState.fBounds;
     const auto grow = [&](const auto &self, auto &node) -> void {
+      scene::detail::settle(node);  // its parts where they are
       scene::eachChild(node, [&](auto &part) {
         const scene::State &state = scene::stateOf(part);
         if (!state.fVisible)
@@ -2235,6 +2236,7 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
         for (;;) {
           std::size_t count = 0;
           std::optional<scene::AnyNodeRef> only;
+          scene::detail::settle(seen);  // its parts where they are
           seen.forEachChild([&](scene::AnyNodeRef &part) {
             if (count++ == 0)
               only.emplace(part);
@@ -2243,11 +2245,13 @@ template <class Facts, class Page, class Show, class Same, class Side, class Pin
             break;
           seen = *only;
         }
+        scene::detail::settle(seen);
         seen.forEachChild([&](scene::AnyNodeRef &part) {
           if (std::exchange(first, false))
             f(scene::stateOf(part));
         });
       } else {
+        scene::detail::settle(one);
         scene::eachChild(one, [&](auto &part) {
           if (std::exchange(first, false))
             f(scene::stateOf(part));
