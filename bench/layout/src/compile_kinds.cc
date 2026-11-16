@@ -94,9 +94,10 @@ void visit_one(flat& t, std::uint32_t n, std::size_t pass, const synthetic<I>& k
 
 }  // namespace
 
-int main(int argc, char**) {
+int main(int argc, char** argv) {
   flat t;
-  const std::size_t size = 1000 + static_cast<std::size_t>(argc);
+  const std::size_t size = argc > 1 ? std::stoul(argv[1]) : 1001;
+  const std::size_t rounds = argc > 2 ? std::stoul(argv[2]) : 1;
   // One of each kind, made in place by its index -- no converting
   // assignment, whose overload resolution over every alternative would
   // cost kinds * kinds -- and the tree's nodes copied from them.
@@ -109,6 +110,8 @@ int main(int argc, char**) {
   for (std::uint32_t n = 1; n < size; ++n) t.children[(n - 1) / 4].push_back(n);
   for (auto& each : t.values) each.assign(size, 0.0f);
   t.at(width, 0) = 640.0f;
+  const auto start = std::chrono::steady_clock::now();
+  for (std::size_t round = 0; round < rounds; ++round)
   for (std::size_t pass = 0; pass < kSchedule.size(); ++pass) {
     const bool up = kSchedule[pass].walk == order::post;
     for (std::size_t i = 0; i < size; ++i) {
@@ -116,5 +119,6 @@ int main(int argc, char**) {
       spl::visit([&](const auto& k) { visit_one(t, n, pass, k); }, t.kinds[n]);
     }
   }
-  std::println("{}", t.at(height, 0));
+  const std::chrono::duration<double, std::milli> took = std::chrono::steady_clock::now() - start;
+  std::println("{} ms per layout of {} nodes ({})", took.count() / static_cast<double>(rounds), size, t.at(height, 0));
 }

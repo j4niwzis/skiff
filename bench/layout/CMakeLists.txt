@@ -49,3 +49,4 @@ foreach(kinds 16 64 256)
     set_target_properties(layout_compile_k${kinds}_c${checked} PROPERTIES EXCLUDE_FROM_ALL ON)
   endforeach()
 endforeach()
+
