@@ -1,9 +1,17 @@
 # skiff
 
-A small retained-mode UI framework on top of Skia, in the shape osu!framework
-gives its drawables, sized for machines with no GPU acceleration. A screen is
-written once as an expression of combinators; the same tree is drawn by
-skiff's scene on Skia, or shown as a page's elements in a browser.
+A small retained-mode UI framework on top of Skia, sized for machines with no
+GPU acceleration. A screen is written once as an expression of combinators;
+the same tree is drawn by skiff's scene on Skia, or shown as a page's
+elements in a browser.
+
+The way screens are written follows
+[reacl-c](https://github.com/active-group/reacl-c): a view is an item made of
+smaller items; what it shows is a part of one model, focused on as it goes
+down (`bound<>`, `scoped<>`, `projected<>`); state of its own is local to it
+(`local<>`); and what it does is an action sent up to the handlers around it
+(`handlers`, `handle<>`), which answer with changes of the model -- all of it
+typed, and checked while compiling.
 
 ## Modules
 
@@ -13,7 +21,8 @@ skiff's scene on Skia, or shown as a page's elements in a browser.
 | `skiff.model` | what a program shows, kept in one place: one aggregate, its parts found by their types, changed only by edits that move the revisions of what they went through |
 | `skiff.bind` | a tree's nodes showing a `skiff.model` and changing it: `Bound`, `Scoped`, keyed lists, locals, handlers |
 | `skiff.compose` | screens written as expressions of combinators -- `column`, `row`, `bound<>`, `scoped<>`, `each<>`, `onClick` and the rest -- and components wired by the types of what they send |
-| `skiff.scene` | the graph: layout, typed stylesheets, transforms, routed input, accessibility semantics, damage and frame scheduling |
+| `skiff.layout` | layout as an attribute grammar: what each kind of node computes from what, the schedule of passes (widths up, widths down, heights up, places down), checked against every kind while compiling |
+| `skiff.scene` | the graph: the compiled layout traversal (the passes generated for the tree's own types), typed stylesheets, transforms, routed input, accessibility semantics, damage and frame scheduling |
 | `skiff.nodes` | the drawables: `Box`, `Text`, `Stack`, flows, `ScrollContainer`, `Image`, `Icon`, `Canvas` and its shapes |
 | `skiff.paint` | a font stack with fallbacks behind a primary face, a canvas painter, easing curves |
 | `skiff.web` | the HTML backend: a tree that is a page -- stacks flex boxes, texts spans, a `Spec` the element's CSS, a named view (`SKIFF_NAMED`) its `data-view` -- bound through `skiff.bind` exactly as the scene's nodes are |
@@ -75,7 +84,7 @@ struct Button;
 struct ButtonLabel;
 struct Sidebar;
 
-struct LazerTheme {
+struct AppTheme {
   static constexpr auto styles =
       scene::makeStyleSheet()
           .rule(scene::select<nodes::Box, Button>(),
@@ -93,7 +102,7 @@ struct LazerTheme {
                 {.visible = false});
 };
 
-scene.setStyleSheet<LazerTheme>();
+scene.setStyleSheet<AppTheme>();
 ```
 
 Later matching rules override earlier ones. Foreground colour, font size and
@@ -164,9 +173,8 @@ if (frame.fWantsAnotherFrame)
   requestFrame();
 ```
 
-That rectangle is the point of the whole thing: the framework skiff is shaped
-after redraws everything every frame because it assumes a GPU. This one
-redraws the part that moved.
+That rectangle is the point of the whole thing: a framework that assumes a
+GPU redraws everything every frame. This one redraws the part that moved.
 
 ## Building and testing
 

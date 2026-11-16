@@ -1575,7 +1575,7 @@ public:
         box.width() - inset * 2.0f, size, color, alpha, bold);
   }
 
-  // Text with a soft shadow, the way lazer draws judgements and HUD numbers.
+  // Text with a soft shadow: a number over a busy picture, readable on it.
   void textShadowed(const std::string &str, float cx, float y, float size,
                     skia::SkColor color, float alpha = 1.0f) const {
     const float w = this->measure(str, size);

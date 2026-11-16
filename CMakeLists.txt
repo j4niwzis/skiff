@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 4.1.1 FATAL_ERROR)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/import-std.cmake)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# skiff -- a small retained-mode UI framework on Skia, in the shape
-# osu!framework gives its drawables, sized for software rasterisation.
+# skiff -- a small retained-mode UI framework on Skia, sized for software
+# rasterisation; screens written as reacl-c writes them.
 #
 #   skiff.web    the HTML backend: nodes that are the page's elements, laid
 #                out by the browser and bound to a model as the scene's are
@@ -19,7 +19,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 #   skiff.nodes  the drawables built on it: boxes, text, sprites, flows,
 #                scroll and cached containers, clickable areas
 #
-# Nothing in here knows what a beatmap is, or what osu! is. This is meant to
+# Nothing in here knows what program it draws for. This is meant to
 # be lifted into a repository of its own; keeping it as a project rather than
 # a directory is what makes that a move rather than a rewrite.
 
