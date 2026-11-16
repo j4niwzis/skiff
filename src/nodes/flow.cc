@@ -700,6 +700,34 @@ bool reconcile(std::vector<Row> &rows, Items &&items, KeyOf keyOf,
       }
     }
   }
+  // The rows there are still the first items, in order, by their keys --
+  // a chat's new message added at the end, or a row shown otherwise where
+  // rows cannot be assigned (composed ones, holding captured callables):
+  // those rows stay where they are, a changed one made again in its place,
+  // the new ones made after them. Moving every row into a new list cost as
+  // much as making them all again (a 10,000-message chat: 0.2 s to add one).
+  if constexpr (std::ranges::forward_range<Items> && std::ranges::sized_range<Items>) {
+    const bool prefix = std::ranges::size(items) >= rows.size() &&
+                        std::ranges::equal(rows, items | std::views::take(rows.size()), [&](const Row &row, const auto &item) {
+                          return std::invoke(rowKey, row) == std::invoke(keyOf, item);
+                        });
+    if (prefix) {
+      bool changed = std::ranges::size(items) != rows.size();
+      const std::size_t kept = rows.size();
+      std::size_t i = 0;
+      for (auto &&item : items) {
+        if (i >= kept) {
+          rows.push_back(std::invoke(make, item));
+        } else if (!std::invoke(shows, std::as_const(rows[i]), item)) {
+          std::destroy_at(&rows[i]);
+          std::construct_at(&rows[i], std::invoke(make, item));
+          changed = true;
+        }
+        ++i;
+      }
+      return changed;
+    }
+  }
   std::multimap<Key, std::size_t> old;
   for (std::size_t i = 0; i < rows.size(); ++i) {
     old.emplace(std::invoke(rowKey, std::as_const(rows[i])), i);
