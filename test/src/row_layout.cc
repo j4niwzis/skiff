@@ -145,3 +145,40 @@ TEST(MemoRowsLayout, ARowMadeAgainInPlaceLaysOutAsAWholeLayoutWould) {
   List whole(items);
   EXPECT_EQ(list.boxes(), whole.boxes()) << "after a row added";
 }
+
+// The compiled traversal lays a tree out as the hand-written layout does,
+// node for node: columns of rows of boxes and texts, margins, padding,
+// gaps, growing and natural widths, alignment across.
+namespace compiled_tree {
+inline auto tree() {
+  return ::skiff::compose::build(c::column(
+      c::vbox(6.0f, {.fillX = true, .autoSize = scene::axes::kY, .padding = {4.0f, 5.0f, 6.0f, 7.0f}}),
+      c::row(c::hbox(8.0f, {.fillX = true, .autoSize = scene::axes::kY}),
+             c::column(c::vbox(0.0f, {.width = 32.0f, .height = 32.0f})),
+             c::column(c::vbox(2.0f, {.relativeSize = scene::axes::kNone, .autoSize = scene::axes::kY, .grow = scene::axes::kX,
+                                      .margin = {1.0f, 2.0f, 3.0f, 4.0f}}),
+                       c::column(c::vbox(0.0f, {.width = 50.0f, .height = 14.0f})),
+                       c::column(c::vbox(0.0f, {.fillX = true, .height = 30.0f})))),
+      c::column(c::vbox(0.0f, {.width = 120.0f, .height = 20.0f, .alignSelf = scene::align::kMiddle})),
+      c::row(c::hbox(4.0f, {.autoSize = scene::axes::kBoth}), c::column(c::vbox(0.0f, {.width = 10.0f, .height = 12.0f})),
+             c::column(c::vbox(0.0f, {.width = 20.0f, .height = 8.0f, .alignSelf = scene::align::kMiddle})))));
+}
+}  // namespace compiled_tree
+
+TEST(CompiledLayout, LaysATreeOutAsTheHandWrittenLayoutDoes) {
+  const auto boxes = [](bool compiled) {
+    scene::compiled::on() = compiled;
+    auto root = compiled_tree::tree();
+    scene::layout(root, skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 600.0f));
+    scene::compiled::on() = false;
+    return scene::laidOutTree(root) | std::views::transform([](const scene::LaidOutNode &one) { return one.bounds; }) |
+           std::ranges::to<std::vector>();
+  };
+  const auto hand = boxes(false);
+  const auto compiled = boxes(true);
+  ASSERT_EQ(hand.size(), compiled.size());
+  for (std::size_t i = 0; i < hand.size(); ++i)
+    EXPECT_EQ(hand[i], compiled[i]) << "node " << i << ": " << hand[i].fLeft << "," << hand[i].fTop << " " << hand[i].width() << "x"
+                                    << hand[i].height() << " laid out by hand, " << compiled[i].fLeft << "," << compiled[i].fTop << " "
+                                    << compiled[i].width() << "x" << compiled[i].height() << " compiled";
+}
