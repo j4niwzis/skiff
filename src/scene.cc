@@ -6564,9 +6564,9 @@ template <class N>
     bool covered = true;
     eachChild(node, [&](auto &child) {
       const State &one = stateOf(child);
-      covered = covered && one.fVisible && !one.fOutOfFlow && !one.fRelativeSizeAxes.has<axis::y>() && !one.fGrowAxes.has<axis::y>() &&
-                !one.fShrinkAxes.has<axis::x>() && one.fDepth == 0.0f && one.fFollow == nullptr && one.fScale == 1.0f &&
-                (fixed == kind::column || !(one.fGrowAxes.has<axis::x>() && one.fAutoSizeAxes.has<axis::x>()));
+      covered = covered && one.fVisible && !one.fOutOfFlow && !one.fRelativeSizeAxes.template has<axis::y>() && !one.fGrowAxes.template has<axis::y>() &&
+                !one.fShrinkAxes.template has<axis::x>() && one.fDepth == 0.0f && one.fFollow == nullptr && one.fScale == 1.0f &&
+                (fixed == kind::column || !(one.fGrowAxes.template has<axis::x>() && one.fAutoSizeAxes.template has<axis::x>()));
     });
     return covered ? fixed : kind::edge;
   }
@@ -6590,9 +6590,9 @@ template <class N> [[nodiscard]] kind kindOf(N &node, FlowOptions &options) {
   bool covered = true;
   eachChild(node, [&](auto &child) {
     const State &one = stateOf(child);
-    covered = covered && one.fVisible && !one.fOutOfFlow && !one.fRelativeSizeAxes.has<axis::y>() && !one.fGrowAxes.has<axis::y>() &&
-              !one.fShrinkAxes.has<axis::x>() && one.fDepth == 0.0f && one.fFollow == nullptr && one.fScale == 1.0f &&
-              (vertical || !(one.fGrowAxes.has<axis::x>() && one.fAutoSizeAxes.has<axis::x>()));
+    covered = covered && one.fVisible && !one.fOutOfFlow && !one.fRelativeSizeAxes.template has<axis::y>() && !one.fGrowAxes.template has<axis::y>() &&
+              !one.fShrinkAxes.template has<axis::x>() && one.fDepth == 0.0f && one.fFollow == nullptr && one.fScale == 1.0f &&
+              (vertical || !(one.fGrowAxes.template has<axis::x>() && one.fAutoSizeAxes.template has<axis::x>()));
   });
   if (!covered)
     return kind::edge;
@@ -6622,7 +6622,7 @@ template <class N> float prefOf(N &node) {
     return s.fRegionPref;
   const auto of = static_cast<kind>(s.fRegionKind);
   float out = 0.0f;
-  if (!s.fAutoSizeAxes.has<axis::x>() && !s.fRelativeSizeAxes.has<axis::x>() && !s.fGrowAxes.has<axis::x>()) {
+  if (!s.fAutoSizeAxes.template has<axis::x>() && !s.fRelativeSizeAxes.template has<axis::x>() && !s.fGrowAxes.template has<axis::x>()) {
     out = s.fWidth;
   } else if (of == kind::edge) {
     constexpr float kRoom = 1.0e7f;
@@ -6651,8 +6651,8 @@ template <class N> float prefOf(N &node) {
 // and most.
 template <class N> [[nodiscard]] float widthIn(N &node, float room) {
   const State &s = stateOf(node);
-  float w = s.fRelativeSizeAxes.has<axis::x>() ? room * s.fWidth : s.fAutoSizeAxes.has<axis::x>() ? std::min(prefOf(node), room) : s.fWidth;
-  w = std::max(w, s.fAutoSizeAxes.has<axis::x>() && room > 0.0f ? std::min(s.fMinWidth, room) : s.fMinWidth);
+  float w = s.fRelativeSizeAxes.template has<axis::x>() ? room * s.fWidth : s.fAutoSizeAxes.template has<axis::x>() ? std::min(prefOf(node), room) : s.fWidth;
+  w = std::max(w, s.fAutoSizeAxes.template has<axis::x>() && room > 0.0f ? std::min(s.fMinWidth, room) : s.fMinWidth);
   if (s.fMaxWidth > 0.0f)
     w = std::min(w, s.fMaxWidth);
   return w;
@@ -6674,7 +6674,7 @@ template <class N> void giveWidths(N &node) {
     eachChild(node, [&](auto &child) {
       State &one = stateOf(child);
       ++count;
-      if (one.fGrowAxes.has<axis::x>()) {
+      if (one.fGrowAxes.template has<axis::x>()) {
         ++growers;
         taken += one.fMargin.totalX();
         return;
@@ -6686,7 +6686,7 @@ template <class N> void giveWidths(N &node) {
       taken += s.fRegionOptions.spacingX * static_cast<float>(count - 1);
     const float share = growers > 0 ? std::max(0.0f, (inner - taken) / static_cast<float>(growers)) : 0.0f;
     eachChild(node, [&](auto &child) {
-      if (stateOf(child).fGrowAxes.has<axis::x>())
+      if (stateOf(child).fGrowAxes.template has<axis::x>())
         stateOf(child).fRegionWidth = share;
     });
   }
@@ -6717,7 +6717,7 @@ template <class N> void heights(N &node) {
   if (of == kind::column && count > 1)
     h += s.fRegionOptions.spacingY * static_cast<float>(count - 1);
   h += s.fPadding.totalY();
-  if (!s.fAutoSizeAxes.has<axis::y>())
+  if (!s.fAutoSizeAxes.template has<axis::y>())
     h = s.fHeight;
   h = std::max(h, s.fMinHeight);
   if (s.fMaxHeight > 0.0f)
@@ -6763,15 +6763,15 @@ template <class N> bool run(N &node, const skia::SkRect &parent) {
   if (kindOf(node, options) == kind::edge)
     return false;
   State &s = stateOf(node);
-  if (s.fAutoSizeAxes.has<axis::x>() || s.fScale != 1.0f || s.fFollow != nullptr)
+  if (s.fAutoSizeAxes.template has<axis::x>() || s.fScale != 1.0f || s.fFollow != nullptr)
     return false;
   enter(node);
   const skia::SkRect room = inset(parent, s.fMargin);
   s.fRegionWidth = widthIn(node, room.width());
   giveWidths(node);
   heights(node);
-  if (!s.fAutoSizeAxes.has<axis::y>())
-    s.fRegionHeight = s.fRelativeSizeAxes.has<axis::y>() ? room.height() * s.fHeight : s.fHeight;
+  if (!s.fAutoSizeAxes.template has<axis::y>())
+    s.fRegionHeight = s.fRelativeSizeAxes.template has<axis::y>() ? room.height() * s.fHeight : s.fHeight;
   place(node, anchoredBox(room, s.fRegionWidth, s.fRegionHeight, s.fAnchor, s.fOrigin, s.fX, s.fY));
   s.fLastConstraint = parent;
   return true;
