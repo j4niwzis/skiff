@@ -93,16 +93,19 @@ struct verdict {
     }
     return false;
   };
-  for (const auto [index, one] : std::views::enumerate(rules)) {
+  // Spans, not views: the constant evaluator walks a view's iterators
+  // through every layer of its adaptors, and this runs for every kind.
+  for (std::size_t index = 0; index < rules.size(); ++index) {
+    const rule& one = rules[index];
     const auto at = pass_of(one.target);
     if (!at)
-      return {false, "no pass computes the attribute", static_cast<std::size_t>(index)};
+      return {false, "no pass computes the attribute", index};
     const bool upward = one.of == place::self && schedule[*at].walk == order::post;
     const bool downward = schedule[*at].walk == order::pre;
     if (!upward && !downward)
-      return {false, "a postorder pass cannot give children an attribute", static_cast<std::size_t>(index)};
-    if (!std::ranges::all_of(one.from | std::views::take(one.count), [&](const reads& read) { return may_read(one, read); }))
-      return {false, "a rule reads what its pass has not computed yet", static_cast<std::size_t>(index)};
+      return {false, "a postorder pass cannot give children an attribute", index};
+    if (!std::ranges::all_of(std::span(one.from).first(one.count), [&](const reads& read) { return may_read(one, read); }))
+      return {false, "a rule reads what its pass has not computed yet", index};
   }
   const auto has = [&](attribute what, place of) { return std::ranges::any_of(rules, [&](const rule& one) { return one.target == what && one.of == of; }); };
   if (!has(attribute::pref, place::self) || !has(attribute::height, place::self))
