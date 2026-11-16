@@ -72,20 +72,26 @@ inline constexpr sized_piece<scene::axis::y, sizing::grown> grow_y{};
 // on that axis taken away.
 template <class Axis, sizing How> void sizeAlong(Look &look, sized_piece<Axis, How>) {
   scene::Spec &spec = look.fSpec;
-  const auto without = [](std::optional<scene::Axes> axes) { return axes.value_or(scene::axes::kNone).template except<Axis>(); };
-  spec.relativeSize = without(spec.relativeSize);
-  spec.autoSize = without(spec.autoSize);
-  spec.grow = without(spec.grow);
+  // Only what is said changes: a sizing not said on the other axis is left
+  // unsaid, as a spec leaves it -- what the node has there stays.
+  const auto without = [](std::optional<scene::Axes> &axes) {
+    if (axes)
+      axes = axes->template except<Axis>();
+  };
+  without(spec.relativeSize);
+  without(spec.autoSize);
+  without(spec.grow);
+  const auto withThis = [](std::optional<scene::Axes> &axes) { axes = axes.value_or(scene::axes::kNone).template with<Axis>(); };
   if constexpr (How == sizing::share) {
-    spec.relativeSize = spec.relativeSize->template with<Axis>();
+    withThis(spec.relativeSize);
     if constexpr (std::same_as<Axis, scene::axis::x>)
       spec.width = 1.0f;
     else
       spec.height = 1.0f;
   } else if constexpr (How == sizing::content) {
-    spec.autoSize = spec.autoSize->template with<Axis>();
+    withThis(spec.autoSize);
   } else if constexpr (How == sizing::grown) {
-    spec.grow = spec.grow->template with<Axis>();
+    withThis(spec.grow);
   }
 }
 // On a look whose sizing is its type's: the axis not said yet -- saying it
