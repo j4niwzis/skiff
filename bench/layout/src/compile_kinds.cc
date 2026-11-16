@@ -51,33 +51,45 @@ struct flat {
   float& at(attribute what, std::uint32_t n) { return values[std::to_underlying(what)][n]; }
 };
 
-// Every pass's code, for each kind: what a container and what a leaf
-// compute, with the kind's own numbers.
-template <std::size_t I>
-void visit_one(flat& t, std::uint32_t n, std::size_t pass, const synthetic<I>& k) {
-  const auto kids = t.children[n] | std::views::transform([&](std::uint32_t c) { return c; });
-  const auto sum = [&](attribute what) { return std::ranges::fold_left(kids | std::views::transform([&](std::uint32_t c) { return t.at(what, c); }), 0.0f, std::plus{}); };
-  if constexpr (synthetic<I>::holds) {
-    switch (pass) {
-      case 0: t.at(pref, n) = sum(pref) + 2.0f * k.pad; break;
-      case 1: for (std::uint32_t c : kids) t.at(width, c) = std::min(t.at(pref, c), t.at(width, n) - 2.0f * k.pad); break;
-      case 2: t.at(height, n) = sum(height) + k.gap * static_cast<float>(t.children[n].size()); break;
-      default: {
-        float at = k.pad;
-        for (std::uint32_t c : kids) {
-          t.at(x, c) = at;
-          t.at(y, c) = k.pad;
-          at += t.at(width, c) + k.gap;
-        }
+// Every pass's code: one function for containers and one for leaves, each
+// made once and given the kind's numbers -- not a template for each kind,
+// whose ranges pipelines were instantiated once per kind (about 0.65 s
+// each, Release or Debug alike). What stays a template per kind is the call
+// that hands its numbers over.
+struct numbers {
+  float pad = 0.0f, gap = 0.0f;
+};
+[[nodiscard]] float sum_of(flat& t, std::uint32_t n, attribute what) {
+  return std::ranges::fold_left(t.children[n] | std::views::transform([&](std::uint32_t c) { return t.at(what, c); }), 0.0f, std::plus{});
+}
+void container_pass(flat& t, std::uint32_t n, std::size_t pass, numbers k) {
+  switch (pass) {
+    case 0: t.at(pref, n) = sum_of(t, n, pref) + 2.0f * k.pad; break;
+    case 1: for (std::uint32_t c : t.children[n]) t.at(width, c) = std::min(t.at(pref, c), t.at(width, n) - 2.0f * k.pad); break;
+    case 2: t.at(height, n) = sum_of(t, n, height) + k.gap * static_cast<float>(t.children[n].size()); break;
+    default: {
+      float at = k.pad;
+      for (std::uint32_t c : t.children[n]) {
+        t.at(x, c) = at;
+        t.at(y, c) = k.pad;
+        at += t.at(width, c) + k.gap;
       }
     }
-  } else {
-    switch (pass) {
-      case 0: t.at(pref, n) = k.pad * 10.0f; break;
-      case 2: t.at(height, n) = std::ceil(t.at(pref, n) / std::max(1.0f, t.at(width, n))) * k.gap; break;
-      default: break;
-    }
   }
+}
+void leaf_pass(flat& t, std::uint32_t n, std::size_t pass, numbers k) {
+  switch (pass) {
+    case 0: t.at(pref, n) = k.pad * 10.0f; break;
+    case 2: t.at(height, n) = std::ceil(t.at(pref, n) / std::max(1.0f, t.at(width, n))) * k.gap; break;
+    default: break;
+  }
+}
+template <std::size_t I>
+void visit_one(flat& t, std::uint32_t n, std::size_t pass, const synthetic<I>& k) {
+  if constexpr (synthetic<I>::holds)
+    container_pass(t, n, pass, {k.pad, k.gap});
+  else
+    leaf_pass(t, n, pass, {k.pad, k.gap});
 }
 
 }  // namespace
