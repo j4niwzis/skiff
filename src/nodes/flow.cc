@@ -72,7 +72,7 @@ stack(const std::array<float, N> &extents, float spacing, Spread spread) {
 static_assert(stack<3>({10.0f, 20.0f, 30.0f}, 4.0f, {}) ==
               std::array<float, 3>{0.0f, 14.0f, 38.0f});
 
-// FillFlowContainer: children laid end to end, wrapping when they run out of
+// A flow: children laid end to end, wrapping when they run out of
 // room: every list, every row of filters.
 namespace detail {
 // How a flow lays out a node's children -- the ones its forEachChild names --
