@@ -6713,7 +6713,10 @@ template <class N> float prefOf(region &r, std::uint32_t at, N &node) {
     return r.prefs[at];
   const State &s = stateOf(node);
   float out = 0.0f;
-  if (!s.fAutoSizeAxes.template has<axis::x>() && !s.fRelativeSizeAxes.template has<axis::x>() && !s.fGrowAxes.template has<axis::x>()) {
+  // An edge node's own: what it comes to laid out -- a text's measure writes
+  // its width as it lays out, so its width as it was is not what it is.
+  if (r.kinds[at] != kind::edge && !s.fAutoSizeAxes.template has<axis::x>() && !s.fRelativeSizeAxes.template has<axis::x>() &&
+      !s.fGrowAxes.template has<axis::x>()) {
     out = s.fWidth;
   } else if (r.kinds[at] == kind::edge) {
     constexpr float kRoom = 1.0e7f;
@@ -6766,9 +6769,12 @@ template <class N>
 // and most.
 template <class N> [[nodiscard]] float widthIn(region &r, std::uint32_t at, N &node, float room) {
   const State &s = stateOf(node);
-  float w = s.fRelativeSizeAxes.template has<axis::x>() ? room * s.fWidth
-            : s.fAutoSizeAxes.template has<axis::x>()   ? std::min(prefOf(r, at, node), room)
-                                                        : s.fWidth;
+  // An edge node that sizes itself (a text: its measure writes its width)
+  // is as wide as it comes to, within the room.
+  const bool measures = r.kinds[at] == kind::edge && !s.fRelativeSizeAxes.template has<axis::x>() && !s.fGrowAxes.template has<axis::x>();
+  float w = s.fRelativeSizeAxes.template has<axis::x>()            ? room * s.fWidth
+            : s.fAutoSizeAxes.template has<axis::x>() || measures ? std::min(prefOf(r, at, node), room)
+                                                                  : s.fWidth;
   w = std::max(w, s.fAutoSizeAxes.template has<axis::x>() && room > 0.0f ? std::min(s.fMinWidth, room) : s.fMinWidth);
   if (s.fMaxWidth > 0.0f)
     w = std::min(w, s.fMaxWidth);
