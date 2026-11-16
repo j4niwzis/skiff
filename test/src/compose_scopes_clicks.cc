@@ -295,7 +295,11 @@ TEST(Compose, APressInATreeThatIsOneStateIsTakenByItsHandlers) {
   const scene::Path path = pressPathTo(root, plus);
   const auto start = bind::carryFrom(&m);
   decltype(auto) carried = carryAtRoot(root, start);
-  (void)scene::walk::clickPath(root, path, 0, plus.fBounds.centerX(), plus.fBounds.centerY(), carried);
+  const bool taken = scene::walk::clickPath(root, path, 0, plus.fBounds.centerX(), plus.fBounds.centerY(), carried);
+  // Said where it fails: whether the click was taken, the press left
+  // waiting, and where the button was.
+  std::println("click taken {}, press waiting {}, button at {} {} {} {}, path {}", taken, scene::hostWork().pressedNow != nullptr,
+               plus.fBounds.fLeft, plus.fBounds.fTop, plus.fBounds.fRight, plus.fBounds.fBottom, path.size());
   if constexpr (scene::kErasedWalks) {
     // Erased walks carry nothing: the press is kept, delivered along its path.
     if (scene::hostWork().pressedNow != nullptr) {
