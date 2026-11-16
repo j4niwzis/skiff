@@ -315,6 +315,7 @@ set_target_properties(skiff_core PROPERTIES
 target_compile_features(skiff_core PUBLIC cxx_std_${skiff_cxx_standard})
 target_sources(skiff_core PUBLIC
   FILE_SET CXX_MODULES FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/core.cc
+                             ${CMAKE_CURRENT_SOURCE_DIR}/src/layout.cc
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/bind.cc
                              ${skiff_bind_partitions})
 target_link_libraries(skiff_core PUBLIC $<BUILD_INTERFACE:splice>)
