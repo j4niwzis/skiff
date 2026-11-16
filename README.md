@@ -1,7 +1,8 @@
 # skiff
 
-A small retained-mode UI framework on top of Skia, sized for machines with no
-GPU acceleration. A screen is written once as an expression of combinators;
+A small retained-mode UI framework on top of Skia, drawing on the CPU (Skia's
+raster backend, for machines with no GPU acceleration) or on the GPU (Skia's
+Ganesh, on GL). A screen is written once as an expression of combinators;
 the same tree is drawn by skiff's scene on Skia, or shown as a page's
 elements in a browser.
 
@@ -173,8 +174,10 @@ if (frame.fWantsAnotherFrame)
   requestFrame();
 ```
 
-That rectangle is the point of the whole thing: a framework that assumes a
-GPU redraws everything every frame. This one redraws the part that moved.
+That rectangle is the point of the whole thing: a framework that redraws
+everything every frame leans on a GPU to afford it. This one redraws the part
+that moved -- on the CPU, where that is all there is, and on the GPU, where
+it is less work for it.
 
 ## Building and testing
 
