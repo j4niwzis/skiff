@@ -766,6 +766,41 @@ template <class... Parts> struct RowBox : Box<Parts...> {
   void setHorizontal() = delete;
 };
 
+// A column or a row whose sizing along each axis is its type's too
+// (skiff::layout::sized): its spec's sizing written from the type, not from
+// what is said at run time, and the compiled passes taking each axis by its
+// one case. c::column<sized<...>>(look, parts...), c::row<...>.
+template <class Sized> [[nodiscard]] Look sizedAs(Look look) {
+  using ::skiff::layout::sizing;
+  scene::Axes relative = scene::axes::kNone, automatic = scene::axes::kNone, grown = scene::axes::kNone;
+  if constexpr (Sized::x == sizing::share) relative = relative.template with<scene::axis::x>();
+  if constexpr (Sized::y == sizing::share) relative = relative.template with<scene::axis::y>();
+  if constexpr (Sized::x == sizing::content) automatic = automatic.template with<scene::axis::x>();
+  if constexpr (Sized::y == sizing::content) automatic = automatic.template with<scene::axis::y>();
+  if constexpr (Sized::x == sizing::grown) grown = grown.template with<scene::axis::x>();
+  if constexpr (Sized::y == sizing::grown) grown = grown.template with<scene::axis::y>();
+  look.fSpec.relativeSize = relative;
+  look.fSpec.autoSize = automatic;
+  look.fSpec.grow = grown;
+  if constexpr (Sized::x == sizing::share) {
+    if (!look.fSpec.width) look.fSpec.width = 1.0f;
+  }
+  if constexpr (Sized::y == sizing::share) {
+    if (!look.fSpec.height) look.fSpec.height = 1.0f;
+  }
+  return look;
+}
+template <class Sized, class... Parts> struct SizedColumnBox : ColumnBox<Parts...> {
+  static constexpr ::skiff::layout::sizing xSizing = Sized::x;
+  static constexpr ::skiff::layout::sizing ySizing = Sized::y;
+  explicit SizedColumnBox(Look look, Parts... parts) : ColumnBox<Parts...>(sizedAs<Sized>(std::move(look)), std::move(parts)...) {}
+};
+template <class Sized, class... Parts> struct SizedRowBox : RowBox<Parts...> {
+  static constexpr ::skiff::layout::sizing xSizing = Sized::x;
+  static constexpr ::skiff::layout::sizing ySizing = Sized::y;
+  explicit SizedRowBox(Look look, Parts... parts) : RowBox<Parts...>(sizedAs<Sized>(std::move(look)), std::move(parts)...) {}
+};
+
 // A stack of a list of parts, as many as there are: made from them, in
 // their order.
 template <class N> struct Many : nodes::Stack {

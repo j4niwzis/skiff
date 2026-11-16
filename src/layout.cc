@@ -143,6 +143,18 @@ template <class Kind, auto& Schedule = kSchedule>
 // column type, a row type): the compiled passes then take it from the type.
 enum class kind_of : std::uint8_t { column, row, edge };
 
+// How a node is sized along an axis, where its type fixes it: its own size,
+// a share of its parent's, what it holds, or (along a row) a share of what
+// its fixed siblings leave. A type that says it (`static constexpr sizing
+// xSizing, ySizing`) has the compiled passes work out that axis by that case
+// alone, chosen while compiling -- not by asking its spec at every layout.
+enum class sizing : std::uint8_t { own, share, content, grown };
+// A node type's sizing along both axes, as a type.
+template <sizing X, sizing Y> struct sized {
+  static constexpr sizing x = X;
+  static constexpr sizing y = Y;
+};
+
 // ---- the kinds of skiff's nodes, and their rules ---------------------------------------
 using enum attribute;
 using enum place;
