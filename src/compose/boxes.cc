@@ -295,10 +295,10 @@ struct Held : Stacked {
   template <class Self>
     requires HeldWrapper<Self>
   [[nodiscard]] bool visible(this const Self &self) { return self.fState.visible(); }
-  [[nodiscard]] const skia::SkRect &bounds(this const Held &self) { return self.state().bounds(); }
+  [[nodiscard]] skia::SkRect bounds(this const Held &self) { return self.state().bounds(); }
   template <class Self>
     requires HeldWrapper<Self>
-  [[nodiscard]] const skia::SkRect &bounds(this const Self &self) { return self.fState.bounds(); }
+  [[nodiscard]] skia::SkRect bounds(this const Self &self) { return self.fState.bounds(); }
   [[nodiscard]] scene::NodeId id(this const Held &self) { return self.state().id(); }
   [[nodiscard]] bool focused(this const Held &self) { return self.state().focused(); }
   template <class Self>
