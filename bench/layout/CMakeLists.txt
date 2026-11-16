@@ -23,11 +23,18 @@ else()
   set(layout_bench_erased 0)
 endif()
 
+# splice: spl::variant and spl::visit, as skiff's nodes have them -- the
+# same tag as skiff's.
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/CPM.cmake)
+CPMAddPackage(NAME splice GITHUB_REPOSITORY j4niwzis/splice GIT_TAG 8a7755a335917daf3bbfc54ef8a3a160f8445d15
+  OPTIONS "SPLICE_TESTS OFF")
+
 add_library(layout_bench_modules)
 target_sources(layout_bench_modules PUBLIC FILE_SET CXX_MODULES FILES
   src/grammar.cc src/tree.cc src/engines.cc)
 target_compile_definitions(layout_bench_modules PUBLIC LAYOUT_BENCH_ERASED=${layout_bench_erased})
 target_compile_features(layout_bench_modules PUBLIC cxx_std_26)
+target_link_libraries(layout_bench_modules PUBLIC splice)
 
 add_executable(layout_bench src/main.cc)
 target_link_libraries(layout_bench PRIVATE layout_bench_modules)

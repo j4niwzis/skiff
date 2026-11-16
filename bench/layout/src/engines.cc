@@ -9,8 +9,8 @@
 // a node it does not recompute (Kirisame, Wang and Panchekha's Spineless
 // Traversal, PLDI 2025).
 //
-// A Debug build reaches every kind's code through a table, as skiff's
-// erased walks do; a release build visits the variant, concrete.
+// Each kind's code reached through spl::visit: through tables in a Debug
+// build, as skiff's erased walks are, concretely in a release one.
 export module layout_bench.engines;
 
 import std;
@@ -24,22 +24,12 @@ inline constexpr std::size_t kPasses = kSchedule.size();
 enum class pass_id : std::uint8_t { pref, width, height, place };
 [[nodiscard]] constexpr std::size_t index(pass_id one) { return std::to_underlying(one); }
 
-template <class... F> struct overloaded : F... { using F::operator()...; };
-
-// A kind's alternative, reached as the build has it: the variant visited
-// (release), or a table of one function for each alternative (Debug).
+// A kind's alternative visited: spl::variant reaches it through tables
+// outside a release build (SPLICE_ERASED), as skiff's erased walks do, and
+// concretely in one.
 template <class Visit>
 decltype(auto) on_kind(const kind_t& kind, Visit&& visit) {
-  if constexpr (kErased) {
-    using result = decltype(std::visit(visit, kind));
-    using entry = result (*)(const kind_t&, Visit&);
-    static constexpr auto table = []<std::size_t... I>(std::index_sequence<I...>) {
-      return std::array<entry, sizeof...(I)>{+[](const kind_t& k, Visit& v) -> result { return v(std::get<I>(k)); }...};
-    }(std::make_index_sequence<std::variant_size_v<kind_t>>{});
-    return table[kind.index()](kind, visit);
-  } else {
-    return std::visit(std::forward<Visit>(visit), kind);
-  }
+  return spl::visit(std::forward<Visit>(visit), kind);
 }
 
 // ---- the rules, as code ----------------------------------------------------------
@@ -61,14 +51,14 @@ decltype(auto) on_kind(const kind_t& kind, Visit&& visit) {
   return static_cast<float>(std::max(end.lines, 1)) * k.line;
 }
 [[nodiscard]] inline float pref_of(const tree& t, node_id n) {
-  return on_kind(t.kinds[n], overloaded{
+  return on_kind(t.kinds[n], spl::overloaded{
       [&](const column& k) { return std::ranges::max(values_of(t, pref, n), {}, std::identity{}) + 2.0f * k.pad; },
       [&](const row& k) { return std::ranges::fold_left(values_of(t, pref, n), 0.0f, std::plus{}) + gaps(k.gap, t.children[n].size()) + 2.0f * k.pad; },
       [&](const text& k) { return std::ranges::fold_left(k.words, 0.0f, std::plus{}) + gaps(k.space, k.words.size()); },
       [&](const fixed& k) { return k.w; }});
 }
 [[nodiscard]] inline float height_of(const tree& t, node_id n) {
-  return on_kind(t.kinds[n], overloaded{
+  return on_kind(t.kinds[n], spl::overloaded{
       [&](const column& k) { return std::ranges::fold_left(values_of(t, height, n), 0.0f, std::plus{}) + gaps(k.gap, t.children[n].size()) + 2.0f * k.pad; },
       [&](const row& k) { return std::ranges::fold_left(values_of(t, height, n), 0.0f, [](float a, float b) { return std::max(a, b); }) + 2.0f * k.pad; },
       [&](const text& k) { return wrapped_height(k, t.at(width, n)); },
@@ -78,7 +68,7 @@ decltype(auto) on_kind(const kind_t& kind, Visit&& visit) {
 // value)` keeps it and says whether it changed.
 template <class Set>
 void give_widths(tree& t, node_id n, Set& set) {
-  on_kind(t.kinds[n], overloaded{
+  on_kind(t.kinds[n], spl::overloaded{
       [&](const column& k) {
         const float inner = std::max(0.0f, t.at(width, n) - 2.0f * k.pad);
         for (node_id c : t.children[n]) set(width, c, inner);
@@ -97,7 +87,7 @@ void give_widths(tree& t, node_id n, Set& set) {
 // And their places, from the sizes they came to.
 template <class Set>
 void give_places(tree& t, node_id n, Set& set) {
-  on_kind(t.kinds[n], overloaded{
+  on_kind(t.kinds[n], spl::overloaded{
       [&](const column& k) {
         float at = k.pad;
         for (node_id c : t.children[n]) {
