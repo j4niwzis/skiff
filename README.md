@@ -74,48 +74,40 @@ A `Spec` holds every layout input a node has. `place` sets anchor and origin
 together; `fill`, `fillX` and `fillY` are relative sizing at 1.0 on one axis
 or both. Zero means unspecified, which is what lets `{}` be a no-op.
 
+## Layout
+
+What each kind of node computes, and from what, is said once as data
+(`skiff.layout`): its natural and least width, the width it is given, its
+height at that width, its place in its parent. A fixed schedule of four
+passes -- widths up, widths down, heights up, places down -- is checked
+against every kind while compiling: a kind whose rule reads what its pass has
+not computed yet does not compile. The scene's layout runs those passes,
+generated for the tree's own types in a release build (nothing erased) and
+over one shared table outside one. A column's or a row's kind is fixed by its
+type (`c::column` builds a `ColumnBox`, `c::row` a `RowBox`), and its sizing
+along each axis may be too (`c::column<layout::sized<...>>`), so the passes
+take that one case while compiling.
+
+Layout is incremental: a region laid out again only for what changed under it
+lays out the rows the frame marked and moves those below them by what they
+grew -- one write a row; what a row holds is moved only when something goes
+into it. Nodes laid out by hooks of their own (a text's measure, a scroll
+view, a widget) are laid out whole by them, as nested regions, when the
+passes reach them. `SKIFF_HAND_LAYOUT` keeps the hand-written layout
+instead.
+
+`bench/layout` measures it: the schedule on its own (full, two dirty bits,
+a spineless queue), and skiff's own scene on Google Benchmark -- a chat of
+100 to 10,000 messages in a scroll view, typed into, resized, added to, each
+edit a whole frame with its phases and walks counted.
+
 ## Styling
 
-Reusable appearance and layout belongs in a typed stylesheet. Node kinds and
-application-defined roles are C++ types, so there are no selector strings,
-runtime hashes or RTTI:
-
-```cpp
-struct Button;
-struct ButtonLabel;
-struct Sidebar;
-
-struct AppTheme {
-  static constexpr auto styles =
-      scene::makeStyleSheet()
-          .rule(scene::select<nodes::Box, Button>(),
-                {.height = 42.0f,
-                 .padding = scene::Margin::horizontal(14.0f),
-                 .cornerRadius = 8.0f,
-                 .backgroundColour = kButton,
-                 .transitionMs = 120.0})
-          .rule(scene::select<nodes::Box, Button>().when(
-                    scene::StyleState::kHover),
-                {.scale = 1.03f, .backgroundColour = kButtonHover})
-          .rule(scene::select<nodes::Text, ButtonLabel>(),
-                {.colour = kWhite, .fontSize = 16.0f, .fontBold = true})
-          .rule(scene::selectAny<Sidebar>().atMostWidth(900.0f),
-                {.visible = false});
-};
-
-scene.setStyleSheet<AppTheme>();
-```
-
-Later matching rules override earlier ones. Foreground colour, font size and
-font weight inherit through containers; backgrounds do not. Rules can select
-`kHover`, `kFocus`, `kSelected` and `kDisabled`; width constraints on
-selectors are lightweight media queries. Position, size, scale and alpha use
-the rule's transition when a selector starts or stops matching, and removing
-the sheet restores each node's original values.
-
-The selector's node and role list are template parameters, and each `.rule()`
-returns a new stylesheet type. Because the theme owns its rule tuple as
-`static constexpr`, resolving a node is an unrolled, allocation-free pass.
+A theme may also style nodes by their types and roles, as a typed stylesheet
+(`scene::makeStyleSheet()`, set with `setStyleSheet<Theme>()`): selectors are
+C++ types, rules are folded while compiling, and hover, focus, selection,
+disabled state and width constraints select among them. Most programs give
+nodes their look where they are made, by their `Spec`, instead.
 
 ### CSS declarations
 
@@ -191,10 +183,13 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-`-G Ninja` is not a preference: CMake only supports C++20 modules under
-Ninja. You also need a compiler that can do `import std` -- clang 19 or newer
-with libc++, or gcc 15 -- and Skia discoverable through `pkg-config` as
-`skia` (or `skia_lite`, which draws nothing, where Skia is not wanted).
+`-G Ninja` is not a preference: CMake only supports C++ modules under Ninja.
+You also need clang 23 (with libc++ or libstdc++) for `import std` and the
+C++26 the library is written in. Skia and the rest come through
+cmake-everywhere, built from pinned sources where the machine does not have
+them; `-DSKIFF_SKIA=OFF` builds the scene on skiff's own stand-in for Skia
+(real geometry, text measured, nothing drawn), which the scene's tests run
+on.
 
 Configure `test` directly to build only the library and its tests. Pass
 `-DTEST_INSTALLED_VERSION=ON` to test a previously installed `skiff` package
