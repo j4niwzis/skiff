@@ -371,9 +371,8 @@ template <class N> struct Flowing {
       // Moved as it is: placed where a whole layout would put it, its
       // subtree moved when gone into; reached by the damage walk where it
       // is in view, to be repainted where it was and is.
-      state.fY += delta;
       scene::work::record(state.fId, self.fId);
-      scene::detail::moveLaidOut(child, 0.0f, delta);
+      scene::detail::placedAgain(child, 0.0f, delta);
       if (!view || skia::SkRect::Intersects(scene::joined(state.fBounds, state.fReach), *view))
         scene::work::reach(state.fId);
     });
