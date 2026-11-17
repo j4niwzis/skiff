@@ -548,6 +548,13 @@ public:
   }
   void drawContents(skiff::scene::Painting &painting, skia::SkCanvas *canvas, float alpha) {
     namespace scene = skiff::scene;
+    // Something in it repainted in place -- a picture come into a box that
+    // keeps its size, laying nothing out: the screens drawn ahead show it as
+    // it was. Kept, a scroll put them back over the rows, and the pictures
+    // that had come since stayed placeholders on the screen (a quote's
+    // thumbnail in a chat).
+    if (std::exchange(fState.fBelowRedrawn, false))
+      this->dropAhead();
     if (!fDrawsAhead || !scene::blitScrolling() || fExtent <= 0.0f || alpha < 0.999f) {
       scene::drawDefault(*this, painting, canvas, alpha);
       return;

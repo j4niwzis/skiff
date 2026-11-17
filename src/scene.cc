@@ -2021,6 +2021,10 @@ public:
   // Whether what it draws changed -- not only where it is drawn or how
   // faintly: a recording is kept through a fade or a slide.
   bool fRedrawn = true;
+  // Something under it repainted since it last looked (collectDamage): what
+  // it keeps drawn of its subtree -- a scroll view's screens drawn ahead --
+  // no longer shows it.
+  bool fBelowRedrawn = false;
   // Not yet seen by a frame's walk: the walk marks it, and where it is.
   bool fNew = true;
   work::Alive fAlive;
@@ -3856,6 +3860,8 @@ template <class N> skia::SkRect collectDamage(N &child, bool drawnAbove) {
   if (redrawn || !below.isEmpty()) {
     state.fPicture = nullptr;
   }
+  if (!below.isEmpty())
+    state.fBelowRedrawn = true;
   // Its children's, in the space they are laid out in: moved by its shift.
   below.offset(state.fShiftX, state.fShiftY);
   if (!below.isEmpty() && state.fMasking &&
