@@ -1281,6 +1281,50 @@ TEST(Layout, ARowTooNarrowShrinksWhatGivesWay) {
   EXPECT_EQ(told, 0u);
 }
 
+// Given room again, what gave way takes its width back: told how far to give
+// way, it is not held there once the row is wide enough for it.
+TEST(Layout, ARowWideAgainGivesBackWhatGaveWay) {
+  Scene<HoldsGivesWay> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  auto &row = scene.root().parts.row;
+  EXPECT_NEAR(row.parts.soft.bounds().width(), 60.0f, 0.6f);
+  row.fState.apply({.width = 200.0f});
+  row.invalidateLayout();
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  EXPECT_FLOAT_EQ(row.parts.soft.bounds().width(), 80.0f);
+  EXPECT_FLOAT_EQ(row.parts.rigid.bounds().fLeft, row.bounds().fLeft + 80.0f);
+}
+
+// What gives way inside a child sized by what it holds: the child gives way
+// for it, and what it holds gives way to what it is left.
+struct GivesWayWithin : skiff::nodes::Stack {
+  struct parts_t {
+    GivesWay held = make<GivesWay>({.height = 10.0f, .autoSize = axes::kX});
+    Box<> rigid = make<Box>({.width = 40.0f, .height = 10.0f}, kCard);
+  } parts;
+  GivesWayWithin() { this->setHorizontal(); }
+};
+struct HoldsGivesWayWithin : Node {
+  struct parts_t {
+    GivesWayWithin row = make<GivesWayWithin>({.width = 100.0f, .height = 10.0f});
+  } parts;
+};
+
+TEST(Layout, AContentSizedChildGivesWayForWhatItHolds) {
+  skiff::scene::overflows().clear();
+  Scene<HoldsGivesWayWithin> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  const std::size_t told = std::exchange(skiff::scene::overflows(), {}).size();
+  const auto &row = scene.root().parts.row;
+  EXPECT_NEAR(row.parts.held.bounds().width(), 60.0f, 0.6f);
+  EXPECT_NEAR(row.parts.held.parts.soft.bounds().width(), 20.0f, 0.6f);
+  EXPECT_LE(row.parts.held.parts.rigid.bounds().fRight, row.parts.held.bounds().fRight + 0.5f);
+  EXPECT_LE(row.parts.rigid.bounds().fRight, row.bounds().fRight + 0.5f);
+  EXPECT_EQ(told, 0u);
+}
+
 // A menu: the arrows move the focus through its items, round from the last
 // to the first, and never out of it.
 struct ArrowMenu : skiff::nodes::Stack {
