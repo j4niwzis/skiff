@@ -329,6 +329,17 @@ struct Held : Stacked {
     // wide, a slid-in column with every row's text gone.
     self.adopt();
     scene::State &node = scene::stateOf(self.parts.held);
+    // Only how it is drawn -- a wash's colour, a fade's alpha and shift at
+    // each of its frames: given as it is, nothing laid out again. Laid out
+    // again at every one, outside a release build (where every wrapper is
+    // over held content), each message row's wash read again as the marks
+    // moved laid every row out anew -- a page of history coming laid a
+    // timeline's 8,108 nodes out 87,508 times in a frame.
+    if (drawnOnly(spec)) {
+      self.fSpecTo(self.parts.held.ref().node(), nodeSide(spec));
+      self.fState.apply(placement(spec));
+      return;
+    }
     // Its own size back first, so the spec and the following start from
     // what it says, not from how it was last made to fill the wrapper.
     self.restore(node);
@@ -540,6 +551,15 @@ private:
   bool fMeasured = false;
   // The axes it sizes itself along (ownAxes).
   scene::Axes fOwnAxes{};
+  // Whether a spec says only how a node is drawn -- its fills, its border,
+  // its corners, its alpha, where it is drawn moved to -- and nothing of its
+  // size, place, room, shown-ness or style: none of its layout changes.
+  [[nodiscard]] static bool drawnOnly(const scene::Spec &spec) {
+    return !spec.place && !spec.anchor && !spec.origin && !spec.x && !spec.y && !spec.fill && !spec.fillX && !spec.fillY && !spec.width &&
+           !spec.height && !spec.relativeSize && !spec.autoSize && !spec.grow && !spec.shrink && !spec.minWidth && !spec.maxWidth &&
+           !spec.minHeight && !spec.maxHeight && !spec.alignSelf && !spec.depth && !spec.margin.given && !spec.padding.given && !spec.scale &&
+           !spec.visible && !spec.revealOnHover && spec.roles.empty() && !spec.selected && !spec.disabled;
+  }
   [[nodiscard]] static scene::Spec placement(const scene::Spec &spec) {
     return {.place = spec.place, .anchor = spec.anchor, .origin = spec.origin, .x = spec.x, .y = spec.y,
             .grow = spec.grow, .shrink = spec.shrink, .minWidth = spec.minWidth, .maxWidth = spec.maxWidth,
