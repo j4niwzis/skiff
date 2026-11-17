@@ -1042,6 +1042,7 @@ template <class Content, class Facts, class Make> struct Mounted : Specced {
           },
           fMake(*now));
       fFresh = true;
+      ++bind::madeEpoch();
     } else {
       fContent.reset();
     }

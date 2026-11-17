@@ -357,19 +357,22 @@ public:
   // whole tree, walked. Else only what changed: each change the model
   // logged since, followed down its own path -- nothing else is visited.
   template <class N> void refresh(N &root, M &model) {
-    if (fShown && fRevision == model.revision() && fEpoch == localEpoch())
+    if (fShown && fRevision == model.revision() && fEpoch == localEpoch() && fMade == madeEpoch())
       return;
+    // Content made since under a mount: walked whole, for this model's
+    // parts in it (scopes already shown pass themselves over).
+    const bool made = fMade != madeEpoch();
     auto changes = model.takeChanges();
 #ifdef SKIFF_ERASED_WALKS
     // Outside a release build, the walk made once (skiff.bind:runtime):
     // whole the first time, after an edit of nothing tracked, or where a
     // Local's state moved; else only along the places that changed.
     const auto places = model.takePlacesChanged();
-    const bool whole = !fShown || !std::get<0>(changes).empty() || fEpoch != localEpoch();
+    const bool whole = !fShown || made || !std::get<0>(changes).empty() || fEpoch != localEpoch();
     rt::Refresh walk(rt::AnyModel::of(model), whole ? nullptr : &places);
     walk.walk(scene::AnyNodeRef::of(root));
 #else
-    if (!fShown || !std::get<0>(changes).empty()) {  // an edit of nothing tracked
+    if (!fShown || made || !std::get<0>(changes).empty()) {  // an edit of nothing tracked, or content made
       bind::refresh(root, model);
     } else {
       targeted(root, model, changes,
@@ -383,6 +386,7 @@ public:
     fShown = true;
     fRevision = model.revision();
     fEpoch = localEpoch();
+    fMade = madeEpoch();
   }
   // A tree changed by hand -- nodes made or replaced: walked whole next time.
   void invalidate() { fShown = false; }
@@ -403,6 +407,7 @@ private:
 
   model::Revision fRevision = 0;
   std::uint64_t fEpoch = 0;
+  std::uint64_t fMade = 0;
   bool fShown = false;
 };
 

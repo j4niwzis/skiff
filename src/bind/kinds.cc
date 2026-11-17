@@ -23,6 +23,16 @@ inline std::uint64_t &localEpoch() {
   thread_local std::uint64_t epoch = 0;
   return epoch;
 }
+// Moved by content a mount made: what every Binding's refresh looks at too.
+// The refresh that made it shows it whole (Mounted::takeFresh), but only
+// for its own model: what the new content reads of another -- a room's
+// join requests, read from the chats under a page mounted from the
+// settings' facts -- was read by that model's binding only once that model
+// moved, and the page stood empty under its count.
+inline std::uint64_t &madeEpoch() {
+  thread_local std::uint64_t epoch = 0;
+  return epoch;
+}
 
 // The value a node bound to Want reads: the part's own type, a field's
 // member's.
