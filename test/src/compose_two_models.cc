@@ -358,4 +358,60 @@ TEST(Compose, AScopeRekeyedByOneModelIsReadFromAnotherThatDidNotMove) {
   bi.refresh(tree, items);
   EXPECT_EQ(said.front()->text(), "second");
 }
+namespace said_again {
+namespace c = skiff::compose;
+struct Rules {
+  struct State {
+    friend bool operator==(const State &, const State &) = default;
+  };
+  static void prepare(auto &, State &) {}
+  static void arrange(auto &, State &) {}
+  static bool settling(const auto &, const State &) { return false; }
+  static void settle(auto &, State &) {}
+};
+struct Item2 {
+  std::size_t key = 0;
+  int n = 0;
+};
+using RowItem = std::tuple<std::size_t, int>;
+inline constexpr auto make_row = [](const RowItem &one) {
+  return c::build(c::arranged<Rules>(Rules::State{}, c::column(c::vbox(0.0f) | c::fill_x | c::content_y,
+      c::row(c::hbox(8.0f) | c::fill_x | c::content_y, c::column(c::vbox(0.0f, {.width = 32.0f, .height = 32.0f})),
+             c::arranged<Rules>(Rules::State{}, c::column(c::vbox(2.0f, {.autoSize = scene::axes::kBoth, .maxWidth = 420.0f}),
+                 nodes::Text(std::format("message {}", std::get<0>(one)), 13.0f, 0u)))))));
+};
+using Rows = nodes::MemoRows<std::size_t, int, std::invoke_result_t<decltype(make_row), const RowItem &>, std::remove_cv_t<decltype(make_row)>,
+                             nodes::ColumnStack>;
+}  // namespace said_again
+
+// Every row told again what it already is -- shown, its least height, its
+// wash's colour -- as projections read again at each refresh tell it: no row
+// laid out again. Outside a release build, where each is a wrapper over held
+// content, each was, and every edge in it twice: a frame of mux's timeline
+// laid its 8,108 nodes out 87,508 times.
+TEST(Compose, RowsToldAgainWhatTheyAreAreNotLaidOutAgain) {
+  using namespace said_again;
+  scene::Scene<nodes::ScrollContainer<Rows>> tree{std::in_place, Rows{make_row}};
+  auto &list = std::get<0>(tree.root().fChildren);
+  list.apply({.fillX = true, .autoSize = scene::axes::kY});
+  tree.root().apply({.fill = true});
+  list.read(std::views::iota(std::size_t{0}, std::size_t{40}) | std::views::transform([](std::size_t k) { return RowItem{k, 0}; }) |
+            std::ranges::to<std::vector>());
+  const auto frame = [&] {
+    const auto before = scene::walkCounts().laidOut;
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 600.0f, 800.0f));
+    (void)tree.finishFrame();
+    return scene::walkCounts().laidOut - before;
+  };
+  (void)frame();
+  for (auto &one : list.fRows)
+    one.fRow.apply({.visible = true, .minHeight = 0.0f});
+  EXPECT_EQ(frame(), 0u);
+  for (auto &one : list.fRows)
+    one.fRow.apply({.background = 0x10203040u, .alpha = 1.0f});
+  EXPECT_EQ(frame(), 0u);
+  // And told something that moves it: laid out.
+  list.fRows.front().fRow.apply({.minHeight = 90.0f});
+  EXPECT_GT(frame(), 0u);
+}
 }  // namespace

@@ -340,6 +340,13 @@ struct Held : Stacked {
       self.fState.apply(placement(spec));
       return;
     }
+    // As it was laid out, to tell whether the spec moved any of it: the
+    // same said again -- a row shown, a size kept, read again at every
+    // refresh -- lays nothing out again.
+    const scene::State::Common wasSelf = self.fState.commonValues();
+    const scene::State::Common wasNode = node.commonValues();
+    const scene::Axes wasShrink = self.fState.fShrinkAxes, wasNodeShrink = node.fShrinkAxes;
+    const bool wasShown = self.fHeldShown;
     // Its own size back first, so the spec and the following start from
     // what it says, not from how it was last made to fill the wrapper.
     self.restore(node);
@@ -365,7 +372,9 @@ struct Held : Stacked {
     if (spec.visible)
       self.fHeldShown = *spec.visible;
     self.followSize(node);
-    self.invalidateLayout();
+    if (!scene::State::sameLayout(wasSelf, self.fState.commonValues()) || !scene::State::sameLayout(wasNode, node.commonValues()) ||
+        !(wasShrink == self.fState.fShrinkAxes) || !(wasNodeShrink == node.fShrinkAxes) || wasShown != self.fHeldShown)
+      self.invalidateLayout();
   }
   template <class Self>
     requires HeldWrapper<Self>
