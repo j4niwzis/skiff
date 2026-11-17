@@ -977,10 +977,16 @@ template <class Policy, class N> struct Arranged : N {
   template <class T>
     requires requires(N& node, const T& value) { node.read(value); }
   void read(const T& value) { N::read(value); }
+  // Its flow a stack's -- laid out by the compiled passes as its look says,
+  // its rules around them (beforeFlow, afterFlow), not a layout of its own
+  // in which every part was laid out by hand.
+  using FlowLaidOut = void;
+  void beforeFlow() { Policy::prepare(static_cast<N &>(*this), fRules); }
+  void afterFlow() { Policy::arrange(static_cast<N &>(*this), fRules); }
   void layoutChildren() {
-    Policy::prepare(static_cast<N &>(*this), fRules);
+    this->beforeFlow();
     this->nodes::Stack::layoutChildren();
-    Policy::arrange(static_cast<N &>(*this), fRules);
+    this->afterFlow();
   }
   [[nodiscard]] bool settling() const { return Policy::settling(static_cast<const N &>(*this), fRules) || N::settling(); }
   [[nodiscard]] bool wantsTick() const {

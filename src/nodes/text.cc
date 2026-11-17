@@ -132,6 +132,11 @@ struct AnyPictures {
 namespace internal {
 template <class Pictures = NoPictures> class BasicText : public skiff::scene::Node {
 public:
+  // Its measure reads only the room across: laid out where that room still
+  // holds it, it comes to the same (scene::detail::sizedApartFromBox).
+  using MeasuresWithin = void;
+
+public:
   using Link = TextLink;
   using Styled = TextStyled;
 

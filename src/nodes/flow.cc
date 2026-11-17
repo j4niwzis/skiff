@@ -27,35 +27,10 @@ using skiff::scene::justify::space_around;
 using skiff::scene::Justify;
 using skiff::scene::FlowOptions;
 
-// Where a line starts and how much goes between its items, given how much
-// room it did not use. Pure arithmetic, usable at compile time.
-struct Spread {
-  float fStart = 0.0f;
-  float fBetween = 0.0f;
-  constexpr bool operator==(const Spread &) const = default;
-};
-[[nodiscard]] constexpr Spread spread(const Justify &how, float room,
-                                      float used, int count) {
-  const float slack = std::max(0.0f, room - used);
-  const auto gaps = static_cast<float>(std::max(0, count - 1));
-  const auto items = static_cast<float>(count);
-  return spl::visit(
-      spl::overloaded{
-          [](justify::start) { return Spread{}; },
-          [&](justify::middle) { return Spread{slack * 0.5f, 0.0f}; },
-          [&](justify::end) { return Spread{slack, 0.0f}; },
-          [&](justify::space_between) {
-            return Spread{0.0f, gaps > 0.0f ? slack / gaps : 0.0f};
-          },
-          [&](justify::space_around) {
-            return count > 0 ? Spread{slack / items * 0.5f, slack / items}
-                             : Spread{};
-          }},
-      how);
-}
-static_assert(spread(justify::end{}, 100.0f, 60.0f, 3) == Spread{40.0f, 0.0f});
-static_assert(spread(justify::space_between{}, 100.0f, 60.0f, 3) ==
-              Spread{0.0f, 20.0f});
+// Where a line starts and what goes between its items: skiff.core's, the
+// compiled layout's too.
+using skiff::scene::Spread;
+using skiff::scene::spread;
 
 // Where each item of a line goes along it, from its extent: the line's
 // arithmetic, apart from the tree.
@@ -130,6 +105,10 @@ template <class N> struct Flowing {
   }
 
   void layout() {
+    // Laid out by hand, not by the compiled passes: told.
+    ++skiff::scene::handFlows();
+    if (skiff::scene::traceSettling() && skiff::scene::handFlowKinds().size() < 256)
+      skiff::scene::handFlowKinds().push_back(skiff::scene::typeOf(fNode).name);
     spl::visit([this](const auto &along) { lay(along); }, fOptions.direction);
   }
 

@@ -521,6 +521,7 @@ struct space_around {};
 using Justify = spl::variant<justify::start, justify::middle, justify::end, justify::space_between, justify::space_around>;
 struct FlowOptions {
   Direction direction = direction::vertical{};
+
   float spacingX = 0.0f;
   float spacingY = 0.0f;
   // A horizontal flow breaks into rows at its edge.
@@ -531,6 +532,37 @@ struct FlowOptions {
   Align crossAlign = align::kStart;
   Justify justify = justify::start{};
 };
+
+// Where a line starts and how much goes between its items, given how much
+// room it did not use. Pure arithmetic, usable at compile time.
+struct Spread {
+  float fStart = 0.0f;
+  float fBetween = 0.0f;
+  constexpr bool operator==(const Spread &) const = default;
+};
+[[nodiscard]] constexpr Spread spread(const Justify &how, float room,
+                                      float used, int count) {
+  const float slack = std::max(0.0f, room - used);
+  const auto gaps = static_cast<float>(std::max(0, count - 1));
+  const auto items = static_cast<float>(count);
+  return spl::visit(
+      spl::overloaded{
+          [](justify::start) { return Spread{}; },
+          [&](justify::middle) { return Spread{slack * 0.5f, 0.0f}; },
+          [&](justify::end) { return Spread{slack, 0.0f}; },
+          [&](justify::space_between) {
+            return Spread{0.0f, gaps > 0.0f ? slack / gaps : 0.0f};
+          },
+          [&](justify::space_around) {
+            return count > 0 ? Spread{slack / items * 0.5f, slack / items}
+                             : Spread{};
+          }},
+      how);
+}
+static_assert(spread(justify::end{}, 100.0f, 60.0f, 3) == Spread{40.0f, 0.0f});
+static_assert(spread(justify::space_between{}, 100.0f, 60.0f, 3) ==
+              Spread{0.0f, 20.0f});
+
 // An icon's marks -- lines, circles, arcs, rounded boxes, paths -- about the
 // middle of its box, stroked or filled, in the icon's colour or their own.
 namespace path_step {

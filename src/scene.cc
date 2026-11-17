@@ -555,10 +555,48 @@ inline std::vector<Dirtier> &dirtiers() {
 // named view: where a frame's layouts went, by what does them -- a frame that
 // lays a tree of thousands out tens of thousands of times shows what is laid
 // out again and again. Kept while traced; the program drains it.
-inline std::map<std::pair<std::string_view, std::string>, std::size_t> &laidOutByKind() {
-  static std::map<std::pair<std::string_view, std::string>, std::size_t> kept;
+// Keyed by the kind, its view, and the kind of the node whose layout laid it
+// out: what lays what out again and again.
+inline std::map<std::tuple<std::string_view, std::string, std::string_view>, std::size_t> &laidOutByKind() {
+  static std::map<std::tuple<std::string_view, std::string, std::string_view>, std::size_t> kept;
   return kept;
 }
+// The flows the hand-written flow laid out -- not the compiled passes --
+// counted at every one; their kinds kept while traced. None, where the
+// compiled layout takes every flow: what a program's tests hold it to.
+inline std::uint64_t &handFlows() {
+  static std::uint64_t count = 0;
+  return count;
+}
+inline std::vector<std::string_view> &handFlowKinds() {
+  static std::vector<std::string_view> kept;
+  return kept;
+}
+// Why the compiled layout took a node as an edge -- laid out by its own
+// hooks or by hand -- by its kind, while traced.
+inline std::map<std::pair<std::string_view, std::string_view>, std::size_t> &edgeReasons() {
+  static std::map<std::pair<std::string_view, std::string_view>, std::size_t> kept;
+  return kept;
+}
+// The kinds being laid out, outermost first, while traced.
+inline std::vector<std::string_view> &layingOut() {
+  static std::vector<std::string_view> kept;
+  return kept;
+}
+// One on that stack while it is laid out.
+struct LayingOut {
+  bool on;
+  explicit LayingOut(std::string_view kind) : on(traceSettling()) {
+    if (on)
+      layingOut().push_back(kind);
+  }
+  ~LayingOut() {
+    if (on && !layingOut().empty())
+      layingOut().pop_back();
+  }
+  LayingOut(const LayingOut &) = delete;
+  LayingOut &operator=(const LayingOut &) = delete;
+};
 inline void tellOverflow(Overflow one) {
   if constexpr (!kLayoutReports)
     return;
@@ -1641,6 +1679,7 @@ public:
   // where it was.
   void invalidateLayout() {
     fLayoutValid = false;
+    fPrefKnown = false;
     fDamaged = true;
     fRedrawn = true;
     fRelaid = true;
@@ -2029,6 +2068,10 @@ public:
   // Whether what it draws changed -- not only where it is drawn or how
   // faintly: a recording is kept through a fade or a slide.
   bool fRedrawn = true;
+  // Its natural width, as the compiled layout measured it last (in a room of
+  // its own): kept while its layout holds and nothing under it changed.
+  float fPref = 0.0f;
+  bool fPrefKnown = false;
   // Something under it repainted since it last looked (collectDamage): what
   // it keeps drawn of its subtree -- a scroll view's screens drawn ahead --
   // no longer shows it.
@@ -2854,6 +2897,31 @@ inline bool &on() {
 template <class T> bool layOut(T &node, const skia::SkRect &parent);
 }  // namespace compiled
 namespace detail {
+// Whether a node's layout reads only the room across its box: by its type
+// (none of its own, or a measure that says so: MeasuresWithin, a text's);
+// outside a release build's typed walks, by its table (ErasedNode's
+// overloads, below).
+template <class T> [[nodiscard]] constexpr bool layoutReadsOnlyRoom(T &) {
+  return !ownsItsLayout<T> || requires { typename T::MeasuresWithin; };
+}
+template <class T> [[nodiscard]] constexpr bool laysItselfOut(T &) { return ownsItsLayout<T>; }
+// Whether a node laid out in one box comes to the same in another: nothing
+// of it a share of its box, its box as tall, and across it its own or what
+// it holds, which the old box did not cut and the new one has room for.
+template <class T> [[nodiscard]] bool sizedApartFromBox(T &node, const State &s, const skia::SkRect &parent) {
+  if (!layoutReadsOnlyRoom(node))
+    return false;
+  if (s.fRelativeSizeAxes.has<axis::x>() || s.fRelativeSizeAxes.has<axis::y>() || s.fScale != 1.0f || s.fShrunkTo > 0.0f ||
+      parent.height() != s.fLastConstraint.height())
+    return false;
+  if (s.fAutoSizeAxes.has<axis::x>() || laysItselfOut(node)) {
+    const float w = s.fBounds.width();
+    const float was = s.fLastConstraint.width() - s.fMargin.totalX();
+    const float now = parent.width() - s.fMargin.totalX();
+    return w < was - 0.5f && w <= now + 0.01f;
+  }
+  return true;
+}
 template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   ::skiff::scene::detail::settle(node);
   State &state = node.fState;
@@ -2867,12 +2935,19 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
           ? state.fFollow->fBounds.makeOffset(work::drawnOffset(state.fFollow->fId).x,
                                               work::drawnOffset(state.fFollow->fId).y)
           : parentBox;
+  // Laid out already in a box of this size, nothing changed under it: the
+  // same layout where the box is now -- layout reads a box's size, not where
+  // it is. Compared whole, a box only moved -- a node measured where its
+  // parent's content box was, then placed where it is now; a bubble's
+  // provisional box, then its own at the row's end -- laid it out again, and
+  // all under it, at every such move.
   if (state.fLayoutValid && !state.fSubtreeDirty &&
-      parent == state.fLastConstraint) {
-    if (state.fPlacementDirty) {
+      parent.width() == state.fLastConstraint.width() && parent.height() == state.fLastConstraint.height()) {
+    if (state.fPlacementDirty || parent != state.fLastConstraint) {
       work::reach(state.fId);
       // Moved, not changed: the subtree goes where it is placed as it is.
       state.fPlacementDirty = false;
+      state.fLastConstraint = parent;
       const skia::SkRect moved =
           anchoredBox(inset(parent, state.fMargin), state.fBounds.width(), state.fBounds.height(), state.fAnchor,
                       state.fOrigin, state.fX, state.fY);
@@ -2889,6 +2964,29 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
     }
     return;
   }
+  // Laid out, nothing changed under it, in another box it comes to the same
+  // in -- a parent sized by what it holds lays it out in a box as wide as
+  // it may be, then in one as wide as it is: moved, not laid out again.
+  // Laid out anew each time, each level of such parents doubled the layouts
+  // under it -- a message's bubble, its pressed name in a row sized by it,
+  // the name cut at its room: 70 layouts of the name for each of the
+  // bubble's (mux's timeline, a page of history coming: 150 ms).
+  if (state.fLayoutValid && !state.fSubtreeDirty && state.fFollow == nullptr && sizedApartFromBox(node, state, parent)) {
+    const skia::SkRect moved = anchoredBox(inset(parent, state.fMargin), state.fBounds.width(), state.fBounds.height(), state.fAnchor,
+                                           state.fOrigin, state.fX, state.fY);
+    const float dx = moved.fLeft - state.fBounds.fLeft;
+    const float dy = moved.fTop - state.fBounds.fTop;
+    state.fPlacementDirty = false;
+    if (dx != 0.0f || dy != 0.0f) {
+      work::reach(state.fId);
+      moveLaidOut(node, dx, dy);
+    }
+    state.fLastConstraint = parent;
+    return;
+  }
+  // Under whose layout it is laid out, where traced.
+  const std::string_view by = traceSettling() && !layingOut().empty() ? layingOut().back() : std::string_view();
+  const LayingOut laying(traceSettling() ? typeOf(node).name : std::string_view());
   // Its own layout as it was, in the same box: laid out again only for what
   // changed under it.
   state.fBelowOnly = state.fLayoutValid && parent == state.fLastConstraint;
@@ -2903,7 +3001,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   work::reach(state.fId);
   ++walkCounts().laidOut;
   if (traceSettling())
-    ++laidOutByKind()[{typeOf(node).name, viewsLaidOut().empty() ? std::string() : std::string(viewsLaidOut().back())}];
+    ++laidOutByKind()[{typeOf(node).name, viewsLaidOut().empty() ? std::string() : std::string(viewsLaidOut().back()), by}];
   if (kLayoutReports && !state.fSizingConflict.empty()) {
     std::println(std::cerr, "[scene] {}: {}{}{}", std::exchange(state.fSizingConflict, {}), typeOf(node).name,
                  viewsLaidOut().empty() ? "" : " in ", viewsLaidOut().empty() ? std::string_view() : std::string_view(viewsLaidOut().back()));
@@ -2983,7 +3081,12 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   // and what they came to there free of its height: they come to the same
   // in its own box, moved with its top. Moved, not laid out again -- a
   // list of 10,000 rows sized by them reached every row twice a frame.
-  if (provisional && !autoX && provisional->width() == state.fBounds.width() && state.fHeightFree) {
+  // Or sized by them across too, and come to the provisional box's size --
+  // a bubble whose text fills its widest, put at the row's end: only moved.
+  // Laid out again there, every part of every own message was laid out
+  // twice in each layout of it, and every part of theirs in turn.
+  if (provisional && provisional->width() == state.fBounds.width() &&
+      (autoY ? state.fHeightFree : provisional->height() == state.fBounds.height())) {
     const float dx = state.fBounds.fLeft - provisional->fLeft;
     const float dy = state.fBounds.fTop - provisional->fTop;
     if (dx != 0.0f || dy != 0.0f)
@@ -4987,6 +5090,13 @@ struct NodeOps {
   // Whether its type lays it out by hooks of its own (ownsItsLayout): what
   // the compiled layout takes whole, seen through the table.
   bool fOwnsLayout;
+  // Whether its layout reads only the room across its box (layoutReadsOnlyRoom).
+  bool fReadsOnlyRoom;
+  // What it does before its flow lays out what it holds, and after: its own
+  // rules over its parts (a message's bubble), where it has them. None
+  // where it has none.
+  void (*fBeforeFlow)(void *);
+  void (*fAfterFlow)(void *);
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
   // Layout and the default draw algorithm need only these typed hooks;
   // the surrounding algorithms do not depend on the node's subtree type.
@@ -5194,6 +5304,15 @@ inline constexpr NodeOps kNodeOps{
     EventEntries<TextHandler, TextEvent, Reply>::of<T>(),
     EventEntries<SemanticHandler, SemanticAction, Reply>::of<T>(),
     ownsItsLayout<T>,
+    !ownsItsLayout<T> || requires { typename T::MeasuresWithin; },
+    requires(T &node) { node.beforeFlow(); } ? +[](void *n) {
+      if constexpr (requires(T &node) { node.beforeFlow(); })
+        nodeAs<T>(n).beforeFlow();
+    } : nullptr,
+    requires(T &node) { node.afterFlow(); } ? +[](void *n) {
+      if constexpr (requires(T &node) { node.afterFlow(); })
+        nodeAs<T>(n).afterFlow();
+    } : nullptr,
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
     +[](void *n, const skia::SkRect &box) { nodeAs<T>(n).measure(box); },
     +[](void *n) { nodeAs<T>(n).layoutChildren(); },
@@ -5361,6 +5480,10 @@ template <class T> void drawDefaultShared(T &node, Painting &painting, skia::SkC
 inline StyleSubject styleSubject(ErasedNode &node, float viewportWidth) {
   return node.fOps->fStyleSubject(node.fNode, viewportWidth);
 }
+namespace detail {
+[[nodiscard]] inline bool layoutReadsOnlyRoom(ErasedNode &node) { return node.fOps->fReadsOnlyRoom; }
+[[nodiscard]] inline bool laysItselfOut(ErasedNode &node) { return node.fOps->fOwnsLayout; }
+}  // namespace detail
 inline NodeKind typeOf(ErasedNode &node) { return node.fOps->core.fKind; }
 template <class F> bool childAt(ErasedNode &node, std::uint32_t place, F &&f) {
   return node.fOps->core.fChildAt(node.fNode, place, const_cast<void *>(static_cast<const void *>(std::addressof(f))), +[](void *context, AnyNodeRef &child) {
@@ -6631,27 +6754,48 @@ namespace compiled {
 // the same passes over the erased walks' table (AnyNodeRef), made once for
 // every tree. What a pass knows of a node is kept in the region's arrays,
 // indexed in the preorder every pass goes in -- not on the node.
-enum class kind : std::uint8_t { column, row, edge };
+enum class kind : std::uint8_t { column, row, edge, loose };
 template <class N> [[nodiscard]] Look lookOf(N &node) { return node.look(); }
 [[nodiscard]] inline Look lookOf(AnyNodeRef &ref) {
   ErasedNode seen(ref);
   return seen.look();
 }
-// Whether a flow's children are ones the rules cover.
-template <class N> [[nodiscard]] bool covers(N &node, bool vertical) {
-  bool covered = true;
+// Whether a child is in its flow: shown, and not placed in the box by its
+// anchor. One that is not is loose: none of the flow's sizes, laid out in
+// its box after it where it is shown (as a flow lays it out).
+[[nodiscard]] inline bool inItsFlow(const State &one) { return one.fVisible && !one.fOutOfFlow; }
+// Whether a flow's children are ones the rules cover -- those in its flow;
+// the loose ones are not the flow's.
+template <class N> [[nodiscard]] std::string_view uncovered(N &node, bool vertical) {
+  std::string_view why;
   eachChild(node, [&](auto &child) {
     const State &one = stateOf(child);
-    covered = covered && one.fVisible && !one.fOutOfFlow && !one.fRelativeSizeAxes.template has<axis::y>() &&
-              !one.fGrowAxes.template has<axis::y>() && !one.fShrinkAxes.template has<axis::x>() && one.fDepth == 0.0f &&
-              one.fFollow == nullptr && one.fScale == 1.0f &&
-              (vertical || !(one.fGrowAxes.template has<axis::x>() && one.fAutoSizeAxes.template has<axis::x>()));
+    if (!why.empty() || !inItsFlow(one))
+      return;
+    why = one.fRelativeSizeAxes.template has<axis::y>() ? "a child a share of its height"
+          : one.fGrowAxes.template has<axis::y>()       ? "a child growing down"
+          : one.fDepth != 0.0f                          ? "a child of a depth"
+          : one.fFollow != nullptr                      ? "a child following another"
+          : one.fScale != 1.0f                          ? "a child scaled"
+          : !vertical && one.fGrowAxes.template has<axis::x>() && one.fAutoSizeAxes.template has<axis::x>()
+              ? "a child growing from its content"
+              : "";
   });
-  return covered;
+  return why;
 }
-[[nodiscard]] inline bool fromStart(const FlowOptions &options) {
-  return !options.wrap && spl::visit(spl::overloaded{[](justify::start) { return true; }, [](const auto &) { return false; }}, options.justify);
+template <class N> [[nodiscard]] bool covers(N &node, bool vertical) { return uncovered(node, vertical).empty(); }
+// Told, while traced, why a node is an edge.
+template <class N> void edgeBecause(N &node, std::string_view why) {
+  if (traceSettling())
+    ++edgeReasons()[{typeOf(node).name, why}];
 }
+// A flow the passes take: not wrapped -- justified any way, what it leaves
+// along it shared as it places (Spread). Taken from its start alone, a row
+// at its end (one's own messages, a service line in the middle) went to the
+// hand-written flow, and every content-sized wrapper in it laid out what it
+// holds twice -- a provisional box, then its own -- each level doubling the
+// one under it.
+[[nodiscard]] inline bool fromStart(const FlowOptions &options) { return !options.wrap; }
 // A node's kind fixed by its type, where the type says it
 // (`static constexpr skiff::layout::kind_of layoutKind`, and flowOptions()):
 // no look read to learn what it is.
@@ -6672,14 +6816,34 @@ template <class N>
     return fromStart(options) && covers(node, fixed == kind::column) ? fixed : kind::edge;
   }
 }
+// What a node does around its flow (its own rules over its parts): by its
+// type, or through its table.
+template <class N> void beforeFlow(N &node) {
+  if constexpr (requires { node.beforeFlow(); })
+    node.beforeFlow();
+}
+inline void beforeFlow(AnyNodeRef &ref) {
+  if (const auto hook = sceneOps(ref).fBeforeFlow)
+    hook(ref.node());
+}
+template <class N> void afterFlow(N &node) {
+  if constexpr (requires { node.afterFlow(); })
+    node.afterFlow();
+}
+inline void afterFlow(AnyNodeRef &ref) {
+  if (const auto hook = sceneOps(ref).fAfterFlow)
+    hook(ref.node());
+}
 // Whether a node lays itself out by hooks of its own: by its type, or
 // through its table.
 template <class N> [[nodiscard]] constexpr bool ownsLayout(N &) { return ownsItsLayout<N>; }
 [[nodiscard]] inline bool ownsLayout(AnyNodeRef &ref) { return sceneOps(ref).fOwnsLayout; }
 // Else by its look, at run time: a flow the rules cover, or an edge.
 template <class N> [[nodiscard]] kind kindOf(N &node, FlowOptions &options) {
-  if (ownsLayout(node))
+  if (ownsLayout(node)) {
+    edgeBecause(node, "lays itself out");
     return kind::edge;
+  }
   bool flow = false;
   spl::visit(spl::overloaded{[&](const look::flow &one) {
                                options = one.options;
@@ -6687,12 +6851,20 @@ template <class N> [[nodiscard]] kind kindOf(N &node, FlowOptions &options) {
                              },
                              [](const auto &) {}},
              lookOf(node));
-  if (!flow || !fromStart(options))
+  if (!flow) {
+    edgeBecause(node, "no flow");
     return kind::edge;
+  }
+  if (!fromStart(options)) {
+    edgeBecause(node, "wraps");
+    return kind::edge;
+  }
   const bool vertical = spl::visit(spl::overloaded{[](direction::vertical) { return true; }, [](direction::horizontal) { return false; }},
                                    options.direction);
-  if (!covers(node, vertical))
+  if (const std::string_view why = uncovered(node, vertical); !why.empty()) {
+    edgeBecause(node, why);
     return kind::edge;
+  }
   return vertical ? kind::column : kind::row;
 }
 // What the passes know of the region's nodes, in preorder: each one's kind
@@ -6734,9 +6906,15 @@ template <class N> void enter(region &r, N &node) {
   if (of == kind::edge)
     return;
   detail::settle(node);
+  // Its own rules over its parts first, as its own layout did them: what
+  // they say of them read by the passes.
+  beforeFlow(node);
   eachChild(node, [&](auto &child) {
     work::record(stateOf(child).fId, stateOf(node).fId);
-    enter(r, child);
+    if (inItsFlow(stateOf(child)))
+      enter(r, child);
+    else
+      (void)r.add(kind::loose, FlowOptions{});
   });
   r.sizes[at] = static_cast<std::uint32_t>(r.kinds.size()) - at;
 }
@@ -6755,27 +6933,36 @@ template <class N> float prefOf(region &r, std::uint32_t at, N &node) {
       !s.fGrowAxes.template has<axis::x>()) {
     out = s.fWidth;
   } else if (r.kinds[at] == kind::edge && s.fLayoutValid && !s.fSubtreeDirty && r.rooms[at] > 0.0f &&
-             s.fLastConstraint.width() == r.rooms[at] && s.fBounds.width() < r.rooms[at] - 0.5f) {
-    // Laid out in the room it has now, nothing changed under it since, and
-    // narrower than that room: what it came to there is what it comes to
-    // with room -- not laid out again to learn it. Measured in a room of
+             s.fLastConstraint.width() == r.rooms[at] && s.fBounds.width() <= r.rooms[at] + 0.5f) {
+    // Laid out in the room it has now, nothing changed under it since: what
+    // it came to there is what it comes to with room, as far as the room
+    // goes -- and as wide as the room, it would come to at least that, all a
+    // width in this room reads (widthIn). Not laid out again to learn it. Measured in a room of
     // its own each time, every bubble of a list was laid out twice at
     // every layout of the list -- in that room, then in its own, its box
     // never the one it was kept for -- a page of history come above them:
     // every row laid out again, 84 ms a frame in a Debug build.
     out = s.fBounds.width();
+  } else if (r.kinds[at] == kind::edge && s.fPrefKnown && s.fLayoutValid && !s.fSubtreeDirty) {
+    // Measured before, nothing changed in it since.
+    out = s.fPref;
   } else if (r.kinds[at] == kind::edge) {
     constexpr float kRoom = 1.0e7f;
     layout(node, skia::SkRect::MakeXYWH(0.0f, 0.0f, kRoom, kRoom));
     out = s.fBounds.width();
+    State &kept = stateOf(node);
+    kept.fPref = out;
+    kept.fPrefKnown = true;
   } else {
     std::uint32_t count = 0;
     std::uint32_t child = at + 1;
     eachChild(node, [&](auto &each) {
-      const float w = prefOf(r, child, each) + stateOf(each).fMargin.totalX();
-      out = r.kinds[at] == kind::column ? std::max(out, w) : out + w;
+      if (r.kinds[child] != kind::loose) {
+        const float w = prefOf(r, child, each) + stateOf(each).fMargin.totalX();
+        out = r.kinds[at] == kind::column ? std::max(out, w) : out + w;
+        ++count;
+      }
       child += r.sizes[child];
-      ++count;
     });
     if (r.kinds[at] == kind::row && count > 1)
       out += r.options[at].spacingX * static_cast<float>(count - 1);
@@ -6833,9 +7020,11 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
   if (r.kinds[at] == kind::column) {
     std::uint32_t child = at + 1;
     eachChild(node, [&](auto &each) {
-      // Its room said first: what it measures in (prefOf) knows it.
-      r.rooms[child] = inner;
-      r.widths[child] = widthIn(r, child, each, std::max(0.0f, inner - stateOf(each).fMargin.totalX()));
+      if (r.kinds[child] != kind::loose) {
+        // Its room said first: what it measures in (prefOf) knows it.
+        r.rooms[child] = inner;
+        r.widths[child] = widthIn(r, child, each, std::max(0.0f, inner - stateOf(each).fMargin.totalX()));
+      }
       child += r.sizes[child];
     });
   } else {
@@ -6845,6 +7034,10 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
     std::uint32_t child = at + 1;
     eachChild(node, [&](auto &each) {
       const State &one = stateOf(each);
+      if (r.kinds[child] == kind::loose) {
+        child += r.sizes[child];
+        return;
+      }
       ++count;
       if (one.fGrowAxes.template has<axis::x>()) {
         ++growers;
@@ -6861,8 +7054,13 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
     // The room what sizes itself has: the row's, less its fixed children and
     // the gaps, as a flow works it out.
     float fixed = count > 1 ? r.options[at].spacingX * static_cast<float>(count - 1) : 0.0f;
+    child = at + 1;
     eachChild(node, [&](auto &each) {
       const State &one = stateOf(each);
+      const bool loose = r.kinds[child] == kind::loose;
+      child += r.sizes[child];
+      if (loose)
+        return;
       fixed += one.fMargin.totalX();
       if (!one.fGrowAxes.template has<axis::x>() && !one.fAutoSizeAxes.template has<axis::x>())
         fixed += one.fRelativeSizeAxes.template has<axis::x>() ? inner * one.fWidth : one.fWidth;
@@ -6871,6 +7069,10 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
     child = at + 1;
     eachChild(node, [&](auto &each) {
       State &one = stateOf(each);
+      if (r.kinds[child] == kind::loose) {
+        child += r.sizes[child];
+        return;
+      }
       // A grown child's width is written on it, as a flow writes it.
       if (one.fGrowAxes.template has<axis::x>()) {
         r.widths[child] = share;
@@ -6879,10 +7081,49 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
       r.rooms[child] = one.fAutoSizeAxes.template has<axis::x>() ? std::min(inner, autoRoom) : inner;
       child += r.sizes[child];
     });
+    // CSS's flex-shrink: more than the row has room for, those that give way
+    // do, each by its share of the excess in proportion to its width, down
+    // to its least -- a few passes, as one stopped at its least leaves the
+    // rest to the others; each laid out in the room it comes to (an elided
+    // text cut there), as the hand-written flow had it.
+    for (int pass = 0; pass < 3; ++pass) {
+      float used = count > 1 ? r.options[at].spacingX * static_cast<float>(count - 1) : 0.0f;
+      float giving = 0.0f;
+      child = at + 1;
+      eachChild(node, [&](auto &each) {
+        const State &one = stateOf(each);
+        if (r.kinds[child] != kind::loose) {
+          used += r.widths[child] + one.fMargin.totalX();
+          if (one.fShrinkAxes.template has<axis::x>())
+            giving += r.widths[child];
+        }
+        child += r.sizes[child];
+      });
+      const float excess = used - inner;
+      if (excess <= 0.5f || giving <= 0.0f)
+        break;
+      bool gave = false;
+      child = at + 1;
+      eachChild(node, [&](auto &each) {
+        const State &one = stateOf(each);
+        if (r.kinds[child] != kind::loose && one.fShrinkAxes.template has<axis::x>()) {
+          const float was = r.widths[child];
+          const float to = std::max(one.fMinWidth, was - excess * was / giving);
+          if (to < was - 0.25f) {
+            r.widths[child] = to;
+            r.rooms[child] = to + one.fMargin.totalX();
+            gave = true;
+          }
+        }
+        child += r.sizes[child];
+      });
+      if (!gave)
+        break;
+    }
   }
   std::uint32_t child = at + 1;
   eachChild(node, [&](auto &each) {
-    if (r.kinds[child] != kind::edge)
+    if (r.kinds[child] != kind::edge && r.kinds[child] != kind::loose)
       giveWidths(r, child, each);
     child += r.sizes[child];
   });
@@ -6926,6 +7167,10 @@ template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPo
   std::uint32_t child = at + 1;
   eachChild(node, [&](auto &each) {
     const State &one = stateOf(each);
+    if (r.kinds[child] == kind::loose) {
+      child += r.sizes[child];
+      return;
+    }
     if (mayWait && r.kinds[child] == kind::edge && one.fLayoutValid && !one.fSubtreeDirty && !one.fBounds.isEmpty() &&
         one.fLastConstraint.width() != r.rooms[child] && !skia::SkRect::Intersects(one.fBounds, *s.fInView)) {
       r.heights[child] = one.fBounds.height();
@@ -6977,11 +7222,39 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
   work::reach(s.fId);
   const skia::SkRect content = s.contentBox();
   const bool column = r.kinds[at] == kind::column;
-  float along = 0.0f;
+  // What its children take along it, and what that leaves shared as it is
+  // justified: at its start, its end, its middle, or between them.
+  float used = 0.0f;
+  int inFlow = 0;
+  {
+    std::uint32_t at_child = at + 1;
+    eachChild(node, [&](auto &each) {
+      if (r.kinds[at_child] != kind::loose) {
+        const Margin &m = stateOf(each).fMargin;
+        used += column ? r.heights[at_child] + m.totalY() : r.widths[at_child] + m.totalX();
+        ++inFlow;
+      }
+      at_child += r.sizes[at_child];
+    });
+  }
+  const float spacing = column ? r.options[at].spacingY : r.options[at].spacingX;
+  if (inFlow > 1)
+    used += spacing * static_cast<float>(inFlow - 1);
+  const Spread shared = spread(r.options[at].justify, column ? content.height() : content.width(), used, inFlow);
+  float along = shared.fStart;
   std::uint32_t child = at + 1;
   eachChild(node, [&](auto &each) {
     State &one = stateOf(each);
     const Margin &m = one.fMargin;
+    if (r.kinds[child] == kind::loose) {
+      // Out of the flow and shown: laid out in the box by its anchor, as a
+      // flow lays it out; hidden, left as it is.
+      work::record(one.fId, s.fId);
+      if (one.fVisible)
+        layout(each, content);
+      child += r.sizes[child];
+      return;
+    }
     const float line = column ? content.width() : content.height();
     const float own = column ? r.widths[child] + m.totalX() : r.heights[child] + m.totalY();
     const float cross = (line - own) * one.fAlignSelf.value_or(r.options[at].crossAlign).at;
@@ -7003,9 +7276,11 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
       place(r, child, each,
             skia::SkRect::MakeXYWH(content.fLeft + one.fX + m.fLeft, content.fTop + one.fY + m.fTop, r.widths[child], r.heights[child]));
     }
-    along += column ? r.heights[child] + m.totalY() + r.options[at].spacingY : r.widths[child] + m.totalX() + r.options[at].spacingX;
+    along += (column ? r.heights[child] + m.totalY() : r.widths[child] + m.totalX()) + spacing + shared.fBetween;
     child += r.sizes[child];
   });
+  // Its own rules over its parts after, as its own layout did them.
+  afterFlow(node);
   // What sticks out of its box, told, as a flow tells it: along an axis it
   // does not take from what it holds, where it does not clip; once, until it
   // fits. Not made at all without the layout's reports.
@@ -7094,7 +7369,7 @@ template <class N> bool redoMarked(N &node) {
       delta += one.fBounds.height() + one.fMargin.totalY() - before;
       return;
     }
-    if (delta == 0.0f)
+    if (delta == 0.0f || !one.fVisible)
       return;
     work::record(one.fId, s.fId);
     detail::placedAgain(each, 0.0f, delta);
@@ -7113,7 +7388,12 @@ template <class N> bool redoMarked(N &node) {
 }
 template <class N> bool run(N &node, const skia::SkRect &parent) {
   State &s = stateOf(node);
-  if (s.fAutoSizeAxes.template has<axis::x>() || s.fScale != 1.0f || s.fFollow != nullptr)
+  // Sized across by what it holds as well: its width its natural width
+  // within its room (widthIn), worked out by the passes. Handed to the
+  // hand-written flow, every content-sized node laid out as a region of its
+  // own -- a bubble, a row behind a wrapper -- laid its children out twice,
+  // a provisional box then its own, and each such level under it doubled.
+  if (s.fScale != 1.0f || s.fFollow != nullptr)
     return false;
   if (redoMarked(node))
     return true;
@@ -7133,8 +7413,10 @@ template <class N> bool run(N &node, const skia::SkRect &parent) {
   bool edges = r.kinds[0] == kind::column;
   std::uint32_t child = 1;
   eachChild(node, [&](auto &each) {
-    edges = edges && r.kinds[child] == kind::edge;
-    stateOf(each).fInFlowAtLayout = true;
+    // Edges, or hidden: a list with rows it does not show (a chat's hidden
+    // events) laid out again in part all the same.
+    edges = edges && (r.kinds[child] == kind::edge || (r.kinds[child] == kind::loose && !stateOf(each).fVisible));
+    stateOf(each).fInFlowAtLayout = r.kinds[child] != kind::loose;
     child += r.sizes[child];
   });
   s.fRegionSimple = edges;
@@ -7149,7 +7431,17 @@ template <class N> bool run(N &node, const skia::SkRect &parent) {
 template <class T> bool layOut(T &node, const skia::SkRect &parent) {
   if (!on())
     return false;
-  if constexpr (kErasedWalks && std::derived_from<T, Node>) {
+  // Laid out through the shared algorithms outside a release build: the node
+  // seen through its table, as the walks see it. Taken as it was -- an
+  // ErasedNode, whose type has every hook a node may have -- it was an edge
+  // whatever it was, and no flow of a Debug build was ever laid out by these
+  // passes: every one by hand, each content-sized level doubling the one
+  // under it (a message's name laid out 70 times for each layout of its
+  // bubble).
+  if constexpr (std::same_as<T, ErasedNode>) {
+    AnyNodeRef ref(node.fNode, &node.fOps->core);
+    return run(ref, parent);
+  } else if constexpr (kErasedWalks && std::derived_from<T, Node>) {
     AnyNodeRef ref = AnyNodeRef::of(node);
     return run(ref, parent);
   } else {
