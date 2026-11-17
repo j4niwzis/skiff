@@ -206,6 +206,65 @@ void skiff_add_message_read(benchmark::State& state) {
     state.ResumeTiming();
   }
 }
+// A page of history come above the rows a window holds -- mux's timeline as
+// it pages back: sixteen rows put in at its top, the rest as they were.
+void skiff_history_page(benchmark::State& state) {
+  skiff_chat chat(static_cast<std::size_t>(state.range(0)));
+  std::size_t next = 0;  // the keys of what is older: past the chat's own
+  chat.reset();
+  const scene::WalkCounts before = scene::walkCounts();
+  for (auto _ : state) {
+    std::vector<item> page = std::views::iota(std::size_t{0}, std::size_t{16}) |
+                             std::views::transform([&](std::size_t) { return item{(std::size_t{1} << 40) + next++, {20, false}}; }) |
+                             std::ranges::to<std::vector>();
+    chat.items.insert(chat.items.begin(), page.begin(), page.end());
+    chat.list().read(chat.items);
+    chat.lay_out();
+  }
+  chat.report(state, before);
+}
+
+// The same with rows that size themselves -- edge nodes the compiled layout
+// measures, as mux's bubbles are: a text as wide as it comes to.
+inline constexpr auto make_text_row = [](const item& one) {
+  const auto& [key, view] = one;
+  skiff::nodes::Text text(said(key, view.words), 13.0f, kInk);
+  text.setWrapped(true);
+  text.apply({.maxWidth = 420.0f});
+  return text;
+};
+using text_rows_t = skiff::nodes::MemoRows<std::size_t, message_view, skiff::nodes::Text, std::remove_cv_t<decltype(make_text_row)>,
+                                           skiff::nodes::ColumnStack>;
+void skiff_history_page_edges(benchmark::State& state) {
+  scene::Scene<skiff::nodes::ScrollContainer<text_rows_t>> view{std::in_place, text_rows_t{make_text_row}};
+  auto& list = std::get<0>(view.root().fChildren);
+  list.apply({.fillX = true, .autoSize = scene::axes::kY});
+  view.root().apply({.fill = true});
+  std::vector<item> items = std::views::iota(std::size_t{0}, static_cast<std::size_t>(state.range(0))) |
+                            std::views::transform([](std::size_t key) { return item{key, {3 + key % 40, false}}; }) | std::ranges::to<std::vector>();
+  double now = 0.0;
+  const auto frame = [&] {
+    now += 16.0;
+    view.update(now);
+    view.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 640.0f, 800.0f));
+    benchmark::DoNotOptimize(view.finishFrame());
+  };
+  list.read(items);
+  frame();
+  std::size_t next = 0;
+  const scene::WalkCounts before = scene::walkCounts();
+  std::size_t frames = 0;
+  for (auto _ : state) {
+    std::vector<item> page = std::views::iota(std::size_t{0}, std::size_t{16}) |
+                             std::views::transform([&](std::size_t) { return item{(std::size_t{1} << 40) + next++, {20, false}}; }) |
+                             std::ranges::to<std::vector>();
+    items.insert(items.begin(), page.begin(), page.end());
+    list.read(items);
+    frame();
+    ++frames;
+  }
+  state.counters["laid_n"] = benchmark::Counter(static_cast<double>(scene::walkCounts().laidOut - before.laidOut) / static_cast<double>(std::max<std::size_t>(frames, 1)));
+}
 
 // ---- the schedule's engines ------------------------------------------------------------
 using namespace layout_bench;
@@ -251,6 +310,8 @@ BENCHMARK(schedule_edit<full, resize>)->Apply(sizes);
 BENCHMARK(schedule_edit<spineless, resize>)->Apply(sizes);
 BENCHMARK(skiff_add_message)->Apply(sizes);
 BENCHMARK(skiff_add_message_read)->Apply(sizes);
+BENCHMARK(skiff_history_page_edges)->Arg(80)->Arg(240)->Unit(benchmark::kMicrosecond);
+BENCHMARK(skiff_history_page)->Arg(80)->Arg(240)->Unit(benchmark::kMicrosecond);
 BENCHMARK(schedule_edit<double_dirty, new_message>)->Apply(sizes);
 BENCHMARK(schedule_edit<spineless, new_message>)->Apply(sizes);
 BENCHMARK_MAIN();

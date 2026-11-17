@@ -6744,6 +6744,16 @@ template <class N> float prefOf(region &r, std::uint32_t at, N &node) {
   if (r.kinds[at] != kind::edge && !s.fAutoSizeAxes.template has<axis::x>() && !s.fRelativeSizeAxes.template has<axis::x>() &&
       !s.fGrowAxes.template has<axis::x>()) {
     out = s.fWidth;
+  } else if (r.kinds[at] == kind::edge && s.fLayoutValid && !s.fSubtreeDirty && r.rooms[at] > 0.0f &&
+             s.fLastConstraint.width() == r.rooms[at] && s.fBounds.width() < r.rooms[at] - 0.5f) {
+    // Laid out in the room it has now, nothing changed under it since, and
+    // narrower than that room: what it came to there is what it comes to
+    // with room -- not laid out again to learn it. Measured in a room of
+    // its own each time, every bubble of a list was laid out twice at
+    // every layout of the list -- in that room, then in its own, its box
+    // never the one it was kept for -- a page of history come above them:
+    // every row laid out again, 84 ms a frame in a Debug build.
+    out = s.fBounds.width();
   } else if (r.kinds[at] == kind::edge) {
     constexpr float kRoom = 1.0e7f;
     layout(node, skia::SkRect::MakeXYWH(0.0f, 0.0f, kRoom, kRoom));
@@ -6813,8 +6823,9 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
   if (r.kinds[at] == kind::column) {
     std::uint32_t child = at + 1;
     eachChild(node, [&](auto &each) {
-      r.widths[child] = widthIn(r, child, each, std::max(0.0f, inner - stateOf(each).fMargin.totalX()));
+      // Its room said first: what it measures in (prefOf) knows it.
       r.rooms[child] = inner;
+      r.widths[child] = widthIn(r, child, each, std::max(0.0f, inner - stateOf(each).fMargin.totalX()));
       child += r.sizes[child];
     });
   } else {
