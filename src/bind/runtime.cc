@@ -312,6 +312,9 @@ struct Table {
   const ItselfPart *fItself = nullptr;
   const PressPart *fPress = nullptr;
   const PipePart *fPipe = nullptr;
+  // A scope's content bound to a part of its own, the node bound around the
+  // scope to another: read below the scope, after the node's own.
+  const BoundPart *fBoundWithin = nullptr;
 };
 
 namespace made {
@@ -332,8 +335,16 @@ template <class T>
   requires IsEach<T>
 constexpr const EachPart *each();
 
-template <class T> struct BoundOf {
-  using B = std::remove_reference_t<decltype(detail::asBound(std::declval<T &>()))>;
+// The node's bound kind -- or, Within, its scope's content's, where that is
+// bound to a part of its own (detail::boundWithin).
+template <class T, bool Within = false> struct BoundOf {
+  static auto &of(void *n) {
+    if constexpr (Within)
+      return detail::boundWithin(*static_cast<T *>(n));
+    else
+      return detail::asBound(*static_cast<T *>(n));
+  }
+  using B = std::remove_reference_t<decltype(of(nullptr))>;
   using Want = decltype(detail::boundToOf(std::declval<B &>()));
   using V = ValueOf<Want>;
   static constexpr BoundPart kPart{
@@ -341,19 +352,30 @@ template <class T> struct BoundOf {
       mrt::keyOf<V>(),
       // (Through the read the node was made with: nothing of it made here.)
       +[](void *n, const void *value) {
-        auto &bound = detail::asBound(*static_cast<T *>(n));
+        auto &bound = of(n);
         bound.fReadErased(std::addressof(bound), value);
       },
-      +[](void *n) { detail::gone(*static_cast<T *>(n)); },
-      +[](void *n) -> model::Revision & { return detail::asBound(*static_cast<T *>(n)).fSeen; },
-      +[](void *n) -> const void *& { return detail::asBound(*static_cast<T *>(n)).fSource; },
-      +[](void *n) -> bool & { return detail::asBound(*static_cast<T *>(n)).fShown; },
-      +[](void *n) -> bool & { return detail::asBound(*static_cast<T *>(n)).fGone; }};
+      +[](void *n) {
+        if constexpr (Within)
+          detail::gone(of(n));
+        else
+          detail::gone(*static_cast<T *>(n));
+      },
+      +[](void *n) -> model::Revision & { return of(n).fSeen; },
+      +[](void *n) -> const void *& { return of(n).fSource; },
+      +[](void *n) -> bool & { return of(n).fShown; },
+      +[](void *n) -> bool & { return of(n).fGone; }};
 };
 template <class T>
   requires IsBound<T>
 constexpr const BoundPart *bound() {
   return &BoundOf<T>::kPart;
+}
+template <class T> constexpr const BoundPart *boundWithin() { return nullptr; }
+template <class T>
+  requires(!std::is_void_v<detail::bound_within_t<T>>)
+constexpr const BoundPart *boundWithin() {
+  return &BoundOf<T, true>::kPart;
 }
 
 template <class T> struct ScopedOf {
@@ -686,7 +708,7 @@ template <class T> struct TableOf {
   static_assert(!RefreshUnseen<T>,
                 "skiff::bind: this node's refresh() is overloaded or a template, which the runtime walks cannot "
                 "call by themselves: list what it reads from as a member, fRefreshes = refreshes(refreshFrom<...>(), ...)");
-  static constexpr Table value{bound<T>(), scoped<T>(), local<T>(), each<T>(), itself<T>(), pressed<T>(), piped<T>()};
+  static constexpr Table value{bound<T>(), scoped<T>(), local<T>(), each<T>(), itself<T>(), pressed<T>(), piped<T>(), boundWithin<T>()};
 };
 template <class T>
 inline constexpr const Table &kTable = TableOf<T>::value;
@@ -822,6 +844,8 @@ private:
     const LocalFrame *around = local ? &*local : frames;
     if (table->fBound != nullptr)
       bound(node, *table->fBound, place, around);
+    if (table->fBoundWithin != nullptr)
+      bound(node, *table->fBoundWithin, place, around);
     if (table->fItself != nullptr)
       table->fItself->fRefresh(node.node(), fModel);
     if (table->fEach != nullptr && owns(table->fEach->fList)) {

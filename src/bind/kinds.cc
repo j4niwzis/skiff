@@ -475,5 +475,29 @@ T elementOf(const Each<K, T, R, C, M> &);
 template <class K, class T, class R, class C, class M>
 K keyOf(const Each<K, T, R, C, M> &);
 
+// A scope's content bound to a part of its own, in a node bound around the
+// scope to another part -- a scope moved by what it reads (rekeyed_by) over
+// content projected from the part it is at: two bound kinds in one node.
+// The walks found the outer one only (asBound deduces the most derived), and
+// the content never read its part -- mux's Join Requests page, empty. That
+// inner one, read below the scope as the content it is.
+template <class W, class H, class B, class... K> B &scopedContentOf(Scoped<W, H, B, K...> &node) { return node; }
+template <class N> struct BoundWithinOf {
+  using type = void;
+};
+template <class N>
+  requires(IsBound<N> && IsScoped<N> && requires(N &n) { asBound(scopedContentOf(asScoped(n))); })
+struct BoundWithinOf<N> {
+  using Outer = std::remove_reference_t<decltype(asBound(std::declval<N &>()))>;
+  using Inner = std::remove_reference_t<decltype(asBound(scopedContentOf(asScoped(std::declval<N &>()))))>;
+  using type = std::conditional_t<std::same_as<Outer, Inner>, void, Inner>;
+};
+template <class N> using bound_within_t = typename BoundWithinOf<N>::type;
+template <class N>
+  requires(!std::is_void_v<bound_within_t<N>>)
+bound_within_t<N> &boundWithin(N &node) {
+  return asBound(scopedContentOf(asScoped(node)));
+}
+
 } // namespace detail
 } // namespace skiff::bind

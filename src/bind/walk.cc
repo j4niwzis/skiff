@@ -125,6 +125,11 @@ template <class Op, class N, class Here, class... Frames>
 void visitBody(Op &op, N &node, const Here &here, const Frames &...frames) {
   if constexpr (!(kInForeign<N, Frames> || ...))
     op.bound(node, here, frames...);
+  // A scope's content bound itself, under a binding around the scope: read
+  // as well, where it is (bind:kinds, boundWithin).
+  if constexpr (!std::is_void_v<bound_within_t<N>>)
+    if constexpr (!(kInForeign<bound_within_t<N>, Frames> || ...))
+      op.bound(boundWithin(node), here, frames...);
   // Content it made as it was read (a mount): shown whole by an op that
   // would otherwise go on only along its own change.
   if constexpr (requires { node.takeFresh(); })
