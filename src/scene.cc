@@ -551,6 +551,14 @@ inline std::vector<Dirtier> &dirtiers() {
   static std::vector<Dirtier> kept;
   return kept;
 }
+// How many times each kind of node was laid out anew this frame, and in which
+// named view: where a frame's layouts went, by what does them -- a frame that
+// lays a tree of thousands out tens of thousands of times shows what is laid
+// out again and again. Kept while traced; the program drains it.
+inline std::map<std::pair<std::string_view, std::string>, std::size_t> &laidOutByKind() {
+  static std::map<std::pair<std::string_view, std::string>, std::size_t> kept;
+  return kept;
+}
 inline void tellOverflow(Overflow one) {
   if constexpr (!kLayoutReports)
     return;
@@ -2894,6 +2902,8 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   state.fLastConstraint = parent;
   work::reach(state.fId);
   ++walkCounts().laidOut;
+  if (traceSettling())
+    ++laidOutByKind()[{typeOf(node).name, viewsLaidOut().empty() ? std::string() : std::string(viewsLaidOut().back())}];
   if (kLayoutReports && !state.fSizingConflict.empty()) {
     std::println(std::cerr, "[scene] {}: {}{}{}", std::exchange(state.fSizingConflict, {}), typeOf(node).name,
                  viewsLaidOut().empty() ? "" : " in ", viewsLaidOut().empty() ? std::string_view() : std::string_view(viewsLaidOut().back()));
