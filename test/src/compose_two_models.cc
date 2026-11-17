@@ -241,4 +241,71 @@ TEST(Compose, APictureComingIntoAKeptBoxTellsItsScrollViewItRepainted) {
   EXPECT_TRUE(list.fState.fBelowRedrawn);
   Store::image = nullptr;
 }
+namespace recorded_picture {
+namespace c = skiff::compose;
+using namespace window_edge;
+using waiting_picture::FromStore;
+using waiting_picture::Store;
+// Drawn: counted, so that a recording played back -- not walked -- shows.
+struct Spy : scene::Node {
+  static inline int draws = 0;
+  Spy() { this->apply({.width = 10.0f, .height = 10.0f}); }
+  template <class P> void drawSelf(P &, float) { ++draws; }
+};
+struct MakeRecordedRow {
+  compose::Held operator()(const Item &) const {
+    nodes::Image<FromStore> picture({"k"});
+    picture.keepBox();
+    // As mux's quote in a bubble: a masked, rounded row, its thumbnail a
+    // fixed box, the whole row recorded and played back.
+    return compose::Held(c::build(c::recorded(c::row(c::hbox(4.0f) | c::fill_x | c::content_y | c::with({.cornerRadius = 5.0f, .masking = true}),
+                                                     c::styled({.width = 32.0f, .height = 32.0f}, std::move(picture)), Spy()))));
+  }
+};
+using RecordedWindow = c::WindowFrom<Src, FeedModel, std::string, int, compose::Held, MakeRecordedRow, c::NoLocate, Tag>;
+}  // namespace recorded_picture
+
+// A picture come into a box that keeps its size, in a row recorded and
+// played back (mux's quote thumbnail, since 16c94): the recording let go and
+// the row drawn again -- kept, it was played back with its placeholder for
+// good.
+TEST(Compose, APictureComingIntoAKeptBoxInARecordedRowIsDrawn) {
+  using namespace recorded_picture;
+  Store::image = nullptr;
+  RecordedWindow window(MakeRecordedRow{});
+  window.apply({.fill = true});
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), bind::Bound<FeedTold, RecordedWindow>(std::move(window))));
+  FeedModel m{FeedRoot{.told = {FeedTold{.of = 1}}, .feed = {Feed{.count = 1}}}};
+  bind::Binding<FeedModel> binding;
+  binding.refresh(tree.root(), m);
+  Heard heard;
+  skia::SkBitmap pixels;
+  ASSERT_TRUE(pixels.tryAllocN32Pixels(300, 400));
+  skia::SkCanvas canvas(pixels);
+  scene::detail::PlainPaint plain;
+  const auto frame = [&](double at) {
+    binding.refresh(tree.root(), m);
+    tree.update(at);
+    tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 400.0f));
+    for (const auto &way : std::exchange(scene::hostWork().pressed, {}))
+      (void)bind::press(tree.root(), m, way, &heard);
+    (void)tree.finishFrame();
+    tree.draw(plain, &canvas);
+  };
+  for (double at = 0.0; at < 600.0; at += 16.0)
+    frame(at);
+  const int before = Spy::draws;
+  frame(600.0);
+  frame(616.0);
+  EXPECT_EQ(Spy::draws, before);  // played back, not walked
+  auto surface = skia::Raster(skia::SkImageInfo::MakeN32Premul(8, 8));
+  Store::image = surface->makeImageSnapshot();
+  Store::waiting.wake();
+  const int still = Spy::draws;
+  for (double at = 632.0; at < 900.0; at += 16.0)
+    frame(at);
+  std::println("the row drawn again after its picture came: {} times", Spy::draws - still);
+  EXPECT_GT(Spy::draws, still);
+  Store::image = nullptr;
+}
 }  // namespace
