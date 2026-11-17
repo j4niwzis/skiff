@@ -308,4 +308,54 @@ TEST(Compose, APictureComingIntoAKeptBoxInARecordedRowIsDrawn) {
   EXPECT_GT(Spy::draws, still);
   Store::image = nullptr;
 }
+namespace rekeyed_across {
+struct Item {
+  std::string label;
+  friend bool operator==(const Item &, const Item &) = default;
+};
+struct Pick {
+  int key = 1;
+  friend bool operator==(const Pick &, const Pick &) = default;
+};
+struct ItemsRoot {
+  model::Keyed<int, Item> items;
+};
+struct PickRoot {
+  model::Tracked<Pick> pick;
+};
+using ItemsModel = model::Model<ItemsRoot, bind::NoReactions>;
+using PickModel = model::Model<PickRoot, bind::NoReactions>;
+struct ItemLabel {
+  std::string operator()(const Item &one) const { return one.label; }
+};
+inline auto item_text() { return skiff::compose::build(skiff::compose::text_for<Item>(ItemLabel{}, nodes::Text("", 13.0f, 0u))); }
+using ItemText = decltype(item_text());
+}  // namespace rekeyed_across
+
+// A scope moved to another key by one model -- the settings' facts saying
+// which room -- over a part of another -- the chats: read under its new key
+// by that model's binding, though that model did not move (mux's Join
+// Requests, under the room the settings are for).
+TEST(Compose, AScopeRekeyedByOneModelIsReadFromAnotherThatDidNotMove) {
+  namespace c = skiff::compose;
+  using namespace rekeyed_across;
+  auto tree = c::build(c::column(c::vbox(0.0f), c::rekeyed_by<Pick>([](const Pick &now) { return std::tuple(now.key); },
+      c::scoped<Item>(c::handlers(), c::column(c::vbox(0.0f), item_text()), 1))));
+  ItemsRoot values;
+  values.items.put(1, Item{"first"});
+  values.items.put(2, Item{"second"});
+  ItemsModel items(std::move(values));
+  PickModel picked{PickRoot{}};
+  bind::Binding<PickModel> bp;
+  bind::Binding<ItemsModel> bi;
+  bp.refresh(tree, picked);
+  bi.refresh(tree, items);
+  const auto said = all_made_as<ItemText>(tree);
+  ASSERT_EQ(said.size(), 1u);
+  EXPECT_EQ(said.front()->text(), "first");
+  (void)picked.apply(model::edit(model::placeOf<Pick, PickRoot>(), model::setTo(Pick{2})));
+  bp.refresh(tree, picked);
+  bi.refresh(tree, items);
+  EXPECT_EQ(said.front()->text(), "second");
+}
 }  // namespace

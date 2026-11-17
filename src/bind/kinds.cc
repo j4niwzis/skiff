@@ -193,6 +193,11 @@ struct Scoped : Base {
     fKeys = std::tuple<Keys...>(std::move(keys)...);
     fSeen = 0;
     fShown = false;
+    // Every binding walks again, not only after one's invalidate(): its part
+    // is another model's, as often as not -- a room's requests read from the
+    // chats under a key the settings' facts give -- and that model's binding,
+    // its revision the same, walked nothing, the scope left on its old key.
+    ++madeEpoch();
   }
   // Its part's revision when its subtree was last refreshed, and the local
   // epoch then: the same now, the subtree is not walked again.
