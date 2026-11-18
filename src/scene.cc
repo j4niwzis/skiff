@@ -2991,7 +2991,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   // changed under it.
   state.fBelowOnly = state.fLayoutValid && parent == state.fLastConstraint;
   // A flow the compiled traversal covers: laid out by its passes.
-  if (state.fFollow == nullptr && compiled::layOut(node, parent)) {
+  if (compiled::layOut(node, parent)) {
     state.fLayoutValid = true;
     state.fSubtreeDirty = false;
     return;
@@ -6764,24 +6764,15 @@ template <class N> [[nodiscard]] Look lookOf(N &node) { return node.look(); }
 // anchor. One that is not is loose: none of the flow's sizes, laid out in
 // its box after it where it is shown (as a flow lays it out).
 [[nodiscard]] inline bool inItsFlow(const State &one) { return one.fVisible && !one.fOutOfFlow; }
-// Whether a flow's children are ones the rules cover -- those in its flow;
-// the loose ones are not the flow's.
-template <class N> [[nodiscard]] std::string_view uncovered(N &node, bool vertical) {
-  std::string_view why;
-  eachChild(node, [&](auto &child) {
-    const State &one = stateOf(child);
-    if (!why.empty() || !inItsFlow(one))
-      return;
-    why = one.fDepth != 0.0f                          ? "a child of a depth"
-          : one.fFollow != nullptr                      ? "a child following another"
-          : one.fScale != 1.0f                          ? "a child scaled"
-          : !vertical && one.fGrowAxes.template has<axis::x>() && one.fAutoSizeAxes.template has<axis::x>()
-              ? "a child growing from its content"
-              : "";
-  });
-  return why;
+// Whether a node is laid out apart from its parent's flow, as an edge:
+// scaled (its box what it comes to, times its scale) or placed against
+// another node (a dropdown, by what it follows) -- what layoutNode does for
+// it, the flow around it only putting it where it goes. Taken as reasons
+// to lay out the whole parent by hand, every flow holding one was laid out
+// by the hand-written flow, each content-sized level under it twice.
+[[nodiscard]] inline std::string_view apart(const State &s) {
+  return s.fScale != 1.0f ? "scaled" : s.fFollow != nullptr ? "following another" : std::string_view();
 }
-template <class N> [[nodiscard]] bool covers(N &node, bool vertical) { return uncovered(node, vertical).empty(); }
 // Told, while traced, why a node is an edge.
 template <class N> void edgeBecause(N &node, std::string_view why) {
   if (traceSettling())
@@ -6804,7 +6795,7 @@ template <class N>
     return kind::edge;
   } else {
     options = node.flowOptions();
-    return covers(node, fixed == kind::column) ? fixed : kind::edge;
+    return apart(stateOf(node)).empty() ? fixed : kind::edge;
   }
 }
 // What a node does around its flow (its own rules over its parts): by its
@@ -6853,13 +6844,12 @@ template <class N> [[nodiscard]] kind kindOf(N &node, FlowOptions &options) {
     edgeBecause(node, "no flow");
     return kind::edge;
   }
-  const bool vertical = spl::visit(spl::overloaded{[](direction::vertical) { return true; }, [](direction::horizontal) { return false; }},
-                                   options.direction);
-  if (const std::string_view why = uncovered(node, vertical); !why.empty()) {
+  if (const std::string_view why = apart(stateOf(node)); !why.empty()) {
     edgeBecause(node, why);
     return kind::edge;
   }
-  return vertical ? kind::column : kind::row;
+  return spl::visit(spl::overloaded{[](direction::vertical) { return kind::column; }, [](direction::horizontal) { return kind::row; }},
+                    options.direction);
 }
 // What the passes know of the region's nodes, in preorder: each one's kind
 // and flow options, how many nodes its subtree has here (its children are
@@ -6883,6 +6873,9 @@ struct region {
   std::vector<float> given;
   // Where a wrapped row breaks: whether a child begins a line of it.
   std::vector<std::uint8_t> breaks;
+  // How tall a box an edge node was measured in (a share of its parent's
+  // height reads it; 0 otherwise): the box it is placed in, the same.
+  std::vector<float> downs;
   [[nodiscard]] std::uint32_t add(kind of, const FlowOptions &with) {
     const auto at = static_cast<std::uint32_t>(kinds.size());
     kinds.push_back(of);
@@ -6896,6 +6889,7 @@ struct region {
     waits.push_back(0);
     given.push_back(-1.0f);
     breaks.push_back(0);
+    downs.push_back(0.0f);
     return at;
   }
 };
@@ -7130,12 +7124,15 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
         child += r.sizes[child];
         return;
       }
-      // A grown child's width is written on it, as a flow writes it.
+      const bool content = one.fAutoSizeAxes.template has<axis::x>();
+      r.rooms[child] = content ? std::min(inner, autoRoom) : inner;
+      // A grown child's width is written on it, as a flow writes it -- where
+      // it is sized by what it holds as well, the flow lays it out at that,
+      // in the room its fixed siblings leave, its share left as a gap.
       if (one.fGrowAxes.template has<axis::x>()) {
-        r.widths[child] = share;
         one.arrangeAxisSize(true, std::max(0.0f, share));
+        r.widths[child] = content ? widthIn(r, child, each, std::max(0.0f, std::min(inner, autoRoom) - one.fMargin.totalX())) : share;
       }
-      r.rooms[child] = one.fAutoSizeAxes.template has<axis::x>() ? std::min(inner, autoRoom) : inner;
       child += r.sizes[child];
     });
     // CSS's flex-shrink: more than the row has room for, those that give way
@@ -7228,7 +7225,8 @@ template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPo
     // its parent's height: laid out in a box that tall, as a flow gives it.
     if (r.given[at] >= 0.0f)
       s.arrangeAxisSize(false, r.given[at]);
-    layout(node, skia::SkRect::MakeXYWH(origin.fX, origin.fY, r.rooms[at], shareDown ? room : 0.0f));
+    r.downs[at] = shareDown ? room : 0.0f;
+    layout(node, skia::SkRect::MakeXYWH(origin.fX, origin.fY, r.rooms[at], r.downs[at]));
     r.heights[at] = s.fBounds.height();
     r.widths[at] = s.fBounds.width();
     return;
@@ -7355,7 +7353,11 @@ template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPo
           if (one.fGrowAxes.template has<axis::x>()) {
             if (to[i] >= 0.0f)
               one.arrangeAxisSize(true, to[i]);
-            r.widths[child] = one.fWidth;
+            // Sized by what it holds as well: that, within the line, as the
+            // flow lays it out.
+            r.widths[child] = one.fAutoSizeAxes.template has<axis::x>()
+                                  ? widthIn(r, child, each, std::max(0.0f, lineRoom - one.fMargin.totalX()))
+                                  : one.fWidth;
             if (r.kinds[child] != kind::edge)
               giveWidths(r, child, each);
             heights(r, child, each, start, insideHeight);
@@ -7487,8 +7489,10 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
       one.fX = x;
       one.fY = y;
     } else if (r.kinds[child] == kind::edge) {
+      // In a box 0 tall, one as tall as a share of it came out 0 tall: a
+      // scroll view filling its column, nothing in it to be seen.
       one.arrange(x, y);
-      layout(each, skia::SkRect::MakeXYWH(content.fLeft, content.fTop, r.rooms[child], 0.0f));
+      layout(each, skia::SkRect::MakeXYWH(content.fLeft, content.fTop, r.rooms[child], r.downs[child]));
     } else {
       one.fX = x;
       one.fY = y;
@@ -7706,7 +7710,10 @@ template <class N> bool run(N &node, const skia::SkRect &parent) {
   // hand-written flow, every content-sized node laid out as a region of its
   // own -- a bubble, a row behind a wrapper -- laid its children out twice,
   // a provisional box then its own, and each such level under it doubled.
-  if (s.fScale != 1.0f || s.fFollow != nullptr)
+  // Scaled: its children laid out in its box as scaled, by hand (rare: a
+  // node popping in). Placed against another node, its box is that one's
+  // (layoutNode gives it), laid out by these passes as any other.
+  if (s.fScale != 1.0f)
     return false;
   if (redoMarked(node))
     return true;
@@ -7728,7 +7735,11 @@ template <class N> bool run(N &node, const skia::SkRect &parent) {
   eachChild(node, [&](auto &each) {
     // Edges, or hidden: a list with rows it does not show (a chat's hidden
     // events) laid out again in part all the same.
-    edges = edges && (r.kinds[child] == kind::edge || (r.kinds[child] == kind::loose && !stateOf(each).fVisible));
+    // Not one whose height is the column's to give -- a share of it, or what
+    // the rest leave: laid out again alone, in a box 0 tall, it came to 0.
+    const State &one = stateOf(each);
+    edges = edges && (r.kinds[child] == kind::edge || (r.kinds[child] == kind::loose && !one.fVisible)) &&
+            !one.fRelativeSizeAxes.template has<axis::y>() && !one.fGrowAxes.template has<axis::y>();
     stateOf(each).fInFlowAtLayout = r.kinds[child] != kind::loose;
     child += r.sizes[child];
   });

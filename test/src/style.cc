@@ -1431,6 +1431,73 @@ TEST(Layout, ACentredRowPutsItsLineInTheMiddle) {
   EXPECT_FLOAT_EQ(row.parts.a.bounds().fLeft - row.bounds().fLeft, 30.0f);
 }
 
+// A row holding a scaled child, one of a depth, and one that grows sized by
+// what it holds: laid out by the compiled passes, not by hand -- the scaled
+// one alone laid out apart, as an edge.
+struct Holds20 : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> inner = make<Box>({.width = 20.0f, .height = 10.0f}, kCard);
+  } parts;
+  Holds20() { this->setHorizontal(); }
+};
+struct MixedRow : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> scaled = make<Box>({.width = 20.0f, .height = 10.0f, .scale = 1.5f}, kCard);
+    Box<> deep = make<Box>({.width = 10.0f, .height = 10.0f, .depth = 2.0f}, kCard);
+    Holds20 grows = make<Holds20>({.height = 10.0f, .autoSize = axes::kX, .grow = axes::kX});
+    Box<> after = make<Box>({.width = 10.0f, .height = 10.0f}, kCard);
+  } parts;
+  MixedRow() { this->setHorizontal(); }
+};
+struct HoldsMixedRow : Node {
+  struct parts_t {
+    MixedRow row = make<MixedRow>({.width = 200.0f, .height = 20.0f});
+  } parts;
+};
+
+TEST(Layout, ARowWithScaledDeepAndGrowingChildrenIsNotLaidOutByHand) {
+  Scene<HoldsMixedRow> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  const auto by_hand = skiff::scene::handFlows();
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  // The scaled box's own children, by hand; nothing else.
+  EXPECT_LE(skiff::scene::handFlows() - by_hand, 1u);
+  const auto &row = scene.root().parts.row;
+  const float left = row.bounds().fLeft;
+  EXPECT_FLOAT_EQ(row.parts.scaled.bounds().width(), 30.0f);
+  EXPECT_FLOAT_EQ(row.parts.deep.bounds().fLeft - left, 30.0f);
+  EXPECT_FLOAT_EQ(row.parts.grows.bounds().fLeft - left, 40.0f);
+  // Sized by what it holds, as the flow has it: its share left as a gap.
+  EXPECT_FLOAT_EQ(row.parts.grows.bounds().width(), 20.0f);
+  EXPECT_FLOAT_EQ(row.parts.grows.parts.inner.bounds().fLeft - left, 40.0f);
+}
+
+// A child as tall as its column (a scroll view filling it): placed in the
+// box it was measured in, as tall -- and so when laid out again alone.
+struct FilledDown : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> top = make<Box>({.width = 40.0f, .height = 10.0f}, kCard);
+    Box<> tall = make<Box>({.fill = true}, kCard);
+  } parts;
+};
+struct HoldsFilledDown : Node {
+  struct parts_t {
+    FilledDown column = make<FilledDown>({.fill = true});
+  } parts;
+};
+
+TEST(Layout, AChildAsTallAsItsColumnIsPlacedThatTall) {
+  Scene<HoldsFilledDown> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  auto &column = scene.root().parts.column;
+  EXPECT_FLOAT_EQ(column.parts.tall.bounds().height(), 300.0f);
+  EXPECT_FLOAT_EQ(column.parts.tall.bounds().fTop - column.bounds().fTop, 10.0f);
+  column.parts.tall.invalidateLayout();
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  EXPECT_FLOAT_EQ(column.parts.tall.bounds().height(), 300.0f);
+}
+
 // A menu: the arrows move the focus through its items, round from the last
 // to the first, and never out of it.
 struct ArrowMenu : skiff::nodes::Stack {
