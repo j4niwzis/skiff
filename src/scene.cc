@@ -1266,6 +1266,13 @@ public:
   float fShiftX = 0.0f, fShiftY = 0.0f;
   std::optional<Border> fBorder;
   bool fVisible = true;
+  // Whether the room it was laid out in cut it -- a text wrapped across
+  // lines or elided at it (fCutOwn, said by its measure), or anything holding
+  // one in its flow (fCutByRoom): laid out again in another width, never
+  // only moved as one that comes out the same there. Moved, a bubble widened
+  // again kept the lines its text was wrapped to at the narrower width.
+  bool fCutOwn = false;
+  bool fCutByRoom = false;
   // Whether being hidden is what it reads from the model, not what it was
   // made as -- a mount, hidden until it is first read: a wrapper put over it
   // follows it, and does not keep it hidden as one made hidden (visible(false)).
@@ -2917,7 +2924,7 @@ template <class T> [[nodiscard]] constexpr bool laysItselfOut(T &) { return owns
 // of it a share of its box, its box as tall, and across it its own or what
 // it holds, which the old box did not cut and the new one has room for.
 template <class T> [[nodiscard]] bool sizedApartFromBox(T &node, const State &s, const skia::SkRect &parent) {
-  if (!layoutReadsOnlyRoom(node))
+  if (!layoutReadsOnlyRoom(node) || s.fCutByRoom)
     return false;
   if (s.fRelativeSizeAxes.has<axis::x>() || s.fRelativeSizeAxes.has<axis::y>() || s.fScale != 1.0f || s.fShrunkTo > 0.0f ||
       parent.height() != s.fLastConstraint.height())
@@ -2929,6 +2936,16 @@ template <class T> [[nodiscard]] bool sizedApartFromBox(T &node, const State &s,
     return w < was - 0.5f && w <= now + 0.01f;
   }
   return true;
+}
+// Whether the room cut it, from its own measure and what is in its flow.
+template <class T> void foldCut(T &node) {
+  State &state = stateOf(node);
+  bool cut = state.fCutOwn;
+  eachChild(node, [&](auto &child) {
+    const State &one = stateOf(child);
+    cut = cut || (one.fVisible && !one.fOutOfFlow && one.fCutByRoom);
+  });
+  state.fCutByRoom = cut;
 }
 template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   ::skiff::scene::detail::settle(node);
@@ -3104,6 +3121,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
       });
     // Its children are where its box is: a later layout in part starts there.
     state.fFlowBox.offset(dx, dy);
+    foldCut(node);
     state.fLayoutValid = true;
     state.fSubtreeDirty = false;
     return;
@@ -3128,6 +3146,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
       node.layoutChildren();
     }
   }
+  foldCut(node);
   state.fLayoutValid = true;
   state.fSubtreeDirty = false;
 }
@@ -7715,6 +7734,16 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
   }
   // Its own rules over its parts after, as its own layout did them.
   afterFlow(node);
+  // Whether the room cut it: as anything in its flow was.
+  {
+    bool cut = s.fCutOwn;
+    std::uint32_t child = at + 1;
+    eachChild(node, [&](auto &) {
+      cut = cut || (r.slots[child].of != kind::loose && r.slots[child].state->fCutByRoom);
+      child += r.slots[child].size;
+    });
+    s.fCutByRoom = cut;
+  }
   // What sticks out of its box, told, as a flow tells it: along an axis it
   // does not take from what it holds, where it does not clip; once, until it
   // fits. Not made at all without the layout's reports.
@@ -7724,6 +7753,11 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
       const bool freeY = !s.fAutoSizeAxes.template has<axis::y>();
       eachChild(node, [&](auto &each) {
         State &one = stateOf(each);
+        // Only what is in the flow, as the flow tells it: one placed by its
+        // anchor -- a sender's face put in the row's padding, on purpose --
+        // was told as sticking out at every layout, the whole row printed.
+        if (!inItsFlow(one))
+          return;
         const skia::SkRect &b = one.fBounds;
         const float x = freeX ? std::max({0.0f, b.fRight - content.fRight - 1.0f, content.fLeft - b.fLeft - 1.0f}) : 0.0f;
         const float y = freeY ? std::max({0.0f, b.fBottom - content.fBottom - 1.0f, content.fTop - b.fTop - 1.0f}) : 0.0f;

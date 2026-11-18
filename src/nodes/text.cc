@@ -780,9 +780,13 @@ public:
         }
         fWroteWidth = state.fWidth;
       }
+      // Across more than a line, at a room short of its largest width: the
+      // room cut it (wrapped at its largest width, a wider room changes nothing).
+      state.fCutOwn = fLines.size() > 1 && !(state.fMaxWidth > 0.0f && room >= state.fMaxWidth - 0.5f);
       fMeasuredSize = fSize;
       return;
     }
+    state.fCutOwn = false;
     if (given <= 0.0f) {
       this->sizeOnOneLine(parent);
     }
@@ -829,6 +833,8 @@ public:
     }
     state.fWidth = width;
     fWroteWidth = width;
+    // Cut short of what its largest width leaves of its glyphs: the room cut it.
+    state.fCutOwn = width + 0.5f < (state.fMaxWidth > 0.0f ? std::min(state.fMaxWidth, fNatural) : fNatural);
   }
 
   template <class P> void drawSelf(P &given, float alpha) {

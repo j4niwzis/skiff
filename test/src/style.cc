@@ -1518,6 +1518,47 @@ TEST(Layout, ABoxThatComesOutTheSameInANarrowerRowIsNotLaidOutAgain) {
   EXPECT_EQ(row.parts.snug.parts.probe.fLayouts, laid);
 }
 
+// Content cut by its room, narrower than the room all the same -- a text
+// wrapped as narrow as its widest line: widened again, laid out again, not
+// only moved as content that comes out the same (it would wrap otherwise).
+struct WrapsLikeText : Node {
+  void measure(const skia::SkRect &parent) {
+    const float room = parent.width();
+    fState.fWidth = room < 100.0f ? room * 0.9f : 100.0f;
+    fState.fHeight = room < 100.0f ? 20.0f : 10.0f;
+    fState.fCutOwn = room < 100.0f;
+  }
+};
+struct SnugWrap : skiff::nodes::Stack {
+  struct parts_t {
+    WrapsLikeText text = make<WrapsLikeText>({});
+  } parts;
+};
+struct SnugWrapRow : skiff::nodes::Stack {
+  struct parts_t {
+    SnugWrap snug = make<SnugWrap>({.autoSize = axes::kBoth});
+  } parts;
+  SnugWrapRow() { this->setHorizontal(); }
+};
+struct HoldsSnugWrapRow : Node {
+  struct parts_t {
+    SnugWrapRow row = make<SnugWrapRow>({.fillX = true, .height = 30.0f});
+  } parts;
+};
+
+TEST(Layout, ContentItsRoomCutIsLaidOutAgainWhenWidened) {
+  Scene<HoldsSnugWrapRow> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  const auto &text = scene.root().parts.row.parts.snug.parts.text;
+  EXPECT_FLOAT_EQ(text.bounds().width(), 100.0f);
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(60.0f, 300.0f));
+  EXPECT_FLOAT_EQ(text.bounds().width(), 54.0f);
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  EXPECT_FLOAT_EQ(text.bounds().width(), 100.0f);
+  EXPECT_FLOAT_EQ(text.bounds().height(), 10.0f);
+}
+
 TEST(Layout, AChildAsTallAsItsColumnIsPlacedThatTall) {
   Scene<HoldsFilledDown> scene{std::in_place};
   scene.state().apply({.fill = true});
