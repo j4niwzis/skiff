@@ -243,14 +243,26 @@ void skiff_history_page_edges(benchmark::State& state) {
   std::vector<item> items = std::views::iota(std::size_t{0}, static_cast<std::size_t>(state.range(0))) |
                             std::views::transform([](std::size_t key) { return item{key, {3 + key % 40, false}}; }) | std::ranges::to<std::vector>();
   double now = 0.0;
+  // Where a page's time goes: reading the rows, the tick, the layout, the
+  // frame's finish (damage), each summed over the pages.
+  using clock = std::chrono::steady_clock;
+  double read_us = 0.0, tick_us = 0.0, layout_us = 0.0, finish_us = 0.0;
+  const auto since = [](clock::time_point from) { return std::chrono::duration<double, std::micro>(clock::now() - from).count(); };
   const auto frame = [&] {
     now += 16.0;
+    auto at = clock::now();
     view.update(now);
+    tick_us += since(at);
+    at = clock::now();
     view.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 640.0f, 800.0f));
+    layout_us += since(at);
+    at = clock::now();
     benchmark::DoNotOptimize(view.finishFrame());
+    finish_us += since(at);
   };
   list.read(items);
   frame();
+  read_us = tick_us = layout_us = finish_us = 0.0;
   std::size_t next = 0;
   const scene::WalkCounts before = scene::walkCounts();
   std::size_t frames = 0;
@@ -259,10 +271,20 @@ void skiff_history_page_edges(benchmark::State& state) {
                              std::views::transform([&](std::size_t) { return item{(std::size_t{1} << 40) + next++, {20, false}}; }) |
                              std::ranges::to<std::vector>();
     items.insert(items.begin(), page.begin(), page.end());
+    // As mux's window slides back: as many rows let go at the bottom -- grown
+    // without end, the rows read were thousands, not a window's.
+    items.resize(static_cast<std::size_t>(state.range(0)));
+    const auto at = clock::now();
     list.read(items);
+    read_us += since(at);
     frame();
     ++frames;
   }
+  const double pages = static_cast<double>(std::max<std::size_t>(frames, 1));
+  state.counters["read_us"] = read_us / pages;
+  state.counters["tick_us"] = tick_us / pages;
+  state.counters["layout_us"] = layout_us / pages;
+  state.counters["finish_us"] = finish_us / pages;
   state.counters["laid_n"] = benchmark::Counter(static_cast<double>(scene::walkCounts().laidOut - before.laidOut) / static_cast<double>(std::max<std::size_t>(frames, 1)));
 }
 

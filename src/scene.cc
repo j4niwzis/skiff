@@ -6856,41 +6856,75 @@ template <class N> [[nodiscard]] kind kindOf(N &node, FlowOptions &options) {
 // at the indices after it, each followed by its own), the width it was
 // given, its height, and its natural width where asked.
 struct region {
-  std::vector<kind> kinds;
-  std::vector<FlowOptions> options;
-  std::vector<std::uint32_t> sizes;
-  std::vector<float> widths, heights, prefs;
-  // The width of the box its parent lays it out in, as a flow gives it: a
-  // column's content width; a row's, or for one sized by what it holds the
-  // room its fixed siblings leave.
-  std::vector<float> rooms;
-  std::vector<std::uint8_t> asked;
-  // Whether it waits, out of view while its scrolled column's width moves:
-  // moved only, laid out at the width once it holds.
-  std::vector<std::uint8_t> waits;
-  // The height its column gives it where it grows down: its share of what
-  // the column's fixed children leave; none (below 0) where it does not.
-  std::vector<float> given;
-  // Where a wrapped row breaks: whether a child begins a line of it.
-  std::vector<std::uint8_t> breaks;
-  // How tall a box an edge node was measured in (a share of its parent's
-  // height reads it; 0 otherwise): the box it is placed in, the same.
-  std::vector<float> downs;
+  // One node's, all in one place: one push for each node entered, not one
+  // for each array (a Debug build spent two microseconds a row entering a
+  // list of them).
+  struct slot {
+    kind of = kind::edge;
+    // Its flow's options, where it is a flow: an index into flows.
+    std::uint32_t flow = 0;
+    std::uint32_t size = 1;
+    float width = 0.0f, height = 0.0f, pref = 0.0f;
+    // The width of the box its parent lays it out in, as a flow gives it: a
+    // column's content width; a row's, or for one sized by what it holds the
+    // room its fixed siblings leave.
+    float room = 0.0f;
+    // The height its column gives it where it grows down: its share of what
+    // the column's fixed children leave; none (below 0) where it does not.
+    float given = -1.0f;
+    // How tall a box an edge node was measured in (a share of its parent's
+    // height reads it; 0 otherwise): the box it is placed in, the same.
+    float down = 0.0f;
+    std::uint8_t asked = 0;
+    // Whether it waits, out of view while its scrolled column's width moves:
+    // moved only, laid out at the width once it holds.
+    std::uint8_t waits = 0;
+    // Where a wrapped row breaks: whether a child begins a line of it.
+    std::uint8_t breaks = 0;
+  };
+  std::vector<slot> slots;
+  std::vector<FlowOptions> flows;
+  [[nodiscard]] FlowOptions &optionsOf(std::uint32_t at) { return flows[slots[at].flow]; }
   [[nodiscard]] std::uint32_t add(kind of, const FlowOptions &with) {
-    const auto at = static_cast<std::uint32_t>(kinds.size());
-    kinds.push_back(of);
-    options.push_back(with);
-    sizes.push_back(1);
-    widths.push_back(0.0f);
-    heights.push_back(0.0f);
-    prefs.push_back(0.0f);
-    rooms.push_back(0.0f);
-    asked.push_back(0);
-    waits.push_back(0);
-    given.push_back(-1.0f);
-    breaks.push_back(0);
-    downs.push_back(0.0f);
+    const auto at = static_cast<std::uint32_t>(slots.size());
+    slot &one = slots.emplace_back();
+    one.of = of;
+    if (of == kind::column || of == kind::row) {
+      one.flow = static_cast<std::uint32_t>(flows.size());
+      flows.push_back(with);
+    }
     return at;
+  }
+  void clear() {
+    slots.clear();
+    flows.clear();
+  }
+};
+// The regions being laid out, one for each run under way -- an edge node
+// laid out by a run of its own inside its parent's: kept and cleared, their
+// arrays never given back. Made anew at every run, a list of rows grew its
+// arrays from nothing at every layout of it.
+inline std::vector<std::unique_ptr<region>> &regionsKept() {
+  static std::vector<std::unique_ptr<region>> kept;
+  return kept;
+}
+inline std::size_t &regionsInUse() {
+  static std::size_t count = 0;
+  return count;
+}
+struct leasedRegion {
+  region &r;
+  leasedRegion() : r(take()) {}
+  ~leasedRegion() { --regionsInUse(); }
+  leasedRegion(const leasedRegion &) = delete;
+  leasedRegion &operator=(const leasedRegion &) = delete;
+  static region &take() {
+    auto &kept = regionsKept();
+    if (kept.size() <= regionsInUse())
+      kept.push_back(std::make_unique<region>());
+    region &one = *kept[regionsInUse()++];
+    one.clear();
+    return one;
   }
 };
 // Pass 0: the region's nodes, in preorder, each with its kind.
@@ -6906,8 +6940,8 @@ template <class N> void enter(region &r, N &node) {
   // an arrangement), read again, or the flow was laid out by what they said
   // the layout before.
   if (beforeFlow(node)) {
-    r.kinds[at] = kindOf(node, r.options[at]);
-    if (r.kinds[at] == kind::edge)
+    r.slots[at].of = kindOf(node, r.optionsOf(at));
+    if (r.slots[at].of == kind::edge)
       return;
   }
   eachChild(node, [&](auto &child) {
@@ -6917,24 +6951,24 @@ template <class N> void enter(region &r, N &node) {
     else
       (void)r.add(kind::loose, FlowOptions{});
   });
-  r.sizes[at] = static_cast<std::uint32_t>(r.kinds.size()) - at;
+  r.slots[at].size = static_cast<std::uint32_t>(r.slots.size()) - at;
 }
 // Pass 1, where it is read: a node's natural width -- an edge node's what it
 // comes to laid out with room enough (on one line, a text), a column's its
 // widest child's, a row's its children's side by side; padding added, held
 // to its least and most.
 template <class N> float prefOf(region &r, std::uint32_t at, N &node) {
-  if (r.asked[at])
-    return r.prefs[at];
+  if (r.slots[at].asked)
+    return r.slots[at].pref;
   const State &s = stateOf(node);
   float out = 0.0f;
   // An edge node's own: what it comes to laid out -- a text's measure writes
   // its width as it lays out, so its width as it was is not what it is.
-  if (r.kinds[at] != kind::edge && !s.fAutoSizeAxes.template has<axis::x>() && !s.fRelativeSizeAxes.template has<axis::x>() &&
+  if (r.slots[at].of != kind::edge && !s.fAutoSizeAxes.template has<axis::x>() && !s.fRelativeSizeAxes.template has<axis::x>() &&
       !s.fGrowAxes.template has<axis::x>()) {
     out = s.fWidth;
-  } else if (r.kinds[at] == kind::edge && s.fLayoutValid && !s.fSubtreeDirty && r.rooms[at] > 0.0f && s.fShrunkTo <= 0.0f &&
-             s.fLastConstraint.width() == r.rooms[at] && s.fBounds.width() <= r.rooms[at] + 0.5f) {
+  } else if (r.slots[at].of == kind::edge && s.fLayoutValid && !s.fSubtreeDirty && r.slots[at].room > 0.0f && s.fShrunkTo <= 0.0f &&
+             s.fLastConstraint.width() == r.slots[at].room && s.fBounds.width() <= r.slots[at].room + 0.5f) {
     // Laid out in the room it has now, nothing changed under it since: what
     // it came to there is what it comes to with room, as far as the room
     // goes -- and as wide as the room, it would come to at least that, all a
@@ -6944,10 +6978,10 @@ template <class N> float prefOf(region &r, std::uint32_t at, N &node) {
     // never the one it was kept for -- a page of history come above them:
     // every row laid out again, 84 ms a frame in a Debug build.
     out = s.fBounds.width();
-  } else if (r.kinds[at] == kind::edge && s.fPrefKnown && s.fLayoutValid && !s.fSubtreeDirty) {
+  } else if (r.slots[at].of == kind::edge && s.fPrefKnown && s.fLayoutValid && !s.fSubtreeDirty) {
     // Measured before, nothing changed in it since.
     out = s.fPref;
-  } else if (r.kinds[at] == kind::edge) {
+  } else if (r.slots[at].of == kind::edge) {
     constexpr float kRoom = 1.0e7f;
     // As wide as it would be, not as far as a row told it to give way: what
     // it gives way from (giveWidths), each layout the same.
@@ -6966,23 +7000,23 @@ template <class N> float prefOf(region &r, std::uint32_t at, N &node) {
       // to give, nothing it adds to it -- as a flow measures what it holds
       // (flowBounds). Measured, a child that fills its box made the box it
       // was in as wide as it could be.
-      if (r.kinds[child] != kind::loose &&
-          !(r.kinds[at] == kind::column && stateOf(each).fRelativeSizeAxes.template has<axis::x>())) {
+      if (r.slots[child].of != kind::loose &&
+          !(r.slots[at].of == kind::column && stateOf(each).fRelativeSizeAxes.template has<axis::x>())) {
         const float w = prefOf(r, child, each) + stateOf(each).fMargin.totalX();
-        out = r.kinds[at] == kind::column ? std::max(out, w) : out + w;
+        out = r.slots[at].of == kind::column ? std::max(out, w) : out + w;
         ++count;
       }
-      child += r.sizes[child];
+      child += r.slots[child].size;
     });
-    if (r.kinds[at] == kind::row && count > 1)
-      out += r.options[at].spacingX * static_cast<float>(count - 1);
+    if (r.slots[at].of == kind::row && count > 1)
+      out += r.optionsOf(at).spacingX * static_cast<float>(count - 1);
     out += s.fPadding.totalX();
   }
   out = std::max(out, s.fMinWidth);
   if (s.fMaxWidth > 0.0f)
     out = std::min(out, s.fMaxWidth);
-  r.prefs[at] = out;
-  r.asked[at] = 1;
+  r.slots[at].pref = out;
+  r.slots[at].asked = 1;
   return out;
 }
 // The same where the node's type fixes how it is sized across
@@ -7014,7 +7048,7 @@ template <class N> [[nodiscard]] float widthIn(region &r, std::uint32_t at, N &n
   const State &s = stateOf(node);
   // An edge node that sizes itself (a text: its measure writes its width)
   // is as wide as it comes to, within the room.
-  const bool measures = r.kinds[at] == kind::edge && !s.fRelativeSizeAxes.template has<axis::x>() && !s.fGrowAxes.template has<axis::x>();
+  const bool measures = r.slots[at].of == kind::edge && !s.fRelativeSizeAxes.template has<axis::x>() && !s.fGrowAxes.template has<axis::x>();
   float w = s.fRelativeSizeAxes.template has<axis::x>()            ? room * s.fWidth
             : s.fAutoSizeAxes.template has<axis::x>() || measures ? std::min(prefOf(r, at, node), room)
                                                                   : s.fWidth;
@@ -7042,24 +7076,24 @@ template <class N> [[nodiscard]] bool givesWay(N &node) {
 // Pass 2: what a container gives its children.
 template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
   const State &s = stateOf(node);
-  const float inner = std::max(0.0f, r.widths[at] - s.fPadding.totalX());
-  if (r.kinds[at] == kind::column) {
+  const float inner = std::max(0.0f, r.slots[at].width - s.fPadding.totalX());
+  if (r.slots[at].of == kind::column) {
     std::uint32_t child = at + 1;
     eachChild(node, [&](auto &each) {
-      if (r.kinds[child] != kind::loose) {
+      if (r.slots[child].of != kind::loose) {
         // Its room said first: what it measures in (prefOf) knows it.
-        r.rooms[child] = inner;
+        r.slots[child].room = inner;
         // An edge child: laid out in that room by the heights pass, its width
         // what it comes to there -- nothing beside it in a column reads it
         // before. Measured first with room enough as well, every child laid
         // out since the last layout was laid out twice: in a room of 1e7,
         // then in its own.
-        r.widths[child] = r.kinds[child] == kind::edge ? std::max(0.0f, inner - stateOf(each).fMargin.totalX())
+        r.slots[child].width = r.slots[child].of == kind::edge ? std::max(0.0f, inner - stateOf(each).fMargin.totalX())
                                                        : widthIn(r, child, each, std::max(0.0f, inner - stateOf(each).fMargin.totalX()));
       }
-      child += r.sizes[child];
+      child += r.slots[child].size;
     });
-  } else if (r.options[at].wrap) {
+  } else if (r.optionsOf(at).wrap) {
     // Wrapped: each child as it is, in the whole line -- a flow measures it
     // in its box; one that grows, its least for now, its share given once
     // the lines are known (heights). Nothing gives way: a child too wide
@@ -7067,16 +7101,16 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
     std::uint32_t child = at + 1;
     eachChild(node, [&](auto &each) {
       State &one = stateOf(each);
-      if (r.kinds[child] != kind::loose) {
-        r.rooms[child] = inner;
-        r.widths[child] = one.fGrowAxes.template has<axis::x>() ? one.fMinWidth
+      if (r.slots[child].of != kind::loose) {
+        r.slots[child].room = inner;
+        r.slots[child].width = one.fGrowAxes.template has<axis::x>() ? one.fMinWidth
                                                                  : widthIn(r, child, each, std::max(0.0f, inner - one.fMargin.totalX()));
         if (one.fShrunkTo != 0.0f) {
           one.fShrunkTo = 0.0f;
           one.fLayoutValid = false;
         }
       }
-      child += r.sizes[child];
+      child += r.slots[child].size;
     });
   } else {
     float taken = 0.0f;
@@ -7085,8 +7119,8 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
     std::uint32_t child = at + 1;
     eachChild(node, [&](auto &each) {
       const State &one = stateOf(each);
-      if (r.kinds[child] == kind::loose) {
-        child += r.sizes[child];
+      if (r.slots[child].of == kind::loose) {
+        child += r.slots[child].size;
         return;
       }
       ++count;
@@ -7094,22 +7128,22 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
         ++growers;
         taken += one.fMargin.totalX();
       } else {
-        r.widths[child] = widthIn(r, child, each, std::max(0.0f, inner - one.fMargin.totalX()));
-        taken += r.widths[child] + one.fMargin.totalX();
+        r.slots[child].width = widthIn(r, child, each, std::max(0.0f, inner - one.fMargin.totalX()));
+        taken += r.slots[child].width + one.fMargin.totalX();
       }
-      child += r.sizes[child];
+      child += r.slots[child].size;
     });
     if (count > 1)
-      taken += r.options[at].spacingX * static_cast<float>(count - 1);
+      taken += r.optionsOf(at).spacingX * static_cast<float>(count - 1);
     const float share = growers > 0 ? std::max(0.0f, (inner - taken) / static_cast<float>(growers)) : 0.0f;
     // The room what sizes itself has: the row's, less its fixed children and
     // the gaps, as a flow works it out.
-    float fixed = count > 1 ? r.options[at].spacingX * static_cast<float>(count - 1) : 0.0f;
+    float fixed = count > 1 ? r.optionsOf(at).spacingX * static_cast<float>(count - 1) : 0.0f;
     child = at + 1;
     eachChild(node, [&](auto &each) {
       const State &one = stateOf(each);
-      const bool loose = r.kinds[child] == kind::loose;
-      child += r.sizes[child];
+      const bool loose = r.slots[child].of == kind::loose;
+      child += r.slots[child].size;
       if (loose)
         return;
       fixed += one.fMargin.totalX();
@@ -7120,20 +7154,20 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
     child = at + 1;
     eachChild(node, [&](auto &each) {
       State &one = stateOf(each);
-      if (r.kinds[child] == kind::loose) {
-        child += r.sizes[child];
+      if (r.slots[child].of == kind::loose) {
+        child += r.slots[child].size;
         return;
       }
       const bool content = one.fAutoSizeAxes.template has<axis::x>();
-      r.rooms[child] = content ? std::min(inner, autoRoom) : inner;
+      r.slots[child].room = content ? std::min(inner, autoRoom) : inner;
       // A grown child's width is written on it, as a flow writes it -- where
       // it is sized by what it holds as well, the flow lays it out at that,
       // in the room its fixed siblings leave, its share left as a gap.
       if (one.fGrowAxes.template has<axis::x>()) {
         one.arrangeAxisSize(true, std::max(0.0f, share));
-        r.widths[child] = content ? widthIn(r, child, each, std::max(0.0f, std::min(inner, autoRoom) - one.fMargin.totalX())) : share;
+        r.slots[child].width = content ? widthIn(r, child, each, std::max(0.0f, std::min(inner, autoRoom) - one.fMargin.totalX())) : share;
       }
-      child += r.sizes[child];
+      child += r.slots[child].size;
     });
     // CSS's flex-shrink: more than the row has room for, those that give way
     // do -- a child that says it does, or one sized by what it holds where
@@ -7142,12 +7176,12 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
     // stopped at its least leaves the rest to the others.
     std::vector<float> natural;
     for (int pass = 0; pass < 3; ++pass) {
-      float used = count > 1 ? r.options[at].spacingX * static_cast<float>(count - 1) : 0.0f;
+      float used = count > 1 ? r.optionsOf(at).spacingX * static_cast<float>(count - 1) : 0.0f;
       child = at + 1;
       eachChild(node, [&](auto &each) {
-        if (r.kinds[child] != kind::loose)
-          used += r.widths[child] + stateOf(each).fMargin.totalX();
-        child += r.sizes[child];
+        if (r.slots[child].of != kind::loose)
+          used += r.slots[child].width + stateOf(each).fMargin.totalX();
+        child += r.slots[child].size;
       });
       const float excess = used - inner;
       if (excess <= 0.5f)
@@ -7155,28 +7189,28 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
       float giving = 0.0f;
       child = at + 1;
       eachChild(node, [&](auto &each) {
-        if (r.kinds[child] != kind::loose && givesWay(each))
-          giving += r.widths[child];
-        child += r.sizes[child];
+        if (r.slots[child].of != kind::loose && givesWay(each))
+          giving += r.slots[child].width;
+        child += r.slots[child].size;
       });
       if (giving <= 0.0f)
         break;
       if (natural.empty())
-        natural.assign(r.widths.begin() + at, r.widths.begin() + at + r.sizes[at]);
+        natural = r.slots | std::views::drop(at) | std::views::take(r.slots[at].size) | std::views::transform(&region::slot::width) | std::ranges::to<std::vector>();
       bool gave = false;
       child = at + 1;
       eachChild(node, [&](auto &each) {
         const State &one = stateOf(each);
-        if (r.kinds[child] != kind::loose && givesWay(each)) {
-          const float was = r.widths[child];
+        if (r.slots[child].of != kind::loose && givesWay(each)) {
+          const float was = r.slots[child].width;
           const float to = std::max(one.fMinWidth, was - excess * was / giving);
           if (to < was - 0.25f) {
-            r.widths[child] = to;
-            r.rooms[child] = std::min(r.rooms[child], to + one.fMargin.totalX());
+            r.slots[child].width = to;
+            r.slots[child].room = std::min(r.slots[child].room, to + one.fMargin.totalX());
             gave = true;
           }
         }
-        child += r.sizes[child];
+        child += r.slots[child].size;
       });
       if (!gave)
         break;
@@ -7188,21 +7222,21 @@ template <class N> void giveWidths(region &r, std::uint32_t at, N &node) {
     child = at + 1;
     eachChild(node, [&](auto &each) {
       State &one = stateOf(each);
-      if (r.kinds[child] != kind::loose) {
-        const float to = !natural.empty() && r.widths[child] < natural[child - at] - 0.25f ? r.widths[child] : 0.0f;
+      if (r.slots[child].of != kind::loose) {
+        const float to = !natural.empty() && r.slots[child].width < natural[child - at] - 0.25f ? r.slots[child].width : 0.0f;
         if (one.fShrunkTo != to) {
           one.fShrunkTo = to;
           one.fLayoutValid = false;
         }
       }
-      child += r.sizes[child];
+      child += r.slots[child].size;
     });
   }
   std::uint32_t child = at + 1;
   eachChild(node, [&](auto &each) {
-    if (r.kinds[child] != kind::edge && r.kinds[child] != kind::loose)
+    if (r.slots[child].of != kind::edge && r.slots[child].of != kind::loose)
       giveWidths(r, child, each);
-    child += r.sizes[child];
+    child += r.slots[child].size;
   });
 }
 // Whether a container takes its height from what it holds: by its type
@@ -7220,15 +7254,15 @@ template <class N> [[nodiscard]] bool sizedByContentDown(N &node) { return state
 template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPoint origin, float room = 0.0f) {
   State &s = stateOf(node);
   const bool shareDown = s.fRelativeSizeAxes.template has<axis::y>();
-  if (r.kinds[at] == kind::edge) {
+  if (r.slots[at].of == kind::edge) {
     // Grown down: as tall as its share, as a flow writes it; a share of
     // its parent's height: laid out in a box that tall, as a flow gives it.
-    if (r.given[at] >= 0.0f)
-      s.arrangeAxisSize(false, r.given[at]);
-    r.downs[at] = shareDown ? room : 0.0f;
-    layout(node, skia::SkRect::MakeXYWH(origin.fX, origin.fY, r.rooms[at], r.downs[at]));
-    r.heights[at] = s.fBounds.height();
-    r.widths[at] = s.fBounds.width();
+    if (r.slots[at].given >= 0.0f)
+      s.arrangeAxisSize(false, r.slots[at].given);
+    r.slots[at].down = shareDown ? room : 0.0f;
+    layout(node, skia::SkRect::MakeXYWH(origin.fX, origin.fY, r.slots[at].room, r.slots[at].down));
+    r.slots[at].height = s.fBounds.height();
+    r.slots[at].width = s.fBounds.width();
     return;
   }
   const skia::SkRect inside = s.contentBox();
@@ -7237,11 +7271,11 @@ template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPo
   // share it grows to, a share of its parent's, or its own -- what its
   // children that take a share of it, or grow into it, read. Known only
   // from what it holds otherwise.
-  const float known = r.given[at] >= 0.0f            ? r.given[at]
+  const float known = r.slots[at].given >= 0.0f            ? r.slots[at].given
                       : shareDown                     ? room * s.fHeight
                       : !sizedByContentDown(node)     ? s.fHeight
                                                       : -1.0f;
-  const bool column = r.kinds[at] == kind::column;
+  const bool column = r.slots[at].of == kind::column;
   float insideHeight = known >= 0.0f ? std::max(0.0f, known - s.fPadding.totalY()) : 0.0f;
   // A scrolled column's rows out of view while its width moves -- a column
   // dragged wider, at every frame of the drag: not laid out again at each
@@ -7250,8 +7284,8 @@ template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPo
   // for that frame). As the hand-written flow has it.
   if (s.fFlowPass != work::layoutPass()) {
     s.fFlowPass = work::layoutPass();
-    s.fFlowMoved = s.fInView.has_value() && s.fFlowWidth >= 0.0f && s.fFlowWidth != r.widths[at];
-    s.fFlowWidth = r.widths[at];
+    s.fFlowMoved = s.fInView.has_value() && s.fFlowWidth >= 0.0f && s.fFlowWidth != r.slots[at].width;
+    s.fFlowWidth = r.slots[at].width;
   }
   const bool mayWait = column && s.fFlowMoved;
   s.fChildrenWaiting = false;
@@ -7264,42 +7298,42 @@ template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPo
     h = std::max(h, s.fMinHeight);
     if (s.fMaxHeight > 0.0f)
       h = std::min(h, s.fMaxHeight);
-    r.heights[at] = h;
+    r.slots[at].height = h;
     // Grown to its share: written on it, as a flow writes it.
-    if (r.given[at] >= 0.0f)
-      s.arrangeAxisSize(false, r.given[at]);
+    if (r.slots[at].given >= 0.0f)
+      s.arrangeAxisSize(false, r.slots[at].given);
   };
-  if (!column && r.options[at].wrap) {
+  if (!column && r.optionsOf(at).wrap) {
     // A wrapped row, as the flow lays it out: what does not grow measured
     // first; then lines broken where the next would not fit, each taken at
     // what it takes (one that grows, its least -- flex-basis nothing); then
     // what grows given its share of its line, and measured at it.
-    const FlowOptions &o = r.options[at];
-    const float lineRoom = std::max(0.0f, r.widths[at] - s.fPadding.totalX());
+    const FlowOptions &o = r.optionsOf(at);
+    const float lineRoom = std::max(0.0f, r.slots[at].width - s.fPadding.totalX());
     const skia::SkPoint start = skia::SkPoint::Make(inside.fLeft, inside.fTop);
     std::vector<std::uint32_t> flow;
     std::vector<State *> states;
     std::uint32_t child = at + 1;
     eachChild(node, [&](auto &each) {
       State &one = stateOf(each);
-      if (r.kinds[child] != kind::loose) {
+      if (r.slots[child].of != kind::loose) {
         flow.push_back(child);
         states.push_back(&one);
         if (!one.fGrowAxes.template has<axis::x>())
           heights(r, child, each, start, insideHeight);
       }
-      child += r.sizes[child];
+      child += r.slots[child].size;
     });
     const auto basis = [&](std::size_t i) {
       const State &one = *states[i];
-      return (one.fGrowAxes.template has<axis::x>() ? one.fMinWidth : r.widths[flow[i]]) + one.fMargin.totalX();
+      return (one.fGrowAxes.template has<axis::x>() ? one.fMinWidth : r.slots[flow[i]].width) + one.fMargin.totalX();
     };
     float lineWidth = 0.0f;
     for (std::size_t i = 0; i < flow.size(); ++i) {
       const float w = basis(i);
       // Half a pixel of slack: four quarters add up to the width.
       const bool breaks = i == 0 || lineWidth + o.spacingX + w > lineRoom + 0.5f;
-      r.breaks[flow[i]] = breaks ? 1 : 0;
+      r.slots[flow[i]].breaks = breaks ? 1 : 0;
       lineWidth = breaks ? w : lineWidth + o.spacingX + w;
     }
     // CSS flex-grow on each line: an equal share of what the growing and the
@@ -7308,7 +7342,7 @@ template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPo
     std::vector<float> to(flow.size(), -1.0f);
     for (std::size_t from = 0; from < flow.size();) {
       std::size_t end = from + 1;
-      while (end < flow.size() && r.breaks[flow[end]] == 0)
+      while (end < flow.size() && r.slots[flow[end]].breaks == 0)
         ++end;
       float used = o.spacingX * static_cast<float>(end - from - 1);
       float growing = 0.0f;
@@ -7348,23 +7382,23 @@ template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPo
       std::size_t i = 0;
       child = at + 1;
       eachChild(node, [&](auto &each) {
-        if (r.kinds[child] != kind::loose) {
+        if (r.slots[child].of != kind::loose) {
           State &one = *states[i];
           if (one.fGrowAxes.template has<axis::x>()) {
             if (to[i] >= 0.0f)
               one.arrangeAxisSize(true, to[i]);
             // Sized by what it holds as well: that, within the line, as the
             // flow lays it out.
-            r.widths[child] = one.fAutoSizeAxes.template has<axis::x>()
+            r.slots[child].width = one.fAutoSizeAxes.template has<axis::x>()
                                   ? widthIn(r, child, each, std::max(0.0f, lineRoom - one.fMargin.totalX()))
                                   : one.fWidth;
-            if (r.kinds[child] != kind::edge)
+            if (r.slots[child].of != kind::edge)
               giveWidths(r, child, each);
             heights(r, child, each, start, insideHeight);
           }
           ++i;
         }
-        child += r.sizes[child];
+        child += r.slots[child].size;
       });
     }
     // Its lines one under another, each as tall as its tallest.
@@ -7372,12 +7406,12 @@ template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPo
     int lines = 0;
     for (std::size_t from = 0; from < flow.size();) {
       std::size_t end = from + 1;
-      while (end < flow.size() && r.breaks[flow[end]] == 0)
+      while (end < flow.size() && r.slots[flow[end]].breaks == 0)
         ++end;
       float tall = 0.0f, wide = o.spacingX * static_cast<float>(end - from - 1);
       for (std::size_t i = from; i < end; ++i) {
-        tall = std::max(tall, r.heights[flow[i]] + states[i]->fMargin.totalY());
-        wide += r.widths[flow[i]] + states[i]->fMargin.totalX();
+        tall = std::max(tall, r.slots[flow[i]].height + states[i]->fMargin.totalY());
+        wide += r.slots[flow[i]].width + states[i]->fMargin.totalX();
       }
       h += tall;
       widest = std::max(widest, wide);
@@ -7389,7 +7423,7 @@ template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPo
     // Sized across by what it holds: as wide as its widest line, as a flow
     // measures it -- no wider than it was given.
     if (s.fAutoSizeAxes.template has<axis::x>())
-      r.widths[at] = std::min(r.widths[at], std::max(widest + s.fPadding.totalX(), s.fMinWidth));
+      r.slots[at].width = std::min(r.slots[at].width, std::max(widest + s.fPadding.totalX(), s.fMinWidth));
     finish(h);
     return;
   }
@@ -7407,49 +7441,49 @@ template <class N> void heights(region &r, std::uint32_t at, N &node, skia::SkPo
   std::uint32_t child = at + 1;
   eachChild(node, [&](auto &each) {
     const State &one = stateOf(each);
-    if (r.kinds[child] == kind::loose) {
-      child += r.sizes[child];
+    if (r.slots[child].of == kind::loose) {
+      child += r.slots[child].size;
       return;
     }
     ++count;
     if (later(one)) {
       growers += one.fGrowAxes.template has<axis::y>() ? 1 : 0;
-      child += r.sizes[child];
+      child += r.slots[child].size;
       return;
     }
-    if (mayWait && r.kinds[child] == kind::edge && one.fLayoutValid && !one.fSubtreeDirty && !one.fBounds.isEmpty() &&
-        one.fLastConstraint.width() != r.rooms[child] && !skia::SkRect::Intersects(one.fBounds, *s.fInView)) {
-      r.heights[child] = one.fBounds.height();
-      r.widths[child] = one.fBounds.width();
-      r.waits[child] = 1;
+    if (mayWait && r.slots[child].of == kind::edge && one.fLayoutValid && !one.fSubtreeDirty && !one.fBounds.isEmpty() &&
+        one.fLastConstraint.width() != r.slots[child].room && !skia::SkRect::Intersects(one.fBounds, *s.fInView)) {
+      r.slots[child].height = one.fBounds.height();
+      r.slots[child].width = one.fBounds.width();
+      r.slots[child].waits = 1;
       s.fChildrenWaiting = true;
     } else {
       heights(r, child, each, skia::SkPoint::Make(inside.fLeft, inside.fTop), insideHeight);
     }
-    const float k = r.heights[child] + one.fMargin.totalY();
+    const float k = r.slots[child].height + one.fMargin.totalY();
     h = column ? h + k : std::max(h, k);
-    child += r.sizes[child];
+    child += r.slots[child].size;
   });
   // Those that waited: down a column, an equal share of what the rest leave
   // of its height; across a row sized by what it holds, a share of its
   // tallest.
-  const float gaps = column && count > 1 ? r.options[at].spacingY * static_cast<float>(count - 1) : 0.0f;
+  const float gaps = column && count > 1 ? r.optionsOf(at).spacingY * static_cast<float>(count - 1) : 0.0f;
   const float share = column && growers > 0 ? std::max(0.0f, (insideHeight - h - gaps) / static_cast<float>(growers)) : 0.0f;
   const float rowHeight = h;
   child = at + 1;
   eachChild(node, [&](auto &each) {
     const State &one = stateOf(each);
-    if (r.kinds[child] != kind::loose && later(one)) {
+    if (r.slots[child].of != kind::loose && later(one)) {
       float within = insideHeight;
       if (column && one.fGrowAxes.template has<axis::y>())
-        r.given[child] = std::max(0.0f, share - one.fMargin.totalY());
+        r.slots[child].given = std::max(0.0f, share - one.fMargin.totalY());
       else
         within = rowHeight;
       heights(r, child, each, skia::SkPoint::Make(inside.fLeft, inside.fTop), within);
-      const float k = r.heights[child] + one.fMargin.totalY();
+      const float k = r.slots[child].height + one.fMargin.totalY();
       h = column ? h + k : std::max(h, k);
     }
-    child += r.sizes[child];
+    child += r.slots[child].size;
   });
   finish(h + gaps);
 }
@@ -7475,8 +7509,8 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
   s.fPlacementDirty = false;
   work::reach(s.fId);
   const skia::SkRect content = s.contentBox();
-  const bool column = r.kinds[at] == kind::column;
-  const FlowOptions &o = r.options[at];
+  const bool column = r.slots[at].of == kind::column;
+  const FlowOptions &o = r.optionsOf(at);
   // A child in the flow put at (x, y) of the content box: moved as it is
   // where it waits, arranged and laid out in the box it was measured in
   // where it is an edge, placed by these passes otherwise.
@@ -7484,19 +7518,19 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
     State &one = stateOf(each);
     const Margin &m = one.fMargin;
     work::record(one.fId, s.fId);
-    if (r.waits[child]) {
+    if (r.slots[child].waits) {
       detail::placedAgain(each, content.fLeft + x + m.fLeft - one.fBounds.fLeft, content.fTop + y + m.fTop - one.fBounds.fTop);
       one.fX = x;
       one.fY = y;
-    } else if (r.kinds[child] == kind::edge) {
+    } else if (r.slots[child].of == kind::edge) {
       // In a box 0 tall, one as tall as a share of it came out 0 tall: a
       // scroll view filling its column, nothing in it to be seen.
       one.arrange(x, y);
-      layout(each, skia::SkRect::MakeXYWH(content.fLeft, content.fTop, r.rooms[child], r.downs[child]));
+      layout(each, skia::SkRect::MakeXYWH(content.fLeft, content.fTop, r.slots[child].room, r.slots[child].down));
     } else {
       one.fX = x;
       one.fY = y;
-      place(r, child, each, skia::SkRect::MakeXYWH(content.fLeft + x + m.fLeft, content.fTop + y + m.fTop, r.widths[child], r.heights[child]));
+      place(r, child, each, skia::SkRect::MakeXYWH(content.fLeft + x + m.fLeft, content.fTop + y + m.fTop, r.slots[child].width, r.slots[child].height));
     }
   };
   // Out of the flow and shown: laid out in the box by its anchor, as a flow
@@ -7521,16 +7555,16 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
     std::vector<line_t> lines;
     std::uint32_t child = at + 1;
     eachChild(node, [&](auto &each) {
-      if (r.kinds[child] != kind::loose) {
+      if (r.slots[child].of != kind::loose) {
         const Margin &m = stateOf(each).fMargin;
-        if (r.breaks[child] != 0 || lines.empty())
+        if (r.slots[child].breaks != 0 || lines.empty())
           lines.emplace_back();
         line_t &line = lines.back();
-        line.wide += (line.count > 0 ? o.spacingX : 0.0f) + r.widths[child] + m.totalX();
-        line.tall = std::max(line.tall, r.heights[child] + m.totalY());
+        line.wide += (line.count > 0 ? o.spacingX : 0.0f) + r.slots[child].width + m.totalX();
+        line.tall = std::max(line.tall, r.slots[child].height + m.totalY());
         ++line.count;
       }
-      child += r.sizes[child];
+      child += r.slots[child].size;
     });
     std::size_t on = 0;
     float x = 0.0f, top = 0.0f;
@@ -7538,25 +7572,25 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
     bool started = false;
     child = at + 1;
     eachChild(node, [&](auto &each) {
-      if (r.kinds[child] == kind::loose) {
+      if (r.slots[child].of == kind::loose) {
         loose(each);
-        child += r.sizes[child];
+        child += r.slots[child].size;
         return;
       }
-      if (started && r.breaks[child] != 0) {
+      if (started && r.slots[child].breaks != 0) {
         top += lines[on].tall + o.spacingY;
         ++on;
       }
-      if (!started || r.breaks[child] != 0) {
+      if (!started || r.slots[child].breaks != 0) {
         started = true;
         gaps = spreadLine(content.width(), lines[on].wide, lines[on].count);
         x = gaps.fStart;
       }
       const State &one = stateOf(each);
-      const float own = r.heights[child] + one.fMargin.totalY();
+      const float own = r.slots[child].height + one.fMargin.totalY();
       put(each, child, x, top + (lines[on].tall - own) * one.fAlignSelf.value_or(o.crossAlign).at);
-      x += r.widths[child] + one.fMargin.totalX() + o.spacingX + gaps.fBetween;
-      child += r.sizes[child];
+      x += r.slots[child].width + one.fMargin.totalX() + o.spacingX + gaps.fBetween;
+      child += r.slots[child].size;
     });
   } else {
     // What its children take along it, and what that leaves shared as it is
@@ -7566,12 +7600,12 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
     {
       std::uint32_t at_child = at + 1;
       eachChild(node, [&](auto &each) {
-        if (r.kinds[at_child] != kind::loose) {
+        if (r.slots[at_child].of != kind::loose) {
           const Margin &m = stateOf(each).fMargin;
-          used += column ? r.heights[at_child] + m.totalY() : r.widths[at_child] + m.totalX();
+          used += column ? r.slots[at_child].height + m.totalY() : r.slots[at_child].width + m.totalX();
           ++inFlow;
         }
-        at_child += r.sizes[at_child];
+        at_child += r.slots[at_child].size;
       });
     }
     const float spacing = column ? o.spacingY : o.spacingX;
@@ -7583,17 +7617,17 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
     eachChild(node, [&](auto &each) {
       State &one = stateOf(each);
       const Margin &m = one.fMargin;
-      if (r.kinds[child] == kind::loose) {
+      if (r.slots[child].of == kind::loose) {
         loose(each);
-        child += r.sizes[child];
+        child += r.slots[child].size;
         return;
       }
       const float line = column ? content.width() : content.height();
-      const float own = column ? r.widths[child] + m.totalX() : r.heights[child] + m.totalY();
+      const float own = column ? r.slots[child].width + m.totalX() : r.slots[child].height + m.totalY();
       const float cross = (line - own) * one.fAlignSelf.value_or(o.crossAlign).at;
       put(each, child, column ? cross : along, column ? along : cross);
-      along += (column ? r.heights[child] + m.totalY() : r.widths[child] + m.totalX()) + spacing + shared.fBetween;
-      child += r.sizes[child];
+      along += (column ? r.slots[child].height + m.totalY() : r.slots[child].width + m.totalX()) + spacing + shared.fBetween;
+      child += r.slots[child].size;
     });
   }
   // Its own rules over its parts after, as its own layout did them.
@@ -7717,20 +7751,21 @@ template <class N> bool run(N &node, const skia::SkRect &parent) {
     return false;
   if (redoMarked(node))
     return true;
-  region r;
+  const leasedRegion lease;
+  region &r = lease.r;
   enter(r, node);
-  if (r.kinds[0] == kind::edge)
+  if (r.slots[0].of == kind::edge)
     return false;
   const skia::SkRect room = inset(parent, s.fMargin);
-  r.widths[0] = widthIn(r, 0, node, room.width());
+  r.slots[0].width = widthIn(r, 0, node, room.width());
   giveWidths(r, 0, node);
   heights(r, 0, node, skia::SkPoint::Make(0.0f, 0.0f), room.height());
   if (!s.fAutoSizeAxes.template has<axis::y>())
-    r.heights[0] = s.fRelativeSizeAxes.template has<axis::y>() ? room.height() * s.fHeight : s.fHeight;
-  place(r, 0, node, anchoredBox(room, r.widths[0], r.heights[0], s.fAnchor, s.fOrigin, s.fX, s.fY));
+    r.slots[0].height = s.fRelativeSizeAxes.template has<axis::y>() ? room.height() * s.fHeight : s.fHeight;
+  place(r, 0, node, anchoredBox(room, r.slots[0].width, r.slots[0].height, s.fAnchor, s.fOrigin, s.fX, s.fY));
   // What a later layout of only what changed under it starts from: a
   // column of edge nodes only, each now in the flow, in this box.
-  bool edges = r.kinds[0] == kind::column;
+  bool edges = r.slots[0].of == kind::column;
   std::uint32_t child = 1;
   eachChild(node, [&](auto &each) {
     // Edges, or hidden: a list with rows it does not show (a chat's hidden
@@ -7738,13 +7773,13 @@ template <class N> bool run(N &node, const skia::SkRect &parent) {
     // Not one whose height is the column's to give -- a share of it, or what
     // the rest leave: laid out again alone, in a box 0 tall, it came to 0.
     const State &one = stateOf(each);
-    edges = edges && (r.kinds[child] == kind::edge || (r.kinds[child] == kind::loose && !one.fVisible)) &&
+    edges = edges && (r.slots[child].of == kind::edge || (r.slots[child].of == kind::loose && !one.fVisible)) &&
             !one.fRelativeSizeAxes.template has<axis::y>() && !one.fGrowAxes.template has<axis::y>();
-    stateOf(each).fInFlowAtLayout = r.kinds[child] != kind::loose;
-    child += r.sizes[child];
+    stateOf(each).fInFlowAtLayout = r.slots[child].of != kind::loose;
+    child += r.slots[child].size;
   });
   s.fRegionSimple = edges;
-  s.fRegionOptions = r.options[0];
+  s.fRegionOptions = r.optionsOf(0);
   s.fRegionBox = s.fBounds;
   s.fLastConstraint = parent;
   return true;
