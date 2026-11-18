@@ -466,11 +466,19 @@ struct Held : Stacked {
     // button over a held tab (a combinator's wrapper no one erased) was no
     // grower yet at the first layout -- a category tab 0 wide until a later
     // one laid the row out again.
+    // Its content's state looked at once: content held by a wrapper is a
+    // wrapper's walked state in turn -- looked at twice at each level, a
+    // row of wrappers over wrappers (mux's message row, six deep) looked
+    // at its innermost 2^6 times for each look at the row: a sixth of a
+    // width change's layout.
     if (parts.held) {
       this->adopt();
-      this->followAgain(scene::stateOf(parts.held));
+      scene::State &held = scene::stateOf(parts.held);
+      this->followAgain(held);
+      this->fState.fVisible = fHeldShown && held.fVisible;
+    } else {
+      this->fState.fVisible = fHeldShown;
     }
-    this->fState.fVisible = fHeldShown && (!parts.held || scene::stateOf(parts.held).fVisible);
     return this->fState;
   }
 

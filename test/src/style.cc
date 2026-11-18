@@ -1486,6 +1486,38 @@ struct HoldsFilledDown : Node {
   } parts;
 };
 
+// A box sized by what it holds, in a row the window narrows: the same in
+// the narrower row, it is moved, and what it holds is not laid out again.
+struct Snug : skiff::nodes::Stack {
+  struct parts_t {
+    LayoutProbe probe = make<LayoutProbe>({.width = 20.0f, .height = 10.0f});
+  } parts;
+};
+struct SnugRow : skiff::nodes::Stack {
+  struct parts_t {
+    Snug snug = make<Snug>({.autoSize = axes::kBoth});
+  } parts;
+  SnugRow() { this->setHorizontal(); }
+};
+struct HoldsSnugRow : Node {
+  struct parts_t {
+    SnugRow row = make<SnugRow>({.fillX = true, .height = 20.0f});
+  } parts;
+};
+
+TEST(Layout, ABoxThatComesOutTheSameInANarrowerRowIsNotLaidOutAgain) {
+  Scene<HoldsSnugRow> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  const auto &row = scene.root().parts.row;
+  const int laid = row.parts.snug.parts.probe.fLayouts;
+  ASSERT_GE(laid, 1);
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(300.0f, 300.0f));
+  EXPECT_FLOAT_EQ(row.bounds().width(), 300.0f);
+  EXPECT_FLOAT_EQ(row.parts.snug.bounds().width(), 20.0f);
+  EXPECT_EQ(row.parts.snug.parts.probe.fLayouts, laid);
+}
+
 TEST(Layout, AChildAsTallAsItsColumnIsPlacedThatTall) {
   Scene<HoldsFilledDown> scene{std::in_place};
   scene.state().apply({.fill = true});

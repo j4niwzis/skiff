@@ -149,6 +149,7 @@ public:
     }
     fText = std::move(text);
     fMeasuredSize = -1.0f;
+    fNaturalKnown = false;
     this->invalidateLayout();
   }
   void setColour(skia::SkColor colour) {
@@ -164,6 +165,7 @@ public:
     }
     fSize = size;
     fMeasuredSize = -1.0f;
+    fNaturalKnown = false;
     this->invalidateLayout();
   }
   void setBold(bool bold) {
@@ -172,6 +174,7 @@ public:
     }
     fBold = bold;
     fMeasuredSize = -1.0f;
+    fNaturalKnown = false;
     this->invalidateLayout();
   }
   // Drawn in the monospace face, as code: each character as wide as the next.
@@ -181,6 +184,7 @@ public:
     }
     fMonospace = monospace;
     fMeasuredSize = -1.0f;
+    fNaturalKnown = false;
     fWrappedRoom = -1.0f;
     this->invalidateLayout();
   }
@@ -648,6 +652,7 @@ public:
       fSize = size;
       fBold = bold;
       fMeasuredSize = -1.0f;
+      fNaturalKnown = false;
       this->invalidateLayout();
     }
     if (colour != fColour) {
@@ -689,8 +694,9 @@ public:
     }
     const skiff::paint::Painter p(nullptr, *font, fMonospace);
     // Its width on one line: measured again only as the text or size change.
-    if (fMeasuredSize != fSize) {
+    if (!fNaturalKnown) {
       fNatural = p.measure(fText, fSize, fBold);
+      fNaturalKnown = true;
     }
     if (automatic) {
       const float room = given > 0.0f              ? given
@@ -782,6 +788,30 @@ public:
     }
     state.fHeight = this->lineHeight();
     fMeasuredSize = fSize;
+  }
+  // Its width with room enough -- what a layout in a room of 1e7 comes to --
+  // where that is its glyphs' on one line, within its largest width: what
+  // the compiled layout asks of it for the box it is in, sized by what it
+  // holds, without laying it out twice (in that room, then in its own).
+  // Below 0 where only a layout says: wrapped by choice, scaled, given a
+  // width, a share of its parent, or wrapping past its largest width.
+  [[nodiscard]] float naturalWidth() {
+    const skiff::scene::State &state = fState;
+    if (fWrapChoice || this->scaled() || this->givenWidth() > 0.0f || state.fGrowAxes.has<skiff::scene::axis::x>() ||
+        state.fRelativeSizeAxes.has<skiff::scene::axis::x>())
+      return -1.0f;
+    if (!fNaturalKnown) {
+      skia::SkFont *font = skiff::paint::defaultFont();
+      if (font == nullptr)
+        return -1.0f;
+      const skiff::paint::Painter p(nullptr, *font, fMonospace);
+      fNatural = p.measure(fText, fSize, fBold);
+      fNaturalKnown = true;
+    }
+    const float most = state.fMaxWidth > 0.0f ? state.fMaxWidth : std::numeric_limits<float>::infinity();
+    if (!fElided && fNatural > most + 0.5f)
+      return -1.0f;
+    return std::min(most, fNatural);
   }
   // On one line: as wide as its glyphs, within its largest width. Sized by
   // its flow or parent, it clips to the width it was given rather than
@@ -1217,6 +1247,7 @@ private:
   std::optional<bool> fWrapChoice;
   // Its width on one line, at fMeasuredSize.
   float fNatural = 0.0f;
+  bool fNaturalKnown = false;
   float fWrappedRoom = -1.0f;
   float fWroteWidth = -1.0f;  // the last width this wrote itself: any other was given
   // Wrapped with no width of its own: it wraps to its parent's, whatever

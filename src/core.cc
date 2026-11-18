@@ -923,6 +923,16 @@ template <class Subject, class... Roles> struct StyleRule {
                                StyleStates which) const {
     return fSelector.fStates.any(which) && this->matchesSubject(node);
   }
+  // Whether it matches at one width of the viewport and not at the other.
+  [[nodiscard]] constexpr bool widthMatters(float from, float to) const {
+    if (!fSelector.fMinViewportWidth && !fSelector.fMaxViewportWidth)
+      return false;
+    const auto within = [&](float width) {
+      return (!fSelector.fMinViewportWidth || width >= *fSelector.fMinViewportWidth) &&
+             (!fSelector.fMaxViewportWidth || width <= *fSelector.fMaxViewportWidth);
+    };
+    return within(from) != within(to);
+  }
 };
 
 template <class... Rules> class StaticStyleSheet {
@@ -959,6 +969,11 @@ public:
         },
         fRules);
   }
+  // Whether the viewport going from one width to another resolves anything
+  // differently: a rule said for some widths matches at one and not the other.
+  [[nodiscard]] constexpr bool widthMatters(float from, float to) const {
+    return std::apply([&](const auto &...rules) { return (rules.widthMatters(from, to) || ... || false); }, fRules);
+  }
 
 private:
   std::tuple<Rules...> fRules;
@@ -967,6 +982,19 @@ private:
 [[nodiscard]] constexpr StaticStyleSheet<> makeStyleSheet() { return {}; }
 
 // A sheet as the walks keep it: two functions instantiated for one theme.
+namespace detail {
+// Every style sheet a resolver was made for: whether a change of the
+// viewport's width resolves anything of it differently.
+inline std::vector<bool (*)(float, float)> &widthSheets() {
+  static std::vector<bool (*)(float, float)> kept;
+  return kept;
+}
+} // namespace detail
+// Whether a change of the viewport's width from one to another resolves any
+// style sheet differently: else nothing is resolved again for it.
+[[nodiscard]] inline bool widthResolvesAnew(float from, float to) {
+  return std::ranges::any_of(detail::widthSheets(), [&](auto matters) { return matters(from, to); });
+}
 struct StyleResolver {
   Style (*fResolve)(const StyleSubject &) = nullptr;
   bool (*fUsesState)(const StyleSubject &, StyleStates) = nullptr;
@@ -975,6 +1003,9 @@ struct StyleResolver {
     return fResolve != nullptr;
   }
   template <class Theme> [[nodiscard]] static StyleResolver of() {
+    // Its sheet's width rules known to the scenes, once.
+    [[maybe_unused]] static const bool known =
+        (detail::widthSheets().push_back(+[](float from, float to) { return Theme::styles.widthMatters(from, to); }), true);
     return {+[](const StyleSubject &node) {
               return Theme::styles.resolve(node);
             },

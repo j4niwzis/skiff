@@ -218,6 +218,8 @@ void skiff_history_page(benchmark::State& state) {
                              std::views::transform([&](std::size_t) { return item{(std::size_t{1} << 40) + next++, {20, false}}; }) |
                              std::ranges::to<std::vector>();
     chat.items.insert(chat.items.begin(), page.begin(), page.end());
+    // As mux's window slides back: as many let go at the bottom.
+    chat.items.resize(static_cast<std::size_t>(state.range(0)));
     chat.list().read(chat.items);
     chat.lay_out();
   }
