@@ -269,7 +269,10 @@ private:
     std::string text;
     Value value;
   };
-  static constexpr std::size_t kGeneration = 1024;
+  // Words of a screen of long messages and code: a thousand of them filled
+  // a generation, and every width the window was dragged through measured
+  // them all again (a resize: tens of milliseconds of text).
+  static constexpr std::size_t kGeneration = 16384;
   Entry &insert(std::uint64_t key, Entry entry) {
     if (fNew.size() >= kGeneration) {
       fOld = std::exchange(fNew, {});
@@ -1426,8 +1429,13 @@ public:
         const std::string_view text(piece.text.begin(), piece.text.end());
         const std::size_t first = static_cast<std::size_t>(text.data() - all.data());
         const std::size_t last = first + text.size();
-        const float whole = this->measure(std::string(text), size, bold);
-        const float bare = this->measure(trimmed(text), size, bold);
+        // Measured once, without its spaces after it: they are a space's
+        // width each, kept once -- each piece measured twice, with them and
+        // without, every word took two of the cache's places.
+        const std::string bareText = trimmed(text);
+        const float bare = this->measure(bareText, size, bold);
+        const auto spaces = std::ranges::count(text.substr(bareText.size()), ' ');
+        const float whole = bare + (spaces > 0 ? static_cast<float>(spaces) * this->measure(std::string(" "), size, bold) : 0.0f);
         if (lineEnd > lineStart && lineWidth + bare > width) {
           lines.push_back(trimmed(all.substr(lineStart, lineEnd - lineStart)));
           lineStart = first;
