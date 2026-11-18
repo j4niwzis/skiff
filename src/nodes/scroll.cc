@@ -157,7 +157,10 @@ public:
         if (laid) {
           one.fDrawnBounds.offset(0.0f, one.fBounds.fTop - one.fBoundsAtPass.fTop);
           one.fLayoutMoved = skia::SkRect::MakeEmpty();
-          forgetRecordings(item);
+          // Its recordings kept: played back where it is now (a recording
+          // moves with its node). Let go here, walked whole, every row under
+          // a page of history come in above had its recordings freed and made
+          // again -- a twelfth of laying the page out.
         }
         if (was == now || !one.fVisible) {
           return;
@@ -177,11 +180,6 @@ public:
     const skia::SkRect bar = skia::SkRect::MakeLTRB(view.fRight - kBarReach, view.fTop, view.fRight, view.fBottom);
     fState.fMovedDamage = scene::joined(fState.fMovedDamage, bar);
     scene::work::mark(fState.fId);
-  }
-  // A subtree's recordings let go: made in the space it was laid out in.
-  template <class N> static void forgetRecordings(N &node) {
-    skiff::scene::stateOf(node).fPicture = nullptr;
-    skiff::scene::eachChild(node, [](auto &child) { forgetRecordings(child); });
   }
   // Its contents moved by dy as a whole: the view copied there by the host,
   // and repainted only the strip that came into view and the bar, which

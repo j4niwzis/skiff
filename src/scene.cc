@@ -1696,6 +1696,9 @@ public:
   }
   bool fRecorded = false;
   skia::Sp<skia::SkPicture> fPicture;
+  // Where its top left was as it was recorded: played back moved by as far
+  // as it has moved since.
+  float fPictureX = 0.0f, fPictureY = 0.0f;
   // Drawn over other things -- a popup's plate, a sheet sliding in: what a
   // program's paint may treat apart (blurring what is under it, live).
   bool fFloats = false;
@@ -2819,14 +2822,15 @@ inline void noteMoved(State &state) {
                                                             : skia::SkRect::MakeEmpty();
 }
 // A node moved as it is: its bounds, the box it was laid out in and its
-// reach where it is now, its recording (made where it was) let go, and its
-// children owing as much (fPendingX/Y) -- moved when gone into.
+// reach where it is now, and its children owing as much (fPendingX/Y) --
+// moved when gone into. Its recording kept: played back where it is now.
+// Let go at every move, every row of a list a page came in above was drawn
+// again whole, its picture freed and made anew.
 inline void moveOwn(State &state, float dx, float dy, bool withItsBox = true) {
   state.fBounds.offset(dx, dy);
   if (withItsBox)
     state.fLastConstraint.offset(dx, dy);
   state.fReach.offset(dx, dy);
-  state.fPicture = nullptr;
   state.fPendingX += dx;
   state.fPendingY += dy;
   if (work::Entry *here = work::entry(state.fId)) {
@@ -3413,8 +3417,17 @@ void drawNode(T &node, Painting &painting, skia::SkCanvas *canvas, float inherit
       drawSelfOf(node, hooks, into, 1.0f);
       eachChildInDrawOrder(node, [&](auto &child, std::uint32_t) { draw(child, painting, into, 1.0f); });
       state.fPicture = recorder.finishRecordingAsPicture();
+      state.fPictureX = state.fBounds.fLeft;
+      state.fPictureY = state.fBounds.fTop;
     }
     if (state.fPicture && state.fRecordedInARow < 3) {
+      // Moved since it was recorded (moveOwn): played back as far over.
+      const float dx = state.fBounds.fLeft - state.fPictureX, dy = state.fBounds.fTop - state.fPictureY;
+      const bool moved = dx != 0.0f || dy != 0.0f;
+      if (moved) {
+        canvas->save();
+        canvas->translate(dx, dy);
+      }
       if (alpha < 0.999f) {
         skia::SkPaint faded;
         faded.setAlphaf(alpha);
@@ -3422,6 +3435,8 @@ void drawNode(T &node, Painting &painting, skia::SkCanvas *canvas, float inherit
       } else {
         canvas->drawPicture(state.fPicture);
       }
+      if (moved)
+        canvas->restore();
     }
   } else {
     paintBox(hooks, state, skiff::paint::Painter(canvas, fontToDrawWith()), alpha);

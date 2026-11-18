@@ -754,6 +754,14 @@ private:
       return;
     }
     const skia::SkTypeface *base = font.getTypeface();
+    // Printable ASCII in a face that has all of it: one run, in that face --
+    // not a face looked up for every character of every word measured (a
+    // page of messages: a fifth of laying out its rows).
+    if (this->asciiCovered(base) &&
+        std::ranges::all_of(text, [](char c) { return static_cast<unsigned char>(c) >= 0x20 && static_cast<unsigned char>(c) < 0x7f; })) {
+      fn(font, text);
+      return;
+    }
     std::size_t runStart = 0;
     int runFace = 0;
     bool haveRun = false;
@@ -835,11 +843,11 @@ private:
   // Mutable: a face found on demand while drawing is added to them.
   mutable std::vector<skia::Sp<skia::SkTypeface>> fFallbacks;
   mutable std::unordered_map<std::int32_t, int> fCoverage;
+  mutable std::unordered_map<const skia::SkTypeface *, bool> fAsciiCovered;
   skia::Sp<skia::SkFontMgr> fManager;
   // Every font the manager has, listed the first time one is needed.
   mutable bool fEveryFaceListed = false;
   mutable std::vector<skia::Sp<skia::SkTypeface>> fEveryFace;
-  mutable std::unordered_map<const skia::SkTypeface *, bool> fAsciiCovered;
   mutable TextCache<float> fWidths;
 };
 
