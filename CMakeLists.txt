@@ -390,6 +390,17 @@ target_compile_definitions(skiff_model PUBLIC
 option(SKIFF_SHARE_DEBUG_ALGORITHMS "In Debug, share layout and drawing code between erased node types" ON)
 target_compile_definitions(${PROJECT_NAME} PUBLIC
   $<$<AND:$<BOOL:${SKIFF_ERASE_WALKS}>,$<BOOL:${SKIFF_SHARE_DEBUG_ALGORITHMS}>,$<CONFIG:Debug>>:SKIFF_SHARED_DEBUG_ALGORITHMS>)
+# skiff's own code optimised in a Debug build -- still with its debug
+# information, its checks and its erased walks; the program's own code as
+# the program builds it. What a Debug program spends laying out, drawing and
+# walking is skiff's code (made once in skiff, SKIFF_SHARED_DEBUG_ALGORITHMS):
+# unoptimised, a page of a chat's history took milliseconds to lay out.
+option(SKIFF_OPTIMIZE_DEBUG "In a Debug build, compile skiff itself optimised (-O2, with -g)" OFF)
+if(SKIFF_OPTIMIZE_DEBUG)
+  foreach(optimised skiff_model skiff_core ${PROJECT_NAME})
+    target_compile_options(${optimised} PRIVATE $<$<CONFIG:Debug>:-O2>)
+  endforeach()
+endif()
 
 # PUBLIC: anything linking this gets `import skia`, `import skiff.paint`,
 # `import skiff.scene` and `import skiff.nodes`.
