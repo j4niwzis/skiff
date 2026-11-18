@@ -1032,6 +1032,18 @@ public:
     if (!changed)
       return false;
     if (fRows.size() != before || remade.empty()) {
+      // The rows made, told to the work tables where they are and marked:
+      // the tick goes to a list in view by what is marked in it (its hints),
+      // and a new row not marked was never found there -- a page of history
+      // had the next tick walk the whole tree for it (3,469 nodes, 200 ms).
+      scene::State &self = this->fState;
+      for (std::uint32_t place = 0; place < fRows.size(); ++place) {
+        const scene::State &row = fRows[place].fState;
+        if (row.fNew) {
+          scene::work::record(row.fId, self.fId, place);
+          scene::work::mark(row.fId);
+        }
+      }
       this->invalidateLayout();
       return true;
     }
