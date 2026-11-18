@@ -255,6 +255,25 @@ TEST(Views, VirtualRowsKeepFullExtentAndOnlyBuildNearbyVariableHeightRows) {
   EXPECT_FLOAT_EQ(row.bounds().fTop, node.fTops[node.fFrom]);
 }
 
+// The view moved a little -- a window dragged taller, a few pixels scrolled:
+// the rows it holds still cover what is needed, and are kept, not let go and
+// made again at every step the edge crossed.
+TEST(Views, VirtualRowsKeepTheirRowsWhileTheyStillCover) {
+  auto node = virtual_view();
+  node.read(virtual_items(1000));
+  node.setCurrent(20000.0f);
+  scene::layout(node, viewport);
+  const auto from = node.fFrom, to = node.fTo;
+  const auto first = std::get<0>(node.fChildren).fRows.front().fState.fId;
+  for (float at = 20001.0f; at < 20040.0f; at += 3.0f) {
+    node.setCurrent(at);
+    scene::layout(node, viewport);
+  }
+  EXPECT_EQ(node.fFrom, from);
+  EXPECT_EQ(node.fTo, to);
+  EXPECT_EQ(std::get<0>(node.fChildren).fRows.front().fState.fId, first);
+}
+
 TEST(Views, VirtualRowsRestoreADistantListAfterShortContentsAndClampShrinks) {
   scene::Scene tree(c::remembered_scroll<std::string>(virtual_view()));
   auto& node = tree.root();

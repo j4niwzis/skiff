@@ -91,7 +91,9 @@ template <class E, class Ask, class N> struct OnCapture : N {
 // and its neighbouring screens have scene nodes. Direct jumps, wheel
 // movement and restored offsets all select rows before their next layout.
 struct VirtualRowsOptions {
-  std::size_t step = 40;
+  // Rows made or let go a step at a time: forty at once made a thousand
+  // nodes in one frame (a sidebar of chats, its window resized).
+  std::size_t step = 10;
   float minimum_view = 400.0f;
 };
 template <class Item, class Height, class N> struct VirtualRows : N {
@@ -139,9 +141,19 @@ template <class Item, class Height, class N> struct VirtualRows : N {
       return std::min(fItems.size(), static_cast<std::size_t>(next - fTops.begin() - 1));
     };
     const auto step = fOptions.step;
-    const auto from = indexAt(at - view) / step * step;
+    const auto first = indexAt(at - view);
     const auto last = std::min(fItems.size(), indexAt(at + 2.0f * view) + 1);
-    const auto to = std::min(fItems.size(), std::max(from + step, (last + step - 1) / step * step));
+    // What it holds still covers what is needed, and not by far: kept. Made
+    // again at every row of slack -- a window dragged taller or shorter, the
+    // view a pixel further -- the rows at its ends were let go and made anew
+    // at every step the edge crossed.
+    const bool covers = fHaveRows && fTo <= fItems.size() && fFrom <= first && fTo >= last && fTo - fFrom <= last - first + 4 * step;
+    if (covers && !changed)
+      return false;
+    // The list changed under a range that still covers: that range, read
+    // again; else one made for where the view is.
+    const auto from = covers ? fFrom : first / step * step;
+    const auto to = covers ? fTo : std::min(fItems.size(), std::max(from + step, (last + step - 1) / step * step));
     if (!changed && fHaveRows && from == fFrom && to == fTo) return false;
     fHaveRows = true;
     fFrom = from;
