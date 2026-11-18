@@ -1273,6 +1273,9 @@ public:
   // again kept the lines its text was wrapped to at the narrower width.
   bool fCutOwn = false;
   bool fCutByRoom = false;
+  // The layout pass it was last laid out in -- laid out, not only moved: its
+  // recordings, made as it was, no longer what it is.
+  std::uint64_t fLaidPass = 0;
   // Whether being hidden is what it reads from the model, not what it was
   // made as -- a mount, hidden until it is first read: a wrapper put over it
   // follows it, and does not keep it hidden as one made hidden (visible(false)).
@@ -3015,6 +3018,7 @@ template <class T> void layoutNode(T &node, const skia::SkRect &parentBox) {
   // Its own layout as it was, in the same box: laid out again only for what
   // changed under it.
   state.fBelowOnly = state.fLayoutValid && parent == state.fLastConstraint;
+  state.fLaidPass = work::layoutPass();
   // A flow the compiled traversal covers: laid out by its passes.
   if (compiled::layOut(node, parent)) {
     state.fLayoutValid = true;
@@ -7606,6 +7610,7 @@ template <class N> void place(region &r, std::uint32_t at, N &node, const skia::
   s.fLayoutValid = true;
   s.fSubtreeDirty = false;
   s.fPlacementDirty = false;
+  s.fLaidPass = work::layoutPass();
   work::reach(s.fId);
   const skia::SkRect content = s.contentBox();
   const bool column = r.slots[at].of == kind::column;
