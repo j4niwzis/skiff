@@ -1325,6 +1325,112 @@ TEST(Layout, AContentSizedChildGivesWayForWhatItHolds) {
   EXPECT_EQ(told, 0u);
 }
 
+// A wrapped row, laid out by the compiled passes -- no flow by hand: what
+// does not fit on a line goes to the next, the row as tall as its lines.
+struct Wrapping : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> a = make<Box>({.width = 40.0f, .height = 10.0f}, kCard);
+    Box<> b = make<Box>({.width = 40.0f, .height = 20.0f}, kCard);
+    Box<> c = make<Box>({.width = 40.0f, .height = 10.0f}, kCard);
+  } parts;
+  Wrapping() {
+    this->setHorizontal();
+    this->fStack.wrap = true;
+    this->fStack.spacingX = 10.0f;
+    this->fStack.spacingY = 5.0f;
+  }
+};
+struct HoldsWrapping : Node {
+  struct parts_t {
+    Wrapping row = make<Wrapping>({.width = 100.0f, .autoSize = axes::kY});
+  } parts;
+};
+
+TEST(Layout, AWrappedRowBreaksWhereTheNextDoesNotFit) {
+  Scene<HoldsWrapping> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  const auto by_hand = skiff::scene::handFlows();
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  EXPECT_EQ(skiff::scene::handFlows(), by_hand);
+  const auto &row = scene.root().parts.row;
+  EXPECT_FLOAT_EQ(row.parts.b.bounds().fLeft - row.bounds().fLeft, 50.0f);
+  EXPECT_FLOAT_EQ(row.parts.c.bounds().fLeft - row.bounds().fLeft, 0.0f);
+  EXPECT_FLOAT_EQ(row.parts.c.bounds().fTop - row.bounds().fTop, 25.0f);
+  EXPECT_FLOAT_EQ(row.bounds().height(), 35.0f);
+}
+
+TEST(Layout, AWrappedRowWiderPutsItAllOnOneLine) {
+  Scene<HoldsWrapping> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  auto &row = scene.root().parts.row;
+  row.fState.apply({.width = 200.0f});
+  row.invalidateLayout();
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  EXPECT_FLOAT_EQ(row.parts.c.bounds().fLeft - row.bounds().fLeft, 100.0f);
+  EXPECT_FLOAT_EQ(row.parts.c.bounds().fTop, row.bounds().fTop);
+  EXPECT_FLOAT_EQ(row.bounds().height(), 20.0f);
+}
+
+// What grows on a wrapped line takes what its line leaves -- its line, not
+// the row: one on a line of its own takes the whole line.
+struct WrappingGrows : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> a = make<Box>({.width = 40.0f, .height = 10.0f}, kCard);
+    Box<> grows = make<Box>({.height = 10.0f, .grow = axes::kX, .minWidth = 30.0f}, kCard);
+    Box<> wide = make<Box>({.width = 90.0f, .height = 10.0f}, kCard);
+    Box<> last = make<Box>({.height = 10.0f, .grow = axes::kX, .minWidth = 20.0f}, kCard);
+  } parts;
+  WrappingGrows() {
+    this->setHorizontal();
+    this->fStack.wrap = true;
+    this->fStack.spacingX = 10.0f;
+  }
+};
+struct HoldsWrappingGrows : Node {
+  struct parts_t {
+    WrappingGrows row = make<WrappingGrows>({.width = 100.0f, .autoSize = axes::kY});
+  } parts;
+};
+
+TEST(Layout, WhatGrowsOnAWrappedLineTakesWhatTheLineLeaves) {
+  Scene<HoldsWrappingGrows> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  const auto by_hand = skiff::scene::handFlows();
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  EXPECT_EQ(skiff::scene::handFlows(), by_hand);
+  const auto &row = scene.root().parts.row;
+  EXPECT_FLOAT_EQ(row.parts.grows.bounds().width(), 50.0f);
+  EXPECT_FLOAT_EQ(row.parts.wide.bounds().fTop - row.bounds().fTop, 10.0f);
+  EXPECT_FLOAT_EQ(row.parts.last.bounds().fTop - row.bounds().fTop, 20.0f);
+  EXPECT_FLOAT_EQ(row.parts.last.bounds().width(), 100.0f);
+  EXPECT_FLOAT_EQ(row.bounds().height(), 30.0f);
+}
+
+// Rows centred: a line not wrapped is put in the middle of its row too.
+struct CentredRows : skiff::nodes::Stack {
+  struct parts_t {
+    Box<> a = make<Box>({.width = 40.0f, .height = 10.0f}, kCard);
+  } parts;
+  CentredRows() {
+    this->setHorizontal();
+    this->fStack.centreRows = true;
+  }
+};
+struct HoldsCentred : Node {
+  struct parts_t {
+    CentredRows row = make<CentredRows>({.width = 100.0f, .height = 10.0f});
+  } parts;
+};
+
+TEST(Layout, ACentredRowPutsItsLineInTheMiddle) {
+  Scene<HoldsCentred> scene{std::in_place};
+  scene.state().apply({.fill = true});
+  scene.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  const auto &row = scene.root().parts.row;
+  EXPECT_FLOAT_EQ(row.parts.a.bounds().fLeft - row.bounds().fLeft, 30.0f);
+}
+
 // A menu: the arrows move the focus through its items, round from the last
 // to the first, and never out of it.
 struct ArrowMenu : skiff::nodes::Stack {
