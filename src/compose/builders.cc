@@ -146,14 +146,19 @@ struct Named<Self, B> {
   using is_builder = std::true_type;
   B inner;
   explicit Named(B made) : inner(std::move(made)) {}
+  template <class Make>
+    requires std::same_as<std::invoke_result_t<Make &>, B>
+  explicit Named(std::in_place_t, Make make) : inner(make()) {}
   void onKey() = delete;
   void onPointer() = delete;
   void onText() = delete;
   void onSemantic() = delete;
   template <class Rules>
   auto build(const Rules& rules) && {
-    auto node = std::move(inner).build(rules);
-    return Named<Self, decltype(node)>(std::move(node));
+    // Built in place, as the macro makes a view: what build makes is the
+    // named view's base, not moved into it.
+    using Node = decltype(std::move(inner).build(rules));
+    return Named<Self, Node>(std::in_place, [&] { return std::move(inner).build(rules); });
   }
 };
 

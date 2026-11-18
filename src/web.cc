@@ -1748,6 +1748,10 @@ template <class Self, class Base> struct Named : Base {
   // (bind::RootOf).
   using NamedContent = Base;
   explicit Named(Base made) : Base(std::move(made)) {}
+  // Made in place from what the expression makes (SKIFF_NAMED): not moved.
+  template <class Make>
+    requires std::same_as<std::invoke_result_t<Make &>, Base>
+  explicit Named(std::in_place_t, Make make) : Base(make()) {}
 };
 
 // ---- walking a page's tree, typed ---------------------------------------------

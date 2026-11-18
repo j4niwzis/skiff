@@ -9,6 +9,9 @@
 // What it does is compose::Named's (CRTP); the macro gives it its name. Its
 // content's event handlers are declared again at its level: a type derived
 // from a node otherwise calls Node's deducing-this defaults, not the node's.
+// What the expression makes is made in place, as the named view's base: the
+// lambda handed to its constructor, called there -- its prvalue never a
+// temporary moved into the view.
 // The type is a struct deriving from what the expression made, so it is
 // everything that was: read, bound, wrapped and walked the same; returned
 // as itself in every build, so that what is overloaded on a view's type
@@ -53,5 +56,5 @@
       using SKIFF_NAMED_BASE<name, decltype(skiff_named_made())>::onSemantic;                                   \
       static constexpr const char *viewName() { return SKIFF_NAMED_VIEW_NAME(name); }                                   \
     };                                                                                                                 \
-    return name(skiff_named_made());                                                                                   \
+    return name(std::in_place, skiff_named_made);                                                                      \
   }()

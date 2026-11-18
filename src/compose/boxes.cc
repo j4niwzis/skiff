@@ -476,6 +476,9 @@ struct Held : Stacked {
       scene::State &held = scene::stateOf(parts.held);
       this->followAgain(held);
       this->fState.fVisible = fHeldShown && held.fVisible;
+      // Hidden as its content reads the model: so is the wrapper, to whatever
+      // adopts it in turn.
+      this->fState.fShownByModel = held.fShownByModel;
     } else {
       this->fState.fVisible = fHeldShown;
     }
@@ -529,7 +532,11 @@ struct Held : Stacked {
     // it was hidden under every wrapper for good -- a call button never
     // seen. What the content says of itself after that stays its own,
     // followed as it is seen (walkedState).
-    fHeldShown = mine.fVisible && node.fVisible;
+    // Hidden by what it reads -- a mount not read yet, under wrappers or not
+    // -- is not hidden as made: followed (walkedState), not kept. Kept,
+    // a named view over a mount made as the settings opened stayed hidden for
+    // good: mux's Join Requests, an empty page.
+    fHeldShown = mine.fVisible && (node.fVisible || node.fShownByModel);
     // Shown again as the content takes a spec: content that is a wrapper
     // itself -- a named view's press, held -- keeps whether it is shown in
     // its own word (its fHeldShown), which its state's flag alone did not move:
@@ -809,6 +816,15 @@ template <class Self, class Base> struct Named : Base {
   // (bind::RootOf).
   using NamedContent = Base;
   explicit Named(Base made) : Base(std::move(made)) { state_of(static_cast<Base &>(*this)).fViewName = Self::viewName(); }
+  // Made in place from what the expression makes (SKIFF_NAMED's lambda):
+  // the prvalue it returns is the base itself -- never a temporary moved
+  // into it, a whole view moved once more for its name, and anything in it
+  // that refers to itself pointing at the temporary.
+  template <class Make>
+    requires std::same_as<std::invoke_result_t<Make &>, Base>
+  explicit Named(std::in_place_t, Make make) : Base(make()) {
+    state_of(static_cast<Base &>(*this)).fViewName = Self::viewName();
+  }
 };
 // Over held content (outside a release build): seen as the Held it is.
 template <class Self> struct Named<Self, Held> : Held {
@@ -817,6 +833,11 @@ template <class Self> struct Named<Self, Held> : Held {
   using NamedBase = Held;
   using SeenAs = Held;
   explicit Named(Held made) : Held(std::move(made)) { scene::stateOf(this->held()).fViewName = Self::viewName(); }
+  template <class Make>
+    requires std::same_as<std::invoke_result_t<Make &>, Held>
+  explicit Named(std::in_place_t, Make make) : Held(make()) {
+    scene::stateOf(this->held()).fViewName = Self::viewName();
+  }
 };
 // Over a view named over held content in turn (a view made of a view of its
 // own, named once more): the same Held, named again -- the outer name the
@@ -830,6 +851,12 @@ struct Named<Self, Base> : Held {
   using NamedBase = Base;
   using SeenAs = Held;
   explicit Named(Base made) : Held(static_cast<Held &&>(made)) { scene::stateOf(this->held()).fViewName = Self::viewName(); }
+  // (The inner view's Held taken from it: moved, as one Held from another.)
+  template <class Make>
+    requires std::same_as<std::invoke_result_t<Make &>, Base>
+  explicit Named(std::in_place_t, Make make) : Held(static_cast<Held &&>(make())) {
+    scene::stateOf(this->held()).fViewName = Self::viewName();
+  }
 };
 
 template <class Tag, class N> struct Marked : N {
@@ -1060,6 +1087,7 @@ template <class Content, class Facts, class Make> struct Mounted : Specced {
       : Specced(std::move(spec)), fMake(std::move(make)) {
     this->fState.setFloats(floats);
     this->setVisible(false);
+    this->fState.fShownByModel = true;
   }
   // Made at once, from its first facts: there before anything reads them.
   Mounted(Make make, const Facts &first, scene::Spec spec = {}, bool floats = false)

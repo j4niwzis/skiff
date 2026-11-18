@@ -1266,6 +1266,10 @@ public:
   float fShiftX = 0.0f, fShiftY = 0.0f;
   std::optional<Border> fBorder;
   bool fVisible = true;
+  // Whether being hidden is what it reads from the model, not what it was
+  // made as -- a mount, hidden until it is first read: a wrapper put over it
+  // follows it, and does not keep it hidden as one made hidden (visible(false)).
+  bool fShownByModel = false;
   bool fRevealOnHover = false;  // shown while what holds it is hovered
 
   // -- the result of layout

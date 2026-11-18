@@ -314,4 +314,57 @@ TEST(Compose, ARoomsRequestsListingShownDirectlyUnderTheScope) {
     EXPECT_EQ(all_made_as<ListingRows>(tree).size(), 1u) << "optional facts";
   }
 }
+// As mux names its views: the scope a named view, its content a named view
+// over a mount not read yet, the page under a tab hidden until it is
+// chosen. A wrapper over the mount kept its first hiding (outside a release
+// build every named view is one): the page stayed empty for good.
+namespace named_page {
+namespace c = skiff::compose;
+using settings_page::Facts;
+using settings_page::Room;
+using settings_page::Listing;
+using settings_page::ListingRows;
+using settings_page::MakeListing;
+inline auto listing_view(int answered) {
+  return SKIFF_NAMED(knock_listing_view, c::projected<Room>(settings_page::ListingOf{answered}, c::mount<ListingRows, Listing>(MakeListing{})));
+}
+template <class N> auto in_managed_chat(N node) {
+  return SKIFF_NAMED(in_managed_chat, c::rekeyed_by<std::optional<Facts>>([](const std::optional<Facts> &now) { return std::tuple(now ? now->room : 0); },
+      c::scoped<Room>(c::handlers(), std::move(node), 0)));
+}
+inline auto knock_view(int answered) { return in_managed_chat(listing_view(answered)); }
+using KnockView = decltype(knock_view(0));
+struct MakeKnockView {
+  std::tuple<KnockView> operator()(int answered) const { return {knock_view(answered)}; }
+};
+struct OnRequests {
+  bool operator()(const std::optional<Facts> &now) const { return now && now->answered == 0 && now->room == 7; }
+};
+}  // namespace named_page
+TEST(Compose, ARoomsRequestsInNamedViewsUnderAHiddenTabAreShown) {
+  namespace c = skiff::compose;
+  using namespace settings_page;
+  using namespace named_page;
+  scene::Scene laid(c::build(c::column(c::vbox(0.0f), c::shown_for<std::optional<Facts>>(OnRequests{},
+      c::column(c::vbox(0.0f), SKIFF_NAMED(rows_of, c::projected<std::optional<Facts>>(AnsweredOf{}, c::mount<named_page::KnockView, int>(named_page::MakeKnockView{}))))))));
+  auto &tree = laid.root();
+  ShowModel shown{ShowRoot{}};
+  ChatsRoot rooms;
+  rooms.rooms.put(7, Room{31});
+  ChatsModel chats(std::move(rooms));
+  bind::Binding<ShowModel> bs;
+  bind::Binding<ChatsModel> bc;
+  (void)shown.apply(model::edit(model::placeOf<std::optional<Facts>, ShowRoot>(), model::setTo(std::optional<Facts>(Facts{.room = 7}))));
+  for (int frame = 0; frame < 3; ++frame) {
+    bs.refresh(tree, shown);
+    bc.refresh(tree, chats);
+  }
+  laid.layoutIfNeeded(skia::SkRect::MakeWH(400.0f, 300.0f));
+  bool shownWhole = false;
+  for (const scene::LaidOutNode &one : scene::laidOutTree(laid.root()))
+    if (one.view == "in_managed_chat" && one.names)
+      shownWhole = one.visible;
+  EXPECT_TRUE(shownWhole);
+}
+
 }  // namespace
