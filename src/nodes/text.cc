@@ -1283,4 +1283,13 @@ using BasicText = std::conditional_t<skiff::scene::kErasedWalks, ErasedBasicText
 
 using Text = BasicText<>;
 
+#ifdef SKIFF_ERASED_WALKS
+// The erased text's code made once, in this module's object, at what skiff
+// is built with -- not again in every unit that makes a text, at the
+// program's own optimisation: a Debug program measured every text with
+// code it had made itself, unoptimised.
+extern template class internal::BasicText<AnyPictures>;
+template class internal::BasicText<AnyPictures>;
+#endif
+
 } // namespace skiff::nodes

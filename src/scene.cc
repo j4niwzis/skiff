@@ -5109,7 +5109,11 @@ struct NodeOps {
 };
 
 #ifdef SKIFF_SHARED_DEBUG_ALGORITHMS
-inline void layoutShared(void *node, const NodeOps *ops, const skia::SkRect &box);
+// Not inline: made once, in this module's object, and called from every
+// unit -- not made again, and at the program's own optimisation, in every
+// unit that lays a node out. The layout of a whole Debug program, the
+// compiled passes and all, runs in what skiff was built with.
+void layoutShared(void *node, const NodeOps *ops, const skia::SkRect &box);
 extern const Walks kDebugWalks;
 #endif
 template <class T> [[nodiscard]] T &nodeAs(void *node) {
@@ -5454,7 +5458,7 @@ public:
 // layout algorithm for every node in every walks_* subtree. Its geometry,
 // autosizing, placement and invalidation all use State and child refs; only
 // measure and layoutChildren require the node's original type.
-inline void layoutShared(void *node, const NodeOps *ops, const skia::SkRect &box) {
+void layoutShared(void *node, const NodeOps *ops, const skia::SkRect &box) {
   ErasedNode seen(node, ops);
   detail::layoutNode(seen, box);
 }
