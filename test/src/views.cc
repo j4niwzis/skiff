@@ -274,6 +274,65 @@ TEST(Views, VirtualRowsKeepTheirRowsWhileTheyStillCover) {
   EXPECT_EQ(std::get<0>(node.fChildren).fRows.front().fState.fId, first);
 }
 
+// A list of chats away from its top, nothing changing: no frame asked for,
+// nothing laid out. (The rooms list asked for frames for as long as it was
+// not at its top, laying itself out again at each.)
+TEST(Views, VirtualRowsStillAwayFromTheTopAskForNoFrames) {
+  scene::Scene tree(virtual_view());
+  auto &node = tree.root();
+  node.read(virtual_items(300));
+  double now = 0.0;
+  const auto frame = [&] {
+    now += 16.0;
+    tree.update(now);
+    tree.layoutIfNeeded(viewport);
+    return tree.finishFrame();
+  };
+  for (int i = 0; i < 3; ++i)
+    (void)frame();
+  node.setCurrent(5000.0f);
+  for (int i = 0; i < 30; ++i)
+    (void)frame();
+  const auto before = scene::walkCounts();
+  int wanted = 0;
+  for (int i = 0; i < 10; ++i)
+    wanted += frame().fWantsAnotherFrame ? 1 : 0;
+  EXPECT_EQ(wanted, 0);
+  EXPECT_EQ(scene::walkCounts().laidOut - before.laidOut, 0u);
+  EXPECT_FLOAT_EQ(node.current(), 5000.0f);
+}
+
+// The same rows read again -- what reads them told again by its model, the
+// offset it keeps among it -- away from the top: nothing laid out, no frame
+// asked, the offset where it was.
+TEST(Views, VirtualRowsReadAgainTheSameAwayFromTheTopLayNothingOut) {
+  scene::Scene tree(virtual_view());
+  auto &node = tree.root();
+  const auto items = virtual_items(300);
+  node.read(items);
+  double now = 0.0;
+  const auto frame = [&] {
+    now += 16.0;
+    tree.update(now);
+    tree.layoutIfNeeded(viewport);
+    return tree.finishFrame();
+  };
+  (void)frame();
+  node.setCurrent(5000.5f);
+  for (int i = 0; i < 10; ++i)
+    (void)frame();
+  const float at = node.current();
+  const auto before = scene::walkCounts();
+  int wanted = 0;
+  for (int i = 0; i < 10; ++i) {
+    node.read(items);
+    wanted += frame().fWantsAnotherFrame ? 1 : 0;
+  }
+  EXPECT_EQ(wanted, 0);
+  EXPECT_EQ(scene::walkCounts().laidOut - before.laidOut, 0u);
+  EXPECT_FLOAT_EQ(node.current(), at);
+}
+
 TEST(Views, VirtualRowsRestoreADistantListAfterShortContentsAndClampShrinks) {
   scene::Scene tree(c::remembered_scroll<std::string>(virtual_view()));
   auto& node = tree.root();

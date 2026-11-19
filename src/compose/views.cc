@@ -121,9 +121,17 @@ template <class Item, class Height, class N> struct VirtualRows : N {
     fTops.assign(1, 0.0f);
     std::transform_inclusive_scan(fItems.begin(), fItems.end(), std::back_inserter(fTops), std::plus{},
                                           [&](const Item& item) { return std::max(0.0f, static_cast<float>(std::invoke(fHeight, item))); }, 0.0f);
-    // Changes to the list preserve its offset, including an empty list
-    // becoming populated while the viewport happened to be at its end.
-    N::setCurrent(fRequested.value_or(this->current()));
+    // An offset asked for before the rows came (a list restored far down)
+    // taken now; else the offset left where it is. Set again at every read --
+    // the same rows told again as the model moved, the offset kept among it
+    // -- the list was laid out anew at each, and away from its top asked for
+    // frame after frame (the rooms list, 7 ms each).
+    // A shorter list under a view far down it: the offset brought back to
+    // its end, as it was by setting it.
+    if (fRequested)
+      N::setCurrent(*fRequested);
+    else if (const float most = std::max(0.0f, fTops.back() - this->bounds().height()); this->current() > most)
+      N::setCurrent(most);
     showRows(true);
   }
   void setCurrent(float offset) {
@@ -155,14 +163,18 @@ template <class Item, class Height, class N> struct VirtualRows : N {
     const auto from = covers ? fFrom : first / step * step;
     const auto to = covers ? fTo : std::min(fItems.size(), std::max(from + step, (last + step - 1) / step * step));
     if (!changed && fHaveRows && from == fFrom && to == fTo) return false;
+    const bool moved = !fHaveRows || from != fFrom || to != fTo;
     fHaveRows = true;
     fFrom = from;
     fTo = to;
     auto& rows = std::get<0>(this->fChildren);
+    // Its padding laid out again by the rows where it moved (apply); the
+    // rows, where any of them changed. Nothing changed, nothing laid out.
     rows.apply({.padding = {fTops[from], 0.0f, fTops.back() - fTops[to], 0.0f}});
-    rows.read(std::vector<Item>(fItems.begin() + from, fItems.begin() + to));
-    this->invalidateLayout();
-    return true;
+    const bool remade = rows.read(std::vector<Item>(fItems.begin() + from, fItems.begin() + to));
+    if (moved || remade)
+      this->invalidateLayout();
+    return moved || remade;
   }
   void layoutChildren() {
     showRows(false);
