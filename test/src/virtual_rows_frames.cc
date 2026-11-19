@@ -159,12 +159,20 @@ TEST(VirtualRowsFrames, RoomsInTheSidebarStandingStillAskForNoFrames) {
     auto& list = *found;
     const auto items = room_items(300);
     double now = 0.0;
+    skia::SkBitmap pixels;
+    (void)pixels.tryAllocN32Pixels(300, 600);
+    skia::SkCanvas canvas(pixels);
+    scene::detail::PlainPaint plain;
+    // As the window runs it: scroll views copied, every frame drawn.
+    scene::blitScrolling() = true;
     const auto frame = [&] {
       now += 16.0;
       list.read(items);
       tree.update(now);
       tree.layoutIfNeeded(window);
-      return tree.finishFrame();
+      auto done = tree.finishFrame();
+      tree.draw(plain, &canvas);
+      return done;
     };
     for (int i = 0; i < 5; ++i)
       (void)frame();
@@ -180,5 +188,55 @@ TEST(VirtualRowsFrames, RoomsInTheSidebarStandingStillAskForNoFrames) {
     EXPECT_EQ(scene::walkCounts().laidOut - before.laidOut, 0u) << "at " << at;
     EXPECT_FLOAT_EQ(list.current(), settled) << "at " << at;
     EXPECT_GT(list.bounds().height(), 300.0f) << "at " << at;
+    scene::blitScrolling() = false;
+  }
+}
+
+namespace {
+// The rooms in a column sized by what it holds: laid out first in the room
+// it might have, then in its own -- a provisional box, then the real one, at
+// every layout of the frame.
+auto measuredColumn(float tall) {
+  auto band = c::styled({.fillX = true, .height = 52.0f}, skiff::nodes::Box<>(0xFFEEEEEEu));
+  auto list = c::styled(tall > 0.0f ? scene::Spec{.fillX = true, .height = tall} : scene::Spec{.fillX = true, .grow = scene::axes::kY}, rooms_view(true));
+  return ::skiff::compose::build(c::column(c::vbox(0.0f, {.fill = true}),
+      c::column(c::vbox(0.0f) | c::fill_x | c::content_y, std::move(band), std::move(list))));
+}
+}
+
+// Away from the top, in such a column: its rows the same at every layout --
+// none made, no frame asked for, nothing laid out once it stands still.
+TEST(VirtualRowsFrames, RoomsInAColumnSizedByThemStandingStillAskForNoFrames) {
+  if (!haveFont()) GTEST_SKIP() << "Needs a font to cut names with";
+  for (const float tall : {500.0f})
+  for (const float at : {0.0f, 3000.5f}) {
+    scene::Scene tree(measuredColumn(tall));
+    rooms_list* found = nullptr;
+    scene::forEachNode<rooms_list>(tree.root(), [&](rooms_list& one) { if (!found) found = &one; });
+    ASSERT_NE(found, nullptr);
+    auto& list = *found;
+    const auto items = room_items(300);
+    double now = 0.0;
+    const auto frame = [&] {
+      now += 16.0;
+      list.read(items);
+      tree.update(now);
+      tree.layoutIfNeeded(window);
+      return tree.finishFrame();
+    };
+    for (int i = 0; i < 5; ++i)
+      (void)frame();
+    list.setCurrent(at);
+    for (int i = 0; i < 30; ++i)
+      (void)frame();
+    const auto from = list.fFrom;
+    const auto before = scene::walkCounts();
+    int wanted = 0;
+    for (int i = 0; i < 10; ++i)
+      wanted += frame().fWantsAnotherFrame ? 1 : 0;
+    EXPECT_EQ(wanted, 0) << "at " << at;
+    EXPECT_EQ(scene::walkCounts().laidOut - before.laidOut, 0u) << "at " << at;
+    EXPECT_EQ(list.fFrom, from) << "at " << at;
+    if (tall > 0.0f) EXPECT_FLOAT_EQ(list.bounds().height(), tall) << "at " << at;
   }
 }

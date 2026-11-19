@@ -130,7 +130,7 @@ template <class Item, class Height, class N> struct VirtualRows : N {
     // its end, as it was by setting it.
     if (fRequested)
       N::setCurrent(*fRequested);
-    else if (const float most = std::max(0.0f, fTops.back() - this->bounds().height()); this->current() > most)
+    else if (const float most = std::max(0.0f, fTops.back() - this->bounds().height()); !this->bounds().isEmpty() && this->current() > most)
       N::setCurrent(most);
     showRows(true);
   }
@@ -177,6 +177,14 @@ template <class Item, class Height, class N> struct VirtualRows : N {
     return moved || remade;
   }
   void layoutChildren() {
+    // In a provisional box -- a parent sized by what it holds measuring it
+    // first in the room it might have: only measured, its rows as they are.
+    // Chosen for that box, they were made for it and made again for the
+    // real one at every layout, every frame asking for the next.
+    if (scene::work::provisionalDepth() > 0) {
+      N::layoutChildren();
+      return;
+    }
     showRows(false);
     N::layoutChildren();
     fRequested.reset();
