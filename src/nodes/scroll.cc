@@ -329,7 +329,11 @@ public:
     // The view itself moved or another size -- a bar opened over it, what is
     // above it grown: all of it repainted where it is. Its rows, the same in
     // its contents, were otherwise left where they were drawn.
-    if (fLaidOut && box != fLastBox) {
+    // Not in a provisional box: only measured there, it is laid out again in
+    // its own, from where the frame found it -- and repainted, every frame
+    // its parent measured it first, all of it, though nothing on the screen
+    // moved (a fifth of the window, the rooms away from their top).
+    if (fLaidOut && box != fLastBox && scene::work::provisionalDepth() == 0) {
       fState.markDamaged();
     }
     // At the end and at rest, the view stays at the end, however much comes
@@ -373,7 +377,12 @@ public:
       fLastOffset = scene::snapToPixel(fExtent);
       this->followed(offset);
     } else if (laidOutBefore && !following && !fToEnd && !fGlidingToEnd && !fScroll.dragging() &&
-               box.width() == boxBefore.width() && box.height() != boxBefore.height()) {
+               box.width() == boxBefore.width() && box.height() != boxBefore.height() &&
+               scene::work::provisionalDepth() == 0) {
+      // (Not in a provisional box, another height than its own: the view
+      // moved by the difference and repainted whole -- away from the top
+      // only, at the top the move clamped to nothing -- at every frame its
+      // parent measured it first.)
       // Only its height changed -- a phone's keyboard come up under it, a
       // bar opened below: what was at its bottom stays at its bottom, as a
       // phone's apps keep it, not hidden under what came. Left alone, the
