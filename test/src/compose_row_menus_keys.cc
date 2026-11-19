@@ -1,4 +1,4 @@
-// A row's menu on a right press, through each layer of a row; a screen's keys answered once; a button shown by what it reads.
+// A row's menu on a right press, through each layer of a row, and its click left to it; a screen's keys answered once; a button shown by what it reads.
 #include "skiff/named.h"
 import std;
 import skia;
@@ -162,3 +162,73 @@ TEST(Compose, AScreensKeyAnswerIsTakenOnceAcrossModels) {
 }
 
 }  // namespace
+
+namespace right_and_left {
+namespace c = skiff::compose;
+struct Chosen {
+  int which = 0;
+};
+// What a press with `button` came to on `node`: the clicks pressed, the
+// answers given.
+template <class N> std::pair<std::size_t, std::size_t> pressedWith(N node, int button) {
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), std::move(node)));
+  tree.layoutIfNeeded(skia::SkRect::MakeXYWH(0.0f, 0.0f, 400.0f, 400.0f));
+  (void)tree.finishFrame();
+  scene::hostWork().answers.clear();
+  scene::hostWork().pressed.clear();
+  (void)tree.dispatchPointer(scene::pointer::down{20.0f, 8.0f, button});
+  (void)tree.dispatchPointer(scene::pointer::up{20.0f, 8.0f, button});
+  tree.update(16.0);
+  (void)tree.finishFrame();
+  const std::pair counts{std::exchange(scene::hostWork().pressed, {}).size(), std::exchange(scene::hostWork().answers, {}).size()};
+  return counts;
+}
+inline auto room(std::string label = "Room") {
+  return c::onClick(Chosen{1}, c::row(c::hbox(12.0f) | c::fill_x | c::with({.height = 40.0f}), row_menu_parts::Probe()), std::move(label));
+}
+}  // namespace right_and_left
+
+// A row clicked and right pressed for its menu -- a room in mux's list: a
+// click is the row's, the right press the menu's. (The menu's own handler
+// for a press on itself hid the row's: no room took a click.)
+TEST(Compose, ARowWithAMenuTakesItsClick) {
+  using namespace right_and_left;
+  const auto [clicks, answers] = pressedWith(c::onRightPressAt(row_menu::Ask{}, room()), 1);
+  EXPECT_EQ(clicks, 1u);
+  EXPECT_EQ(answers, 0u);
+}
+TEST(Compose, ARowWithAMenuRightPressedAsksTheMenuAndIsNotClicked) {
+  using namespace right_and_left;
+  const auto [clicks, answers] = pressedWith(c::onRightPressAt(row_menu::Ask{}, room()), 3);
+  EXPECT_EQ(clicks, 0u);
+  if constexpr (scene::kErasedWalks)
+    EXPECT_EQ(answers, 1u);
+}
+// The same through the layers mux puts between them: recorded, its cursor
+// said, a list item.
+TEST(Compose, ARowWithAMenuTakesItsClickThroughItsLayers) {
+  using namespace right_and_left;
+  const auto layered = [] {
+    return c::onRightPressAt(row_menu::Ask{}, c::recorded(c::with_cursor(scene::cursor::arrow{},
+        c::said(scene::SemanticRole{scene::semantic_role::list_item{}}, false, room()))));
+  };
+  EXPECT_EQ(pressedWith(layered(), 1).first, 1u);
+  EXPECT_EQ(pressedWith(layered(), 3).first, 0u);
+}
+// A menu over a column of rows: each row its own click, the menu its right
+// press -- what a press on itself does not reach the rows under it.
+TEST(Compose, RowsUnderAMenuOverTheirColumnTakeTheirClicks) {
+  using namespace right_and_left;
+  const auto column = [] {
+    return c::onRightPressAt(row_menu::Ask{}, c::column(c::vbox(0.0f, {.fillX = true, .autoSize = scene::axes::kY}), room("First"), room("Second")));
+  };
+  EXPECT_EQ(pressedWith(column(), 1).first, 1u);
+  EXPECT_EQ(pressedWith(column(), 3).first, 0u);
+}
+// A middle press clicks nothing and asks no menu.
+TEST(Compose, AMiddlePressOnARowWithAMenuDoesNothing) {
+  using namespace right_and_left;
+  const auto [clicks, answers] = pressedWith(c::onRightPressAt(row_menu::Ask{}, room()), 2);
+  EXPECT_EQ(clicks, 0u);
+  EXPECT_EQ(answers, 0u);
+}

@@ -515,8 +515,24 @@ template <class Ask, class N> struct OnRightPressAt : N {
   std::optional<Answer> onPointer(scene::phase::bubble, const scene::pointer::down &press, scene::PointerReply &reply) {
     return this->asked(press, reply);
   }
+  // Its own press, the right one; any other its content's, as if this were
+  // not over it. Declared here, this hid the content's own: a room's row --
+  // clicked (onClick), its menu on a right press -- took no click at all.
   std::optional<Answer> onPointer(scene::phase::target, const scene::pointer::down &press, scene::PointerReply &reply) {
-    return this->asked(press, reply);
+    if (press.button == 3)
+      return this->asked(press, reply);
+    auto &content = static_cast<N &>(*this);
+    using Theirs = decltype(content.onPointer(scene::phase::target{}, press, reply));
+    if constexpr (std::is_void_v<Theirs>) {
+      content.onPointer(scene::phase::target{}, press, reply);
+      return std::nullopt;
+    } else if constexpr (std::convertible_to<Theirs, std::optional<Answer>>) {
+      return content.onPointer(scene::phase::target{}, press, reply);
+    } else {
+      // An answer of the content's own kind: kept as the content's would be.
+      scene::answered(content, content.onPointer(scene::phase::target{}, press, reply), scene::NoCarry{});
+      return std::nullopt;
+    }
   }
 
 private:
