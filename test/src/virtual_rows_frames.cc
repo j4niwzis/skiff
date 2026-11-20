@@ -249,18 +249,23 @@ TEST(VirtualRowsFrames, RoomsInAColumnSizedByThemStandingStillAskForNoFrames) {
 TEST(VirtualRowsFrames, RoomsMeasuredWithoutALimitKeepTheirRows) {
   if (!haveFont()) GTEST_SKIP() << "Needs a font to cut names with";
   for (const float at : {0.0f, 3000.5f}) {
-    auto list = rooms_view();
+    // Growing into the box it is given, as mux's does: ten million tall there.
+    auto root = ::skiff::compose::build(c::column(c::vbox(0.0f, {.fill = true}), rooms_view(true)));
+    rooms_list* found = nullptr;
+    scene::forEachNode<rooms_list>(root, [&](rooms_list& one) { if (!found) found = &one; });
+    ASSERT_NE(found, nullptr);
+    auto& list = *found;
     const auto items = room_items(300);
     list.read(items);
-    scene::layout(list, window);
+    scene::layout(root, window);
     list.setCurrent(at);
-    scene::layout(list, window);
+    scene::layout(root, window);
     const auto from = list.fFrom, to = list.fTo;
     const auto first = std::get<0>(list.fChildren).fRows.front().fState.fId;
     for (int i = 0; i < 5; ++i) {
       list.read(items);
-      scene::layout(list, skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 1.0e7f));
-      scene::layout(list, window);
+      scene::layout(root, skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 1.0e7f));
+      scene::layout(root, window);
     }
     EXPECT_EQ(list.fFrom, from) << "at " << at;
     EXPECT_EQ(list.fTo, to) << "at " << at;

@@ -196,7 +196,14 @@ template <class Item, class Height, class N> struct VirtualRows : N {
     // Chosen for that box, they were made for it and made again for the
     // real one at every layout, every frame asking for the next.
     if (scene::work::provisionalDepth() > 0 || measuredWithoutLimit()) {
+      // Its offset kept too: in a box that tall nothing scrolls, and the
+      // view, clamped to its top there, read its rows from the top after.
+      const float kept = fRequested.value_or(this->current());
       N::layoutChildren();
+      if (this->current() != kept) {
+        fRequested = kept;
+        N::setCurrent(kept);
+      }
       return;
     }
     showRows(false);
