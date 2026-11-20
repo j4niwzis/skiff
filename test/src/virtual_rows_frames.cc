@@ -273,3 +273,42 @@ TEST(VirtualRowsFrames, RoomsMeasuredWithoutALimitKeepTheirRows) {
     EXPECT_FLOAT_EQ(list.current(), at) << "at " << at;
   }
 }
+
+// A room clicked while the list is measured without a limit at every frame:
+// pressed down, a frame, released -- the click its own, its row not made
+// again in between. (Rooms away from the top took no clicks.)
+TEST(VirtualRowsFrames, ARoomMeasuredWithoutALimitEveryFrameTakesItsClick) {
+  if (!haveFont()) GTEST_SKIP() << "Needs a font to cut names with";
+  for (const float at : {0.0f, 3000.5f}) {
+    scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), rooms_view(true)));
+    rooms_list* found = nullptr;
+    scene::forEachNode<rooms_list>(tree.root(), [&](rooms_list& one) { if (!found) found = &one; });
+    ASSERT_NE(found, nullptr);
+    auto& list = *found;
+    const auto items = room_items(300);
+    double now = 0.0;
+    const auto frame = [&] {
+      now += 16.0;
+      list.read(items);
+      tree.update(now);
+      scene::layout(tree.root(), skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 1.0e7f));
+      scene::layout(tree.root(), window);
+      return tree.finishFrame();
+    };
+    for (int i = 0; i < 3; ++i) (void)frame();
+    list.setCurrent(at);
+    for (int i = 0; i < 5; ++i) (void)frame();
+    auto& work = scene::hostWork();
+    work.answers.clear();
+    work.pressed.clear();
+    tree.dispatchPointer(scene::pointer::move{100.0f, 300.0f});
+    (void)frame();
+    tree.dispatchPointer(scene::pointer::down{100.0f, 300.0f, 1});
+    (void)frame();
+    tree.dispatchPointer(scene::pointer::up{100.0f, 300.0f, 1});
+    (void)frame();
+    EXPECT_EQ(work.pressed.size(), 1u) << "at " << at;
+    work.answers.clear();
+    work.pressed.clear();
+  }
+}
