@@ -110,6 +110,20 @@ template <class Item, class Height, class N> struct VirtualRows : N {
   std::size_t fFrom = 0, fTo = 0;
   std::optional<float> fRequested;
   bool fHaveRows = false;
+  // The height it was last shown at: what its rows are chosen for. Laid out
+  // in a box with no height to speak of -- a parent measuring what it holds
+  // with no limit, ten million tall -- its offset clamped to 0 there, it chose
+  // the rows at its top, then the ones where it is in its own box: away from
+  // its top, rows made again at every layout, every frame asking for the next
+  // (the rooms list; 2,075 nodes made a frame).
+  float fShownHeight = 0.0f;
+  static constexpr float kNoLimit = 1.0e6f;
+  [[nodiscard]] bool measuredWithoutLimit() const { return this->bounds().height() >= kNoLimit; }
+  [[nodiscard]] float shownHeight() {
+    if (!measuredWithoutLimit() && !this->bounds().isEmpty())
+      fShownHeight = this->bounds().height();
+    return fShownHeight;
+  }
   VirtualRows(Height height, VirtualRowsOptions options, N node)
       : N(std::move(node)), fHeight(std::move(height)), fOptions(options) {
     fOptions.step = std::max(std::size_t{1}, fOptions.step);
@@ -130,7 +144,7 @@ template <class Item, class Height, class N> struct VirtualRows : N {
     // its end, as it was by setting it.
     if (fRequested)
       N::setCurrent(*fRequested);
-    else if (const float most = std::max(0.0f, fTops.back() - this->bounds().height()); !this->bounds().isEmpty() && this->current() > most)
+    else if (const float most = std::max(0.0f, fTops.back() - shownHeight()); fShownHeight > 0.0f && this->current() > most)
       N::setCurrent(most);
     showRows(true);
   }
@@ -141,9 +155,9 @@ template <class Item, class Height, class N> struct VirtualRows : N {
   }
   void scrollToStart() { setCurrent(0.0f); }
   bool showRows(bool changed) {
-    const float view = std::max(this->bounds().height(), fOptions.minimum_view);
-    const float at = std::clamp(fRequested.value_or(this->current()), 0.0f,
-                              std::max(0.0f, fTops.back() - this->bounds().height()));
+    const float shown = shownHeight();
+    const float view = std::max(shown, fOptions.minimum_view);
+    const float at = std::clamp(fRequested.value_or(this->current()), 0.0f, std::max(0.0f, fTops.back() - shown));
     const auto indexAt = [&](float y) {
       const auto next = std::upper_bound(fTops.begin(), fTops.end(), std::max(0.0f, y));
       return std::min(fItems.size(), static_cast<std::size_t>(next - fTops.begin() - 1));
@@ -181,7 +195,7 @@ template <class Item, class Height, class N> struct VirtualRows : N {
     // first in the room it might have: only measured, its rows as they are.
     // Chosen for that box, they were made for it and made again for the
     // real one at every layout, every frame asking for the next.
-    if (scene::work::provisionalDepth() > 0) {
+    if (scene::work::provisionalDepth() > 0 || measuredWithoutLimit()) {
       N::layoutChildren();
       return;
     }

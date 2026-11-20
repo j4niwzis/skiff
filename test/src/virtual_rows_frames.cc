@@ -240,3 +240,31 @@ TEST(VirtualRowsFrames, RoomsInAColumnSizedByThemStandingStillAskForNoFrames) {
     if (tall > 0.0f) EXPECT_FLOAT_EQ(list.bounds().height(), tall) << "at " << at;
   }
 }
+
+// Measured with no limit -- a box ten million tall, as a parent measuring
+// what it holds lays it out -- then laid out in its own, at every frame:
+// away from its top, its rows stay the ones where it is, none made again.
+// (It chose the rows at its top in the tall box, its offset clamped to 0
+// there, then the ones where it is: 2,075 nodes made a frame.)
+TEST(VirtualRowsFrames, RoomsMeasuredWithoutALimitKeepTheirRows) {
+  if (!haveFont()) GTEST_SKIP() << "Needs a font to cut names with";
+  for (const float at : {0.0f, 3000.5f}) {
+    auto list = rooms_view();
+    const auto items = room_items(300);
+    list.read(items);
+    scene::layout(list, window);
+    list.setCurrent(at);
+    scene::layout(list, window);
+    const auto from = list.fFrom, to = list.fTo;
+    const auto first = std::get<0>(list.fChildren).fRows.front().fState.fId;
+    for (int i = 0; i < 5; ++i) {
+      list.read(items);
+      scene::layout(list, skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 1.0e7f));
+      scene::layout(list, window);
+    }
+    EXPECT_EQ(list.fFrom, from) << "at " << at;
+    EXPECT_EQ(list.fTo, to) << "at " << at;
+    EXPECT_EQ(std::get<0>(list.fChildren).fRows.front().fState.fId, first) << "at " << at;
+    EXPECT_FLOAT_EQ(list.current(), at) << "at " << at;
+  }
+}
