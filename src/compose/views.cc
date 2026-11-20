@@ -198,11 +198,19 @@ template <class Item, class Height, class N> struct VirtualRows : N {
     if (scene::work::provisionalDepth() > 0 || measuredWithoutLimit()) {
       // Its offset kept too: in a box that tall nothing scrolls, and the
       // view, clamped to its top there, read its rows from the top after.
-      const float kept = fRequested.value_or(this->current());
-      N::layoutChildren();
-      if (this->current() != kept) {
-        fRequested = kept;
-        N::setCurrent(kept);
+      // Put back as it stood, gesture and all: set again by a jump, a wheel's
+      // glide and a fling were stopped at every frame.
+      if constexpr (requires(N &view) { view.restore(view.held()); }) {
+        const auto was = N::held();
+        N::layoutChildren();
+        N::restore(was);
+      } else {
+        const float kept = fRequested.value_or(this->current());
+        N::layoutChildren();
+        if (this->current() != kept) {
+          fRequested = kept;
+          N::setCurrent(kept);
+        }
       }
       return;
     }

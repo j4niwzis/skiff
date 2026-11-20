@@ -210,6 +210,23 @@ public:
     fState.fMovedDamage = scene::joined(scene::joined(fState.fMovedDamage, strip), bar);
     scene::work::mark(fState.fId);
   }
+  // How it stands -- its gesture under way (a wheel's glide, a fling), its
+  // extent, where it was laid out and drawn -- taken and put back around a
+  // layout that only measures what holds it: a box with no limit, where
+  // nothing scrolls. Put back by a jump instead, the glide stopped at every
+  // frame: the wheel crawled and a drag let go had no fling.
+  struct Held {
+    skiff::scene::ScrollGesture scroll;
+    float extent = 0.0f, lastOffset = 0.0f;
+    skia::SkRect lastBox = skia::SkRect::MakeEmpty();
+  };
+  [[nodiscard]] Held held() const { return {fScroll, fExtent, fLastOffset, fLastBox}; }
+  void restore(const Held &was) {
+    fScroll = was.scroll;
+    fExtent = was.extent;
+    fLastOffset = was.lastOffset;
+    fLastBox = was.lastBox;
+  }
   [[nodiscard]] float current() const noexcept { return fScroll.offset(); }
   [[nodiscard]] skiff::scene::Look look() const { return skiff::scene::look::scrolled{}; }
   [[nodiscard]] float extent() const noexcept { return fExtent; }

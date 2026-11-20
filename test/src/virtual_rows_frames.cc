@@ -312,3 +312,31 @@ TEST(VirtualRowsFrames, ARoomMeasuredWithoutALimitEveryFrameTakesItsClick) {
     work.pressed.clear();
   }
 }
+
+// A wheel's glide under way while the list is measured without a limit at
+// every frame: it goes on to where it was going. (Put back by a jump at each
+// measure, it stopped every frame: the wheel crawled, a fling was lost.)
+TEST(VirtualRowsFrames, AGlideGoesOnWhileTheListIsMeasuredWithoutALimit) {
+  if (!haveFont()) GTEST_SKIP() << "Needs a font to cut names with";
+  scene::Scene tree(c::column(c::vbox(0.0f, {.fill = true}), rooms_view(true)));
+  rooms_list* found = nullptr;
+  scene::forEachNode<rooms_list>(tree.root(), [&](rooms_list& one) { if (!found) found = &one; });
+  ASSERT_NE(found, nullptr);
+  auto& list = *found;
+  const auto items = room_items(300);
+  double now = 0.0;
+  const auto frame = [&] {
+    now += 16.0;
+    list.read(items);
+    tree.update(now);
+    scene::layout(tree.root(), skia::SkRect::MakeXYWH(0.0f, 0.0f, 300.0f, 1.0e7f));
+    scene::layout(tree.root(), window);
+    return tree.finishFrame();
+  };
+  for (int i = 0; i < 3; ++i) (void)frame();
+  list.setCurrent(3000.0f);
+  for (int i = 0; i < 5; ++i) (void)frame();
+  list.scrollTo(3600.0f);
+  for (int i = 0; i < 60; ++i) (void)frame();
+  EXPECT_NEAR(list.current(), 3600.0f, 1.0f);
+}
